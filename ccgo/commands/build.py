@@ -62,8 +62,8 @@ class Build(CliCommand):
         parser.add_argument(
             "--arch",
             action="store",
-            default="arm64-v8a",
-            help="arch like armeabi-v7a, arm64-v8a, x86_64, etc",
+            default="armeabi-v7a,arm64-v8a,x86_64",
+            help="arch like armeabi-v7a,arm64-v8a,x86_64, etc, if choose more than one, use ',' to split them.",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
@@ -75,7 +75,7 @@ class Build(CliCommand):
         print(vars(args))
         num = 2 if args.ide_project else 1
         arch = args.arch if args.target == "android" else ""
-        cmd = f"python3 build_{args.target}.py {num} {arch}"
+        cmd = f"python3 build_{args.target}.py {num} {arch.replace(',', ' ')}"
         print("\nExecute command:")
         print(cmd)
         err_code = os.system(cmd)

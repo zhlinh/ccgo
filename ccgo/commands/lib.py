@@ -53,6 +53,7 @@ class Lib(CliCommand):
         parser.add_argument(
             "--template-url",
             action="store",
+            default="https://github.com/zhlinh/ccgo-template.git",
             help="template url",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
