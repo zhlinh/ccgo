@@ -51,6 +51,8 @@ CMakeCache.txt
 ######################
 __pycache__
 *.pyc
+dist/
+*egg-info/
 
 ######################
 # android
@@ -118,3 +120,5 @@ tool/*/**/db.sqlite3
 **/ipa/
 *.log
 *result.log
+
+
