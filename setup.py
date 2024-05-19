@@ -20,7 +20,7 @@ with open("README.md", "r") as f:
 
 setup(
     name='ccgo',
-    version='1.0.0',
+    version='1.1.0',
     description='A C++ cross-platform build system.',
     long_description=long_description,
     author='zhlinh',
