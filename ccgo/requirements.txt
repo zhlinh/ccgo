@@ -1,0 +1,2 @@
+copier>=9.2.0
+copier-templates-extensions>=0.3.0
