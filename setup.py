@@ -23,6 +23,7 @@ setup(
     version='1.1.0',
     description='A C++ cross-platform build system.',
     long_description=long_description,
+    long_description_content_type="text/markdown",
     author='zhlinh',
     author_email='zhlinhng@gmail.com',
     url='https://github.com/zhlinh/ccgo',
