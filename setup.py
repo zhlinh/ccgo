@@ -21,11 +21,11 @@ with open("README.md", "r") as f:
 setup(
     name='ccgo',
     version='1.0.0',
-    description='An cross-platform build system.',
+    description='A C++ cross-platform build system.',
     long_description=long_description,
     author='zhlinh',
     author_email='zhlinhng@gmail.com',
-    url='https://zhenlinhuang.com',
+    url='https://github.com/zhlinh/ccgo',
     package_dir={"./": "ccgo"},
     packages=find_packages(),
     include_package_data = True,
