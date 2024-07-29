@@ -64,7 +64,7 @@ class Publish(CliCommand):
             print("\nPublishing only support maven of android now")
             sys.exit(1)
         # do publish
-        cmd = f"./gradlew --stop && ./gradlew publishMainPublicationToMavenRepository"
+        cmd = f"./gradlew publishMainPublicationToMavenRepository --no-daemon --info"
         err_code, err_msg = exec_command(cmd)
         if err_code != 0:
             print("\nEnd with error:")
