@@ -24,6 +24,14 @@ message(STATUS "Generating ThirdParty library [${TEMPLATE_SUB_LIB_NAME}]")
 
 project(${TEMPLATE_SUB_LIB_NAME} LANGUAGES C CXX)
 
+# ========== Check if building as CCGO dependency ==========
+# If CCGO_AS_DEPENDENCY is set by parent project, propagate it to compile definitions
+if(CCGO_AS_DEPENDENCY)
+    message(STATUS "[${TEMPLATE_SUB_LIB_NAME}] CCGO_AS_DEPENDENCY=ON, disabling standalone features")
+    add_compile_definitions(CCGO_AS_DEPENDENCY)
+endif()
+# ==========================================================
+
 set(TEMP_DIR_LIST "")
 get_third_party_src_directories(TEMP_DIR_LIST ${CMAKE_CURRENT_SOURCE_DIR})
 

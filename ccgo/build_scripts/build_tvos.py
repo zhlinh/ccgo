@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -- coding: utf-8 --
 #
-# build_ios.py
+# build_tvos.py
 # ccgo
 #
 # Copyright 2024 zhlinh and ccgo Project Authors. All rights reserved.
@@ -15,11 +15,11 @@
 # substantial portions of the Software.
 
 """
-iOS native library build script.
+tvOS native library build script.
 
-This script builds universal static libraries and XCFrameworks for iOS platform
-using CMake and iOS toolchain. It handles:
-- Building for physical devices (arm64, arm64e, armv7, armv7s)
+This script builds universal static libraries and XCFrameworks for tvOS platform
+using CMake and tvOS toolchain. It handles:
+- Building for physical devices (Apple TV 4K: arm64, arm64e)
 - Building for simulators (x86_64, arm64, arm64e)
 - Merging static libraries with libtool
 - Creating .framework bundles for device and simulator
@@ -33,13 +33,13 @@ Requirements:
 - macOS development environment
 
 Usage:
-    python3 build_ios.py [mode]
+    python3 build_tvos.py [mode]
 
     mode: 1 (build XCFramework), 2 (generate Xcode project), 3 (exit)
 
 Output:
-    - XCFramework: cmake_build/iOS/Darwin.out/{project}.xcframework
-    - Frameworks: cmake_build/iOS/Darwin.out/os|simulator/{project}.framework
+    - XCFramework: cmake_build/tvOS/Darwin.out/{project}.xcframework
+    - Frameworks: cmake_build/tvOS/Darwin.out/os|simulator/{project}.framework
 """
 
 import glob
@@ -62,34 +62,35 @@ PROJECT_NAME_LOWER = PROJECT_NAME.lower()
 PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
 
 # Build output paths
-BUILD_OUT_PATH = "cmake_build/iOS"
+BUILD_OUT_PATH = "cmake_build/tvOS"
 # Darwin(Linux,Windows).out = ${CMAKE_SYSTEM_NAME}.out
 INSTALL_PATH = BUILD_OUT_PATH + "/Darwin.out"
 
-# CMake build command for iOS Simulator (x86_64 for Intel Macs, arm64/arm64e for M1+ simulators)
-# Targets iOS 10.0+, disables ARC and Bitcode, enables symbol visibility
+# CMake build command for tvOS Simulator (x86_64 for Intel Macs, arm64/arm64e for M1+ simulators)
+# Targets tvOS 10.0+, disables ARC and Bitcode, enables symbol visibility
 # Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
-IOS_BUILD_SIMULATOR_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/ios.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR -DIOS_ARCH="x86_64;arm64;arm64e" -DIOS_DEPLOYMENT_TARGET=10.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
+TVOS_BUILD_SIMULATOR_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/tvos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_TVOS -DIOS_ARCH="x86_64;arm64;arm64e" -DIOS_DEPLOYMENT_TARGET=10.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
 
-# CMake build command for iOS physical devices (arm64/arm64e for modern devices, armv7/armv7s for legacy)
+# CMake build command for tvOS physical devices (arm64/arm64e for Apple TV 4K and later)
+# tvOS does not support armv7/armv7s (no legacy device support)
 # Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
-IOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/ios.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=OS -DIOS_ARCH="arm64;arm64e;armv7;armv7s" -DIOS_DEPLOYMENT_TARGET=10.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
+TVOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/tvos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=TVOS -DIOS_ARCH="arm64;arm64e" -DIOS_DEPLOYMENT_TARGET=10.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
 
 # Xcode project generation command (for development/debugging)
 # Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
-GEN_IOS_OS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_TOOLCHAIN_FILE="%s/ios.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=OS -DIOS_ARCH="arm64;arm64e;armv7;armv7s" -DIOS_DEPLOYMENT_TARGET=10.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s'
+GEN_TVOS_OS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_TOOLCHAIN_FILE="%s/tvos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=TVOS -DIOS_ARCH="arm64;arm64e" -DIOS_DEPLOYMENT_TARGET=10.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s'
 
-# All supported iOS architectures for third-party library integration
-THIRD_PARTY_ARCHS = ["x86_64", "arm64e", "arm64", "armv7", "armv7s"]
+# All supported tvOS architectures for third-party library integration
+THIRD_PARTY_ARCHS = ["x86_64", "arm64e", "arm64"]
 
 
-def build_ios(target_option="", tag="", link_type='static'):
+def build_tvos(target_option="", tag="", link_type='static'):
     """
-    Build iOS XCFramework containing both device and simulator frameworks.
+    Build tvOS XCFramework containing both device and simulator frameworks.
 
-    This function performs the complete iOS build process:
+    This function performs the complete tvOS build process:
     1. Generates version info header file
-    2. Builds static libraries for physical devices (arm64, arm64e, armv7, armv7s)
+    2. Builds static libraries for physical devices (arm64, arm64e)
     3. Merges device static libraries using libtool
     4. Builds static libraries for simulators (x86_64, arm64, arm64e)
     5. Merges simulator static libraries using libtool
@@ -106,26 +107,25 @@ def build_ios(target_option="", tag="", link_type='static'):
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Device framework: cmake_build/iOS/Darwin.out/os/{project}.framework
-        - Simulator framework: cmake_build/iOS/Darwin.out/simulator/{project}.framework
-        - XCFramework: cmake_build/iOS/Darwin.out/{project}.xcframework
+        - Device framework: cmake_build/tvOS/Darwin.out/os/{project}.framework
+        - Simulator framework: cmake_build/tvOS/Darwin.out/simulator/{project}.framework
+        - XCFramework: cmake_build/tvOS/Darwin.out/{project}.xcframework
 
     Note:
-        The XCFramework is the recommended distribution format for iOS libraries
+        The XCFramework is the recommended distribution format for tvOS libraries
         as it contains binaries for both devices and simulators in a single bundle.
         This allows Xcode to automatically select the correct binary during builds.
     """
     before_time = time.time()
-    print(f"==================build_ios (link_type: {link_type})========================")
+    print(f"==================build_tvos (link_type: {link_type})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
         tag,
-        platform="ios",
+        platform="tvos",
     )
-
     # Add link type CMake flags
     link_type_flags = ""
     if link_type == 'static':
@@ -141,7 +141,7 @@ def build_ios(target_option="", tag="", link_type='static'):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    build_cmd = IOS_BUILD_OS_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option)
+    build_cmd = TVOS_BUILD_OS_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option)
     ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
@@ -153,7 +153,7 @@ def build_ios(target_option="", tag="", link_type='static'):
     libtool_os_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}_os"
     libtool_simulator_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}_simulator"
     dst_framework_path = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}.framework"
-    dst_framework_headers = IOS_BUILD_COPY_HEADER_FILES
+    dst_framework_headers = TVOS_BUILD_COPY_HEADER_FILES
     # add static libs
     total_src_lib = glob.glob(INSTALL_PATH + "/*.a")
     rm_src_lib = []
@@ -166,7 +166,7 @@ def build_ios(target_option="", tag="", link_type='static'):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    build_cmd = IOS_BUILD_SIMULATOR_CMD % (
+    build_cmd = TVOS_BUILD_SIMULATOR_CMD % (
         CCGO_CMAKE_DIR,
         CCGO_CMAKE_DIR,
         full_target_option,
@@ -223,24 +223,26 @@ def build_ios(target_option="", tag="", link_type='static'):
     return True
 
 
-def archive_ios_project():
+def archive_tvos_project():
     """
-    Archive iOS XCFramework into ZIP packages.
+    Archive tvOS XCFramework into two ZIP packages.
 
-    This function creates two ZIP packages:
-    1. Release ZIP (xcframework only): {PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
-    2. Archive ZIP (with symbols, headers, etc.): (ARCHIVE)_{PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
+    This function creates two separate ZIP packages:
+    1. Release ZIP: Contains only the XCFramework for distribution
+    2. Archive ZIP: Contains XCFramework + headers + dSYM symbols for debugging
+
+    The packages are named:
+    - Release: {PROJECT_NAME}_TVOS_SDK-{version}.zip
+    - Archive: (ARCHIVE)_{PROJECT_NAME}_TVOS_SDK-{version}.zip
 
     Output:
-        - target/ios/{PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
-          (contains {project_name}.xcframework)
-        - target/ios/(ARCHIVE)_{PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
-          (contains xcframework, headers, symbols, etc.)
+        - target/{PROJECT_NAME}_TVOS_SDK-{version}.zip (release package)
+        - bin/(ARCHIVE)_{PROJECT_NAME}_TVOS_SDK-{version}.zip (archive package)
     """
     import zipfile
     from pathlib import Path
 
-    print("==================Archive iOS Project========================")
+    print("==================Archive tvOS Project========================")
 
     # Get project version info
     version_name = get_version_name(SCRIPT_PATH)
@@ -267,108 +269,99 @@ def archive_ios_project():
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
-    ios_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
+    tvos_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Find xcframework
+    # Find XCFramework source
     xcframework_name = f"{PROJECT_NAME_LOWER}.xcframework"
-    xcframework_src = os.path.join(ios_install_path, xcframework_name)
+    xcframework_src = os.path.join(tvos_install_path, xcframework_name)
 
     if not os.path.exists(xcframework_src):
         print(f"WARNING: XCFramework not found at {xcframework_src}")
         return
 
-    # ========== 1. Create Release ZIP (xcframework only) ==========
-    print("\n--- Creating Release ZIP (xcframework only) ---")
-    temp_release_dir = os.path.join(bin_dir, f"_temp_release_{project_name_upper}")
-    if os.path.exists(temp_release_dir):
-        shutil.rmtree(temp_release_dir)
-    os.makedirs(temp_release_dir, exist_ok=True)
-
-    # Copy XCFramework to temporary directory
-    temp_xcframework = os.path.join(temp_release_dir, xcframework_name)
-    shutil.copytree(xcframework_src, temp_xcframework)
-    print(f"Copied XCFramework: {xcframework_name}")
-
-    # Create Release ZIP
-    release_zip_name = f"{project_name_upper}_IOS_SDK-{full_version}.zip"
+    # ========== 1. Create Release ZIP (XCFramework only) ==========
+    release_zip_name = f"{project_name_upper}_TVOS_SDK-{full_version}.zip"
     release_zip_path = os.path.join(bin_dir, release_zip_name)
 
-    if os.path.exists(release_zip_path):
-        os.remove(release_zip_path)
-
+    print(f"Creating release ZIP: {release_zip_name}")
     with zipfile.ZipFile(release_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(temp_release_dir):
+        # Add xcframework to zip
+        for root, dirs, files in os.walk(xcframework_src):
             for file in files:
                 file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, temp_release_dir)
+                arcname = os.path.join(xcframework_name, os.path.relpath(file_path, xcframework_src))
                 zipf.write(file_path, arcname)
 
-    shutil.rmtree(temp_release_dir)
-    print(f"Created Release ZIP: {release_zip_name}")
+    release_size = os.path.getsize(release_zip_path) / 1024  # KB
+    print(f"✓ Release ZIP created: {release_zip_name} ({release_size:.1f} KB)")
 
-    # ========== 2. Create Archive ZIP (with additional files) ==========
-    print("\n--- Creating Archive ZIP (with symbols and headers) ---")
-    archive_name = f"(ARCHIVE)_{project_name_upper}_IOS_SDK-{full_version}"
-    archive_dir = os.path.join(bin_dir, archive_name)
+    # ========== 2. Create Archive ZIP (XCFramework + Headers + Symbols) ==========
+    archive_zip_name = f"(ARCHIVE)_{project_name_upper}_TVOS_SDK-{full_version}.zip"
+    archive_zip_path = os.path.join(bin_dir, archive_zip_name)
 
-    if os.path.exists(archive_dir):
-        shutil.rmtree(archive_dir)
-    os.makedirs(archive_dir, exist_ok=True)
-
-    # Copy XCFramework to archive
-    archive_xcframework = os.path.join(archive_dir, xcframework_name)
-    shutil.copytree(xcframework_src, archive_xcframework)
-    print(f"Copied XCFramework to archive: {xcframework_name}")
-
-    # Copy header files if they exist
-    headers_src = os.path.join(SCRIPT_PATH, "include")
-    if os.path.exists(headers_src):
-        headers_dest = os.path.join(archive_dir, "include")
-        shutil.copytree(headers_src, headers_dest)
-        print(f"Copied headers: include/")
-
-    # Copy symbol files if they exist (dSYM for iOS)
-    dsym_pattern = f"{ios_install_path}/*.dSYM"
-    dsym_files = glob.glob(dsym_pattern)
-    if dsym_files:
-        for dsym_file in dsym_files:
-            dsym_name = os.path.basename(dsym_file)
-            dsym_dest = os.path.join(archive_dir, dsym_name)
-            shutil.copytree(dsym_file, dsym_dest)
-            print(f"Copied symbols: {dsym_name}")
-
-    # Create Archive ZIP
-    archive_zip_path = os.path.join(bin_dir, f"{archive_name}.zip")
-    if os.path.exists(archive_zip_path):
-        os.remove(archive_zip_path)
-
+    print(f"Creating archive ZIP: {archive_zip_name}")
     with zipfile.ZipFile(archive_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(archive_dir):
+        # Add xcframework
+        for root, dirs, files in os.walk(xcframework_src):
             for file in files:
                 file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, bin_dir)
+                arcname = os.path.join(xcframework_name, os.path.relpath(file_path, xcframework_src))
                 zipf.write(file_path, arcname)
 
-    shutil.rmtree(archive_dir)
-    print(f"Created Archive ZIP: {archive_name}.zip")
+        # Add header files if they exist
+        headers_src = os.path.join(SCRIPT_PATH, "include")
+        if os.path.exists(headers_src):
+            for root, dirs, files in os.walk(headers_src):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.join("include", os.path.relpath(file_path, headers_src))
+                    zipf.write(file_path, arcname)
+            print(f"  ✓ Added headers")
 
-    print("\n==================Archive Complete========================")
+        # Add dSYM symbol files if they exist
+        dsym_added = False
+        # Look for dSYM in both os and simulator directories
+        for platform_dir in ["os", "simulator"]:
+            platform_path = os.path.join(tvos_install_path, platform_dir)
+            if os.path.exists(platform_path):
+                # Find .dSYM bundles
+                for item in os.listdir(platform_path):
+                    if item.endswith(".dSYM"):
+                        dsym_path = os.path.join(platform_path, item)
+                        if os.path.isdir(dsym_path):
+                            # Add dSYM bundle to archive
+                            for root, dirs, files in os.walk(dsym_path):
+                                for file in files:
+                                    file_path = os.path.join(root, file)
+                                    arcname = os.path.join(f"symbols/{platform_dir}", item,
+                                                          os.path.relpath(file_path, dsym_path))
+                                    zipf.write(file_path, arcname)
+                            dsym_added = True
+
+        if dsym_added:
+            print(f"  ✓ Added dSYM symbols")
+
+    archive_size = os.path.getsize(archive_zip_path) / 1024  # KB
+    print(f"✓ Archive ZIP created: {archive_zip_name} ({archive_size:.1f} KB)")
+
+    print("==================Archive Complete========================")
     print(f"Release ZIP: {release_zip_path}")
     print(f"Archive ZIP: {archive_zip_path}")
 
 
 def print_build_results():
     """
-    Print iOS build results from target directory.
+    Print tvOS build results from target directory.
 
-    This function displays the build artifacts and moves them to target/ios/:
-    - Release SDK ZIP packages (xcframework only)
-    - Archive SDK ZIP packages (with symbols, headers, etc.)
+    This function displays the build artifacts and moves them to target/tvos/:
+    1. Release ZIP package (XCFramework only)
+    2. Archive ZIP package (XCFramework + headers + symbols)
+    3. Other build artifacts
     """
-    print("==================iOS Build Results========================")
+    print("==================tvOS Build Results========================")
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
@@ -378,50 +371,58 @@ def print_build_results():
         print(f"ERROR: target directory not found. Please run build first.")
         sys.exit(1)
 
-    # Check for SDK ZIP packages (both release and archive)
-    all_zips = glob.glob(f"{bin_dir}/*.zip")
-    sdk_zips = [
-        f for f in all_zips
-        if "IOS_SDK" in os.path.basename(f) and not os.path.basename(f).startswith("_temp_")
+    # Check for build artifacts - now looking for ZIP files
+    release_zips = [
+        f
+        for f in glob.glob(f"{bin_dir}/*TVOS_SDK*.zip")
+        if not os.path.basename(f).startswith("(ARCHIVE)")
     ]
+    archive_zips = glob.glob(f"{bin_dir}/(ARCHIVE)*TVOS_SDK*.zip")
 
-    if not sdk_zips:
+    if not release_zips and not archive_zips:
         print(f"ERROR: No build artifacts found in {bin_dir}")
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create target/ios directory for platform-specific artifacts
-    bin_ios_dir = os.path.join(bin_dir, "ios")
-    os.makedirs(bin_ios_dir, exist_ok=True)
+    # Create target/tvos directory for platform-specific artifacts
+    bin_tvos_dir = os.path.join(bin_dir, "tvos")
+    os.makedirs(bin_tvos_dir, exist_ok=True)
 
-    # Clean up old xcframework directories in target/ios/
-    for item in os.listdir(bin_ios_dir):
-        item_path = os.path.join(bin_ios_dir, item)
+    # Clean up old xcframework directories in target/tvos/
+    for item in os.listdir(bin_tvos_dir):
+        item_path = os.path.join(bin_tvos_dir, item)
         if os.path.isdir(item_path) and item.endswith('.xcframework'):
             shutil.rmtree(item_path)
             print(f"Cleaned up old xcframework: {item}")
 
-    # Move SDK ZIP files to target/ios/
+    # Move ZIP files to target/tvos/
     artifacts_moved = []
-    for sdk_zip in sdk_zips:
-        dest = os.path.join(bin_ios_dir, os.path.basename(sdk_zip))
+    for release_zip in release_zips:
+        dest = os.path.join(bin_tvos_dir, os.path.basename(release_zip))
         if os.path.exists(dest):
             os.remove(dest)
-        shutil.move(sdk_zip, dest)
-        artifacts_moved.append(os.path.basename(sdk_zip))
+        shutil.move(release_zip, dest)
+        artifacts_moved.append(os.path.basename(release_zip))
+
+    for archive_zip in archive_zips:
+        dest = os.path.join(bin_tvos_dir, os.path.basename(archive_zip))
+        if os.path.exists(dest):
+            os.remove(dest)
+        shutil.move(archive_zip, dest)
+        artifacts_moved.append(os.path.basename(archive_zip))
 
     if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/ios/")
+        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/tvos/")
 
-    # Copy build_info.json from cmake_build to target/ios
-    copy_build_info_to_target("ios", SCRIPT_PATH)
+    # Copy build_info.json from cmake_build to target/tvos
+    copy_build_info_to_target("tvos", SCRIPT_PATH)
 
-    print(f"\nBuild artifacts in target/ios/:")
+    print(f"\nBuild artifacts in target/tvos/:")
     print("-" * 60)
 
-    # List all files in target/ios directory with sizes
-    for item in sorted(os.listdir(bin_ios_dir)):
-        item_path = os.path.join(bin_ios_dir, item)
+    # List all files in target/tvos directory with sizes
+    for item in sorted(os.listdir(bin_tvos_dir)):
+        item_path = os.path.join(bin_tvos_dir, item)
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
@@ -439,12 +440,12 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def gen_ios_project(target_option="", tag=""):
+def gen_tvos_project(target_option="", tag=""):
     """
-    Generate Xcode project for iOS development and debugging.
+    Generate Xcode project for tvOS development and debugging.
 
     This function creates an Xcode project (.xcodeproj) that can be opened in Xcode
-    for interactive development, debugging, and testing. Unlike build_ios() which
+    for interactive development, debugging, and testing. Unlike build_tvos() which
     creates distributable frameworks, this generates IDE project files.
 
     Args:
@@ -455,28 +456,28 @@ def gen_ios_project(target_option="", tag=""):
         bool: True if project generation succeeded, False otherwise
 
     Output:
-        - Xcode project: cmake_build/iOS/{project}.xcodeproj
+        - Xcode project: cmake_build/tvOS/{project}.xcodeproj
 
     Note:
-        The generated Xcode project is configured for iOS device builds.
+        The generated Xcode project is configured for tvOS device builds.
         To build for simulator, you can switch the scheme in Xcode.
         This is useful for development workflows where you need Xcode's
         debugging tools, code completion, and build system integration.
     """
-    print("==================gen_ios_project========================")
+    print("==================gen_tvos_project========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
         tag,
-        platform="ios",
+        platform="tvos",
     )
 
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    cmd = GEN_IOS_OS_PROJ % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option)
+    cmd = GEN_TVOS_OS_PROJ % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option)
     ret = os.system(cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
@@ -492,34 +493,33 @@ def gen_ios_project(target_option="", tag=""):
 
 def main(target_option="", tag="", link_type='static'):
     """
-    Main entry point for iOS XCFramework build.
+    Main entry point for tvOS XCFramework build.
 
     This function serves as the primary entry point when building
-    distributable iOS frameworks and XCFrameworks.
+    distributable tvOS frameworks and XCFrameworks.
 
     Args:
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
-        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
 
     Note:
-        This function calls build_ios() to create the XCFramework,
-        then archives it and moves artifacts to target/ios/ directory.
-        For Xcode project generation, use gen_ios_project() instead.
+        This function calls build_tvos() to create the XCFramework,
+        then archives it and moves artifacts to target/tvos/ directory.
+        For Xcode project generation, use gen_tvos_project() instead.
     """
     print(f"main tag {tag}, link_type: {link_type}")
 
     # Build XCFramework
-    if not build_ios(target_option, tag, link_type):
-        print("ERROR: iOS build failed")
+    if not build_tvos(target_option, tag, link_type):
+        print("ERROR: tvOS build failed")
         sys.exit(1)
 
     # Archive and organize artifacts
-    archive_ios_project()
+    archive_tvos_project()
     print_build_results()
 
 
-# Command-line interface for iOS builds
+# Command-line interface for tvOS builds
 # Supports two invocation modes:
 # 1. Interactive mode (no args): Prompts user for build mode
 # 2. Mode only (1 arg): Uses specified mode directly
@@ -538,17 +538,17 @@ if __name__ == "__main__":
             num = str(
                 input(
                     "Enter menu:"
-                    + f"\n1. Clean && build iOS {PROJECT_NAME_LOWER}."
-                    + f"\n2. Gen iOS {PROJECT_NAME_LOWER} Project."
+                    + f"\n1. Clean && build tvOS {PROJECT_NAME_LOWER}."
+                    + f"\n2. Gen tvOS {PROJECT_NAME_LOWER} Project."
                     + f"\n3. Exit."
                 )
             )
-        print(f"==================iOS Choose num: {num}==================")
+        print(f"==================tvOS Choose num: {num}==================")
         if num == "1":
             main(tag=num)
             break
         elif num == "2":
-            gen_ios_project()
+            gen_tvos_project()
             break
         else:
             break

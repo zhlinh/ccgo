@@ -34,6 +34,11 @@ include(${CCGO_CMAKE_DIR}/CMakeExtraFlags.cmake)   # Platform-specific compiler 
 # Add project root to include paths for header file resolution
 include_directories(./)
 
+## Auto-discover CCGO dependencies from third_party directory
+# This automatically finds and configures all dependencies installed via 'ccgo install'
+include(${CCGO_CMAKE_DIR}/FindCCGODependencies.cmake)
+find_ccgo_dependencies()
+
 ## Configure and build third-party dependencies (optional)
 # Subdirectories are added in file system order to ensure consistent build behavior
 if(THIRD_PARTY_OPTION)
@@ -45,8 +50,20 @@ if(THIRD_PARTY_OPTION)
             NEWLINE_STYLE LF  # Use Unix-style line endings for cross-platform compatibility
             @ONLY             # Only replace @VAR@ syntax, not ${VAR}
     )
+
+    # Set CCGO_AS_DEPENDENCY for all third-party subdirectories
+    # This tells dependencies to disable their JNI_OnLoad and other standalone features
+    # Keep this variable throughout the build so main target can also use it
+    set(CCGO_AS_DEPENDENCY ON CACHE INTERNAL "Building as CCGO dependency")
+    message(STATUS "[CCGO] Setting CCGO_AS_DEPENDENCY=ON for third_party dependencies")
+    # Define as global compile definition so all targets can see it
+    add_compile_definitions(CCGO_AS_DEPENDENCY)
+
     # Add third_party as subdirectory with custom binary directory name
     add_subdirectory(third_party ${PROJECT_NAME}-third_party)
+
+    # Note: We do NOT unset CCGO_AS_DEPENDENCY because main target also compiles third_party sources
+    message(STATUS "[CCGO] CCGO_AS_DEPENDENCY remains active for main target")
 endif()
 
 ## Configure and build main source code
@@ -255,10 +272,28 @@ elseif(BENCHMARK_SUPPORT)
     install(TARGETS ${BENCHMARK_NAME} RUNTIME DESTINATION ${SELF_LIBS_OUT})
 
 else()
-    ## Build Mode 3: Platform-Specific Shared Library
-    # Creates distributable shared libraries for Android, OHOS, etc.
+    ## Build Mode 3: Platform-Specific Libraries (Static/Shared/Both)
+    # Creates distributable libraries for Android, OHOS, etc.
+
+    # Configure build types (can be controlled via CMake args)
+    if(NOT DEFINED CCGO_BUILD_STATIC)
+        set(CCGO_BUILD_STATIC ON CACHE BOOL "Build static library")
+    endif()
+    if(NOT DEFINED CCGO_BUILD_SHARED)
+        set(CCGO_BUILD_SHARED ON CACHE BOOL "Build shared library")
+    endif()
+
+    # Validate at least one build type is enabled
+    if(NOT CCGO_BUILD_STATIC AND NOT CCGO_BUILD_SHARED)
+        message(FATAL_ERROR "At least one of CCGO_BUILD_STATIC or CCGO_BUILD_SHARED must be ON")
+    endif()
+
+    message(STATUS "CCGO Build Configuration:")
+    message(STATUS "  - Static library: ${CCGO_BUILD_STATIC}")
+    message(STATUS "  - Shared library: ${CCGO_BUILD_SHARED}")
+
     if(ANDROID)
-        ### Android Shared Library (.so) Build
+        ### Android Libraries Build (Static/Shared)
         # Configure linker search paths for third-party libraries
         list(APPEND LINK_SRC_DIRS third_party)
         link_directories(${LINK_SRC_DIRS})
@@ -299,23 +334,88 @@ else()
         list(APPEND TARGET_SRC_LINKS log)  # Android logging (__android_log_print)
         list(APPEND TARGET_SRC_LINKS z)    # zlib compression (avoid find_library for fortify issues)
 
-        # Create shared library from all collected sources
-        add_library(${PROJECT_NAME} SHARED ${SELF_SRC_FILES})
+        # ========== Build Static Library ==========
+        if(CCGO_BUILD_STATIC)
+            set(STATIC_TARGET ${PROJECT_NAME}_static)
+            add_library(${STATIC_TARGET} STATIC ${SELF_SRC_FILES})
 
-        # Install library to output directory
-        install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${SELF_LIBS_OUT} ARCHIVE DESTINATION ${SELF_LIBS_OUT})
+            target_link_libraries(${STATIC_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            # Link CCGO dependencies (static libraries)
+            file(GLOB CCGO_DEP_DIRS "${CMAKE_SOURCE_DIR}/third_party/*")
+            foreach(CCGO_DEP_DIR ${CCGO_DEP_DIRS})
+                if(IS_DIRECTORY "${CCGO_DEP_DIR}")
+                    get_filename_component(CCGO_DEP_NAME ${CCGO_DEP_DIR} NAME)
+                    string(TOUPPER ${CCGO_DEP_NAME} CCGO_DEP_NAME_UPPER)
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS)
+                        target_include_directories(${STATIC_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS})
+                    endif()
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES)
+                        target_link_libraries(${STATIC_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES})
+                    endif()
+                endif()
+            endforeach()
+
+            set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
+
+            # Set output name and directory
+            set_target_properties(${STATIC_TARGET} PROPERTIES
+                OUTPUT_NAME ${PROJECT_NAME}
+                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static/${ANDROID_ABI}
+            )
+
+            install(TARGETS ${STATIC_TARGET}
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static/${ANDROID_ABI})
+
+            message(STATUS "Building Android static library: lib${PROJECT_NAME}.a")
+        endif()
+
+        # ========== Build Shared Library ==========
+        if(CCGO_BUILD_SHARED)
+            set(SHARED_TARGET ${PROJECT_NAME})
+            add_library(${SHARED_TARGET} SHARED ${SELF_SRC_FILES})
+
+            target_link_libraries(${SHARED_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            # Link CCGO dependencies (prefer shared, fallback to static)
+            file(GLOB CCGO_DEP_DIRS "${CMAKE_SOURCE_DIR}/third_party/*")
+            foreach(CCGO_DEP_DIR ${CCGO_DEP_DIRS})
+                if(IS_DIRECTORY "${CCGO_DEP_DIR}")
+                    get_filename_component(CCGO_DEP_NAME ${CCGO_DEP_DIR} NAME)
+                    string(TOUPPER ${CCGO_DEP_NAME} CCGO_DEP_NAME_UPPER)
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS)
+                        target_include_directories(${SHARED_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS})
+                    endif()
+
+                    # Use shared library if available, otherwise fall back to static
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_SHARED_LIBRARIES)
+                        target_link_libraries(${SHARED_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_SHARED_LIBRARIES})
+                    elseif(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES)
+                        target_link_libraries(${SHARED_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES})
+                    endif()
+                endif()
+            endforeach()
+
+            set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
+
+            # Set SO-NAME for proper runtime linking
+            set_target_properties(${SHARED_TARGET} PROPERTIES
+                LINK_FLAGS "-Wl,-h,lib${PROJECT_NAME}.so"
+                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared/${ANDROID_ABI}
+            )
+
+            install(TARGETS ${SHARED_TARGET}
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared/${ANDROID_ABI})
+
+            message(STATUS "Building Android shared library: lib${PROJECT_NAME}.so")
+        endif()
 
         message(STATUS "TARGET_SRC_LINKS=${TARGET_SRC_LINKS}")
-
-        # Set SO-NAME for proper runtime linking (critical for Android)
-        # Format: lib{project}.so (without version suffix)
-        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-Wl,-h,lib${PROJECT_NAME}.so")
-
-        # Link all dependencies (source modules, third-party, system libs)
-        target_link_libraries(${PROJECT_NAME} PUBLIC ${TARGET_SRC_LINKS})
-        set_property(TARGET ${PROJECT_NAME} PROPERTY LINKER_LANGUAGE "CXX")
     elseif(OHOS)
-        ### OpenHarmony (OHOS) Shared Library (.so) Build
+        ### OpenHarmony (OHOS) Libraries Build (Static/Shared)
         # Configure linker search paths for third-party libraries
         list(APPEND LINK_SRC_DIRS third_party)
         link_directories(${LINK_SRC_DIRS})
@@ -358,21 +458,86 @@ else()
         list(APPEND TARGET_SRC_LINKS libnet_connection.so)    # Network connectivity APIs
         list(APPEND TARGET_SRC_LINKS libz.so)                 # zlib compression
 
-        # Create shared library from all collected sources
-        add_library(${PROJECT_NAME} SHARED ${SELF_SRC_FILES})
+        # ========== Build Static Library ==========
+        if(CCGO_BUILD_STATIC)
+            set(STATIC_TARGET ${PROJECT_NAME}_static)
+            add_library(${STATIC_TARGET} STATIC ${SELF_SRC_FILES})
 
-        # Install library to output directory
-        install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${SELF_LIBS_OUT} ARCHIVE DESTINATION ${SELF_LIBS_OUT})
+            target_link_libraries(${STATIC_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            # Link CCGO dependencies (static libraries)
+            file(GLOB CCGO_DEP_DIRS "${CMAKE_SOURCE_DIR}/third_party/*")
+            foreach(CCGO_DEP_DIR ${CCGO_DEP_DIRS})
+                if(IS_DIRECTORY "${CCGO_DEP_DIR}")
+                    get_filename_component(CCGO_DEP_NAME ${CCGO_DEP_DIR} NAME)
+                    string(TOUPPER ${CCGO_DEP_NAME} CCGO_DEP_NAME_UPPER)
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS)
+                        target_include_directories(${STATIC_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS})
+                    endif()
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES)
+                        target_link_libraries(${STATIC_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES})
+                    endif()
+                endif()
+            endforeach()
+
+            set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
+
+            # Set output name and directory
+            set_target_properties(${STATIC_TARGET} PROPERTIES
+                OUTPUT_NAME ${PROJECT_NAME}
+                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static/${OHOS_ARCH}
+            )
+
+            install(TARGETS ${STATIC_TARGET}
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static/${OHOS_ARCH})
+
+            message(STATUS "Building OHOS static library: lib${PROJECT_NAME}.a")
+        endif()
+
+        # ========== Build Shared Library ==========
+        if(CCGO_BUILD_SHARED)
+            set(SHARED_TARGET ${PROJECT_NAME})
+            add_library(${SHARED_TARGET} SHARED ${SELF_SRC_FILES})
+
+            target_link_libraries(${SHARED_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            # Link CCGO dependencies (prefer shared, fallback to static)
+            file(GLOB CCGO_DEP_DIRS "${CMAKE_SOURCE_DIR}/third_party/*")
+            foreach(CCGO_DEP_DIR ${CCGO_DEP_DIRS})
+                if(IS_DIRECTORY "${CCGO_DEP_DIR}")
+                    get_filename_component(CCGO_DEP_NAME ${CCGO_DEP_DIR} NAME)
+                    string(TOUPPER ${CCGO_DEP_NAME} CCGO_DEP_NAME_UPPER)
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS)
+                        target_include_directories(${SHARED_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS})
+                    endif()
+
+                    # Use shared library if available, otherwise fall back to static
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_SHARED_LIBRARIES)
+                        target_link_libraries(${SHARED_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_SHARED_LIBRARIES})
+                    elseif(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES)
+                        target_link_libraries(${SHARED_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES})
+                    endif()
+                endif()
+            endforeach()
+
+            set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
+
+            # Set SO-NAME for proper runtime linking
+            set_target_properties(${SHARED_TARGET} PROPERTIES
+                LINK_FLAGS "-Wl,-h,lib${PROJECT_NAME}.so"
+                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared/${OHOS_ARCH}
+            )
+
+            install(TARGETS ${SHARED_TARGET}
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared/${OHOS_ARCH})
+
+            message(STATUS "Building OHOS shared library: lib${PROJECT_NAME}.so")
+        endif()
 
         message(STATUS "TARGET_SRC_LINKS=${TARGET_SRC_LINKS}")
-
-        # Set SO-NAME for proper runtime linking (critical for OHOS)
-        # Format: lib{project}.so (without version suffix)
-        set_target_properties(${PROJECT_NAME} PROPERTIES LINK_FLAGS "-Wl,-h,lib${PROJECT_NAME}.so")
-
-        # Link all dependencies (source modules, third-party, system libs)
-        target_link_libraries(${PROJECT_NAME} PUBLIC ${TARGET_SRC_LINKS})
-        set_property(TARGET ${PROJECT_NAME} PROPERTY LINKER_LANGUAGE "CXX")
 
     elseif(APPLE)
         # Apple platforms (iOS/macOS): Static libraries are built and installed

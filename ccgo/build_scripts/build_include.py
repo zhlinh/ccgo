@@ -87,8 +87,8 @@ def archive_include_project():
     (ARCHIVE)_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
 
     Output:
-        - bin/include/{PROJECT_NAME}_INCLUDE-{version}-{suffix}/
-        - bin/include/(ARCHIVE)_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
+        - target/include/{PROJECT_NAME}_INCLUDE-{version}-{suffix}/
+        - target/include/(ARCHIVE)_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
     """
     import zipfile
     from pathlib import Path
@@ -119,10 +119,10 @@ def archive_include_project():
     full_version = f"{version_name}-{suffix}" if suffix else version_name
 
     # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
     include_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
-    # Create bin directory
+    # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
     # Find and copy include directory
@@ -172,20 +172,20 @@ def archive_include_project():
 
 def print_build_results():
     """
-    Print include build results from bin directory.
+    Print include build results from target directory.
 
-    This function displays the build artifacts and moves them to bin/include/:
+    This function displays the build artifacts and moves them to target/include/:
     1. Include directory
     2. ARCHIVE zip
     """
     print("==================Include Build Results========================")
 
     # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
 
-    # Check if bin directory exists
+    # Check if target directory exists
     if not os.path.exists(bin_dir):
-        print(f"ERROR: bin directory not found. Please run build first.")
+        print(f"ERROR: target directory not found. Please run build first.")
         sys.exit(1)
 
     # Check for build artifacts
@@ -205,7 +205,7 @@ def print_build_results():
     bin_include_dir = os.path.join(bin_dir, "include")
     os.makedirs(bin_include_dir, exist_ok=True)
 
-    # Move include directories and archive files to bin/include/
+    # Move include directories and archive files to target/include/
     artifacts_moved = []
     for include_dir in include_dirs:
         dest = os.path.join(bin_include_dir, os.path.basename(include_dir))
@@ -220,15 +220,15 @@ def print_build_results():
         artifacts_moved.append(os.path.basename(archive_zip))
 
     if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to bin/include/")
+        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/include/")
 
-    # Copy build_info.json from cmake_build to bin/include
-    copy_build_info_to_bin("include", SCRIPT_PATH)
+    # Copy build_info.json from cmake_build to target/include
+    copy_build_info_to_target("include", SCRIPT_PATH)
 
-    print(f"\nBuild artifacts in bin/include/:")
+    print(f"\nBuild artifacts in target/include/:")
     print("-" * 60)
 
-    # List all files in bin/include directory with sizes
+    # List all files in target/include directory with sizes
     for item in sorted(os.listdir(bin_include_dir)):
         item_path = os.path.join(bin_include_dir, item)
         if os.path.isfile(item_path):

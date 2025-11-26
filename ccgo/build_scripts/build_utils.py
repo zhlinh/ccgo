@@ -48,7 +48,11 @@ from datetime import datetime
 if sys.version_info >= (3, 11, 0, "alpha", 7):
     import tomllib
 else:
-    tomllib = None
+    # For Python < 3.11, try to import tomli as fallback
+    try:
+        import tomli as tomllib
+    except ImportError:
+        tomllib = None
 
 # Load configuration from CCGO.toml in project directory (current working directory)
 PROJECT_DIR = os.getcwd()
@@ -62,7 +66,9 @@ def load_ccgo_config():
     defined in build_config.py. Falls back to default values if CCGO.toml
     is not found or cannot be parsed.
     """
-    config_file = os.path.join(PROJECT_DIR, "CCGO.toml")
+    # Use current working directory instead of module-level PROJECT_DIR
+    project_dir = os.getcwd()
+    config_file = os.path.join(project_dir, "CCGO.toml")
 
     if not os.path.isfile(config_file):
         print(f"   ⚠️  Warning: CCGO.toml not found at {config_file}")
@@ -79,10 +85,14 @@ def load_ccgo_config():
             "OHOS_MERGE_THIRD_PARTY_LIBS": [],
             "OHOS_MERGE_EXCLUDE_LIBS": [],
             "IOS_BUILD_COPY_HEADER_FILES": {},
+            "WATCHOS_BUILD_COPY_HEADER_FILES": {},
+            "TVOS_BUILD_COPY_HEADER_FILES": {},
             "MACOS_BUILD_COPY_HEADER_FILES": {},
             "WINDOWS_BUILD_COPY_HEADER_FILES": {},
             "LINUX_BUILD_COPY_HEADER_FILES": {},
             "INCLUDE_BUILD_COPY_HEADER_FILES": {},
+            "DEPENDENCIES": {},
+            "PLATFORM_DEPENDENCIES": {},
         }
 
     if not tomllib:
@@ -100,10 +110,14 @@ def load_ccgo_config():
             "OHOS_MERGE_THIRD_PARTY_LIBS": [],
             "OHOS_MERGE_EXCLUDE_LIBS": [],
             "IOS_BUILD_COPY_HEADER_FILES": {},
+            "WATCHOS_BUILD_COPY_HEADER_FILES": {},
+            "TVOS_BUILD_COPY_HEADER_FILES": {},
             "MACOS_BUILD_COPY_HEADER_FILES": {},
             "WINDOWS_BUILD_COPY_HEADER_FILES": {},
             "LINUX_BUILD_COPY_HEADER_FILES": {},
             "INCLUDE_BUILD_COPY_HEADER_FILES": {},
+            "DEPENDENCIES": {},
+            "PLATFORM_DEPENDENCIES": {},
         }
 
     try:
@@ -142,10 +156,25 @@ def load_ccgo_config():
             return header_dict
 
         ios_headers = convert_headers(toml_data.get("ios", {}))
+        watchos_headers = convert_headers(toml_data.get("watchos", {}))
+        tvos_headers = convert_headers(toml_data.get("tvos", {}))
         macos_headers = convert_headers(toml_data.get("macos", {}))
         windows_headers = convert_headers(toml_data.get("windows", {}))
         linux_headers = convert_headers(toml_data.get("linux", {}))
         include_headers = convert_headers(toml_data.get("include", {}))
+
+        # Extract dependencies
+        dependencies = toml_data.get("dependencies", {})
+
+        # Extract platform-specific dependencies
+        platform_dependencies = {}
+        for key in toml_data.keys():
+            if key.startswith("target."):
+                # Extract platform config like target.'cfg(windows)'
+                target_cfg = key.replace("target.", "").strip("'\"")
+                target_data = toml_data[key]
+                if "dependencies" in target_data:
+                    platform_dependencies[target_cfg] = target_data["dependencies"]
 
         return {
             "PROJECT_NAME": project_name,
@@ -159,10 +188,14 @@ def load_ccgo_config():
             "OHOS_MERGE_THIRD_PARTY_LIBS": ohos_merge_libs,
             "OHOS_MERGE_EXCLUDE_LIBS": ohos_exclude_libs,
             "IOS_BUILD_COPY_HEADER_FILES": ios_headers,
+            "WATCHOS_BUILD_COPY_HEADER_FILES": watchos_headers,
+            "TVOS_BUILD_COPY_HEADER_FILES": tvos_headers,
             "MACOS_BUILD_COPY_HEADER_FILES": macos_headers,
             "WINDOWS_BUILD_COPY_HEADER_FILES": windows_headers,
             "LINUX_BUILD_COPY_HEADER_FILES": linux_headers,
             "INCLUDE_BUILD_COPY_HEADER_FILES": include_headers,
+            "DEPENDENCIES": dependencies,
+            "PLATFORM_DEPENDENCIES": platform_dependencies,
         }
     except Exception as e:
         print(f"   ⚠️  Error reading CCGO.toml: {e}")
@@ -179,10 +212,14 @@ def load_ccgo_config():
             "OHOS_MERGE_THIRD_PARTY_LIBS": [],
             "OHOS_MERGE_EXCLUDE_LIBS": [],
             "IOS_BUILD_COPY_HEADER_FILES": {},
+            "WATCHOS_BUILD_COPY_HEADER_FILES": {},
+            "TVOS_BUILD_COPY_HEADER_FILES": {},
             "MACOS_BUILD_COPY_HEADER_FILES": {},
             "WINDOWS_BUILD_COPY_HEADER_FILES": {},
             "LINUX_BUILD_COPY_HEADER_FILES": {},
             "INCLUDE_BUILD_COPY_HEADER_FILES": {},
+            "DEPENDENCIES": {},
+            "PLATFORM_DEPENDENCIES": {},
         }
 
 
@@ -199,15 +236,106 @@ OHOS_PROJECT_PATH = _CONFIG["OHOS_PROJECT_PATH"]
 OHOS_MERGE_THIRD_PARTY_LIBS = _CONFIG["OHOS_MERGE_THIRD_PARTY_LIBS"]
 OHOS_MERGE_EXCLUDE_LIBS = _CONFIG["OHOS_MERGE_EXCLUDE_LIBS"]
 IOS_BUILD_COPY_HEADER_FILES = _CONFIG["IOS_BUILD_COPY_HEADER_FILES"]
+WATCHOS_BUILD_COPY_HEADER_FILES = _CONFIG["WATCHOS_BUILD_COPY_HEADER_FILES"]
+TVOS_BUILD_COPY_HEADER_FILES = _CONFIG["TVOS_BUILD_COPY_HEADER_FILES"]
 MACOS_BUILD_COPY_HEADER_FILES = _CONFIG["MACOS_BUILD_COPY_HEADER_FILES"]
 WINDOWS_BUILD_COPY_HEADER_FILES = _CONFIG["WINDOWS_BUILD_COPY_HEADER_FILES"]
 LINUX_BUILD_COPY_HEADER_FILES = _CONFIG["LINUX_BUILD_COPY_HEADER_FILES"]
 INCLUDE_BUILD_COPY_HEADER_FILES = _CONFIG["INCLUDE_BUILD_COPY_HEADER_FILES"]
+DEPENDENCIES = _CONFIG["DEPENDENCIES"]
+PLATFORM_DEPENDENCIES = _CONFIG["PLATFORM_DEPENDENCIES"]
 
 # Store the build script path for cmake directory access
 BUILD_SCRIPT_PATH = os.path.dirname(os.path.realpath(__file__))
 # CCGO cmake directory path (in the ccgo package)
 CCGO_CMAKE_DIR = os.path.join(BUILD_SCRIPT_PATH, "cmake")
+
+
+def resolve_dependencies(platform=None):
+    """
+    Resolve all dependencies for the project.
+
+    Args:
+        platform: Target platform (e.g., "android", "ios", "windows", "linux", "macos", "ohos")
+                  If None, only resolves common dependencies
+
+    Returns:
+        Dictionary mapping dependency name to resolved path
+    """
+    # Import here to avoid circular dependencies
+    from .dependency_manager import DependencyManager, should_include_platform_dependencies
+
+    if not DEPENDENCIES and not PLATFORM_DEPENDENCIES:
+        # No dependencies to resolve
+        return {}
+
+    print("   🔍 Resolving dependencies...")
+
+    # Create dependency manager
+    dep_manager = DependencyManager(PROJECT_DIR)
+
+    # Start with common dependencies
+    all_deps = dict(DEPENDENCIES)
+
+    # Add platform-specific dependencies
+    if platform and PLATFORM_DEPENDENCIES:
+        for platform_cfg, deps in PLATFORM_DEPENDENCIES.items():
+            if should_include_platform_dependencies(platform_cfg, platform):
+                print(f"   📦 Including platform-specific dependencies for: {platform_cfg}")
+                all_deps.update(deps)
+
+    if not all_deps:
+        print("   ℹ️  No dependencies to resolve")
+        return {}
+
+    # Resolve all dependencies
+    try:
+        resolved = dep_manager.resolve_all_dependencies(all_deps)
+        print(f"   ✅ Successfully resolved {len(resolved)} dependencies")
+        return resolved
+    except Exception as e:
+        print(f"   ❌ Failed to resolve dependencies: {e}")
+        raise
+
+
+def get_dependency_cmake_args(resolved_deps=None):
+    """
+    Get CMake arguments for dependencies.
+
+    Args:
+        resolved_deps: Dictionary of resolved dependencies (if None, dependencies are resolved automatically)
+
+    Returns:
+        List of CMake arguments to include dependencies
+    """
+    if resolved_deps is None:
+        if not DEPENDENCIES and not PLATFORM_DEPENDENCIES:
+            return []
+        # Dependencies will be resolved later by the build script
+        return []
+
+    if not resolved_deps:
+        return []
+
+    # Import here to avoid circular dependencies
+    from .dependency_manager import DependencyManager
+
+    dep_manager = DependencyManager(PROJECT_DIR)
+
+    # Get include directories
+    include_dirs = dep_manager.get_cmake_include_dirs(resolved_deps)
+
+    cmake_args = []
+    if include_dirs:
+        # Add include directories
+        cmake_args.append(f"-DCCGO_DEP_INCLUDE_DIRS={';'.join(include_dirs)}")
+
+    # Add dependency paths
+    dep_paths = list(resolved_deps.values())
+    if dep_paths:
+        cmake_args.append(f"-DCCGO_DEP_PATHS={';'.join(dep_paths)}")
+
+    return cmake_args
 
 
 def libtool_libs(src_libs, dst_lib):
@@ -352,7 +480,7 @@ def gen_dwarf_with_dsym(src_dylib, dst_dsym):
     """
     Generate dSYM debug symbol file from a dynamic library (macOS/iOS).
 
-    dSYM files contain debugging information extracted from binaries,
+    dSYM files contain debugging information extracted from targetaries,
     used for crash symbolication and debugging on Apple platforms.
 
     Args:
@@ -741,11 +869,19 @@ def check_ndk_env():
     if err_code != 0:
         print(ndk_revision)
         return False
-    if check_ndk_revision(ndk_revision[:4]):
+
+    # Extract major.minor version (e.g., "25.2" from "25.2.9519653")
+    version_parts = ndk_revision.split('.')
+    if len(version_parts) >= 2:
+        major_minor = f"{version_parts[0]}.{version_parts[1]}"
+    else:
+        major_minor = ndk_revision[:4]
+
+    if check_ndk_revision(major_minor):
         return True
 
     print(
-        f"Error: make sure ndk's version == {get_ndk_desc()}, current is {ndk_revision[:4]}"
+        f"Error: make sure ndk's version == {get_ndk_desc()}, current is {major_minor}"
     )
     return False
 
@@ -969,7 +1105,7 @@ def _gen_build_info_json(
     - Environment details (OS, Python version, ccgo version)
 
     The JSON file is saved to platform-specific directories:
-    - bin/{platform}/build_info.json (e.g., bin/android/build_info.json)
+    - target/{platform}/build_info.json (e.g., target/android/build_info.json)
     - Falls back to project root if platform is not specified
 
     Args:
@@ -1113,6 +1249,48 @@ def _gen_build_info_json(
                     }
             except Exception:
                 pass
+        elif platform_lower == "watchos":
+            # watchOS-specific information
+            try:
+                # Get Xcode version
+                result = subprocess.run(
+                    ["xcodebuild", "-version"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    xcode_info = result.stdout.strip().split("\n")
+                    xcode_version = xcode_info[0].replace("Xcode ", "") if xcode_info else "unknown"
+                    build_number = xcode_info[1].replace("Build version ", "") if len(xcode_info) > 1 else ""
+
+                    build_info["build"]["watchos"] = {
+                        "xcode_version": xcode_version,
+                        "xcode_build": build_number,
+                    }
+            except Exception:
+                pass
+        elif platform_lower == "tvos":
+            # tvOS-specific information
+            try:
+                # Get Xcode version
+                result = subprocess.run(
+                    ["xcodebuild", "-version"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    xcode_info = result.stdout.strip().split("\n")
+                    xcode_version = xcode_info[0].replace("Xcode ", "") if xcode_info else "unknown"
+                    build_number = xcode_info[1].replace("Build version ", "") if len(xcode_info) > 1 else ""
+
+                    build_info["build"]["tvos"] = {
+                        "xcode_version": xcode_version,
+                        "xcode_build": build_number,
+                    }
+            except Exception:
+                pass
         elif platform_lower == "macos":
             # macOS-specific information
             try:
@@ -1166,12 +1344,14 @@ def _gen_build_info_json(
 
     # Determine output directory based on platform
     # Use cmake_build/{Platform}/ for platform-specific builds during build process
-    # The file will be copied to bin/{platform}/ by the build script after packaging
+    # The file will be copied to target/{platform}/ by the build script after packaging
     if target_platform:
         # Map platform names to cmake build directories
         platform_build_dirs = {
             "android": "cmake_build/Android",
             "ios": "cmake_build/iOS",
+            "watchos": "cmake_build/watchOS",
+            "tvos": "cmake_build/tvOS",
             "macos": "cmake_build/macOS",
             "windows": "cmake_build/Windows",
             "linux": "cmake_build/Linux",
@@ -1248,7 +1428,7 @@ def gen_project_revision_file(
         - Only writes file if content has changed (avoids unnecessary rebuilds)
         - Retrieves git info from the version file directory
         - Outputs build description to stdout for CI/CD parsing
-        - JSON output is saved to bin/{platform}/build_info.json for platform-specific builds
+        - JSON output is saved to target/{platform}/build_info.json for platform-specific builds
         - Falls back to <project_root>/build_info.json if platform is not specified
         - JSON generation is controlled by [build.generate_json_metadata] in CCGO.toml
     """
@@ -1346,9 +1526,9 @@ def gen_project_revision_file(
             print("[[==END_BUILD_INFO_JSON==]]")
 
 
-def copy_build_info_to_bin(platform_name, project_dir=None):
+def copy_build_info_to_target(platform_name, project_dir=None):
     """
-    Copy build_info.json from cmake_build directory to bin/{platform}/ directory.
+    Copy build_info.json from cmake_build directory to target/{platform}/ directory.
 
     This function is called after the build artifacts are packaged to ensure
     build_info.json is included in the final distribution directory.
@@ -1383,15 +1563,15 @@ def copy_build_info_to_bin(platform_name, project_dir=None):
     if not os.path.exists(build_info_src):
         return False
 
-    # Create bin/{platform} directory
-    bin_platform_dir = os.path.join(project_dir, "bin", platform_name.lower())
-    os.makedirs(bin_platform_dir, exist_ok=True)
+    # Create target/{platform} directory
+    target_platform_dir = os.path.join(project_dir, "target", platform_name.lower())
+    os.makedirs(target_platform_dir, exist_ok=True)
 
     # Copy build_info.json
-    build_info_dst = os.path.join(bin_platform_dir, "build_info.json")
+    build_info_dst = os.path.join(target_platform_dir, "build_info.json")
     shutil.copy2(build_info_src, build_info_dst)
 
-    print(f"[SUCCESS] Copied build_info.json to bin/{platform_name.lower()}/")
+    print(f"[SUCCESS] Copied build_info.json to target/{platform_name.lower()}/")
     return True
 
 

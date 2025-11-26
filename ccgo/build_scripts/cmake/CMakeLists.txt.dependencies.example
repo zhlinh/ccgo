@@ -1,0 +1,99 @@
+# CMakeLists.txt - Example of using CCGO dependencies
+#
+# This example shows how to use dependencies installed via 'ccgo install'
+
+cmake_minimum_required(VERSION 3.10)
+project(MyProject)
+
+# Include CCGO dependencies finder
+# This assumes CCGO_CMAKE_DIR is set by the build scripts
+include(${CCGO_CMAKE_DIR}/FindCCGODependencies.cmake)
+
+# Find all installed dependencies
+find_ccgo_dependencies()
+
+# Option 1: Manual linking using variables
+# =========================================
+
+# Add your executable or library
+add_library(mylib STATIC
+    src/mylib.cpp
+    src/mylib.h
+)
+
+# Link dependencies manually using the exported variables
+if(CCGO_DEPENDENCY_LIBFOO_FOUND)
+    target_include_directories(mylib PRIVATE
+        ${CCGO_DEPENDENCY_LIBFOO_INCLUDE_DIRS}
+    )
+    target_link_libraries(mylib PRIVATE
+        ${CCGO_DEPENDENCY_LIBFOO_LIBRARIES}
+    )
+endif()
+
+# Option 2: Using helper function
+# ================================
+
+add_executable(myapp
+    src/main.cpp
+)
+
+# Use the helper function to link dependencies
+if(CCGO_DEPENDENCY_LIBFOO_FOUND)
+    ccgo_link_dependency(myapp libfoo)
+endif()
+
+if(CCGO_DEPENDENCY_LIBBAR_FOUND)
+    ccgo_link_dependency(myapp libbar)
+endif()
+
+# Option 3: Control link type preference
+# =======================================
+
+# Set link type preference before calling find_ccgo_dependencies()
+# Default is "static" if not set
+# set(CCGO_DEPENDENCY_LINK_TYPE "shared")  # Use shared libraries
+# set(CCGO_DEPENDENCY_LINK_TYPE "static")  # Use static libraries
+
+# Then call find_ccgo_dependencies()
+# find_ccgo_dependencies()
+
+# Option 4: Access specific library types
+# ========================================
+
+# You can also access static and shared libraries separately
+# if(CCGO_DEPENDENCY_LIBFOO_STATIC_LIBRARIES)
+#     target_link_libraries(myapp PRIVATE
+#         ${CCGO_DEPENDENCY_LIBFOO_STATIC_LIBRARIES}
+#     )
+# endif()
+#
+# if(CCGO_DEPENDENCY_LIBFOO_SHARED_LIBRARIES)
+#     target_link_libraries(myapp PRIVATE
+#         ${CCGO_DEPENDENCY_LIBFOO_SHARED_LIBRARIES}
+#     )
+# endif()
+
+# Example: Platform-specific dependencies
+# ========================================
+
+if(ANDROID)
+    if(CCGO_DEPENDENCY_LIBANDROID_FOUND)
+        ccgo_link_dependency(myapp libandroid)
+    endif()
+elseif(IOS)
+    if(CCGO_DEPENDENCY_LIBIOS_FOUND)
+        ccgo_link_dependency(myapp libios)
+    endif()
+endif()
+
+# Print summary
+message(STATUS "")
+message(STATUS "=== CCGO Dependencies Summary ===")
+if(CCGO_DEPENDENCIES_FOUND)
+    message(STATUS "Dependencies found and configured")
+else()
+    message(STATUS "No dependencies found or required for this platform")
+endif()
+message(STATUS "==================================")
+message(STATUS "")

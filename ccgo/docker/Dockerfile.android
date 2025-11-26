@@ -1,0 +1,98 @@
+# Dockerfile for building Android native libraries (AAR with .so) on any platform
+# Includes Android SDK, NDK, and all required build tools
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic build dependencies with caching
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    zip \
+    unzip \
+    openjdk-17-jdk \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for CCGO
+# tomli: TOML parsing for Python < 3.11
+# copier: Template engine (required by ccgo)
+RUN pip3 install --no-cache-dir \
+    tomli \
+    copier>=9.2.0 \
+    copier-templates-extensions>=0.3.0
+
+# Set Java environment
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Install Android Command Line Tools
+WORKDIR /opt
+RUN wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip && \
+    unzip -q commandlinetools-linux-9477386_latest.zip && \
+    rm commandlinetools-linux-9477386_latest.zip
+
+# Set up Android SDK directory structure
+ENV ANDROID_HOME=/opt/android-sdk
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+    mv cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest
+
+# Add Android tools to PATH
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/build-tools/34.0.0:${PATH}"
+
+# Accept Android SDK licenses
+RUN yes | sdkmanager --licenses || true
+
+# Install Android SDK components
+# - Platform 34 (Android 14)
+# - Build tools 34.0.0
+# - Platform tools (adb, fastboot, etc.)
+# - CMake 3.22.1 (for native builds)
+# - NDK (Android Native Development Kit)
+RUN sdkmanager \
+    "platform-tools" \
+    "platforms;android-34" \
+    "build-tools;34.0.0" \
+    "cmake;3.22.1" \
+    "ndk;25.2.9519653"
+
+# Set NDK environment variables
+ENV ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/25.2.9519653"
+ENV ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+ENV NDK_ROOT="${ANDROID_NDK_HOME}"
+ENV PATH="${ANDROID_NDK_HOME}:${PATH}"
+
+# Install Gradle 8.x (required for modern Android builds)
+RUN wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip && \
+    unzip -q gradle-8.5-bin.zip -d /opt && \
+    rm gradle-8.5-bin.zip
+
+ENV GRADLE_HOME=/opt/gradle-8.5
+ENV PATH="${GRADLE_HOME}/bin:${PATH}"
+
+# Set working directory
+WORKDIR /workspace
+
+# Set environment variables
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Verify installations
+RUN echo "=== Verification ===" && \
+    java -version && \
+    echo "JAVA_HOME: ${JAVA_HOME}" && \
+    echo "ANDROID_HOME: ${ANDROID_HOME}" && \
+    echo "ANDROID_NDK_HOME: ${ANDROID_NDK_HOME}" && \
+    gradle --version && \
+    echo "=== Android SDK Components ===" && \
+    sdkmanager --list | grep "build-tools\|platforms\|ndk\|cmake"
+
+# Entry point - execute build script
+ENTRYPOINT ["/bin/bash", "-c"]

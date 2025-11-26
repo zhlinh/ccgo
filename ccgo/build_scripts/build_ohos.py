@@ -79,6 +79,9 @@ except KeyError as identifier:
 BUILD_OUT_PATH = "cmake_build/OHOS"
 OHOS_LIBS_INSTALL_PATH = BUILD_OUT_PATH + "/"
 
+# OHOS project path (where Hvigor builds are located)
+OHOS_PROJECT_PATH = "ohos/main_ohos_sdk"
+
 # CMake build command template with OHOS toolchain configuration
 # Parameters: source_path, generator, arch, sdk_root (4x), min_sdk, stl, ccgo_cmake_dir, target_option
 OHOS_BUILD_CMD = (
@@ -134,7 +137,7 @@ def get_ohos_strip_path(arch):
     return strip_path
 
 
-def build_ohos(incremental, arch, target_option, tag):
+def build_ohos(incremental, arch, target_option, tag, link_type='both'):
     """
     Build native libraries for a specific OHOS ABI.
 
@@ -152,13 +155,16 @@ def build_ohos(incremental, arch, target_option, tag):
         arch: OHOS ABI to build (armeabi-v7a, arm64-v8a, x86_64)
         target_option: Additional CMake target options
         tag: Version tag string for metadata
+        link_type: Library link type ('static', 'shared', or 'both')
 
     Returns:
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Symbol libraries (with debug info): obj/local/{arch}/
-        - Release libraries (stripped): libs/{arch}/
+        - Shared symbol libraries (with debug info): obj/local/{arch}/
+        - Static symbol libraries (if needed): obj/static_local/{arch}/
+        - Shared release libraries (stripped): libs/shared/{arch}/
+        - Static release libraries: libs/static/{arch}/
 
     Note:
         Requires OHOS_SDK_HOME or HOS_SDK_HOME environment variable to be set.
@@ -169,6 +175,18 @@ def build_ohos(incremental, arch, target_option, tag):
     clean(os.path.join(SCRIPT_PATH, BUILD_OUT_PATH), incremental)
     os.chdir(os.path.join(SCRIPT_PATH, BUILD_OUT_PATH))
 
+    # Add link type CMake flags
+    link_type_flags = ""
+    if link_type == 'static':
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=OFF"
+    elif link_type == 'shared':
+        link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
+    else:  # both
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
+
+    # Combine with existing target options
+    full_target_option = f"{link_type_flags} {target_option}".strip()
+
     build_cmd = OHOS_BUILD_CMD % (
         SCRIPT_PATH,
         OHOS_GENERATOR,
@@ -178,7 +196,7 @@ def build_ohos(incremental, arch, target_option, tag):
         get_ohos_min_sdk_version(SCRIPT_PATH),
         get_ohos_stl(SCRIPT_PATH),
         CCGO_CMAKE_DIR,
-        target_option,
+        full_target_option,
     )
     print(f"build cmd: [{build_cmd}]")
     ret = os.system(build_cmd)
@@ -188,64 +206,118 @@ def build_ohos(incremental, arch, target_option, tag):
         print("!!!!!!!!!!!!!!!!!!build fail!!!!!!!!!!!!!!!!!!!!")
         return False
 
-    symbol_path = OHOS_SYMBOL_PATH
-    lib_path = OHOS_LIBS_PATH
+    # Determine which link types to process based on link_type parameter
+    link_types_to_build = []
+    if link_type == 'static' or link_type == 'both':
+        link_types_to_build.append('static')
+    if link_type == 'shared' or link_type == 'both':
+        link_types_to_build.append('shared')
 
-    if not os.path.exists(symbol_path):
-        os.makedirs(symbol_path)
-
-    symbol_path = symbol_path + arch
-    if os.path.exists(symbol_path):
-        shutil.rmtree(symbol_path)
-
-    os.mkdir(symbol_path)
-
-    if not os.path.exists(lib_path):
-        os.makedirs(lib_path)
-
-    lib_path = lib_path + arch
-    if os.path.exists(lib_path):
-        shutil.rmtree(lib_path)
-
-    os.mkdir(lib_path)
-
-    for f in glob.glob(OHOS_LIBS_INSTALL_PATH + "*.so"):
-        if is_in_lib_list(f, OHOS_MERGE_EXCLUDE_LIBS):
-            continue
-        shutil.copy(f, symbol_path)
-        shutil.copy(f, lib_path)
-
-    if not os.path.exists("third_party") or "stdcomm" not in os.listdir("third_party"):
-        # copy stl
-        shutil.copy(OHOS_STL_FILE[arch], symbol_path)
-        shutil.copy(OHOS_STL_FILE[arch], lib_path)
-
-    if os.path.exists("third_party"):
-        # copy third_party/xxx/lib/ohos/yyy/*.so
-        for f in os.listdir("third_party"):
-            if f.endswith("comm") and (f not in OHOS_MERGE_THIRD_PARTY_LIBS):
-                # xxxcomm is not default to merge
-                continue
-            target_dir = f"third_party/{f}/lib/ohos/{arch}/"
-            if not os.path.exists(target_dir):
-                continue
-            file_names = glob.glob(target_dir + "*.so")
-            for file_name in file_names:
-                if is_in_lib_list(file_name, OHOS_MERGE_EXCLUDE_LIBS):
-                    continue
-                shutil.copy(file_name, lib_path)
-
-    # strip
     strip_path = get_ohos_strip_path(arch)
-    for f in glob.glob(f"{lib_path}/*.so"):
-        strip_cmd = f"{strip_path} {f}"
-        print(f"strip cmd: [{strip_cmd}]")
-        os.system(strip_cmd)
 
-    print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    print(f"==================[{arch}] Output========================")
-    print(f"libs(release): {lib_path}")
-    print(f"symbols(must store permanently): {symbol_path}")
+    # Process each link type
+    for current_link_type in link_types_to_build:
+        # Setup paths for symbols and release libs
+        # OHOS structure (different from Android to maintain HAR compatibility):
+        # - Shared symbols: obj/local/{arch}/
+        # - Static symbols: obj/static_local/{arch}/ (only if different from release)
+        # - Shared release: libs/{arch}/ (for HAR packaging - Hvigor expects this structure)
+        # - Static release: Not placed in libs/ (HAR doesn't need static libs)
+
+        if current_link_type == 'shared':
+            # Shared libraries: obj/local/{arch}/ for symbols
+            # libs/{arch}/ for release (HAR packaging needs this structure)
+            symbol_base = OHOS_SYMBOL_PATH
+            lib_base = OHOS_LIBS_PATH  # libs/{arch}/ - no 'shared' subdirectory for OHOS
+        else:  # static
+            # Static libraries: obj/static_local/{arch}/ for symbols
+            # Static release libs are not needed for HAR, so we don't copy them to libs/
+            symbol_base = OHOS_SYMBOL_PATH.replace("obj/local/", "obj/static_local/")
+            lib_base = None  # Don't create libs/ output for static
+
+        if not os.path.exists(symbol_base):
+            os.makedirs(symbol_base)
+
+        symbol_path = symbol_base + arch
+        if os.path.exists(symbol_path):
+            shutil.rmtree(symbol_path)
+        os.mkdir(symbol_path)
+
+        # Only create lib_path for shared libraries (static libs don't go to libs/)
+        lib_path = None
+        if lib_base is not None:
+            if not os.path.exists(lib_base):
+                os.makedirs(lib_base)
+
+            lib_path = lib_base + arch
+            if os.path.exists(lib_path):
+                shutil.rmtree(lib_path)
+            os.mkdir(lib_path)
+
+        # Copy built libraries from cmake output directory
+        # Static: cmake_build/OHOS/static/{arch}/*.a
+        # Shared: cmake_build/OHOS/shared/{arch}/*.so
+        cmake_output_dir = f"{OHOS_LIBS_INSTALL_PATH}{current_link_type}/{arch}/"
+        file_extension = "*.a" if current_link_type == 'static' else "*.so"
+
+        # For static libraries, check if symbol version differs from release version
+        # If they're identical, we don't need obj/static_local/
+        static_symbols_needed = False
+
+        for f in glob.glob(cmake_output_dir + file_extension):
+            if is_in_lib_list(f, OHOS_MERGE_EXCLUDE_LIBS):
+                continue
+
+            # Copy to lib_path only if it exists (shared libs only)
+            if lib_path is not None:
+                shutil.copy(f, lib_path)
+
+            # For static libraries, only copy to symbol_path
+            if current_link_type == 'static':
+                # Static libraries typically don't have stripped versions
+                # We only keep symbols in obj/static_local/
+                static_symbols_needed = True
+                shutil.copy(f, symbol_path)
+            else:
+                # For shared libraries, always keep symbols (they'll be stripped later)
+                shutil.copy(f, symbol_path)
+
+        # Only copy STL for shared libraries
+        if current_link_type == 'shared':
+            if not os.path.exists("third_party") or "stdcomm" not in os.listdir("third_party"):
+                # copy stl
+                shutil.copy(OHOS_STL_FILE[arch], symbol_path)
+                shutil.copy(OHOS_STL_FILE[arch], lib_path)
+
+            if os.path.exists("third_party"):
+                # copy third_party/xxx/lib/ohos/yyy/*.so
+                for f in os.listdir("third_party"):
+                    if f.endswith("comm") and (f not in OHOS_MERGE_THIRD_PARTY_LIBS):
+                        # xxxcomm is not default to merge
+                        continue
+                    target_dir = f"third_party/{f}/lib/ohos/{arch}/"
+                    if not os.path.exists(target_dir):
+                        continue
+                    file_names = glob.glob(target_dir + "*.so")
+                    for file_name in file_names:
+                        if is_in_lib_list(file_name, OHOS_MERGE_EXCLUDE_LIBS):
+                            continue
+                        shutil.copy(file_name, lib_path)
+
+            # Strip shared libraries only
+            for f in glob.glob(f"{lib_path}/*.so"):
+                strip_cmd = f"{strip_path} {f}"
+                print(f"strip cmd: [{strip_cmd}]")
+                os.system(strip_cmd)
+
+        print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+        print(f"==================[{arch} - {current_link_type}] Output========================")
+        if lib_path is not None:
+            print(f"libs(release): {lib_path}")
+        if current_link_type == 'shared':
+            print(f"symbols(must store permanently): {symbol_path}")
+        elif static_symbols_needed:
+            print(f"symbols(static): {symbol_path}")
 
     after_time = time.time()
 
@@ -255,9 +327,9 @@ def build_ohos(incremental, arch, target_option, tag):
 
 def print_build_results():
     """
-    Print OHOS build results from bin directory.
+    Print OHOS build results from target directory.
 
-    This function displays the build artifacts and moves them to bin/ohos/:
+    This function displays the build artifacts and moves them to target/ohos/:
     1. HAR file
     2. ARCHIVE zip (created by hvigor build process)
     3. Other build artifacts
@@ -269,11 +341,11 @@ def print_build_results():
     print("==================OHOS Build Results========================")
 
     # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
 
-    # Check if bin directory exists
+    # Check if target directory exists
     if not os.path.exists(bin_dir):
-        print(f"ERROR: bin directory not found. Please run 'hvigorw assembleHar' first.")
+        print(f"ERROR: target directory not found. Please run 'hvigorw assembleHar' first.")
         sys.exit(1)
 
     # Check for build artifacts
@@ -292,11 +364,11 @@ def print_build_results():
         print("Please ensure hvigor archiveProject was executed successfully.")
         sys.exit(1)
 
-    # Create bin/ohos directory for platform-specific artifacts
+    # Create target/ohos directory for platform-specific artifacts
     bin_ohos_dir = os.path.join(bin_dir, "ohos")
     os.makedirs(bin_ohos_dir, exist_ok=True)
 
-    # Move renamed .har and (ARCHIVE)*.zip files to bin/ohos/
+    # Move renamed .har and (ARCHIVE)*.zip files to target/ohos/
     artifacts_moved = []
     for har_file in har_files:
         dest = os.path.join(bin_ohos_dir, os.path.basename(har_file))
@@ -308,7 +380,7 @@ def print_build_results():
         shutil.move(archive_zip, dest)
         artifacts_moved.append(os.path.basename(archive_zip))
 
-    # Clean up original HAR files left by assembleHar (not needed in bin/)
+    # Clean up original HAR files left by assembleHar (not needed in target/)
     original_har_files = [f for f in all_har_files if "OHOS_SDK" not in os.path.basename(f)]
     for har_file in original_har_files:
         if os.path.exists(har_file):
@@ -316,15 +388,15 @@ def print_build_results():
             print(f"[INFO] Removed original HAR file: {os.path.basename(har_file)}")
 
     if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to bin/ohos/")
+        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/ohos/")
 
-    # Copy build_info.json from cmake_build to bin/ohos
-    copy_build_info_to_bin("ohos", SCRIPT_PATH)
+    # Copy build_info.json from cmake_build to target/ohos
+    copy_build_info_to_target("ohos", SCRIPT_PATH)
 
-    print(f"\nBuild artifacts in bin/ohos/:")
+    print(f"\nBuild artifacts in target/ohos/:")
     print("-" * 60)
 
-    # List all files in bin/ohos directory with sizes
+    # List all files in target/ohos directory with sizes
     for item in sorted(os.listdir(bin_ohos_dir)):
         item_path = os.path.join(bin_ohos_dir, item)
         if os.path.isfile(item_path):
@@ -349,7 +421,7 @@ def archive_ohos_project():
     Archive OHOS HAR and related build artifacts.
 
     This function creates an archive package containing:
-    1. HAR file (copied to bin/ohos/)
+    1. HAR file (copied to target/ohos/)
     2. Symbol libraries with debug info (obj/local/**/*.so)
     3. ArkTS/ets source files
     4. Mapping files if available
@@ -358,8 +430,8 @@ def archive_ohos_project():
     (ARCHIVE)_{PROJECT_NAME}_OHOS_SDK-{version}-{suffix}.zip
 
     Output:
-        - bin/ohos/{PROJECT_NAME}_OHOS_SDK-{version}-{suffix}.har
-        - bin/ohos/(ARCHIVE)_{PROJECT_NAME}_OHOS_SDK-{version}-{suffix}.zip
+        - target/ohos/{PROJECT_NAME}_OHOS_SDK-{version}-{suffix}.har
+        - target/ohos/(ARCHIVE)_{PROJECT_NAME}_OHOS_SDK-{version}-{suffix}.zip
     """
     import zipfile
     from pathlib import Path
@@ -389,11 +461,11 @@ def archive_ohos_project():
     # Build full version name with suffix
     full_version = f"{version_name}-{suffix}" if suffix else version_name
 
-    # Define paths - use bin/ for temporary storage, will be moved to bin/ohos/ later
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
+    # Define paths - use bin/ for temporary storage, will be moved to target/ohos/ later
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
     ohos_main_sdk = os.path.join(SCRIPT_PATH, "ohos", "main_ohos_sdk")
 
-    # Create bin directory
+    # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
     # Find and copy HAR file
@@ -460,11 +532,11 @@ def archive_ohos_project():
     print(f"Archive ZIP: {zip_file_path}")
     print("\nMoving artifacts to platform-specific directory...")
 
-    # Move artifacts to bin/ohos/ and display final results
+    # Move artifacts to target/ohos/ and display final results
     print_build_results()
 
 
-def main(incremental, build_archs, target_option="", tag=""):
+def main(incremental, build_archs, target_option="", tag="", link_type='both'):
     """
     Main entry point for building OHOS native libraries across multiple ABIs.
 
@@ -479,6 +551,7 @@ def main(incremental, build_archs, target_option="", tag=""):
         build_archs: List of OHOS ABIs to build (e.g., ['arm64-v8a', 'armeabi-v7a'])
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
 
     Raises:
         RuntimeError: If OHOS SDK environment check fails or any build fails
@@ -499,7 +572,7 @@ def main(incremental, build_archs, target_option="", tag=""):
             f"Exception occurs when check ohos native env, please install ndk {get_ohos_native_desc()} and put in env OHOS_SDK_HOME"
         )
 
-    print(f"main tag {tag}, archs [{build_archs}]")
+    print(f"main tag {tag}, archs [{build_archs}], link_type:{link_type}")
 
     # generate verinfo.h
     gen_project_revision_file(
@@ -508,12 +581,34 @@ def main(incremental, build_archs, target_option="", tag=""):
         get_version_name(SCRIPT_PATH),
         tag,
         incremental=incremental,
-    platform="ohos",
+        platform="ohos",
     )
+
+    # Clean up old directory structures from previous versions
+    # 1. Old obj/local/shared and obj/local/static (before restructuring)
+    old_shared_dir = os.path.join(OHOS_SYMBOL_PATH, "shared")
+    old_static_dir = os.path.join(OHOS_SYMBOL_PATH, "static")
+    if os.path.exists(old_shared_dir):
+        shutil.rmtree(old_shared_dir)
+        print(f"Cleaned up old directory structure: {old_shared_dir}")
+    if os.path.exists(old_static_dir):
+        shutil.rmtree(old_static_dir)
+        print(f"Cleaned up old directory structure: {old_static_dir}")
+
+    # 2. Old libs/shared and libs/static (from Android-style structure)
+    old_libs_shared = os.path.join(OHOS_LIBS_PATH, "shared")
+    old_libs_static = os.path.join(OHOS_LIBS_PATH, "static")
+    if os.path.exists(old_libs_shared):
+        shutil.rmtree(old_libs_shared)
+        print(f"Cleaned up old directory structure: {old_libs_shared}")
+    if os.path.exists(old_libs_static):
+        shutil.rmtree(old_libs_static)
+        print(f"Cleaned up old directory structure: {old_libs_static}")
+
     has_error = False
     success_archs = []
     for arch in build_archs:
-        if not build_ohos(incremental, arch, target_option, tag):
+        if not build_ohos(incremental, arch, target_option, tag, link_type):
             has_error = True
             break
         success_archs.append(arch)
@@ -522,15 +617,25 @@ def main(incremental, build_archs, target_option="", tag=""):
     print(f"Build Success:{success_archs}")
     print(f"Build Failed:{list(set(build_archs) - set(success_archs))}")
     print("==================Output========================")
-    print(f"libs(release): {OHOS_LIBS_PATH}")
-    print(f"symbols(must store permanently): {OHOS_SYMBOL_PATH}")
+    if link_type == 'static':
+        print(f"symbols(static): {OHOS_SYMBOL_PATH.replace('obj/local/', 'obj/static_local/')}")
+        print(f"Note: Static libs are not placed in libs/ (HAR doesn't need them)")
+    elif link_type == 'shared':
+        print(f"libs(release - shared): {OHOS_LIBS_PATH} (for HAR packaging)")
+        print(f"symbols(must store permanently): {OHOS_SYMBOL_PATH}")
+    elif link_type == 'both':
+        print(f"libs(release - shared): {OHOS_LIBS_PATH} (for HAR packaging)")
+        print(f"symbols(shared - must store permanently): {OHOS_SYMBOL_PATH}")
+        print(f"symbols(static): {OHOS_SYMBOL_PATH.replace('obj/local/', 'obj/static_local/')}")
+        print(f"Note: Static libs are only kept as symbols in obj/static_local/")
+
     if has_error:
         raise RuntimeError("Exception occurs when build ohos")
 
 
 # Command-line interface for OHOS builds
 # New argument-based interface:
-# Default (no args): Print build results from bin directory (hvigor already created HAR)
+# Default (no args): Print build results from target directory (hvigor already created HAR)
 # --native-only: Build native libraries only
 # --arch: Specify architectures (comma-separated)
 #
@@ -561,14 +666,21 @@ if __name__ == "__main__":
         action="store_true",
         help="Incremental build (skip clean step)",
     )
+    parser.add_argument(
+        "--link-type",
+        type=str,
+        choices=['static', 'shared', 'both'],
+        default='both',
+        help="Library link type (default: both)",
+    )
 
     args = parser.parse_args()
 
     if args.native_only:
         # Build native libraries only
         archs = [arch.strip() for arch in args.arch.split(",")]
-        print(f"==================OHOS Native Build, archs: {archs}==================")
-        main(args.incremental, archs, tag="native")
+        print(f"==================OHOS Native Build, archs: {archs}, link_type: {args.link_type}==================")
+        main(args.incremental, archs, tag="native", link_type=args.link_type)
     else:
         # Default: Print build results (hvigor assembleHar already handles building)
         print("==================OHOS Build Results Mode==================")

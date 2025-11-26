@@ -33,6 +33,7 @@ setup(
     install_requires=[
         "copier>=9.2.0",
         "copier-templates-extensions>=0.3.0",
+        'tomli>=2.0.0; python_version < "3.11"',
     ],
     classifiers=[
         "Development Status :: 3 - Alpha",

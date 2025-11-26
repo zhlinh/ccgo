@@ -96,17 +96,49 @@ OPTIONS:
 
 OUTPUT STRUCTURE:
     <project>_SDK-<version>/
-    ├── include/               Header files
-    ├── lib/                   Platform libraries
-    │   ├── android/          .so, .aar files
-    │   ├── ios/              .a, .framework files
-    │   ├── macos/            .a, .dylib, .framework files
-    │   ├── windows/          .lib, .dll files
-    │   ├── linux/            .a, .so files
-    │   └── ohos/             .so, .har files
-    ├── kmp/                   (optional) KMP artifacts
-    ├── docs/                  (optional) Documentation
-    └── README.md              Package information
+    ├── include/                       Header files
+    ├── lib/                           Platform libraries
+    │   ├── android/                   Android libraries
+    │   │   ├── static/               Static libraries (.a)
+    │   │   │   ├── arm64-v8a/
+    │   │   │   ├── armeabi-v7a/
+    │   │   │   └── x86_64/
+    │   │   └── shared/               Shared libraries (.so)
+    │   │       ├── arm64-v8a/
+    │   │       ├── armeabi-v7a/
+    │   │       └── x86_64/
+    │   ├── ios/                       iOS libraries
+    │   │   ├── static/               .xcframework, .framework, .a
+    │   │   └── shared/               .xcframework, .framework, .dylib
+    │   ├── macos/                     macOS libraries
+    │   │   ├── static/               .framework, .xcframework, .a
+    │   │   └── shared/               .framework, .xcframework, .dylib
+    │   ├── tvos/                      tvOS libraries
+    │   │   ├── static/               .xcframework, .framework, .a
+    │   │   └── shared/               .xcframework, .framework, .dylib
+    │   ├── watchos/                   watchOS libraries
+    │   │   ├── static/               .xcframework, .framework, .a
+    │   │   └── shared/               .xcframework, .framework, .dylib
+    │   ├── windows/                   Windows libraries
+    │   │   ├── static/x64/           .lib files
+    │   │   └── shared/x64/           .dll, .lib files
+    │   ├── linux/                     Linux libraries
+    │   │   ├── static/               .a files
+    │   │   └── shared/               .so files
+    │   ├── ohos/                      OpenHarmony libraries
+    │   │   ├── static/               Static libraries (.a)
+    │   │   │   ├── arm64-v8a/
+    │   │   │   ├── armeabi-v7a/
+    │   │   │   └── x86_64/
+    │   │   └── shared/               Shared libraries (.so)
+    │   │       ├── arm64-v8a/
+    │   │       ├── armeabi-v7a/
+    │   │       └── x86_64/
+    │   └── kmp/                       (optional) KMP artifacts
+    │       ├── android/               .aar files
+    │       └── desktop/               .jar files
+    ├── docs/                          (optional) Documentation
+    └── README.md                      Package information
         """
 
     def cli(self) -> CliNameSpace:
@@ -274,7 +306,11 @@ OUTPUT STRUCTURE:
         return "SDK"
 
     def collect_platform_artifacts(self, project_dir: str, platform: str, output_dir: str, project_name: str):
-        """Collect artifacts for a specific platform"""
+        """Collect artifacts for a specific platform
+
+        Collects artifacts from both static/ and shared/ subdirectories if they exist.
+        Supports new dual-format build system with separate static and shared libraries.
+        """
         print(f"\n📦 Collecting {platform} artifacts...")
 
         # Create platform output directory
@@ -286,209 +322,482 @@ OUTPUT STRUCTURE:
         try:
             # Platform-specific collection logic
             if platform.lower() == "android":
-                # Android: Extract .so files from AAR package in bin directory
-                bin_dir = os.path.join(project_dir, "bin")
-                if os.path.exists(bin_dir):
-                    # Find AAR files
-                    import zipfile
-                    for aar_file in Path(bin_dir).glob("*ANDROID*.aar"):
-                        print(f"   📂 Extracting from {aar_file.name}...")
-                        with zipfile.ZipFile(aar_file, 'r') as zip_ref:
-                            # Extract .so files for each architecture
-                            for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
-                                arch_output = os.path.join(platform_output, arch)
+                # Android: Collect from both static and shared subdirectories if they exist
+                platform_build_dir = os.path.join(project_dir, "cmake_build", "Android")
+                android_out = os.path.join(platform_build_dir, "Android.out")
+
+                # Try new format first (static/ and shared/ subdirectories)
+                for link_type in ["static", "shared"]:
+                    link_type_dir = os.path.join(android_out, link_type)
+                    if os.path.exists(link_type_dir):
+                        print(f"   📂 Collecting {link_type} libraries...")
+                        link_type_output = os.path.join(platform_output, link_type)
+                        os.makedirs(link_type_output, exist_ok=True)
+
+                        # Collect for each architecture
+                        for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
+                            arch_dir = os.path.join(link_type_dir, arch)
+                            if os.path.exists(arch_dir):
+                                arch_output = os.path.join(link_type_output, arch)
                                 os.makedirs(arch_output, exist_ok=True)
 
-                                # Look for .so files in jni/arch/
-                                for zip_info in zip_ref.namelist():
-                                    if zip_info.startswith(f"jni/{arch}/") and zip_info.endswith(".so"):
-                                        # Extract only the project's .so file, not dependencies like libc++_shared.so
-                                        so_name = os.path.basename(zip_info)
-                                        if project_name.lower() in so_name.lower():
-                                            zip_ref.extract(zip_info, "/tmp/ccgo_extract")
-                                            src = os.path.join("/tmp/ccgo_extract", zip_info)
-                                            dest = os.path.join(arch_output, so_name)
-                                            shutil.copy2(src, dest)
-                                            print(f"   ✓ {arch}/{so_name}")
-                                            collected = True
-                        # Clean up extraction directory
-                        if os.path.exists("/tmp/ccgo_extract"):
-                            shutil.rmtree("/tmp/ccgo_extract")
-                        break  # Only process first AAR file
+                                # Copy library files
+                                if link_type == "static":
+                                    lib_files = list(Path(arch_dir).glob(f"lib{project_name}*.a"))
+                                else:
+                                    lib_files = list(Path(arch_dir).glob(f"lib{project_name}*.so"))
+
+                                for lib_file in lib_files:
+                                    dest = os.path.join(arch_output, lib_file.name)
+                                    shutil.copy2(lib_file, dest)
+                                    print(f"   ✓ {link_type}/{arch}/{lib_file.name}")
+                                    collected = True
+
+                # Fallback: Extract from AAR package in bin directory (backward compatibility)
+                if not collected:
+                    bin_dir = os.path.join(project_dir, "bin")
+                    if os.path.exists(bin_dir):
+                        import zipfile
+                        for aar_file in Path(bin_dir).glob("*ANDROID*.aar"):
+                            print(f"   📂 Extracting from {aar_file.name}...")
+                            with zipfile.ZipFile(aar_file, 'r') as zip_ref:
+                                # Extract .so files for each architecture
+                                for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
+                                    arch_output = os.path.join(platform_output, "shared", arch)
+                                    os.makedirs(arch_output, exist_ok=True)
+
+                                    # Look for .so files in jni/arch/
+                                    for zip_info in zip_ref.namelist():
+                                        if zip_info.startswith(f"jni/{arch}/") and zip_info.endswith(".so"):
+                                            so_name = os.path.basename(zip_info)
+                                            if project_name.lower() in so_name.lower():
+                                                zip_ref.extract(zip_info, "/tmp/ccgo_extract")
+                                                src = os.path.join("/tmp/ccgo_extract", zip_info)
+                                                dest = os.path.join(arch_output, so_name)
+                                                shutil.copy2(src, dest)
+                                                print(f"   ✓ shared/{arch}/{so_name}")
+                                                collected = True
+                            # Clean up extraction directory
+                            if os.path.exists("/tmp/ccgo_extract"):
+                                shutil.rmtree("/tmp/ccgo_extract")
+                            break  # Only process first AAR file
 
             elif platform.lower() == "ios":
-                # iOS: Prefer xcframework, then framework, then .a files
+                # iOS: Collect from both static and shared subdirectories if they exist
                 platform_build_dir = os.path.join(project_dir, "cmake_build", "iOS")
                 darwin_out = os.path.join(platform_build_dir, "Darwin.out")
 
                 if os.path.exists(darwin_out):
-                    # Method 1: Look for xcframework (highest priority)
-                    xcframeworks = [f for f in Path(darwin_out).glob("*.xcframework")
-                                   if project_name.lower() in f.name.lower()]
-                    if xcframeworks:
-                        xcframework = xcframeworks[0]
-                        dest = os.path.join(platform_output, xcframework.name)
-                        if os.path.exists(dest):
-                            shutil.rmtree(dest)
-                        shutil.copytree(xcframework, dest, symlinks=True)
-                        print(f"   ✓ {xcframework.name}")
-                        collected = True
+                    # Try new format first (static/ and shared/ subdirectories)
+                    for link_type in ["static", "shared"]:
+                        link_type_dir = os.path.join(darwin_out, link_type)
+                        if os.path.exists(link_type_dir):
+                            print(f"   📂 Collecting {link_type} libraries...")
+                            link_type_output = os.path.join(platform_output, link_type)
+                            os.makedirs(link_type_output, exist_ok=True)
 
-                    # Method 2: Look for framework
-                    if not collected:
-                        frameworks = [f for f in Path(darwin_out).glob("*.framework")
-                                     if project_name.lower() in f.name.lower()]
-                        if frameworks:
-                            framework = frameworks[0]
-                            dest = os.path.join(platform_output, framework.name)
-                            if os.path.exists(dest):
-                                shutil.rmtree(dest)
-                            shutil.copytree(framework, dest, symlinks=True)
-                            print(f"   ✓ {framework.name}")
-                            collected = True
-
-                    # Method 3: Fallback to .a files
-                    if not collected:
-                        a_files = list(Path(darwin_out).glob(f"lib{project_name}*.a"))
-                        if a_files:
-                            output_lib = os.path.join(platform_output, f"{project_name}.a")
-                            if len(a_files) == 1:
-                                shutil.copy2(a_files[0], output_lib)
-                                print(f"   ✓ {project_name}.a")
+                            # Look for xcframework (highest priority)
+                            xcframeworks = [f for f in Path(link_type_dir).glob("*.xcframework")
+                                           if project_name.lower() in f.name.lower()]
+                            if xcframeworks:
+                                xcframework = xcframeworks[0]
+                                dest = os.path.join(link_type_output, xcframework.name)
+                                if os.path.exists(dest):
+                                    shutil.rmtree(dest)
+                                shutil.copytree(xcframework, dest, symlinks=True)
+                                print(f"   ✓ {link_type}/{xcframework.name}")
                                 collected = True
                             else:
-                                # Merge multiple .a files using libtool
-                                lib_paths = [str(f) for f in a_files]
-                                cmd = f"libtool -static -o {output_lib} {' '.join(lib_paths)}"
-                                result = subprocess.run(cmd, shell=True, capture_output=True)
-                                if result.returncode == 0:
-                                    print(f"   ✓ {project_name}.a (merged {len(a_files)} libraries)")
+                                # Look for framework
+                                frameworks = [f for f in Path(link_type_dir).glob("*.framework")
+                                             if project_name.lower() in f.name.lower()]
+                                if frameworks:
+                                    framework = frameworks[0]
+                                    dest = os.path.join(link_type_output, framework.name)
+                                    if os.path.exists(dest):
+                                        shutil.rmtree(dest)
+                                    shutil.copytree(framework, dest, symlinks=True)
+                                    print(f"   ✓ {link_type}/{framework.name}")
                                     collected = True
 
-            elif platform.lower() == "macos":
-                # macOS: Prefer framework, then xcframework, then .a files
-                platform_build_dir = os.path.join(project_dir, "cmake_build", "macOS")
-                darwin_out = os.path.join(platform_build_dir, "Darwin.out")
-
-                if os.path.exists(darwin_out):
-                    # Method 1: Look for framework (highest priority for macOS)
-                    frameworks = [f for f in Path(darwin_out).glob("*.framework")
-                                 if project_name.lower() in f.name.lower()]
-                    if frameworks:
-                        framework = frameworks[0]
-                        dest = os.path.join(platform_output, framework.name)
-                        if os.path.exists(dest):
-                            shutil.rmtree(dest)
-                        shutil.copytree(framework, dest, symlinks=True)
-                        print(f"   ✓ {framework.name}")
-                        collected = True
-
-                    # Method 2: Look for xcframework
+                    # Fallback to old format (no subdirectories)
                     if not collected:
+                        # Method 1: Look for xcframework (highest priority)
                         xcframeworks = [f for f in Path(darwin_out).glob("*.xcframework")
                                        if project_name.lower() in f.name.lower()]
                         if xcframeworks:
                             xcframework = xcframeworks[0]
-                            dest = os.path.join(platform_output, xcframework.name)
+                            # Assume static for backward compatibility
+                            static_output = os.path.join(platform_output, "static")
+                            os.makedirs(static_output, exist_ok=True)
+                            dest = os.path.join(static_output, xcframework.name)
                             if os.path.exists(dest):
                                 shutil.rmtree(dest)
                             shutil.copytree(xcframework, dest, symlinks=True)
-                            print(f"   ✓ {xcframework.name}")
+                            print(f"   ✓ static/{xcframework.name}")
                             collected = True
 
-                    # Method 3: Fallback to .a files
-                    if not collected:
-                        a_files = list(Path(darwin_out).glob(f"lib{project_name}*.a"))
-                        if a_files:
-                            output_lib = os.path.join(platform_output, f"{project_name}.a")
-                            if len(a_files) == 1:
-                                shutil.copy2(a_files[0], output_lib)
-                                print(f"   ✓ {project_name}.a")
+                        # Method 2: Look for framework
+                        if not collected:
+                            frameworks = [f for f in Path(darwin_out).glob("*.framework")
+                                         if project_name.lower() in f.name.lower()]
+                            if frameworks:
+                                framework = frameworks[0]
+                                static_output = os.path.join(platform_output, "static")
+                                os.makedirs(static_output, exist_ok=True)
+                                dest = os.path.join(static_output, framework.name)
+                                if os.path.exists(dest):
+                                    shutil.rmtree(dest)
+                                shutil.copytree(framework, dest, symlinks=True)
+                                print(f"   ✓ static/{framework.name}")
                                 collected = True
-                            else:
-                                # Merge using libtool
-                                lib_paths = [str(f) for f in a_files]
-                                cmd = f"libtool -static -o {output_lib} {' '.join(lib_paths)}"
-                                result = subprocess.run(cmd, shell=True, capture_output=True)
-                                if result.returncode == 0:
-                                    print(f"   ✓ {project_name}.a (merged {len(a_files)} libraries)")
+
+                        # Method 3: Fallback to .a files
+                        if not collected:
+                            a_files = list(Path(darwin_out).glob(f"lib{project_name}*.a"))
+                            if a_files:
+                                static_output = os.path.join(platform_output, "static")
+                                os.makedirs(static_output, exist_ok=True)
+                                output_lib = os.path.join(static_output, f"{project_name}.a")
+                                if len(a_files) == 1:
+                                    shutil.copy2(a_files[0], output_lib)
+                                    print(f"   ✓ static/{project_name}.a")
                                     collected = True
+                                else:
+                                    # Merge multiple .a files using libtool
+                                    lib_paths = [str(f) for f in a_files]
+                                    cmd = f"libtool -static -o {output_lib} {' '.join(lib_paths)}"
+                                    result = subprocess.run(cmd, shell=True, capture_output=True)
+                                    if result.returncode == 0:
+                                        print(f"   ✓ static/{project_name}.a (merged {len(a_files)} libraries)")
+                                        collected = True
 
-            elif platform.lower() == "windows":
-                # Windows: Extract .lib from zip files in bin directory
-                bin_dir = os.path.join(project_dir, "bin")
-                if os.path.exists(bin_dir):
-                    import zipfile
-                    for zip_file in Path(bin_dir).glob("*WINDOWS*.zip"):
-                        print(f"   📂 Extracting from {zip_file.name}...")
-                        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
-                            x64_output = os.path.join(platform_output, "x64")
-                            os.makedirs(x64_output, exist_ok=True)
-
-                            for zip_info in zip_ref.namelist():
-                                if zip_info.endswith(".lib") and project_name.lower() in zip_info.lower():
-                                    lib_name = os.path.basename(zip_info)
-                                    zip_ref.extract(zip_info, "/tmp/ccgo_extract")
-                                    src = os.path.join("/tmp/ccgo_extract", zip_info)
-                                    dest = os.path.join(x64_output, lib_name)
-                                    shutil.copy2(src, dest)
-                                    print(f"   ✓ x64/{lib_name}")
-                                    collected = True
-                        if os.path.exists("/tmp/ccgo_extract"):
-                            shutil.rmtree("/tmp/ccgo_extract")
-                        break
-
-            elif platform.lower() == "linux":
-                # Linux: Collect .a files from Darwin.out
-                platform_build_dir = os.path.join(project_dir, "cmake_build", "Linux")
+            elif platform.lower() == "macos":
+                # macOS: Collect from both static and shared subdirectories if they exist
+                platform_build_dir = os.path.join(project_dir, "cmake_build", "macOS")
                 darwin_out = os.path.join(platform_build_dir, "Darwin.out")
 
                 if os.path.exists(darwin_out):
-                    a_files = list(Path(darwin_out).glob(f"lib{project_name}*.a"))
-                    if a_files:
-                        output_lib = os.path.join(platform_output, f"{project_name}.a")
-                        if len(a_files) == 1:
-                            shutil.copy2(a_files[0], output_lib)
-                            print(f"   ✓ {project_name}.a")
+                    # Try new format first (static/ and shared/ subdirectories)
+                    for link_type in ["static", "shared"]:
+                        link_type_dir = os.path.join(darwin_out, link_type)
+                        if os.path.exists(link_type_dir):
+                            print(f"   📂 Collecting {link_type} libraries...")
+                            link_type_output = os.path.join(platform_output, link_type)
+                            os.makedirs(link_type_output, exist_ok=True)
+
+                            # Look for framework (highest priority for macOS)
+                            frameworks = [f for f in Path(link_type_dir).glob("*.framework")
+                                         if project_name.lower() in f.name.lower()]
+                            if frameworks:
+                                framework = frameworks[0]
+                                dest = os.path.join(link_type_output, framework.name)
+                                if os.path.exists(dest):
+                                    shutil.rmtree(dest)
+                                shutil.copytree(framework, dest, symlinks=True)
+                                print(f"   ✓ {link_type}/{framework.name}")
+                                collected = True
+                            else:
+                                # Look for xcframework
+                                xcframeworks = [f for f in Path(link_type_dir).glob("*.xcframework")
+                                               if project_name.lower() in f.name.lower()]
+                                if xcframeworks:
+                                    xcframework = xcframeworks[0]
+                                    dest = os.path.join(link_type_output, xcframework.name)
+                                    if os.path.exists(dest):
+                                        shutil.rmtree(dest)
+                                    shutil.copytree(xcframework, dest, symlinks=True)
+                                    print(f"   ✓ {link_type}/{xcframework.name}")
+                                    collected = True
+
+                    # Fallback to old format (no subdirectories)
+                    if not collected:
+                        # Method 1: Look for framework (highest priority for macOS)
+                        frameworks = [f for f in Path(darwin_out).glob("*.framework")
+                                     if project_name.lower() in f.name.lower()]
+                        if frameworks:
+                            framework = frameworks[0]
+                            static_output = os.path.join(platform_output, "static")
+                            os.makedirs(static_output, exist_ok=True)
+                            dest = os.path.join(static_output, framework.name)
+                            if os.path.exists(dest):
+                                shutil.rmtree(dest)
+                            shutil.copytree(framework, dest, symlinks=True)
+                            print(f"   ✓ static/{framework.name}")
                             collected = True
-                        else:
-                            # Merge using ar
-                            lib_paths = [str(f) for f in a_files]
-                            cmd = f"ar -M <<EOF\nCREATE {output_lib}\n"
-                            for lib in lib_paths:
-                                cmd += f"ADDLIB {lib}\n"
-                            cmd += f"SAVE\nEND\nEOF"
-                            result = subprocess.run(cmd, shell=True, capture_output=True)
-                            if result.returncode == 0:
-                                print(f"   ✓ {project_name}.a (merged {len(a_files)} libraries)")
+
+                        # Method 2: Look for xcframework
+                        if not collected:
+                            xcframeworks = [f for f in Path(darwin_out).glob("*.xcframework")
+                                           if project_name.lower() in f.name.lower()]
+                            if xcframeworks:
+                                xcframework = xcframeworks[0]
+                                static_output = os.path.join(platform_output, "static")
+                                os.makedirs(static_output, exist_ok=True)
+                                dest = os.path.join(static_output, xcframework.name)
+                                if os.path.exists(dest):
+                                    shutil.rmtree(dest)
+                                shutil.copytree(xcframework, dest, symlinks=True)
+                                print(f"   ✓ static/{xcframework.name}")
                                 collected = True
 
+                        # Method 3: Fallback to .a files
+                        if not collected:
+                            a_files = list(Path(darwin_out).glob(f"lib{project_name}*.a"))
+                            if a_files:
+                                static_output = os.path.join(platform_output, "static")
+                                os.makedirs(static_output, exist_ok=True)
+                                output_lib = os.path.join(static_output, f"{project_name}.a")
+                                if len(a_files) == 1:
+                                    shutil.copy2(a_files[0], output_lib)
+                                    print(f"   ✓ static/{project_name}.a")
+                                    collected = True
+                                else:
+                                    # Merge using libtool
+                                    lib_paths = [str(f) for f in a_files]
+                                    cmd = f"libtool -static -o {output_lib} {' '.join(lib_paths)}"
+                                    result = subprocess.run(cmd, shell=True, capture_output=True)
+                                    if result.returncode == 0:
+                                        print(f"   ✓ static/{project_name}.a (merged {len(a_files)} libraries)")
+                                        collected = True
+
+            elif platform.lower() == "windows":
+                # Windows: Collect from both static and shared subdirectories if they exist
+                platform_build_dir = os.path.join(project_dir, "cmake_build", "Windows")
+                windows_out = os.path.join(platform_build_dir, "Windows.out")
+
+                # Try new format first (static/ and shared/ subdirectories)
+                if os.path.exists(windows_out):
+                    for link_type in ["static", "shared"]:
+                        link_type_dir = os.path.join(windows_out, link_type)
+                        if os.path.exists(link_type_dir):
+                            print(f"   📂 Collecting {link_type} libraries...")
+                            link_type_output = os.path.join(platform_output, link_type, "x64")
+                            os.makedirs(link_type_output, exist_ok=True)
+
+                            # Copy library files
+                            if link_type == "static":
+                                lib_files = list(Path(link_type_dir).glob(f"{project_name}*.lib"))
+                            else:
+                                lib_files = list(Path(link_type_dir).glob(f"{project_name}*.dll")) + \
+                                           list(Path(link_type_dir).glob(f"{project_name}*.lib"))
+
+                            for lib_file in lib_files:
+                                dest = os.path.join(link_type_output, lib_file.name)
+                                shutil.copy2(lib_file, dest)
+                                print(f"   ✓ {link_type}/x64/{lib_file.name}")
+                                collected = True
+
+                # Fallback: Extract from zip files in bin directory (backward compatibility)
+                if not collected:
+                    bin_dir = os.path.join(project_dir, "bin")
+                    if os.path.exists(bin_dir):
+                        import zipfile
+                        for zip_file in Path(bin_dir).glob("*WINDOWS*.zip"):
+                            print(f"   📂 Extracting from {zip_file.name}...")
+                            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+                                x64_output = os.path.join(platform_output, "static", "x64")
+                                os.makedirs(x64_output, exist_ok=True)
+
+                                for zip_info in zip_ref.namelist():
+                                    if zip_info.endswith(".lib") and project_name.lower() in zip_info.lower():
+                                        lib_name = os.path.basename(zip_info)
+                                        zip_ref.extract(zip_info, "/tmp/ccgo_extract")
+                                        src = os.path.join("/tmp/ccgo_extract", zip_info)
+                                        dest = os.path.join(x64_output, lib_name)
+                                        shutil.copy2(src, dest)
+                                        print(f"   ✓ static/x64/{lib_name}")
+                                        collected = True
+                            if os.path.exists("/tmp/ccgo_extract"):
+                                shutil.rmtree("/tmp/ccgo_extract")
+                            break
+
+            elif platform.lower() == "linux":
+                # Linux: Collect from both static and shared subdirectories if they exist
+                platform_build_dir = os.path.join(project_dir, "cmake_build", "Linux")
+                linux_out = os.path.join(platform_build_dir, "Linux.out")
+
+                if os.path.exists(linux_out):
+                    # Try new format first (static/ and shared/ subdirectories)
+                    for link_type in ["static", "shared"]:
+                        link_type_dir = os.path.join(linux_out, link_type)
+                        if os.path.exists(link_type_dir):
+                            print(f"   📂 Collecting {link_type} libraries...")
+                            link_type_output = os.path.join(platform_output, link_type)
+                            os.makedirs(link_type_output, exist_ok=True)
+
+                            # Copy library files
+                            if link_type == "static":
+                                lib_files = list(Path(link_type_dir).glob(f"lib{project_name}*.a"))
+                            else:
+                                lib_files = list(Path(link_type_dir).glob(f"lib{project_name}*.so*"))
+
+                            for lib_file in lib_files:
+                                dest = os.path.join(link_type_output, lib_file.name)
+                                shutil.copy2(lib_file, dest)
+                                print(f"   ✓ {link_type}/{lib_file.name}")
+                                collected = True
+
+                    # Fallback to old format (Darwin.out directly)
+                    if not collected:
+                        # Try old path for backward compatibility
+                        darwin_out = os.path.join(platform_build_dir, "Darwin.out")
+                        if os.path.exists(darwin_out):
+                            a_files = list(Path(darwin_out).glob(f"lib{project_name}*.a"))
+                            if a_files:
+                                static_output = os.path.join(platform_output, "static")
+                                os.makedirs(static_output, exist_ok=True)
+                                output_lib = os.path.join(static_output, f"{project_name}.a")
+                                if len(a_files) == 1:
+                                    shutil.copy2(a_files[0], output_lib)
+                                    print(f"   ✓ static/{project_name}.a")
+                                    collected = True
+                                else:
+                                    # Merge using ar
+                                    lib_paths = [str(f) for f in a_files]
+                                    cmd = f"ar -M <<EOF\nCREATE {output_lib}\n"
+                                    for lib in lib_paths:
+                                        cmd += f"ADDLIB {lib}\n"
+                                    cmd += f"SAVE\nEND\nEOF"
+                                    result = subprocess.run(cmd, shell=True, capture_output=True)
+                                    if result.returncode == 0:
+                                        print(f"   ✓ static/{project_name}.a (merged {len(a_files)} libraries)")
+                                        collected = True
+
             elif platform.lower() == "ohos":
-                # OHOS: Extract .so files from HAR package in bin directory
-                bin_dir = os.path.join(project_dir, "bin")
-                if os.path.exists(bin_dir):
-                    import zipfile
-                    for har_file in Path(bin_dir).glob("*OHOS*.har"):
-                        print(f"   📂 Extracting from {har_file.name}...")
-                        with zipfile.ZipFile(har_file, 'r') as zip_ref:
-                            for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
-                                arch_output = os.path.join(platform_output, arch)
+                # OHOS: Collect from both static and shared subdirectories if they exist
+                platform_build_dir = os.path.join(project_dir, "cmake_build", "OHOS")
+                ohos_out = os.path.join(platform_build_dir, "OHOS.out")
+
+                # Try new format first (static/ and shared/ subdirectories)
+                for link_type in ["static", "shared"]:
+                    link_type_dir = os.path.join(ohos_out, link_type)
+                    if os.path.exists(link_type_dir):
+                        print(f"   📂 Collecting {link_type} libraries...")
+                        link_type_output = os.path.join(platform_output, link_type)
+                        os.makedirs(link_type_output, exist_ok=True)
+
+                        # Collect for each architecture
+                        for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
+                            arch_dir = os.path.join(link_type_dir, arch)
+                            if os.path.exists(arch_dir):
+                                arch_output = os.path.join(link_type_output, arch)
                                 os.makedirs(arch_output, exist_ok=True)
 
-                                # Look for .so files in package/libs/arch/
-                                for zip_info in zip_ref.namelist():
-                                    if f"package/libs/{arch}/" in zip_info and zip_info.endswith(".so"):
-                                        so_name = os.path.basename(zip_info)
-                                        if project_name.lower() in so_name.lower():
-                                            zip_ref.extract(zip_info, "/tmp/ccgo_extract")
-                                            src = os.path.join("/tmp/ccgo_extract", zip_info)
-                                            dest = os.path.join(arch_output, so_name)
-                                            shutil.copy2(src, dest)
-                                            print(f"   ✓ {arch}/{so_name}")
-                                            collected = True
-                        if os.path.exists("/tmp/ccgo_extract"):
-                            shutil.rmtree("/tmp/ccgo_extract")
-                        break
+                                # Copy library files
+                                if link_type == "static":
+                                    lib_files = list(Path(arch_dir).glob(f"lib{project_name}*.a"))
+                                else:
+                                    lib_files = list(Path(arch_dir).glob(f"lib{project_name}*.so"))
+
+                                for lib_file in lib_files:
+                                    dest = os.path.join(arch_output, lib_file.name)
+                                    shutil.copy2(lib_file, dest)
+                                    print(f"   ✓ {link_type}/{arch}/{lib_file.name}")
+                                    collected = True
+
+                # Fallback: Extract from HAR package in bin directory (backward compatibility)
+                if not collected:
+                    bin_dir = os.path.join(project_dir, "bin")
+                    if os.path.exists(bin_dir):
+                        import zipfile
+                        for har_file in Path(bin_dir).glob("*OHOS*.har"):
+                            print(f"   📂 Extracting from {har_file.name}...")
+                            with zipfile.ZipFile(har_file, 'r') as zip_ref:
+                                for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
+                                    arch_output = os.path.join(platform_output, "shared", arch)
+                                    os.makedirs(arch_output, exist_ok=True)
+
+                                    # Look for .so files in package/libs/arch/
+                                    for zip_info in zip_ref.namelist():
+                                        if f"package/libs/{arch}/" in zip_info and zip_info.endswith(".so"):
+                                            so_name = os.path.basename(zip_info)
+                                            if project_name.lower() in so_name.lower():
+                                                zip_ref.extract(zip_info, "/tmp/ccgo_extract")
+                                                src = os.path.join("/tmp/ccgo_extract", zip_info)
+                                                dest = os.path.join(arch_output, so_name)
+                                                shutil.copy2(src, dest)
+                                                print(f"   ✓ shared/{arch}/{so_name}")
+                                                collected = True
+                            if os.path.exists("/tmp/ccgo_extract"):
+                                shutil.rmtree("/tmp/ccgo_extract")
+                            break
+
+            elif platform.lower() == "tvos":
+                # tvOS: Similar to iOS, collect from both static and shared subdirectories
+                platform_build_dir = os.path.join(project_dir, "cmake_build", "tvOS")
+                darwin_out = os.path.join(platform_build_dir, "Darwin.out")
+
+                if os.path.exists(darwin_out):
+                    # Try new format first (static/ and shared/ subdirectories)
+                    for link_type in ["static", "shared"]:
+                        link_type_dir = os.path.join(darwin_out, link_type)
+                        if os.path.exists(link_type_dir):
+                            print(f"   📂 Collecting {link_type} libraries...")
+                            link_type_output = os.path.join(platform_output, link_type)
+                            os.makedirs(link_type_output, exist_ok=True)
+
+                            # Look for xcframework (highest priority)
+                            xcframeworks = [f for f in Path(link_type_dir).glob("*.xcframework")
+                                           if project_name.lower() in f.name.lower()]
+                            if xcframeworks:
+                                xcframework = xcframeworks[0]
+                                dest = os.path.join(link_type_output, xcframework.name)
+                                if os.path.exists(dest):
+                                    shutil.rmtree(dest)
+                                shutil.copytree(xcframework, dest, symlinks=True)
+                                print(f"   ✓ {link_type}/{xcframework.name}")
+                                collected = True
+                            else:
+                                # Look for framework
+                                frameworks = [f for f in Path(link_type_dir).glob("*.framework")
+                                             if project_name.lower() in f.name.lower()]
+                                if frameworks:
+                                    framework = frameworks[0]
+                                    dest = os.path.join(link_type_output, framework.name)
+                                    if os.path.exists(dest):
+                                        shutil.rmtree(dest)
+                                    shutil.copytree(framework, dest, symlinks=True)
+                                    print(f"   ✓ {link_type}/{framework.name}")
+                                    collected = True
+
+            elif platform.lower() == "watchos":
+                # watchOS: Similar to iOS, collect from both static and shared subdirectories
+                platform_build_dir = os.path.join(project_dir, "cmake_build", "watchOS")
+                darwin_out = os.path.join(platform_build_dir, "Darwin.out")
+
+                if os.path.exists(darwin_out):
+                    # Try new format first (static/ and shared/ subdirectories)
+                    for link_type in ["static", "shared"]:
+                        link_type_dir = os.path.join(darwin_out, link_type)
+                        if os.path.exists(link_type_dir):
+                            print(f"   📂 Collecting {link_type} libraries...")
+                            link_type_output = os.path.join(platform_output, link_type)
+                            os.makedirs(link_type_output, exist_ok=True)
+
+                            # Look for xcframework (highest priority)
+                            xcframeworks = [f for f in Path(link_type_dir).glob("*.xcframework")
+                                           if project_name.lower() in f.name.lower()]
+                            if xcframeworks:
+                                xcframework = xcframeworks[0]
+                                dest = os.path.join(link_type_output, xcframework.name)
+                                if os.path.exists(dest):
+                                    shutil.rmtree(dest)
+                                shutil.copytree(xcframework, dest, symlinks=True)
+                                print(f"   ✓ {link_type}/{xcframework.name}")
+                                collected = True
+                            else:
+                                # Look for framework
+                                frameworks = [f for f in Path(link_type_dir).glob("*.framework")
+                                             if project_name.lower() in f.name.lower()]
+                                if frameworks:
+                                    framework = frameworks[0]
+                                    dest = os.path.join(link_type_output, framework.name)
+                                    if os.path.exists(dest):
+                                        shutil.rmtree(dest)
+                                    shutil.copytree(framework, dest, symlinks=True)
+                                    print(f"   ✓ {link_type}/{framework.name}")
+                                    collected = True
 
             if not collected:
                 print(f"   ⚠️  No artifacts found for {platform}")
@@ -577,23 +886,23 @@ OUTPUT STRUCTURE:
                 if os.path.exists(kmp_dir):
                     kmp_build = os.path.join(kmp_dir, "build")
                     if os.path.exists(kmp_build):
-                        # Copy AAR files
+                        # Copy AAR files (put in lib/kmp/android to match other platforms)
                         aar_dir = os.path.join(kmp_build, "outputs", "aar")
                         if os.path.exists(aar_dir):
-                            kmp_output = os.path.join(output_dir, "kmp", "android")
+                            kmp_output = os.path.join(output_dir, "lib", "kmp", "android")
                             os.makedirs(kmp_output, exist_ok=True)
                             for aar_file in glob.glob(os.path.join(aar_dir, "*.aar")):
                                 shutil.copy2(aar_file, kmp_output)
-                                print(f"   ✓ {os.path.basename(aar_file)}")
+                                print(f"   ✓ android/{os.path.basename(aar_file)}")
 
-                        # Copy JAR files
+                        # Copy JAR files (put in lib/kmp/desktop to match other platforms)
                         jar_dir = os.path.join(kmp_build, "libs")
                         if os.path.exists(jar_dir):
-                            kmp_output = os.path.join(output_dir, "kmp", "desktop")
+                            kmp_output = os.path.join(output_dir, "lib", "kmp", "desktop")
                             os.makedirs(kmp_output, exist_ok=True)
                             for jar_file in glob.glob(os.path.join(jar_dir, "*.jar")):
                                 shutil.copy2(jar_file, kmp_output)
-                                print(f"   ✓ {os.path.basename(jar_file)}")
+                                print(f"   ✓ desktop/{os.path.basename(jar_file)}")
 
                         return True
         except (OSError, PermissionError):
@@ -623,6 +932,119 @@ OUTPUT STRUCTURE:
 
         print(f"   ⚠️  No documentation found")
         return False
+
+    def generate_package_json(self, package_dir: str, project_name: str, version: str, collected_platforms: list):
+        """Generate ccgo-package.json with SDK metadata
+
+        This file contains:
+        - Package name, version, and generation time
+        - List of platforms with their link types
+        - Library files for each platform/link_type/arch
+        - Dependencies (third-party libraries) information
+        """
+        print(f"\n📦 Generating ccgo-package.json...")
+
+        package_metadata = {
+            "name": project_name,
+            "version": version,
+            "generated": datetime.now().isoformat(),
+            "platforms": {}
+        }
+
+        lib_dir = os.path.join(package_dir, "lib")
+        if not os.path.exists(lib_dir):
+            print("   ⚠️  No lib directory found, skipping metadata generation")
+            return
+
+        # Scan each platform directory
+        for platform in collected_platforms:
+            platform_dir = os.path.join(lib_dir, platform)
+            if not os.path.exists(platform_dir):
+                continue
+
+            platform_metadata = {
+                "link_types": {}
+            }
+
+            # Check for static and shared subdirectories
+            for link_type in ["static", "shared"]:
+                link_type_dir = os.path.join(platform_dir, link_type)
+                if os.path.exists(link_type_dir):
+                    link_type_metadata = self._scan_link_type_dir(link_type_dir, platform, link_type, project_name)
+                    if link_type_metadata:
+                        platform_metadata["link_types"][link_type] = link_type_metadata
+
+            if platform_metadata["link_types"]:
+                package_metadata["platforms"][platform] = platform_metadata
+
+        # Write JSON file
+        json_path = os.path.join(package_dir, "ccgo-package.json")
+        with open(json_path, 'w') as f:
+            import json
+            json.dump(package_metadata, f, indent=2)
+
+        print(f"   ✓ Generated ccgo-package.json")
+        return json_path
+
+    def _scan_link_type_dir(self, link_type_dir: str, platform: str, link_type: str, project_name: str):
+        """Scan a link type directory and return metadata about libraries"""
+        metadata = {}
+
+        # For platforms with architectures (Android, OHOS, Windows)
+        if platform.lower() in ["android", "ohos"]:
+            metadata["architectures"] = {}
+            for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
+                arch_dir = os.path.join(link_type_dir, arch)
+                if os.path.exists(arch_dir):
+                    libs = []
+                    for lib_file in Path(arch_dir).iterdir():
+                        if lib_file.is_file():
+                            libs.append({
+                                "name": lib_file.name,
+                                "size": lib_file.stat().st_size,
+                                "path": f"lib/{platform}/{link_type}/{arch}/{lib_file.name}"
+                            })
+                    if libs:
+                        metadata["architectures"][arch] = {"libraries": libs}
+
+        elif platform.lower() == "windows":
+            metadata["architectures"] = {}
+            x64_dir = os.path.join(link_type_dir, "x64")
+            if os.path.exists(x64_dir):
+                libs = []
+                for lib_file in Path(x64_dir).iterdir():
+                    if lib_file.is_file():
+                        libs.append({
+                            "name": lib_file.name,
+                            "size": lib_file.stat().st_size,
+                            "path": f"lib/{platform}/{link_type}/x64/{lib_file.name}"
+                        })
+                if libs:
+                    metadata["architectures"]["x64"] = {"libraries": libs}
+
+        # For Apple platforms (iOS, macOS, tvOS, watchOS) and Linux
+        else:
+            libs = []
+            for item in Path(link_type_dir).iterdir():
+                if item.is_file():
+                    libs.append({
+                        "name": item.name,
+                        "size": item.stat().st_size,
+                        "path": f"lib/{platform}/{link_type}/{item.name}"
+                    })
+                elif item.is_dir() and (item.suffix in [".framework", ".xcframework"]):
+                    # For frameworks, calculate total size
+                    total_size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                    libs.append({
+                        "name": item.name,
+                        "size": total_size,
+                        "path": f"lib/{platform}/{link_type}/{item.name}",
+                        "type": "framework" if item.suffix == ".framework" else "xcframework"
+                    })
+            if libs:
+                metadata["libraries"] = libs
+
+        return metadata if metadata else None
 
     def create_archive(self, source_dir: str, output_path: str, format: str):
         """Create archive from source directory"""
@@ -690,7 +1112,7 @@ OUTPUT STRUCTURE:
         self.collect_include_headers(project_dir, package_dir, project_name)
 
         # Collect platform artifacts
-        platforms = ["android", "ios", "macos", "windows", "linux", "ohos"]
+        platforms = ["android", "ios", "macos", "tvos", "watchos", "windows", "linux", "ohos"]
         if args.platforms:
             platforms = [p.strip() for p in args.platforms.split(",")]
 
@@ -737,12 +1159,21 @@ OUTPUT STRUCTURE:
                 f.write(f"*No platform artifacts found. Build platforms first.*\n")
             f.write(f"\n## Structure\n\n")
             f.write(f"- `include/` - Header files\n")
-            if collected_platforms:
-                f.write(f"- `lib/<platform>/` - Platform-specific libraries\n")
-            if args.include_kmp:
-                f.write(f"- `kmp/` - Kotlin Multiplatform artifacts\n")
+            if collected_platforms or args.include_kmp:
+                f.write(f"- `lib/` - Platform-specific libraries\n")
+                if collected_platforms:
+                    for platform in collected_platforms:
+                        f.write(f"  - `lib/{platform}/` - {platform.capitalize()} libraries\n")
+                if args.include_kmp:
+                    f.write(f"  - `lib/kmp/` - Kotlin Multiplatform artifacts\n")
+                    f.write(f"    - `lib/kmp/android/` - KMP Android libraries (.aar)\n")
+                    f.write(f"    - `lib/kmp/desktop/` - KMP Desktop libraries (.jar)\n")
             if args.include_docs:
                 f.write(f"- `docs/` - Documentation\n")
+
+        # Generate ccgo-package.json with metadata
+        if collected_platforms:
+            self.generate_package_json(package_dir, project_name, version, collected_platforms)
 
         print(f"\n{'='*80}")
         print("Package Summary")

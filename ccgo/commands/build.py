@@ -40,6 +40,8 @@ This command builds native libraries and packages them for the target platform.
 SUPPORTED PLATFORMS:
     android     Build for Android (AAR package with native .so libraries)
     ios         Build for iOS (static libraries and frameworks)
+    watchos     Build for watchOS (static libraries and frameworks)
+    tvos        Build for tvOS (static libraries and frameworks)
     macos       Build for macOS (static libraries and frameworks)
     windows     Build for Windows (.lib and .dll libraries)
     linux       Build for Linux (static and shared libraries)
@@ -60,11 +62,26 @@ EXAMPLES:
     # Build iOS with Xcode project generation
     ccgo build ios --ide-project
 
+    # Build watchOS static library and frameworks
+    ccgo build watchos
+
+    # Build tvOS static library and frameworks
+    ccgo build tvos
+
     # Build KMP library for all platforms
     ccgo build kmp
 
     # Build OHOS with specific architectures
     ccgo build ohos --arch arm64-v8a
+
+    # Cross-platform builds using Docker (build any platform on any OS)
+    ccgo build linux --docker
+    ccgo build windows --docker
+    ccgo build macos --docker
+    ccgo build ios --docker
+    ccgo build watchos --docker
+    ccgo build tvos --docker
+    ccgo build android --docker
 
 PLATFORM-SPECIFIC OPTIONS:
     Android/OHOS:
@@ -72,19 +89,28 @@ PLATFORM-SPECIFIC OPTIONS:
                            (armeabi-v7a, arm64-v8a, x86_64)
         --native-only      Build only .so libraries (skip AAR/HAR packaging)
 
+    All platforms (except OHOS/KMP):
+        --docker           Build using Docker containers (enables cross-platform builds)
+                          Allows building any platform on any OS without local toolchains
+
     All platforms:
         --ide-project      Generate IDE project files for development
 
 REQUIREMENTS:
-    Android:   ANDROID_HOME, ANDROID_NDK_HOME, JAVA_HOME
-    iOS/macOS: Xcode and command-line tools
-    OHOS:      OHOS_SDK_HOME or HOS_SDK_HOME
-    Windows:   Visual Studio or MinGW
-    Linux:     GCC or Clang
+    Native builds (without --docker):
+        Android:            ANDROID_HOME, ANDROID_NDK_HOME, JAVA_HOME
+        iOS/watchOS/tvOS:   Xcode and command-line tools
+        macOS:              Xcode and command-line tools
+        OHOS:               OHOS_SDK_HOME or HOS_SDK_HOME
+        Windows:            Visual Studio or MinGW
+        Linux:              GCC or Clang
+
+    Docker builds (with --docker):
+        All platforms:      Docker Desktop installed and running (~8GB disk space)
         """
 
     def get_target_list(self) -> list:
-        return ["android", "ios", "windows", "linux", "macos", "ohos", "kmp", "include"]
+        return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "include"]
 
     def cli(self) -> CliNameSpace:
         parser = argparse.ArgumentParser(
@@ -113,6 +139,11 @@ REQUIREMENTS:
             "--native-only",
             action="store_true",
             help="only build native libraries (e.g., .so, .framework) without additional packaging",
+        )
+        parser.add_argument(
+            "--docker",
+            action="store_true",
+            help="build using Docker containers (enables cross-platform builds for Linux/Windows)",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
@@ -158,6 +189,33 @@ REQUIREMENTS:
                 print("ERROR: CCGO.toml not found in project directory")
                 print("Please create a CCGO.toml file in your project root directory")
                 sys.exit(1)
+
+        # Handle Docker builds for all supported platforms
+        supported_docker_platforms = ["linux", "windows", "macos", "ios", "watchos", "tvos", "android"]
+        if args.docker:
+            if args.target in supported_docker_platforms:
+                print(f"\n=== Docker Build for {args.target.capitalize()} ===")
+                print("This will build the library using Docker containers")
+                print("No local toolchains required - everything runs in Docker")
+
+                # Get Docker build script path
+                docker_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docker")
+                docker_script = os.path.join(docker_dir, "build_docker.py")
+
+                if not os.path.isfile(docker_script):
+                    print(f"ERROR: Docker build script not found at {docker_script}")
+                    sys.exit(1)
+
+                # Run Docker build
+                cmd = f"python3 '{docker_script}' {args.target} '{project_subdir}'"
+                print(f"Executing: {cmd}")
+
+                err_code = os.system(cmd)
+                sys.exit(err_code)
+            else:
+                print(f"WARNING: --docker option is not supported for {args.target} builds")
+                print(f"Supported Docker platforms: {', '.join(supported_docker_platforms)}")
+                print(f"Continuing with native build...")
 
         # If Android build without --native-only flag, use 3-step build process
         if args.target == "android" and not args.native_only:

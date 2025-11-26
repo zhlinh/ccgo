@@ -81,23 +81,24 @@ WIN_SRC_DIR = "src"  # Source directory name for PDB collection
 THIRD_PARTY_MERGE_LIBS = ["pthread"]  # Third-party libraries to merge into final .lib
 
 
-def build_windows(incremental, tag="", config="Release"):
+def build_windows(incremental, tag="", config="Release", link_type='static', use_mingw=False):
     """
-    Build Windows static library with Visual Studio toolchain.
+    Build Windows static library with Visual Studio or MinGW toolchain.
 
     This function performs the complete Windows build process:
     1. Generates version info header file
     2. Cleans build directory (unless incremental build)
-    3. Configures and builds with Visual Studio 2019 (v142 toolset)
+    3. Configures and builds with Visual Studio 2019 (v142 toolset) OR MinGW-w64
     4. Merges multiple static libraries into single .lib file
     5. Copies header files to include directory
-    6. Collects PDB debug symbol files
+    6. Collects PDB debug symbol files (Visual Studio only)
     7. Packages PDB files into zip archive
 
     Args:
         incremental: If True, skip clean step for faster rebuilds
         tag: Version tag string for metadata (default: '')
         config: Build configuration - 'Release' or 'Debug' (default: 'Release')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -114,6 +115,7 @@ def build_windows(incremental, tag="", config="Release"):
         project sources and third-party dependencies.
     """
     before_time = time.time()
+    print(f"==================build_windows (link_type: {link_type})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
@@ -123,10 +125,42 @@ def build_windows(incremental, tag="", config="Release"):
         incremental=incremental,
         platform="windows",
     )
+
+    # Add link type CMake flags
+    link_type_flags = ""
+    if link_type == 'static':
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=OFF"
+    elif link_type == 'shared':
+        link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
+    else:  # both
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
+
     clean(BUILD_OUT_PATH, incremental)
     os.chdir(BUILD_OUT_PATH)
 
-    cmd = WIN_BUILD_CMD % (CCGO_CMAKE_DIR, config)
+    if use_mingw:
+        # MinGW cross-compilation (for Docker/Linux environments)
+        # Use Unix Makefiles generator with MinGW compilers
+        cmake_config_cmd = (
+            f'cmake ../.. '
+            f'-G "Unix Makefiles" '
+            f'-DCMAKE_SYSTEM_NAME=Windows '
+            f'-DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc '
+            f'-DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ '
+            f'-DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres '
+            f'-DCMAKE_FIND_ROOT_PATH=/usr/x86_64-w64-mingw32 '
+            f'-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER '
+            f'-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY '
+            f'-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY '
+            f'-DCMAKE_BUILD_TYPE={config} '
+            f'-DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags}'
+        )
+        cmake_build_cmd = 'cmake --build . --target install'
+        cmd = f'{cmake_config_cmd} && {cmake_build_cmd}'
+    else:
+        # Visual Studio build (native Windows)
+        cmd = f'cmake ../.. -G "Visual Studio 16 2019" -T v142 -DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags} && cmake --build . --target install --config {config}'
+
     print("build cmd:" + cmd)
     ret = os.system(cmd)
     os.chdir(SCRIPT_PATH)
@@ -154,40 +188,58 @@ def build_windows(incremental, tag="", config="Release"):
     )
 
     print(f"build merge libs: {needed_libs}")
-    if not merge_win_static_libs(
-        needed_libs, win_result_dir + f"/{PROJECT_NAME_LOWER}.lib"
-    ):
-        print("!!!!!!!!!!!!!!!!!!merge libs fail!!!!!!!!!!!!!!!!!!!!")
-        return False
+
+    if use_mingw:
+        # MinGW builds: Copy libraries directly without merging
+        # MinGW produces .a files, not .lib files
+        # Just copy the built library to the output directory
+        mingw_libs = glob.glob(INSTALL_PATH + "*.a")
+        for lib in mingw_libs:
+            shutil.copy(lib, win_result_dir)
+        print(f"Copied MinGW libraries: {mingw_libs}")
+    else:
+        # Visual Studio builds: Merge multiple .lib files into one
+        if not merge_win_static_libs(
+            needed_libs, win_result_dir + f"/{PROJECT_NAME_LOWER}.lib"
+        ):
+            print("!!!!!!!!!!!!!!!!!!merge libs fail!!!!!!!!!!!!!!!!!!!!")
+            return False
 
     headers = dict()
     headers.update(WINDOWS_BUILD_COPY_HEADER_FILES)
     copy_file_mapping(headers, "./", win_result_dir + "/include")
 
-    sub_folders = filtered_lib_names
-    # copy pdb of third_party
-    copy_windows_pdb(BUILD_OUT_PATH, sub_folders, config, INSTALL_PATH)
-    src_dir_folder = PROJECT_NAME_LOWER + "-" + WIN_SRC_DIR
-    # copy pdb of src
-    sub_folders = list(
-        map(lambda x: x.replace(PROJECT_NAME_LOWER, src_dir_folder), sub_folders)
-    )
-    copy_windows_pdb(
-        os.path.join(BUILD_OUT_PATH, src_dir_folder), sub_folders, config, INSTALL_PATH
-    )
+    if use_mingw:
+        # MinGW doesn't generate PDB files (uses DWARF debug info instead)
+        print("MinGW build: Skipping PDB collection (not applicable)")
+    else:
+        # Visual Studio builds: Copy PDB debug symbol files
+        sub_folders = filtered_lib_names
+        # copy pdb of third_party
+        copy_windows_pdb(BUILD_OUT_PATH, sub_folders, config, INSTALL_PATH)
+        src_dir_folder = PROJECT_NAME_LOWER + "-" + WIN_SRC_DIR
+        # copy pdb of src
+        sub_folders = list(
+            map(lambda x: x.replace(PROJECT_NAME_LOWER, src_dir_folder), sub_folders)
+        )
+        copy_windows_pdb(
+            os.path.join(BUILD_OUT_PATH, src_dir_folder), sub_folders, config, INSTALL_PATH
+        )
 
-    # zip pdb files
-    pdf_suffix = ".pdb"
-    zip_files_ends_with(
-        INSTALL_PATH,
-        pdf_suffix,
-        win_result_dir + f"/{PROJECT_NAME_LOWER}{pdf_suffix}.zip",
-    )
+    # zip pdb files (Visual Studio only)
+    if not use_mingw:
+        pdf_suffix = ".pdb"
+        zip_files_ends_with(
+            INSTALL_PATH,
+            pdf_suffix,
+            win_result_dir + f"/{PROJECT_NAME_LOWER}{pdf_suffix}.zip",
+        )
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     print("==================Output========================")
     print(f"libs: {win_result_dir}")
-    print(f"pdb files: {INSTALL_PATH}")
+    if not use_mingw:
+        print(f"pdb files: {INSTALL_PATH}")
 
     after_time = time.time()
     print(f"use time: {int(after_time - before_time)} s")
@@ -265,8 +317,8 @@ def archive_windows_project():
     (ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
 
     Output:
-        - bin/windows/{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.dir/
-        - bin/windows/(ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
+        - target/windows/{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.dir/
+        - target/windows/(ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
     """
     import zipfile
     from pathlib import Path
@@ -297,10 +349,10 @@ def archive_windows_project():
     full_version = f"{version_name}-{suffix}" if suffix else version_name
 
     # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
     windows_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
-    # Create bin directory
+    # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
     # Find and copy library directory
@@ -351,9 +403,9 @@ def archive_windows_project():
 
 def print_build_results():
     """
-    Print Windows build results from bin directory.
+    Print Windows build results from target directory.
 
-    This function displays the build artifacts and moves them to bin/windows/:
+    This function displays the build artifacts and moves them to target/windows/:
     1. Static library directory
     2. ARCHIVE zip
     3. Other build artifacts
@@ -361,11 +413,11 @@ def print_build_results():
     print("==================Windows Build Results========================")
 
     # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
 
-    # Check if bin directory exists
+    # Check if target directory exists
     if not os.path.exists(bin_dir):
-        print(f"ERROR: bin directory not found. Please run build first.")
+        print(f"ERROR: target directory not found. Please run build first.")
         sys.exit(1)
 
     # Check for build artifacts
@@ -379,11 +431,11 @@ def print_build_results():
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create bin/windows directory for platform-specific artifacts
+    # Create target/windows directory for platform-specific artifacts
     bin_windows_dir = os.path.join(bin_dir, "windows")
     os.makedirs(bin_windows_dir, exist_ok=True)
 
-    # Move library directories and archive files to bin/windows/
+    # Move library directories and archive files to target/windows/
     artifacts_moved = []
     for lib_dir in lib_dirs:
         dest = os.path.join(bin_windows_dir, os.path.basename(lib_dir))
@@ -398,15 +450,15 @@ def print_build_results():
         artifacts_moved.append(os.path.basename(archive_zip))
 
     if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to bin/windows/")
+        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/windows/")
 
-    # Copy build_info.json from cmake_build to bin/windows
-    copy_build_info_to_bin("windows", SCRIPT_PATH)
+    # Copy build_info.json from cmake_build to target/windows
+    copy_build_info_to_target("windows", SCRIPT_PATH)
 
-    print(f"\nBuild artifacts in bin/windows/:")
+    print(f"\nBuild artifacts in target/windows/:")
     print("-" * 60)
 
-    # List all files in bin/windows directory with sizes
+    # List all files in target/windows directory with sizes
     for item in sorted(os.listdir(bin_windows_dir)):
         item_path = os.path.join(bin_windows_dir, item)
         if os.path.isfile(item_path):
@@ -444,11 +496,19 @@ def main():
         4 - Exit without action
 
     Note:
-        Requires Visual Studio 2019 or later to be installed.
+        Requires Visual Studio 2019 or later to be installed, OR MinGW-w64
+        for cross-compilation from Linux/macOS (Docker containers).
         The VS environment check ensures required tools are available.
     """
-    if not check_vs_env():
+    # Check if MinGW is available (for Docker/cross-compilation)
+    mingw_available = shutil.which("x86_64-w64-mingw32-gcc") is not None
+
+    if not mingw_available and not check_vs_env():
+        # Neither MinGW nor Visual Studio available
         return
+
+    # Use MinGW if available (takes precedence in Docker/Linux environments)
+    use_mingw = mingw_available
 
     # Command-line interface for Windows builds
     # Supports two invocation modes:
@@ -473,16 +533,23 @@ def main():
             )
         print(f"==================Windows Choose num: {num}==================")
         if num == "1":
-            build_windows(incremental=False, tag=num, config="Release")
+            build_windows(incremental=False, tag=num, config="Release", use_mingw=use_mingw)
             # Archive and organize artifacts
             archive_windows_project()
             print_build_results()
             break
         elif num == "2":
-            gen_win_project(tag=num, config="Release")
+            if use_mingw:
+                print("WARNING: Project generation not supported with MinGW")
+                print("Using MinGW cross-compilation instead")
+                build_windows(incremental=False, tag=num, config="Release", use_mingw=use_mingw)
+                archive_windows_project()
+                print_build_results()
+            else:
+                gen_win_project(tag=num, config="Release")
             break
         elif num == "3":
-            build_windows(incremental=False, tag=num, config="Debug")
+            build_windows(incremental=False, tag=num, config="Debug", use_mingw=use_mingw)
             # Archive and organize artifacts
             archive_windows_project()
             print_build_results()

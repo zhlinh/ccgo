@@ -55,12 +55,19 @@ except ImportError:
 
 # Script configuration
 SCRIPT_PATH = os.getcwd()
-# Directory name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
 
-# Ensure cmake directory exists in project
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# Load project configuration from CCGO.toml
+# If CCGO.toml doesn't exist or returns default "SDK", fallback to directory name
+config = load_ccgo_config()
+if config["PROJECT_NAME"] == "SDK" and not os.path.exists(os.path.join(SCRIPT_PATH, "CCGO.toml")):
+    # Fallback to directory name if CCGO.toml doesn't exist
+    PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
+    PROJECT_NAME_LOWER = PROJECT_NAME.lower()
+else:
+    # Use project name from CCGO.toml
+    PROJECT_NAME = config["PROJECT_NAME"]
+    PROJECT_NAME_LOWER = config["PROJECT_NAME_LOWER"]
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
 # Build output paths
 BUILD_OUT_PATH = "cmake_build/Linux"
@@ -75,7 +82,7 @@ BUILD_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCCGO_CMAKE_DIR="%s" && mak
 GEN_PROJECT_CMD = 'cmake ../.. -G "CodeLite - Unix Makefiles" -DCCGO_CMAKE_DIR="%s"'
 
 
-def build_linux(target_option="", tag=""):
+def build_linux(target_option="", tag="", link_type='static'):
     """
     Build Linux static library with GCC/Clang toolchain.
 
@@ -89,6 +96,7 @@ def build_linux(target_option="", tag=""):
     Args:
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -103,7 +111,7 @@ def build_linux(target_option="", tag=""):
         The resulting library can be linked into applications using -l flag.
     """
     before_time = time.time()
-    print("==================build_linux========================")
+    print(f"==================build_linux (link_type: {link_type})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
@@ -112,23 +120,50 @@ def build_linux(target_option="", tag=""):
         tag,
         platform="linux",
     )
+
+    # Add link type CMake flags
+    link_type_flags = ""
+    if link_type == 'static':
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=OFF"
+    elif link_type == 'shared':
+        link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
+    else:  # both
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
+
+    # Update BUILD_CMD to include link_type_flags
+    build_cmd = f'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags} && make -j8 && make install'
+
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    ret = os.system(BUILD_CMD % CCGO_CMAKE_DIR)
+    ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build fail!!!!!!!!!!!!!!!")
         return False
 
-    # add static libs
-    libtool_src_libs = glob.glob(INSTALL_PATH + "/*.a")
+    # Dynamically find the actual install directory (could be Darwin.out, Linux.out, etc.)
+    # This is needed because CMAKE_SYSTEM_NAME varies by host OS
+    actual_install_path = None
+    for out_dir in glob.glob(BUILD_OUT_PATH + "/*.out"):
+        if glob.glob(out_dir + "/*.a"):
+            actual_install_path = out_dir
+            print(f"Found install directory: {actual_install_path}")
+            break
 
-    libtool_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}.a"
+    if not actual_install_path:
+        # Fallback to default INSTALL_PATH
+        actual_install_path = INSTALL_PATH
+        print(f"Warning: No .a files found, using default: {actual_install_path}")
+
+    # add static libs
+    libtool_src_libs = glob.glob(actual_install_path + "/*.a")
+
+    libtool_dst_lib = actual_install_path + f"/{PROJECT_NAME_LOWER}.a"
     if not libtool_libs(libtool_src_libs, libtool_dst_lib):
         return False
 
-    dst_framework_path = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}.dir"
+    dst_framework_path = actual_install_path + f"/{PROJECT_NAME_LOWER}.dir"
     make_static_framework(
         libtool_dst_lib, dst_framework_path, LINUX_BUILD_COPY_HEADER_FILES, "./"
     )
@@ -197,16 +232,15 @@ def archive_linux_project():
     """
     Archive Linux static library and related build artifacts.
 
-    This function creates an archive package containing:
-    1. Static library (.a file) and headers
-    2. Build artifacts
-
-    The archive is packaged into a ZIP file named:
-    (ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
+    This function creates two archive packages:
+    1. Main package: {PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
+       - Contains stripped library with simplified structure: {project}.lib/{project}.a
+    2. Archive package: (ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
+       - Contains unstripped library for debugging (includes version info)
 
     Output:
-        - bin/linux/{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.dir/
-        - bin/linux/(ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
+        - target/{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
+        - target/(ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
     """
     import zipfile
     from pathlib import Path
@@ -237,13 +271,32 @@ def archive_linux_project():
     full_version = f"{version_name}-{suffix}" if suffix else version_name
 
     # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
-    linux_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
 
-    # Create bin directory
+    # Dynamically find the actual install directory (could be Darwin.out, Linux.out, etc.)
+    # Look for the directory containing the actual .a file in the .dir subdirectory
+    actual_install_path = None
+    build_out_full_path = os.path.join(SCRIPT_PATH, BUILD_OUT_PATH)
+    for out_dir in glob.glob(build_out_full_path + "/*.out"):
+        lib_dir_name = f"{PROJECT_NAME_LOWER}.dir"
+        test_lib_dir = os.path.join(out_dir, lib_dir_name)
+        test_lib_file = os.path.join(test_lib_dir, f"{PROJECT_NAME_LOWER}.a")
+        if os.path.exists(test_lib_file):
+            actual_install_path = out_dir
+            print(f"Found install directory for archive: {actual_install_path}")
+            break
+
+    if not actual_install_path:
+        # Fallback to default INSTALL_PATH
+        actual_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
+        print(f"Warning: Using default install path: {actual_install_path}")
+
+    linux_install_path = actual_install_path
+
+    # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Find and copy library directory
+    # Find source library directory
     lib_dir_name = f"{PROJECT_NAME_LOWER}.dir"
     lib_dir_src = os.path.join(linux_install_path, lib_dir_name)
 
@@ -251,102 +304,133 @@ def archive_linux_project():
         print(f"WARNING: Library directory not found at {lib_dir_src}")
         return
 
-    lib_dir_dest = os.path.join(
-        bin_dir, f"{project_name_upper}_LINUX_SDK-{full_version}.dir"
-    )
-    if os.path.exists(lib_dir_dest):
-        shutil.rmtree(lib_dir_dest)
-    shutil.copytree(lib_dir_src, lib_dir_dest)
-    print(f"Copied library directory: {lib_dir_dest}")
+    # Create temporary .lib directory for packaging
+    temp_lib_dir = os.path.join(bin_dir, f"{PROJECT_NAME_LOWER}.lib")
+    if os.path.exists(temp_lib_dir):
+        shutil.rmtree(temp_lib_dir)
+    shutil.copytree(lib_dir_src, temp_lib_dir)
+    print(f"Prepared library directory: {temp_lib_dir}")
 
-    # Create archive directory structure
-    archive_name = f"(ARCHIVE)_{project_name_upper}_LINUX_SDK-{full_version}"
-    archive_dir = os.path.join(bin_dir, archive_name)
+    # Create main ZIP archive with simplified structure
+    main_zip_name = f"{project_name_upper}_LINUX_SDK-{full_version}.zip"
+    main_zip_path = os.path.join(bin_dir, main_zip_name)
 
-    if os.path.exists(archive_dir):
-        shutil.rmtree(archive_dir)
-    os.makedirs(archive_dir, exist_ok=True)
-
-    # Copy library directory to archive
-    archive_lib_dir = os.path.join(archive_dir, lib_dir_name)
-    shutil.copytree(lib_dir_src, archive_lib_dir)
-    print(f"Copied library directory to archive: {lib_dir_name}")
-
-    # Create ZIP archive
-    zip_file_path = os.path.join(bin_dir, f"{archive_name}.zip")
-    with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(archive_dir):
+    print(f"Creating main ZIP archive: {main_zip_name}")
+    with zipfile.ZipFile(main_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(temp_lib_dir):
             for file in files:
                 file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, bin_dir)
+                # Use simplified structure: {project}.lib/* instead of long version name
+                arcname = os.path.join(
+                    f"{PROJECT_NAME_LOWER}.lib",
+                    os.path.relpath(file_path, temp_lib_dir)
+                )
                 zipf.write(file_path, arcname)
 
-    # Remove temporary archive directory
-    shutil.rmtree(archive_dir)
+    print(f"Created main archive: {main_zip_path}")
+
+    # Create archive package with unstripped library (includes version info)
+    archive_zip_name = f"(ARCHIVE)_{project_name_upper}_LINUX_SDK-{full_version}.zip"
+    archive_zip_path = os.path.join(bin_dir, archive_zip_name)
+
+    print(f"Creating archive package: {archive_zip_name}")
+    with zipfile.ZipFile(archive_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        # Find the .a file (unstripped)
+        static_lib = os.path.join(temp_lib_dir, f"{PROJECT_NAME_LOWER}.a")
+        if os.path.exists(static_lib):
+            arcname = f"{PROJECT_NAME_LOWER}.lib/{PROJECT_NAME_LOWER}.a"
+            zipf.write(static_lib, arcname)
+            print(f"Added unstripped library: {arcname}")
+
+        # Also include headers
+        headers_dir = os.path.join(temp_lib_dir, "Headers")
+        if os.path.exists(headers_dir):
+            for root, dirs, files in os.walk(headers_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.join(
+                        f"{PROJECT_NAME_LOWER}.lib",
+                        os.path.relpath(file_path, temp_lib_dir)
+                    )
+                    zipf.write(file_path, arcname)
+
+    print(f"Created archive package: {archive_zip_path}")
+
+    # Remove temporary .lib directory after zipping
+    shutil.rmtree(temp_lib_dir)
+    print(f"Removed temporary directory: {temp_lib_dir}")
 
     print("==================Archive Complete========================")
-    print(f"Library directory: {lib_dir_dest}")
-    print(f"Archive ZIP: {zip_file_path}")
+    print(f"Main package: {main_zip_path}")
+    print(f"Archive package: {archive_zip_path}")
 
 
 def print_build_results():
     """
-    Print Linux build results from bin directory.
+    Print Linux build results from target directory.
 
-    This function displays the build artifacts and moves them to bin/linux/:
-    1. Static library directory
-    2. ARCHIVE zip
-    3. Other build artifacts
+    This function displays the build artifacts and moves them to target/linux/:
+    1. Main ZIP archive ({PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip)
+    2. Archive package ((ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip)
+    3. build_info.json
     """
     print("==================Linux Build Results========================")
 
     # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "bin")
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
 
-    # Check if bin directory exists
+    # Check if target directory exists
     if not os.path.exists(bin_dir):
-        print(f"ERROR: bin directory not found. Please run build first.")
+        print(f"ERROR: target directory not found. Please run build first.")
         sys.exit(1)
 
-    # Check for build artifacts
-    lib_dirs = [
-        f for f in glob.glob(f"{bin_dir}/*.dir") if "LINUX_SDK" in os.path.basename(f)
+    # Check for build artifacts (main ZIP and archive ZIP)
+    # Main package: {PROJECT_NAME}_LINUX_SDK-*.zip (not starting with (ARCHIVE)_)
+    main_zips = [
+        f for f in glob.glob(f"{bin_dir}/*_LINUX_SDK-*.zip")
+        if not os.path.basename(f).startswith("(ARCHIVE)_")
     ]
-    archive_zips = glob.glob(f"{bin_dir}/(ARCHIVE)*.zip")
 
-    if not lib_dirs and not archive_zips:
+    # Archive package: (ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-*.zip
+    archive_zips = [
+        f for f in glob.glob(f"{bin_dir}/(ARCHIVE)_*_LINUX_SDK-*.zip")
+    ]
+
+    if not main_zips and not archive_zips:
         print(f"ERROR: No build artifacts found in {bin_dir}")
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create bin/linux directory for platform-specific artifacts
+    # Create target/linux directory for platform-specific artifacts
     bin_linux_dir = os.path.join(bin_dir, "linux")
     os.makedirs(bin_linux_dir, exist_ok=True)
 
-    # Move library directories and archive files to bin/linux/
+    # Move archive files to target/linux/
     artifacts_moved = []
-    for lib_dir in lib_dirs:
-        dest = os.path.join(bin_linux_dir, os.path.basename(lib_dir))
+    for main_zip in main_zips:
+        dest = os.path.join(bin_linux_dir, os.path.basename(main_zip))
         if os.path.exists(dest):
-            shutil.rmtree(dest)
-        shutil.move(lib_dir, dest)
-        artifacts_moved.append(os.path.basename(lib_dir))
+            os.remove(dest)
+        shutil.move(main_zip, dest)
+        artifacts_moved.append(os.path.basename(main_zip))
 
     for archive_zip in archive_zips:
         dest = os.path.join(bin_linux_dir, os.path.basename(archive_zip))
+        if os.path.exists(dest):
+            os.remove(dest)
         shutil.move(archive_zip, dest)
         artifacts_moved.append(os.path.basename(archive_zip))
 
     if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to bin/linux/")
+        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/linux/")
 
-    # Copy build_info.json from cmake_build to bin/linux
-    copy_build_info_to_bin("linux", SCRIPT_PATH)
+    # Copy build_info.json from cmake_build to target/linux
+    copy_build_info_to_target("linux", SCRIPT_PATH)
 
-    print(f"\nBuild artifacts in bin/linux/:")
+    print(f"\nBuild artifacts in target/linux/:")
     print("-" * 60)
 
-    # List all files in bin/linux directory with sizes
+    # List all files in target/linux directory with sizes
     for item in sorted(os.listdir(bin_linux_dir)):
         item_path = os.path.join(bin_linux_dir, item)
         if os.path.isfile(item_path):
@@ -366,7 +450,7 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def main(target_option="", tag=""):
+def main(target_option="", tag="", link_type='static'):
     """
     Main entry point for Linux static library build.
 
@@ -379,9 +463,16 @@ def main(target_option="", tag=""):
 
     Note:
         This function calls build_linux() to create the static library,
-        then archives it and moves artifacts to bin/linux/ directory.
+        then archives it and moves artifacts to target/linux/ directory.
         For CodeLite project generation, use gen_linux_project() instead.
     """
+    # Clean target/linux directory at the start of build
+    # Note: build_info.json will be regenerated at the end of the build process
+    target_linux_dir = os.path.join(SCRIPT_PATH, "target/linux")
+    if os.path.exists(target_linux_dir):
+        shutil.rmtree(target_linux_dir)
+        print(f"[CLEAN] Removed target/linux directory")
+
     # Build static library
     build_linux(target_option=target_option, tag=tag)
 

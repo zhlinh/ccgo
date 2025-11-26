@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -- coding: utf-8 --
 #
-# build_macos.py
+# build_watchos.py
 # ccgo
 #
 # Copyright 2024 zhlinh and ccgo Project Authors. All rights reserved.
@@ -15,14 +15,15 @@
 # substantial portions of the Software.
 
 """
-macOS native library build script.
+watchOS native library build script.
 
-This script builds universal static libraries and frameworks for macOS platform
-using CMake. It handles:
-- Building for Apple Silicon (arm64, arm64e)
-- Building for Intel processors (x86_64)
-- Merging architectures into universal binaries with libtool
-- Creating .framework bundles for distribution
+This script builds universal static libraries and XCFrameworks for watchOS platform
+using CMake and watchOS toolchain. It handles:
+- Building for physical devices (Apple Watch: armv7k for Series 3 and earlier, arm64_32 for Series 4+)
+- Building for simulators (x86_64 for Intel Macs, arm64 for M1+ Macs)
+- Merging static libraries with libtool
+- Creating .framework bundles for device and simulator
+- Generating XCFramework for unified distribution
 - Xcode project generation for development
 
 Requirements:
@@ -32,13 +33,13 @@ Requirements:
 - macOS development environment
 
 Usage:
-    python3 build_macos.py [mode]
+    python3 build_watchos.py [mode]
 
-    mode: 1 (build framework), 2 (generate Xcode project), 3 (exit)
+    mode: 1 (build XCFramework), 2 (generate Xcode project), 3 (exit)
 
 Output:
-    - Universal framework: cmake_build/macOS/Darwin.out/{project}.framework
-    - Framework supports both Intel and Apple Silicon Macs
+    - XCFramework: cmake_build/watchOS/Darwin.out/{project}.xcframework
+    - Frameworks: cmake_build/watchOS/Darwin.out/os|simulator/{project}.framework
 """
 
 import glob
@@ -57,44 +58,45 @@ except ImportError:
 SCRIPT_PATH = os.getcwd()
 # Directory name as project name
 PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-
-# Ensure cmake directory exists in project
 PROJECT_NAME_LOWER = PROJECT_NAME.lower()
 PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
 
 # Build output paths
-BUILD_OUT_PATH = "cmake_build/macOS"
+BUILD_OUT_PATH = "cmake_build/watchOS"
+# Darwin(Linux,Windows).out = ${CMAKE_SYSTEM_NAME}.out
 INSTALL_PATH = BUILD_OUT_PATH + "/Darwin.out"
 
-# CMake build command for macOS (defaults to x86_64 if no arch specified)
-# Disables ARC and Bitcode for C/C++ native libraries
-MACOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s && make -j8 && make install'
+# CMake build command for watchOS Simulator (x86_64 for Intel Macs, arm64 for M1+ simulators)
+# Targets watchOS 3.0+, disables ARC and Bitcode, enables symbol visibility
+# Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
+WATCHOS_BUILD_SIMULATOR_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_WATCHOS -DIOS_ARCH="x86_64;arm64" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
 
-# CMake build command for Apple Silicon Macs (M1, M2, M3, etc.)
-# Builds for arm64 and arm64e architectures
-MACOS_BUILD_ARM_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCCGO_CMAKE_DIR="%s" %s && make -j8 && make install'
+# CMake build command for watchOS physical devices (armv7k for Series 3 and earlier, arm64_32 for Series 4+)
+# arm64_32 is a special 32-bit ABI running on 64-bit ARM processors for better memory efficiency
+# Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
+WATCHOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
 
-# CMake build command for Intel Macs
-# Builds for x86_64 architecture only
-MACOS_BUILD_X86_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="x86_64" -DCCGO_CMAKE_DIR="%s" %s && make -j8 && make install'
+# Xcode project generation command (for development/debugging)
+# Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
+GEN_WATCHOS_OS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s'
 
-# Xcode project generation command
-# Targets macOS 10.9+ for broad compatibility, disables Bitcode
-GEN_MACOS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.9 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s'
+# All supported watchOS architectures for third-party library integration
+THIRD_PARTY_ARCHS = ["x86_64", "arm64", "armv7k", "arm64_32"]
 
 
-def build_macos(target_option="", tag="", link_type='static'):
+def build_watchos(target_option="", tag="", link_type='static'):
     """
-    Build universal macOS framework supporting both Intel and Apple Silicon.
+    Build watchOS XCFramework containing both device and simulator frameworks.
 
-    This function performs the complete macOS build process:
+    This function performs the complete watchOS build process:
     1. Generates version info header file
-    2. Builds static libraries for Apple Silicon (arm64, arm64e)
-    3. Merges ARM static libraries using libtool
-    4. Builds static libraries for Intel (x86_64)
-    5. Merges Intel static libraries using libtool
-    6. Combines ARM and Intel libraries into universal binary with libtool
-    7. Creates .framework bundle with universal binary
+    2. Builds static libraries for physical devices (armv7k, arm64_32)
+    3. Merges device static libraries using libtool
+    4. Builds static libraries for simulators (x86_64, arm64)
+    5. Merges simulator static libraries using libtool
+    6. Creates .framework bundle for device libraries
+    7. Creates .framework bundle for simulator libraries
+    8. Generates XCFramework combining both device and simulator frameworks
 
     Args:
         target_option: Additional CMake target options (default: '')
@@ -105,22 +107,26 @@ def build_macos(target_option="", tag="", link_type='static'):
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Universal framework: cmake_build/macOS/Darwin.out/{project}.framework
+        - Device framework: cmake_build/watchOS/Darwin.out/os/{project}.framework
+        - Simulator framework: cmake_build/watchOS/Darwin.out/simulator/{project}.framework
+        - XCFramework: cmake_build/watchOS/Darwin.out/{project}.xcframework
 
     Note:
-        The resulting framework is a universal binary that runs natively on both
-        Intel and Apple Silicon Macs. This provides optimal performance on all
-        Mac architectures without requiring Rosetta 2 translation.
+        The XCFramework is the recommended distribution format for watchOS libraries
+        as it contains binaries for both devices and simulators in a single bundle.
+        This allows Xcode to automatically select the correct binary during builds.
+        arm64_32 is a special 32-bit ABI that runs on 64-bit ARM processors for
+        better memory efficiency on Apple Watch Series 4 and later.
     """
     before_time = time.time()
-    print(f"==================build_macos (link_type: {link_type})========================")
+    print(f"==================build_watchos (link_type: {link_type})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
         tag,
-        platform="macos",
+        platform="watchos",
     )
 
     # Add link type CMake flags
@@ -138,18 +144,19 @@ def build_macos(target_option="", tag="", link_type='static'):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    build_cmd = MACOS_BUILD_ARM_CMD % (CCGO_CMAKE_DIR, full_target_option)
+    build_cmd = WATCHOS_BUILD_OS_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option)
     ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build os fail!!!!!!!!!!!!!!!")
         return False
 
+    # target_option is set, then build project
     lipo_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}"
     libtool_os_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}_os"
     libtool_simulator_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}_simulator"
     dst_framework_path = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}.framework"
-    dst_framework_headers = MACOS_BUILD_COPY_HEADER_FILES
+    dst_framework_headers = WATCHOS_BUILD_COPY_HEADER_FILES
     # add static libs
     total_src_lib = glob.glob(INSTALL_PATH + "/*.a")
     rm_src_lib = []
@@ -162,30 +169,56 @@ def build_macos(target_option="", tag="", link_type='static'):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    build_cmd = MACOS_BUILD_X86_CMD % (CCGO_CMAKE_DIR, full_target_option)
+    build_cmd = WATCHOS_BUILD_SIMULATOR_CMD % (
+        CCGO_CMAKE_DIR,
+        CCGO_CMAKE_DIR,
+        full_target_option,
+    )
     ret = os.system(build_cmd)
+
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build simulator fail!!!!!!!!!!!!!!!")
         return False
+
     if not libtool_libs(glob.glob(INSTALL_PATH + "/*.a"), libtool_simulator_dst_lib):
         return False
 
-    # src libs to be libtool
+    # os
     lipo_src_libs = []
     lipo_src_libs.append(libtool_os_dst_lib)
-    lipo_src_libs.append(libtool_simulator_dst_lib)
-    # if len(target_option) <= 0:
-    #    lipo_src_libs.append(libtool_xlog_dst_lib)
-
-    if not libtool_libs(lipo_src_libs, lipo_dst_lib):
+    os_lipo_dst_lib = INSTALL_PATH + f"/os/{PROJECT_NAME_LOWER}"
+    if not libtool_libs(lipo_src_libs, os_lipo_dst_lib):
         return False
-
-    make_static_framework(lipo_dst_lib, dst_framework_path, dst_framework_headers, "./")
+    os_dst_framework_path = INSTALL_PATH + f"/os/{PROJECT_NAME_LOWER}.framework"
+    make_static_framework(
+        os_lipo_dst_lib, os_dst_framework_path, dst_framework_headers, "./"
+    )
+    # simulator
+    lipo_src_libs = []
+    lipo_src_libs.append(libtool_simulator_dst_lib)
+    simulator_lipo_dst_lib = INSTALL_PATH + f"/simulator/{PROJECT_NAME_LOWER}"
+    if not libtool_libs(lipo_src_libs, simulator_lipo_dst_lib):
+        return False
+    simulator_dst_framework_path = (
+        INSTALL_PATH + f"/simulator/{PROJECT_NAME_LOWER}.framework"
+    )
+    make_static_framework(
+        simulator_lipo_dst_lib,
+        simulator_dst_framework_path,
+        dst_framework_headers,
+        "./",
+    )
+    # xcframework
+    dst_xcframework_path = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}.xcframework"
+    if not make_xcframework(
+        os_dst_framework_path, simulator_dst_framework_path, dst_xcframework_path
+    ):
+        return False
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     print("==================Output========================")
-    print(dst_framework_path)
+    print(dst_xcframework_path)
 
     after_time = time.time()
 
@@ -193,24 +226,24 @@ def build_macos(target_option="", tag="", link_type='static'):
     return True
 
 
-def archive_macos_project():
+def archive_watchos_project():
     """
-    Archive macOS framework into ZIP packages.
+    Archive watchOS XCFramework into ZIP packages.
 
     This function creates two ZIP packages:
-    1. Release ZIP (framework only): {PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
-    2. Archive ZIP (with symbols, headers, etc.): (ARCHIVE)_{PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
+    1. Release ZIP (xcframework only): {PROJECT_NAME}_WATCHOS_SDK-{version}-{suffix}.zip
+    2. Archive ZIP (with symbols, headers, etc.): (ARCHIVE)_{PROJECT_NAME}_WATCHOS_SDK-{version}-{suffix}.zip
 
     Output:
-        - target/macos/{PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
-          (contains {project_name}.framework)
-        - target/macos/(ARCHIVE)_{PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
-          (contains framework, headers, symbols, etc.)
+        - target/watchos/{PROJECT_NAME}_WATCHOS_SDK-{version}-{suffix}.zip
+          (contains {project_name}.xcframework)
+        - target/watchos/(ARCHIVE)_{PROJECT_NAME}_WATCHOS_SDK-{version}-{suffix}.zip
+          (contains xcframework, headers, symbols, etc.)
     """
     import zipfile
     from pathlib import Path
 
-    print("==================Archive macOS Project========================")
+    print("==================Archive watchOS Project========================")
 
     # Get project version info
     version_name = get_version_name(SCRIPT_PATH)
@@ -237,33 +270,33 @@ def archive_macos_project():
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
-    macos_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
+    watchos_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Find framework
-    framework_name = f"{PROJECT_NAME_LOWER}.framework"
-    framework_src = os.path.join(macos_install_path, framework_name)
+    # Find xcframework
+    xcframework_name = f"{PROJECT_NAME_LOWER}.xcframework"
+    xcframework_src = os.path.join(watchos_install_path, xcframework_name)
 
-    if not os.path.exists(framework_src):
-        print(f"WARNING: Framework not found at {framework_src}")
+    if not os.path.exists(xcframework_src):
+        print(f"WARNING: XCFramework not found at {xcframework_src}")
         return
 
-    # ========== 1. Create Release ZIP (framework only) ==========
-    print("\n--- Creating Release ZIP (framework only) ---")
+    # ========== 1. Create Release ZIP (xcframework only) ==========
+    print("\n--- Creating Release ZIP (xcframework only) ---")
     temp_release_dir = os.path.join(bin_dir, f"_temp_release_{project_name_upper}")
     if os.path.exists(temp_release_dir):
         shutil.rmtree(temp_release_dir)
     os.makedirs(temp_release_dir, exist_ok=True)
 
-    # Copy Framework to temporary directory
-    temp_framework = os.path.join(temp_release_dir, framework_name)
-    shutil.copytree(framework_src, temp_framework)
-    print(f"Copied Framework: {framework_name}")
+    # Copy XCFramework to temporary directory
+    temp_xcframework = os.path.join(temp_release_dir, xcframework_name)
+    shutil.copytree(xcframework_src, temp_xcframework)
+    print(f"Copied XCFramework: {xcframework_name}")
 
     # Create Release ZIP
-    release_zip_name = f"{project_name_upper}_MACOS_SDK-{full_version}.zip"
+    release_zip_name = f"{project_name_upper}_WATCHOS_SDK-{full_version}.zip"
     release_zip_path = os.path.join(bin_dir, release_zip_name)
 
     if os.path.exists(release_zip_path):
@@ -281,17 +314,17 @@ def archive_macos_project():
 
     # ========== 2. Create Archive ZIP (with additional files) ==========
     print("\n--- Creating Archive ZIP (with symbols and headers) ---")
-    archive_name = f"(ARCHIVE)_{project_name_upper}_MACOS_SDK-{full_version}"
+    archive_name = f"(ARCHIVE)_{project_name_upper}_WATCHOS_SDK-{full_version}"
     archive_dir = os.path.join(bin_dir, archive_name)
 
     if os.path.exists(archive_dir):
         shutil.rmtree(archive_dir)
     os.makedirs(archive_dir, exist_ok=True)
 
-    # Copy Framework to archive
-    archive_framework = os.path.join(archive_dir, framework_name)
-    shutil.copytree(framework_src, archive_framework)
-    print(f"Copied Framework to archive: {framework_name}")
+    # Copy XCFramework to archive
+    archive_xcframework = os.path.join(archive_dir, xcframework_name)
+    shutil.copytree(xcframework_src, archive_xcframework)
+    print(f"Copied XCFramework to archive: {xcframework_name}")
 
     # Copy header files if they exist
     headers_src = os.path.join(SCRIPT_PATH, "include")
@@ -300,8 +333,8 @@ def archive_macos_project():
         shutil.copytree(headers_src, headers_dest)
         print(f"Copied headers: include/")
 
-    # Copy symbol files if they exist (dSYM for macOS)
-    dsym_pattern = f"{macos_install_path}/*.dSYM"
+    # Copy symbol files if they exist (dSYM for watchOS)
+    dsym_pattern = f"{watchos_install_path}/*.dSYM"
     dsym_files = glob.glob(dsym_pattern)
     if dsym_files:
         for dsym_file in dsym_files:
@@ -332,13 +365,13 @@ def archive_macos_project():
 
 def print_build_results():
     """
-    Print macOS build results from target directory.
+    Print watchOS build results from target directory.
 
-    This function displays the build artifacts and moves them to target/macos/:
-    - Release SDK ZIP packages (framework only)
+    This function displays the build artifacts and moves them to target/watchos/:
+    - Release SDK ZIP packages (xcframework only)
     - Archive SDK ZIP packages (with symbols, headers, etc.)
     """
-    print("==================macOS Build Results========================")
+    print("==================watchOS Build Results========================")
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
@@ -352,7 +385,7 @@ def print_build_results():
     all_zips = glob.glob(f"{bin_dir}/*.zip")
     sdk_zips = [
         f for f in all_zips
-        if "MACOS_SDK" in os.path.basename(f) and not os.path.basename(f).startswith("_temp_")
+        if "WATCHOS_SDK" in os.path.basename(f) and not os.path.basename(f).startswith("_temp_")
     ]
 
     if not sdk_zips:
@@ -360,38 +393,38 @@ def print_build_results():
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create target/macos directory for platform-specific artifacts
-    bin_macos_dir = os.path.join(bin_dir, "macos")
-    os.makedirs(bin_macos_dir, exist_ok=True)
+    # Create target/watchos directory for platform-specific artifacts
+    bin_watchos_dir = os.path.join(bin_dir, "watchos")
+    os.makedirs(bin_watchos_dir, exist_ok=True)
 
-    # Clean up old framework directories in target/macos/
-    for item in os.listdir(bin_macos_dir):
-        item_path = os.path.join(bin_macos_dir, item)
-        if os.path.isdir(item_path) and item.endswith('.framework'):
+    # Clean up old xcframework directories in target/watchos/
+    for item in os.listdir(bin_watchos_dir):
+        item_path = os.path.join(bin_watchos_dir, item)
+        if os.path.isdir(item_path) and item.endswith('.xcframework'):
             shutil.rmtree(item_path)
-            print(f"Cleaned up old framework: {item}")
+            print(f"Cleaned up old xcframework: {item}")
 
-    # Move SDK ZIP files to target/macos/
+    # Move SDK ZIP files to target/watchos/
     artifacts_moved = []
     for sdk_zip in sdk_zips:
-        dest = os.path.join(bin_macos_dir, os.path.basename(sdk_zip))
+        dest = os.path.join(bin_watchos_dir, os.path.basename(sdk_zip))
         if os.path.exists(dest):
             os.remove(dest)
         shutil.move(sdk_zip, dest)
         artifacts_moved.append(os.path.basename(sdk_zip))
 
     if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/macos/")
+        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/watchos/")
 
-    # Copy build_info.json from cmake_build to target/macos
-    copy_build_info_to_target("macos", SCRIPT_PATH)
+    # Copy build_info.json from cmake_build to target/watchos
+    copy_build_info_to_target("watchos", SCRIPT_PATH)
 
-    print(f"\nBuild artifacts in target/macos/:")
+    print(f"\nBuild artifacts in target/watchos/:")
     print("-" * 60)
 
-    # List all files in target/macos directory with sizes
-    for item in sorted(os.listdir(bin_macos_dir)):
-        item_path = os.path.join(bin_macos_dir, item)
+    # List all files in target/watchos directory with sizes
+    for item in sorted(os.listdir(bin_watchos_dir)):
+        item_path = os.path.join(bin_watchos_dir, item)
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
@@ -409,13 +442,13 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def gen_macos_project(target_option="", tag=""):
+def gen_watchos_project(target_option="", tag=""):
     """
-    Generate Xcode project for macOS development and debugging.
+    Generate Xcode project for watchOS development and debugging.
 
     This function creates an Xcode project (.xcodeproj) that can be opened in Xcode
-    for interactive development, debugging, and testing. The project is automatically
-    opened in Xcode after generation.
+    for interactive development, debugging, and testing. Unlike build_watchos() which
+    creates distributable frameworks, this generates IDE project files.
 
     Args:
         target_option: Additional CMake target options (default: '')
@@ -425,83 +458,81 @@ def gen_macos_project(target_option="", tag=""):
         bool: True if project generation succeeded, False otherwise
 
     Output:
-        - Xcode project: cmake_build/macOS/{project}.xcodeproj (auto-opened)
+        - Xcode project: cmake_build/watchOS/{project}.xcodeproj
 
     Note:
-        The project targets macOS 10.9+ for broad compatibility.
+        The generated Xcode project is configured for watchOS device builds.
+        To build for simulator, you can switch the scheme in Xcode.
         This is useful for development workflows where you need Xcode's
         debugging tools, code completion, and build system integration.
-        The project file is automatically opened in Xcode after generation.
     """
-    print("==================gen_macos_project========================")
+    print("==================gen_watchos_project========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
         tag,
-        platform="macos",
+        platform="watchos",
     )
+
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    cmd = GEN_MACOS_PROJ % (CCGO_CMAKE_DIR, target_option)
+    cmd = GEN_WATCHOS_OS_PROJ % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option)
     ret = os.system(cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!gen fail!!!!!!!!!!!!!!!")
         return False
 
-    project_file_prefix = os.path.join(SCRIPT_PATH, BUILD_OUT_PATH, PROJECT_NAME_LOWER)
-    project_file = get_project_file_name(project_file_prefix)
-
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     print("==================Output========================")
-    print(f"project file: {project_file}")
-
-    os.system(get_open_project_file_cmd(project_file))
+    print(f"project file: {SCRIPT_PATH}/{BUILD_OUT_PATH}")
 
     return True
 
 
 def main(target_option="", tag="", link_type='static'):
     """
-    Main entry point for macOS universal framework build.
+    Main entry point for watchOS XCFramework build.
 
     This function serves as the primary entry point when building
-    distributable macOS frameworks with universal binary support.
+    distributable watchOS frameworks and XCFrameworks.
 
     Args:
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
 
     Note:
-        This function calls build_macos() to create the universal framework,
-        then archives it and moves artifacts to target/macos/ directory.
-        For Xcode project generation, use gen_macos_project() instead.
+        This function calls build_watchos() to create the XCFramework,
+        then archives it and moves artifacts to target/watchos/ directory.
+        For Xcode project generation, use gen_watchos_project() instead.
     """
-    print("main tag %s" % tag)
+    print(f"main tag {tag}, link_type: {link_type}")
 
-    # Build universal framework
-    if not build_macos(target_option, tag, link_type):
-        print("ERROR: macOS build failed")
+    # Build XCFramework
+    if not build_watchos(target_option, tag, link_type):
+        print("ERROR: watchOS build failed")
         sys.exit(1)
 
     # Archive and organize artifacts
-    archive_macos_project()
+    archive_watchos_project()
     print_build_results()
 
 
-# Command-line interface for macOS builds
+# Command-line interface for watchOS builds
 # Supports two invocation modes:
 # 1. Interactive mode (no args): Prompts user for build mode
 # 2. Mode only (1 arg): Uses specified mode directly
 #
 # Build modes:
-# 1 - Build universal framework: Creates .framework with Intel + Apple Silicon binaries
-# 2 - Generate Xcode project: Creates .xcodeproj and opens in Xcode for development
+# 1 - Build XCFramework: Creates distributable framework with device + simulator binaries
+# 2 - Generate Xcode project: Creates .xcodeproj for development/debugging in Xcode
 # 3 - Exit: Quit without building
 if __name__ == "__main__":
+    PROJECT_NAME_LOWER = PROJECT_NAME.lower()
     while True:
         if len(sys.argv) >= 2:
             num = sys.argv[1]
@@ -510,17 +541,17 @@ if __name__ == "__main__":
             num = str(
                 input(
                     "Enter menu:"
-                    + f"\n1. Clean && Build macOS {PROJECT_NAME_LOWER}."
-                    + f"\n2. Gen macOS {PROJECT_NAME_LOWER} Project."
-                    + "\n3. Exit.\n"
+                    + f"\n1. Clean && build watchOS {PROJECT_NAME_LOWER}."
+                    + f"\n2. Gen watchOS {PROJECT_NAME_LOWER} Project."
+                    + f"\n3. Exit."
                 )
             )
-        print(f"==================MacOS Choose num: {num}==================")
+        print(f"==================watchOS Choose num: {num}==================")
         if num == "1":
             main(tag=num)
             break
         elif num == "2":
-            gen_macos_project(tag=num)
+            gen_watchos_project()
             break
         else:
             break
