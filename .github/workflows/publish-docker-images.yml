@@ -11,6 +11,14 @@ on:
         description: 'Platforms to build (comma-separated: linux,windows,apple,android or "all")'
         required: true
         default: 'all'
+      registry:
+        description: 'Docker registry to use'
+        required: true
+        type: choice
+        options:
+          - ghcr.io
+          - docker.io
+        default: 'ghcr.io'
   push:
     branches:
       - main
@@ -22,8 +30,8 @@ on:
     - cron: '0 2 * * 0'
 
 env:
-  DOCKER_HUB_USERNAME: ccgo  # Change this to your Docker Hub username
-  REGISTRY: docker.io
+  # Default to GHCR for scheduled/push builds, can be overridden by workflow_dispatch
+  REGISTRY: ${{ github.event.inputs.registry || 'ghcr.io' }}
 
 jobs:
   build-and-push:
@@ -55,17 +63,31 @@ jobs:
         with:
           driver-opts: network=host
 
-      - name: Login to Docker Hub
+      - name: Login to Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.REGISTRY == 'ghcr.io' && github.actor || secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ env.REGISTRY == 'ghcr.io' && secrets.GITHUB_TOKEN || secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Set image name
+        id: image_name
+        run: |
+          if [ "${{ env.REGISTRY }}" = "ghcr.io" ]; then
+            # GHCR format: ghcr.io/owner/repo-name
+            IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}"
+          else
+            # Docker Hub format: username/repo-name
+            IMAGE_NAME="${{ secrets.DOCKER_HUB_USERNAME }}/${{ matrix.image }}"
+          fi
+          echo "full_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
+          echo "Image name: ${IMAGE_NAME}"
 
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKER_HUB_USERNAME }}/${{ matrix.image }}
+          images: ${{ steps.image_name.outputs.full_name }}
           tags: |
             type=raw,value=latest
             type=sha,prefix={{branch}}-
@@ -82,8 +104,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.DOCKER_HUB_USERNAME }}/${{ matrix.image }}:buildcache
-          cache-to: type=registry,ref=${{ env.DOCKER_HUB_USERNAME }}/${{ matrix.image }}:buildcache,mode=max
+          cache-from: type=registry,ref=${{ steps.image_name.outputs.full_name }}:buildcache
+          cache-to: type=registry,ref=${{ steps.image_name.outputs.full_name }}:buildcache,mode=max
           build-args: |
             BUILDKIT_INLINE_CACHE=1
 
@@ -92,9 +114,9 @@ jobs:
 
       - name: Verify image
         run: |
-          docker pull ${{ env.DOCKER_HUB_USERNAME }}/${{ matrix.image }}:latest
+          docker pull ${{ steps.image_name.outputs.full_name }}:latest
           docker images | grep ${{ matrix.image }}
-          docker inspect ${{ env.DOCKER_HUB_USERNAME }}/${{ matrix.image }}:latest
+          docker inspect ${{ steps.image_name.outputs.full_name }}:latest
 
   summary:
     name: Build Summary
@@ -103,18 +125,29 @@ jobs:
     steps:
       - name: Summary
         run: |
+          # Determine registry and image prefix
+          if [ "${{ env.REGISTRY }}" = "ghcr.io" ]; then
+            REGISTRY_NAME="GitHub Container Registry (GHCR)"
+            IMAGE_PREFIX="${{ env.REGISTRY }}/${{ github.repository_owner }}"
+          else
+            REGISTRY_NAME="Docker Hub"
+            IMAGE_PREFIX="${{ secrets.DOCKER_HUB_USERNAME }}"
+          fi
+
           echo "## Docker Images Published 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "All CCGO builder images have been successfully built and pushed to Docker Hub!" >> $GITHUB_STEP_SUMMARY
+          echo "All CCGO builder images have been successfully built and pushed to **${REGISTRY_NAME}**!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** \`${{ env.REGISTRY }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Available Images:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Platform | Image | Pull Command |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|--------------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Linux | \`${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-linux:latest\` | \`docker pull ${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-linux:latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows | \`${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-windows:latest\` | \`docker pull ${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-windows:latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Apple | \`${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-apple:latest\` | \`docker pull ${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Android | \`${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-android:latest\` | \`docker pull ${{ env.DOCKER_HUB_USERNAME }}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Linux | \`${IMAGE_PREFIX}/ccgo-builder-linux:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-linux:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows | \`${IMAGE_PREFIX}/ccgo-builder-windows:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-windows:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Apple | \`${IMAGE_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Android | \`${IMAGE_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Usage:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
