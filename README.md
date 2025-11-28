@@ -9,6 +9,7 @@ A cross-platform C++ build system designed to simplify and accelerate multi-plat
 
 - 🚀 Fast cross-platform C++ builds for Android, iOS, macOS, Windows, Linux, and OpenHarmony (OHOS)
 - 📦 Kotlin Multiplatform (KMP) support
+- 📦 Conan C/C++ package manager integration
 - 🧪 Integrated testing with GoogleTest
 - 📊 Benchmarking support with Google Benchmark
 - 📚 Documentation generation
@@ -117,6 +118,7 @@ ccgo build <target> [options]
 - `linux` - Build for Linux
 - `ohos` - Build for OpenHarmony (supports `--arch`)
 - `kmp` - Build Kotlin Multiplatform library
+- `conan` - Build Conan C/C++ package
 - `include` - Build include headers
 
 **Options:**
@@ -147,6 +149,9 @@ ccgo build linux
 
 # Build Kotlin Multiplatform library
 ccgo build kmp
+
+# Build Conan C/C++ package
+ccgo build conan
 
 # Generate IDE project for Android
 ccgo build android --ide-project

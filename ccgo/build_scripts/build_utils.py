@@ -719,7 +719,7 @@ def make_static_framework(
 
     A framework is a bundle directory containing:
     - The compiled library binary
-    - Headers/ directory with public headers
+    - include/ directory with public headers
 
     Args:
         src_lib: Source library file path (.a static library)
@@ -739,7 +739,7 @@ def make_static_framework(
     os.makedirs(dst_framework)
     shutil.copy(src_lib, dst_framework)
 
-    framework_path = dst_framework + "/Headers"
+    framework_path = dst_framework + "/include"
     for src, dst in header_file_mappings.items():
         if not os.path.exists(src):
             continue
@@ -1875,6 +1875,93 @@ def merge_win_static_libs(src_libs, dst_lib):
     return True
 
 
+def merge_mingw_static_libs(src_libs, dst_lib):
+    """
+    Merge multiple MinGW static libraries into a single library using ar.
+
+    Uses MinGW's ar tool to combine .a files without requiring gcc.
+    This method extracts all object files from source libraries and
+    repackages them into a single archive.
+
+    Args:
+        src_libs: List of source library file paths to merge
+        dst_lib: Destination library file path
+
+    Returns:
+        bool: True if merge succeeded, False otherwise
+
+    Note:
+        Works in MinGW cross-compilation environments where only
+        x86_64-w64-mingw32-ar is available (no gcc).
+    """
+    import tempfile
+
+    # Detect which ar tool to use
+    # Try MinGW ar first, then fall back to system ar
+    ar_tool = "ar"
+    if shutil.which("x86_64-w64-mingw32-ar"):
+        ar_tool = "x86_64-w64-mingw32-ar"
+    elif shutil.which("ar"):
+        ar_tool = "ar"
+    else:
+        print("!!!!!!!!!!!ar tool not found!!!!!!!!!!!!!!!")
+        return False
+
+    print(f"Using ar tool: {ar_tool}")
+
+    # Create a temporary directory for extracting object files
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Ensure destination directory exists
+        dst_dir = os.path.dirname(dst_lib)
+        if dst_dir:
+            os.makedirs(dst_dir, exist_ok=True)
+
+        # Extract all object files from source libraries
+        for lib in src_libs:
+            if not os.path.exists(lib):
+                print(f"Warning: Library not found: {lib}")
+                continue
+
+            # Use ar to extract object files from this library
+            # Change to temp directory to extract files there
+            extract_cmd = f"cd {temp_dir} && {ar_tool} x {os.path.abspath(lib)}"
+            print(f"Extracting: {extract_cmd}")
+            ret = os.system(extract_cmd)
+            if ret != 0:
+                print(f"!!!!!!!!!!!{ar_tool} extract from {lib} failed!!!!!!!!!!!!!!!")
+                return False
+
+        # List all extracted object files
+        # Try both .o and .obj extensions (MinGW may use either)
+        obj_files = glob.glob(os.path.join(temp_dir, "*.o"))
+        obj_files.extend(glob.glob(os.path.join(temp_dir, "*.obj")))
+
+        if not obj_files:
+            # Debug: List all files in temp directory
+            all_files = os.listdir(temp_dir)
+            print(f"Debug: Files in temp directory: {all_files}")
+            print(f"!!!!!!!!!!!No object files extracted!!!!!!!!!!!!!!!")
+            return False
+
+        print(f"Extracted {len(obj_files)} object files")
+
+        # Create new archive from all object files
+        # Use relative paths by changing to temp directory
+        obj_names = [os.path.basename(f) for f in obj_files]
+        obj_list_str = " ".join(obj_names)
+
+        # Create the merged library
+        create_cmd = f"cd {temp_dir} && {ar_tool} crs {os.path.abspath(dst_lib)} {obj_list_str}"
+        print(f"Creating merged library: {create_cmd}")
+        ret = os.system(create_cmd)
+        if ret != 0:
+            print(f"!!!!!!!!!!!{ar_tool} create {dst_lib} failed!!!!!!!!!!!!!!!")
+            return False
+
+    print(f"Successfully merged {len(src_libs)} libraries into {dst_lib}")
+    return True
+
+
 def copy_windows_pdb(cmake_out, sub_folder, config, dst_folder):
     """
     Copy Windows PDB (Program Database) debug symbol files.
@@ -2039,6 +2126,492 @@ def is_in_lib_list(target, lib_list):
             if target[3:] == lib:
                 return True
     return False
+
+
+def check_library_architecture(library_path, platform_hint=None):
+    """
+    Check and print library architecture information.
+
+    Args:
+        library_path: Path to the library file (.a, .so, .lib, etc.)
+        platform_hint: Optional platform hint ('linux', 'android', 'windows', 'macos', 'ios')
+
+    Returns:
+        dict: Architecture information including platform, arch, bits, etc.
+    """
+    if not os.path.exists(library_path):
+        print(f"WARNING: Library not found: {library_path}")
+        return None
+
+    print("\n==================== Library Architecture Check ====================")
+    print(f"Library: {os.path.basename(library_path)}")
+    print(f"Path: {library_path}")
+
+    # Check file size
+    file_size = os.path.getsize(library_path)
+    print(f"Size: {file_size / (1024 * 1024):.2f} MB")
+
+    if file_size == 0:
+        print("WARNING: File is empty (0 bytes)")
+        print("=====================================================================\n")
+        return {"path": library_path, "size": 0, "error": "empty file"}
+
+    result = {"path": library_path, "size": file_size}
+
+    # Check if file command is available
+    file_cmd_available = shutil.which("file") is not None
+
+    if file_cmd_available:
+        # Run file command
+        try:
+            file_output = subprocess.check_output(["file", library_path], text=True).strip()
+            print(f"File type: {file_output}")
+
+            # Parse architecture from file output
+            if "ELF" in file_output:
+                # Linux/Android ELF binary
+                if "64-bit" in file_output:
+                    result["bits"] = 64
+                elif "32-bit" in file_output:
+                    result["bits"] = 32
+
+                if "x86-64" in file_output or "x86_64" in file_output:
+                    result["arch"] = "x86_64"
+                    result["platform"] = platform_hint or "linux"
+                elif "ARM aarch64" in file_output:
+                    result["arch"] = "arm64-v8a" if platform_hint == "android" else "arm64"
+                    result["platform"] = platform_hint or "linux"
+                elif "ARM" in file_output and "32-bit" in file_output:
+                    result["arch"] = "armeabi-v7a" if platform_hint == "android" else "armv7"
+                    result["platform"] = platform_hint or "linux"
+                elif "Intel 80386" in file_output:
+                    result["arch"] = "x86"
+                    result["platform"] = platform_hint or "linux"
+
+                # Try readelf for more details
+                if shutil.which("readelf"):
+                    try:
+                        readelf_output = subprocess.check_output(
+                            ["readelf", "-h", library_path],
+                            stderr=subprocess.DEVNULL,
+                            text=True
+                        )
+                        for line in readelf_output.split('\n'):
+                            if "Machine:" in line:
+                                print(f"Machine: {line.split('Machine:')[1].strip()}")
+                                break
+                    except:
+                        pass
+
+            elif "Mach-O" in file_output:
+                # macOS/iOS Mach-O binary
+                result["platform"] = platform_hint or "macos"
+
+                # Try lipo for universal binary info
+                if shutil.which("lipo"):
+                    try:
+                        lipo_output = subprocess.check_output(
+                            ["lipo", "-info", library_path],
+                            stderr=subprocess.DEVNULL,
+                            text=True
+                        ).strip()
+                        print(f"Architectures: {lipo_output}")
+
+                        if "x86_64" in lipo_output and "arm64" in lipo_output:
+                            result["arch"] = "universal (x86_64 + arm64)"
+                        elif "x86_64" in lipo_output:
+                            result["arch"] = "x86_64"
+                        elif "arm64" in lipo_output:
+                            result["arch"] = "arm64"
+                        elif "armv7" in lipo_output:
+                            result["arch"] = "armv7"
+                    except:
+                        if "universal" in file_output:
+                            result["arch"] = "universal"
+
+            elif "PE32" in file_output or "MS Windows" in file_output:
+                # Windows PE binary
+                result["platform"] = "windows"
+                if "PE32+" in file_output:
+                    result["arch"] = "x86_64"
+                    result["bits"] = 64
+                else:
+                    result["arch"] = "x86"
+                    result["bits"] = 32
+
+            elif "ar archive" in file_output:
+                # Static library archive - need to check object files
+                result["type"] = "static archive"
+
+                # For .a files, extract and check first object
+                if library_path.endswith('.a'):
+                    import tempfile
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        try:
+                            # Extract first object file
+                            subprocess.run(
+                                ["ar", "x", library_path],
+                                cwd=tmpdir,
+                                capture_output=True,
+                                check=False
+                            )
+                            # Check first .o file
+                            obj_files = glob.glob(os.path.join(tmpdir, "*.o"))
+                            if obj_files:
+                                first_obj = obj_files[0]
+                                obj_file_output = subprocess.check_output(
+                                    ["file", first_obj], text=True
+                                ).strip()
+                                print(f"First object: {obj_file_output}")
+                                # Parse object file architecture
+                                if "ELF" in obj_file_output:
+                                    if "x86-64" in obj_file_output:
+                                        result["arch"] = "x86_64"
+                                    elif "ARM aarch64" in obj_file_output:
+                                        result["arch"] = "arm64"
+                                    elif "ARM" in obj_file_output:
+                                        result["arch"] = "armv7"
+                        except Exception as e:
+                            print(f"Could not extract object files: {e}")
+
+        except Exception as e:
+            print(f"ERROR: Could not run file command: {e}")
+    else:
+        # file command not available, use fallback methods
+        print("INFO: 'file' command not available, using fallback detection methods")
+
+        # Try to detect file type based on extension and magic bytes
+        filename = os.path.basename(library_path).lower()
+
+        # Read first few bytes for magic number detection
+        try:
+            with open(library_path, 'rb') as f:
+                magic_bytes = f.read(64)  # Read more bytes for better detection
+        except:
+            magic_bytes = b''
+
+        # Detect by extension and magic bytes
+        if filename.endswith('.so') or (magic_bytes and magic_bytes[:4] == b'\x7fELF'):
+            # ELF file (Linux/Android)
+            print(f"File type: ELF shared object (detected by extension/magic)")
+            result["platform"] = platform_hint or "linux"
+
+            # Try readelf if available
+            if shutil.which("readelf"):
+                try:
+                    readelf_output = subprocess.check_output(
+                        ["readelf", "-h", library_path],
+                        stderr=subprocess.DEVNULL,
+                        text=True
+                    )
+                    for line in readelf_output.split('\n'):
+                        if "Class:" in line:
+                            if "ELF64" in line:
+                                result["bits"] = 64
+                            elif "ELF32" in line:
+                                result["bits"] = 32
+                        if "Machine:" in line:
+                            machine = line.split('Machine:')[1].strip()
+                            print(f"Machine: {machine}")
+                            if "AArch64" in machine:
+                                result["arch"] = "arm64-v8a" if platform_hint == "android" else "arm64"
+                            elif "ARM" in machine:
+                                result["arch"] = "armeabi-v7a" if platform_hint == "android" else "armv7"
+                            elif "X86-64" in machine or "x86-64" in machine:
+                                result["arch"] = "x86_64"
+                            elif "Intel 80386" in machine:
+                                result["arch"] = "x86"
+                            break
+                except:
+                    pass
+            else:
+                # Try to parse ELF header directly if readelf isn't available
+                if len(magic_bytes) >= 20:
+                    # ELF class is at offset 4 (1=32-bit, 2=64-bit)
+                    if magic_bytes[4] == 2:
+                        result["bits"] = 64
+                    elif magic_bytes[4] == 1:
+                        result["bits"] = 32
+
+                    # Machine type is at offset 18-19 (little endian)
+                    if magic_bytes[5] == 1:  # Little endian
+                        machine_type = int.from_bytes(magic_bytes[18:20], 'little')
+                        if machine_type == 0xB7:  # AArch64
+                            result["arch"] = "arm64-v8a" if platform_hint == "android" else "arm64"
+                            print(f"Architecture: ARM64 (from ELF header)")
+                        elif machine_type == 0x28:  # ARM
+                            result["arch"] = "armeabi-v7a" if platform_hint == "android" else "armv7"
+                            print(f"Architecture: ARM (from ELF header)")
+                        elif machine_type == 0x3E:  # x86-64
+                            result["arch"] = "x86_64"
+                            print(f"Architecture: x86_64 (from ELF header)")
+                        elif machine_type == 0x03:  # i386
+                            result["arch"] = "x86"
+                            print(f"Architecture: x86 (from ELF header)")
+
+        elif filename.endswith('.a') or (magic_bytes and magic_bytes[:8] == b'!<arch>\n'):
+            # Static library archive (ar archive format)
+            result["type"] = "static archive"
+            result["platform"] = platform_hint or "unknown"
+
+            # Check for ar archive magic bytes
+            if magic_bytes[:8] == b'!<arch>\n':
+                print(f"File type: AR archive (detected by magic bytes)")
+            else:
+                print(f"File type: Static library (detected by extension)")
+
+            # Try ar command to list contents
+            if shutil.which("ar"):
+                try:
+                    ar_output = subprocess.check_output(
+                        ["ar", "t", library_path],
+                        stderr=subprocess.DEVNULL,
+                        text=True
+                    )
+                    obj_files = [f for f in ar_output.split('\n') if f.endswith('.o')]
+                    if obj_files:
+                        print(f"Archive contains {len(obj_files)} object file(s)")
+                        result["object_count"] = len(obj_files)
+
+                        # Try to get more info with ar tv for size information
+                        try:
+                            ar_tv_output = subprocess.check_output(
+                                ["ar", "tv", library_path],
+                                stderr=subprocess.DEVNULL,
+                                text=True
+                            )
+                            # Parse total size from ar tv output
+                            total_size = sum(int(line.split()[2]) for line in ar_tv_output.split('\n')
+                                           if line and len(line.split()) >= 3)
+                            if total_size > 0:
+                                print(f"Total object size: {total_size / 1024:.2f} KB")
+                        except:
+                            pass
+                except:
+                    pass
+            else:
+                # ar command not available, try basic detection from magic bytes
+                if magic_bytes[:8] == b'!<arch>\n':
+                    # Parse archive header to get basic info
+                    try:
+                        # AR format has 60-byte headers after magic
+                        header_start = 8
+                        if len(magic_bytes) > header_start + 60:
+                            # First member name is at offset 0-15 in header
+                            first_member = magic_bytes[header_start:header_start+16].decode('ascii', errors='ignore').strip()
+                            if first_member:
+                                print(f"First archive member: {first_member}")
+                    except:
+                        pass
+
+            # Platform-specific hints for .a files
+            if platform_hint == "windows" or "mingw" in library_path.lower():
+                result["platform"] = "windows"
+                result["arch"] = "x86_64"  # Assume x64 for modern builds
+                print("Platform hint: Windows/MinGW static library")
+            elif platform_hint == "android":
+                result["platform"] = "android"
+                # Try to infer architecture from path
+                if "arm64-v8a" in library_path:
+                    result["arch"] = "arm64-v8a"
+                elif "armeabi-v7a" in library_path:
+                    result["arch"] = "armeabi-v7a"
+                elif "x86_64" in library_path:
+                    result["arch"] = "x86_64"
+                elif "x86" in library_path:
+                    result["arch"] = "x86"
+                print(f"Platform hint: Android static library")
+            elif platform_hint:
+                print(f"Platform hint: {platform_hint}")
+
+        elif filename.endswith('.lib') or filename.endswith('.dll'):
+            # Windows library
+            result["platform"] = "windows"
+
+            if filename.endswith('.dll'):
+                result["type"] = "shared library"
+                print(f"File type: Windows DLL (detected by extension)")
+            else:
+                result["type"] = "static library"
+                print(f"File type: Windows static library (detected by extension)")
+
+            # Check for PE/COFF magic bytes
+            if magic_bytes and len(magic_bytes) >= 2:
+                if magic_bytes[:2] == b'MZ':  # DOS/PE header
+                    print(f"Format: PE/COFF executable (detected by magic)")
+                    # Try to determine architecture from PE header
+                    try:
+                        # PE header offset is at 0x3C
+                        if len(magic_bytes) >= 64:
+                            pe_offset = int.from_bytes(magic_bytes[0x3C:0x3C+4], 'little')
+                            if len(magic_bytes) > pe_offset + 6:
+                                # Machine type is at PE+4
+                                machine = int.from_bytes(magic_bytes[pe_offset+4:pe_offset+6], 'little')
+                                if machine == 0x8664:  # AMD64
+                                    result["arch"] = "x86_64"
+                                    result["bits"] = 64
+                                    print(f"Architecture: x86_64 (from PE header)")
+                                elif machine == 0x14c:  # i386
+                                    result["arch"] = "x86"
+                                    result["bits"] = 32
+                                    print(f"Architecture: x86 (from PE header)")
+                    except:
+                        pass
+
+            # Try dumpbin if available (unlikely in Docker)
+            if shutil.which("dumpbin"):
+                try:
+                    dumpbin_output = subprocess.check_output(
+                        ["dumpbin", "/HEADERS", library_path],
+                        stderr=subprocess.DEVNULL,
+                        text=True
+                    )
+                    if "x64" in dumpbin_output or "AMD64" in dumpbin_output:
+                        result["arch"] = "x86_64"
+                        result["bits"] = 64
+                    elif "x86" in dumpbin_output:
+                        result["arch"] = "x86"
+                        result["bits"] = 32
+                except:
+                    pass
+            elif "arch" not in result:
+                # Default to x64 for modern Windows builds if we couldn't detect
+                result["arch"] = "x86_64"
+                print(f"Architecture: x86_64 (assumed for modern Windows)")
+
+        elif filename.endswith(('.dylib', '.framework')) or \
+             (magic_bytes and len(magic_bytes) >= 4 and magic_bytes[:4] in [
+                 b'\xfe\xed\xfa\xce',  # Mach-O 32-bit big endian
+                 b'\xce\xfa\xed\xfe',  # Mach-O 32-bit little endian
+                 b'\xfe\xed\xfa\xcf',  # Mach-O 64-bit big endian
+                 b'\xcf\xfa\xed\xfe',  # Mach-O 64-bit little endian
+                 b'\xca\xfe\xba\xbe',  # Mach-O fat binary
+                 b'\xbe\xba\xfe\xca'   # Mach-O fat binary (reversed)
+             ]):
+            # macOS/iOS library
+            result["platform"] = platform_hint or "macos"
+
+            # Detect Mach-O format from magic bytes
+            if magic_bytes and len(magic_bytes) >= 4:
+                magic = magic_bytes[:4]
+                if magic in [b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca']:
+                    print(f"File type: Mach-O universal binary (detected by magic)")
+                    result["arch"] = "universal"
+                elif magic in [b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe']:
+                    print(f"File type: Mach-O 64-bit (detected by magic)")
+                    # Try to determine arch from Mach-O header
+                    if len(magic_bytes) >= 12:
+                        cpu_type = int.from_bytes(magic_bytes[4:8], 'little' if magic == b'\xcf\xfa\xed\xfe' else 'big')
+                        if cpu_type == 0x0100000c:  # ARM64
+                            result["arch"] = "arm64"
+                        elif cpu_type == 0x01000007:  # x86_64
+                            result["arch"] = "x86_64"
+                elif magic in [b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe']:
+                    print(f"File type: Mach-O 32-bit (detected by magic)")
+                    result["arch"] = "i386"
+                else:
+                    print(f"File type: macOS/iOS library (detected by extension)")
+            else:
+                print(f"File type: macOS/iOS library (detected by extension)")
+
+            # Try lipo if available for more detailed info
+            if shutil.which("lipo"):
+                try:
+                    lipo_output = subprocess.check_output(
+                        ["lipo", "-info", library_path],
+                        stderr=subprocess.DEVNULL,
+                        text=True
+                    ).strip()
+                    print(f"Architectures (lipo): {lipo_output}")
+
+                    if "x86_64" in lipo_output and "arm64" in lipo_output:
+                        result["arch"] = "universal (x86_64 + arm64)"
+                    elif "x86_64" in lipo_output:
+                        result["arch"] = "x86_64"
+                    elif "arm64" in lipo_output:
+                        result["arch"] = "arm64"
+                except:
+                    pass
+        else:
+            # Unknown file type
+            print(f"File type: Unknown (no 'file' command, unable to detect type)")
+            result["platform"] = platform_hint or "unknown"
+
+    # Print result summary
+    print("\n--- Architecture Summary ---")
+    if "platform" in result:
+        print(f"Platform: {result['platform']}")
+    if "arch" in result:
+        print(f"Architecture: {result['arch']}")
+    if "bits" in result:
+        print(f"Bits: {result['bits']}-bit")
+    if "type" in result:
+        print(f"Type: {result['type']}")
+
+    print("=====================================================================\n")
+
+    return result
+
+
+def check_build_libraries(lib_paths, platform_hint=None):
+    """
+    Check multiple libraries and print summary.
+
+    Args:
+        lib_paths: List of library paths or glob patterns
+        platform_hint: Optional platform hint for architecture detection
+
+    Returns:
+        bool: True if all libraries exist and were checked successfully
+    """
+    if isinstance(lib_paths, str):
+        lib_paths = [lib_paths]
+
+    checked_libs = []
+    missing_libs = []
+
+    for path_pattern in lib_paths:
+        # Handle glob patterns
+        if '*' in path_pattern:
+            matched_files = glob.glob(path_pattern)
+            if not matched_files:
+                missing_libs.append(path_pattern)
+                continue
+            for lib_file in matched_files:
+                if os.path.exists(lib_file):
+                    result = check_library_architecture(lib_file, platform_hint)
+                    if result:
+                        checked_libs.append(result)
+                else:
+                    missing_libs.append(lib_file)
+        else:
+            if os.path.exists(path_pattern):
+                result = check_library_architecture(path_pattern, platform_hint)
+                if result:
+                    checked_libs.append(result)
+            else:
+                missing_libs.append(path_pattern)
+
+    # Print summary
+    if checked_libs or missing_libs:
+        print("\n==================== Build Libraries Summary ====================")
+        if checked_libs:
+            print(f"✓ Successfully checked {len(checked_libs)} libraries")
+            for lib in checked_libs:
+                arch_info = lib.get('arch', 'unknown')
+                platform_info = lib.get('platform', 'unknown')
+                print(f"  - {os.path.basename(lib['path'])}: {platform_info}/{arch_info}")
+
+        if missing_libs:
+            print(f"✗ Missing {len(missing_libs)} libraries:")
+            for lib in missing_libs:
+                print(f"  - {lib}")
+            print("\nERROR: Some expected libraries were not found!")
+            return False
+
+        print("==================================================================\n")
+
+    return len(missing_libs) == 0
 
 
 def main():

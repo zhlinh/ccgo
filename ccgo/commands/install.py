@@ -72,9 +72,9 @@ EXAMPLES:
 
 CCGO.toml FORMAT:
     [dependencies]
-    libfoo = { version = "1.0.0", source = "https://example.com/libfoo_SDK-1.0.0.zip" }
-    libbar = { path = "../libbar/sdk_package/libbar_SDK-1.0.0" }
-    libbaz = { version = "2.1.0", source = "/absolute/path/to/libbaz_SDK-2.1.0.tar.gz" }
+    libfoo = { version = "1.0.0", source = "https://example.com/LIBFOO_SDK-1.0.0.zip" }
+    libbar = { path = "../libbar/target/package/LIBBAR_SDK-1.0.0" }
+    libbaz = { version = "2.1.0", source = "/absolute/path/to/LIBBAZ_SDK-2.1.0.tar.gz" }
 
     # Platform-specific dependencies
     [dependencies.android]

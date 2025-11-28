@@ -14,6 +14,8 @@ import sys
 import argparse
 import subprocess
 import importlib.util
+import platform
+import time
 from pathlib import Path
 
 # setup path
@@ -32,12 +34,52 @@ from utils.cmd.cmd_util import exec_command
 
 
 class Build(CliCommand):
+    def _is_cross_platform_build(self, host_platform: str, target_platform: str) -> bool:
+        """
+        Check if building target_platform on host_platform requires cross-compilation.
+
+        Args:
+            host_platform: Current platform ('Darwin', 'Linux', 'Windows')
+            target_platform: Target build platform (e.g., 'linux', 'windows', 'macos', 'ios', etc.)
+
+        Returns:
+            True if cross-platform build (requires Docker), False if native build
+        """
+        # Normalize host platform
+        host_map = {
+            'Darwin': 'macos',
+            'Linux': 'linux',
+            'Windows': 'windows'
+        }
+        host = host_map.get(host_platform, host_platform.lower())
+
+        # Platforms that don't require specific toolchains (can build anywhere)
+        universal_targets = ['kmp', 'include']
+        if target_platform in universal_targets:
+            return False
+
+        # Define native build capabilities for each host platform
+        native_builds = {
+            'macos': ['macos', 'ios', 'watchos', 'tvos'],  # Requires Xcode
+            'linux': ['linux'],  # Requires GCC/Clang
+            'windows': ['windows'],  # Requires Visual Studio/MinGW
+        }
+
+        # Android and OHOS can be built on any platform with their respective SDKs
+        # but we don't auto-enable Docker for them as users likely have SDK installed
+        if target_platform in ['android', 'ohos']:
+            return False
+
+        # Check if target can be built natively on current host
+        return target_platform not in native_builds.get(host, [])
+
     def description(self) -> str:
         return """Build library for specific platform.
 
 This command builds native libraries and packages them for the target platform.
 
 SUPPORTED PLATFORMS:
+    all         Build for all platforms (android, ios, macos, watchos, tvos, windows, linux, ohos, kmp, conan)
     android     Build for Android (AAR package with native .so libraries)
     ios         Build for iOS (static libraries and frameworks)
     watchos     Build for watchOS (static libraries and frameworks)
@@ -47,9 +89,13 @@ SUPPORTED PLATFORMS:
     linux       Build for Linux (static and shared libraries)
     ohos        Build for OpenHarmony (HAR package with native .so libraries)
     kmp         Build Kotlin Multiplatform library (all supported targets)
+    conan       Build Conan package for C/C++ dependency management
     include     Build and package header files only
 
 EXAMPLES:
+    # Build all platforms
+    ccgo build all
+
     # Build Android with default architectures (armeabi-v7a, arm64-v8a, x86_64)
     ccgo build android
 
@@ -110,7 +156,11 @@ REQUIREMENTS:
         """
 
     def get_target_list(self) -> list:
-        return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "include"]
+        return ["all", "android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan", "include"]
+
+    def get_build_platforms(self) -> list:
+        """Get list of actual build platforms (excluding meta-targets like 'all')"""
+        return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan"]
 
     def cli(self) -> CliNameSpace:
         parser = argparse.ArgumentParser(
@@ -145,12 +195,113 @@ REQUIREMENTS:
             action="store_true",
             help="build using Docker containers (enables cross-platform builds for Linux/Windows)",
         )
+        parser.add_argument(
+            "--no-docker",
+            action="store_true",
+            help="disable automatic Docker mode for cross-platform builds (use native toolchain)",
+        )
+        parser.add_argument(
+            "--docker-dev",
+            action="store_true",
+            help="use local ccgo source in Docker (for development, requires local ccgo repo)",
+        )
+        parser.add_argument(
+            "--toolchain",
+            choices=["msvc", "gnu", "mingw", "auto"],
+            default="auto",
+            help="Windows toolchain: msvc (Visual Studio), gnu/mingw (MinGW-w64), auto (detect)",
+        )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
         args, unknown = parser.parse_known_args(input_argv)
         return args
 
+    def _print_build_time(self, start_time: float):
+        """Print the build time in a human-readable format."""
+        elapsed = time.time() - start_time
+        if elapsed < 60:
+            print(f"\n⏱ Build completed in {elapsed:.2f} seconds")
+        elif elapsed < 3600:
+            minutes = int(elapsed // 60)
+            seconds = elapsed % 60
+            print(f"\n⏱ Build completed in {minutes} min {seconds:.1f} sec")
+        else:
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            seconds = elapsed % 60
+            print(f"\n⏱ Build completed in {hours} hr {minutes} min {seconds:.0f} sec")
+
     def exec(self, context: CliContext, args: CliNameSpace):
+        # Record start time
+        start_time = time.time()
+
+        # Handle 'all' target - build all platforms
+        if args.target == "all":
+            print("="*80)
+            print("Building library for ALL platforms")
+            print("="*80)
+
+            platforms = self.get_build_platforms()
+            total_platforms = len(platforms)
+            failed_platforms = []
+            successful_platforms = []
+
+            print(f"\nWill build {total_platforms} platforms: {', '.join(platforms)}")
+            print("="*80)
+
+            for index, target_platform in enumerate(platforms, 1):
+                print(f"\n{'='*80}")
+                print(f"Building platform {index}/{total_platforms}: {target_platform.upper()}")
+                print(f"{'='*80}\n")
+
+                # Create a copy of args with the specific platform
+                platform_args = argparse.Namespace(**vars(args))
+                platform_args.target = target_platform
+
+                # Build the platform
+                platform_start = time.time()
+                try:
+                    # Call exec recursively with the specific platform
+                    self.exec(context, platform_args)
+                    successful_platforms.append(target_platform)
+                    print(f"\n✅ {target_platform.upper()} build completed successfully")
+                except SystemExit as e:
+                    if e.code != 0:
+                        failed_platforms.append(target_platform)
+                        print(f"\n❌ {target_platform.upper()} build failed with exit code {e.code}")
+                    else:
+                        successful_platforms.append(target_platform)
+                        print(f"\n✅ {target_platform.upper()} build completed successfully")
+                except Exception as e:
+                    failed_platforms.append(target_platform)
+                    print(f"\n❌ {target_platform.upper()} build failed with error: {e}")
+
+            # Print summary
+            print(f"\n{'='*80}")
+            print("BUILD ALL SUMMARY")
+            print(f"{'='*80}")
+            print(f"\nTotal platforms: {total_platforms}")
+            print(f"Successful: {len(successful_platforms)}")
+            print(f"Failed: {len(failed_platforms)}")
+
+            if successful_platforms:
+                print(f"\n✅ Successful builds:")
+                for p in successful_platforms:
+                    print(f"   - {p}")
+
+            if failed_platforms:
+                print(f"\n❌ Failed builds:")
+                for p in failed_platforms:
+                    print(f"   - {p}")
+
+            self._print_build_time(start_time)
+
+            if failed_platforms:
+                sys.exit(1)
+            else:
+                print(f"\n🎉 All platforms built successfully!")
+                sys.exit(0)
+
         print("Building library, with configuration...")
         print(vars(args))
 
@@ -163,12 +314,14 @@ REQUIREMENTS:
             if not project_dir or not os.path.exists(project_dir):
                 print(f"ERROR: Current working directory no longer exists: {e}")
                 print("Please navigate to your project directory and try again.")
+                self._print_build_time(start_time)
                 sys.exit(1)
             # Try to change to the saved directory
             try:
                 os.chdir(project_dir)
             except (OSError, FileNotFoundError):
                 print(f"ERROR: Cannot access project directory: {project_dir}")
+                self._print_build_time(start_time)
                 sys.exit(1)
 
         # Check if CCGO.toml exists in one of the subdirectories
@@ -188,7 +341,18 @@ REQUIREMENTS:
             else:
                 print("ERROR: CCGO.toml not found in project directory")
                 print("Please create a CCGO.toml file in your project root directory")
+                self._print_build_time(start_time)
                 sys.exit(1)
+
+        # Auto-enable Docker for cross-platform builds (unless --no-docker is specified)
+        if not args.docker and not args.no_docker:
+            host_platform = platform.system()  # 'Darwin', 'Linux', or 'Windows'
+            if self._is_cross_platform_build(host_platform, args.target):
+                args.docker = True
+                print(f"\n=== Auto-enabling Docker Mode ===")
+                print(f"Detected cross-platform build: {host_platform} → {args.target}")
+                print(f"Docker mode automatically enabled for cross-compilation")
+                print(f"(Use --no-docker to disable automatic Docker mode)\n")
 
         # Handle Docker builds for all supported platforms
         supported_docker_platforms = ["linux", "windows", "macos", "ios", "watchos", "tvos", "android"]
@@ -199,18 +363,25 @@ REQUIREMENTS:
                 print("No local toolchains required - everything runs in Docker")
 
                 # Get Docker build script path
-                docker_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docker")
+                docker_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dockers")
                 docker_script = os.path.join(docker_dir, "build_docker.py")
 
                 if not os.path.isfile(docker_script):
                     print(f"ERROR: Docker build script not found at {docker_script}")
+                    self._print_build_time(start_time)
                     sys.exit(1)
 
                 # Run Docker build
-                cmd = f"python3 '{docker_script}' {args.target} '{project_subdir}'"
+                dev_flag = " --dev" if args.docker_dev else ""
+                # Add toolchain option for Windows builds
+                toolchain_flag = ""
+                if args.target == "windows" and hasattr(args, 'toolchain') and args.toolchain != "auto":
+                    toolchain_flag = f" --toolchain={args.toolchain}"
+                cmd = f"python3 '{docker_script}' {args.target} '{project_subdir}'{dev_flag}{toolchain_flag}"
                 print(f"Executing: {cmd}")
 
                 err_code = os.system(cmd)
+                self._print_build_time(start_time)
                 sys.exit(err_code)
             else:
                 print(f"WARNING: --docker option is not supported for {args.target} builds")
@@ -229,6 +400,7 @@ REQUIREMENTS:
 
             if not os.path.isfile(build_script_path):
                 print(f"ERROR: Build script {build_script_path} not found")
+                self._print_build_time(start_time)
                 sys.exit(1)
 
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
@@ -241,6 +413,7 @@ REQUIREMENTS:
             err_code = os.system(native_cmd)
             if err_code != 0:
                 print("ERROR: Native library build failed")
+                self._print_build_time(start_time)
                 sys.exit(err_code)
 
             # Step 2: Use Gradle to package into AAR
@@ -248,6 +421,7 @@ REQUIREMENTS:
             gradlew_path = os.path.join(project_subdir, "android", "gradlew")
             if not os.path.isfile(gradlew_path):
                 print(f"ERROR: gradlew not found at {gradlew_path}")
+                self._print_build_time(start_time)
                 sys.exit(1)
 
             gradle_cmd = f"cd '{project_subdir}/android' && chmod +x gradlew && ./gradlew --no-daemon :archiveProject"
@@ -256,6 +430,7 @@ REQUIREMENTS:
             err_code = os.system(gradle_cmd)
             if err_code != 0:
                 print("ERROR: AAR packaging failed")
+                self._print_build_time(start_time)
                 sys.exit(err_code)
 
             # Step 3: Print build results (Gradle archiveProject already created archive)
@@ -264,6 +439,7 @@ REQUIREMENTS:
             print(f"Executing: {results_cmd}")
 
             err_code = os.system(results_cmd)
+            self._print_build_time(start_time)
             sys.exit(err_code)
 
         # If KMP build, use build_scripts/build_kmp.py
@@ -277,6 +453,7 @@ REQUIREMENTS:
 
             if not os.path.isfile(build_kmp_script):
                 print(f"ERROR: build_kmp.py not found at {build_kmp_script}")
+                self._print_build_time(start_time)
                 sys.exit(1)
 
             # Mode 1 = build library (default)
@@ -288,6 +465,32 @@ REQUIREMENTS:
             print(cmd)
 
             err_code = os.system(cmd)
+            self._print_build_time(start_time)
+            sys.exit(err_code)
+
+        # If Conan build, create Conan package
+        if args.target == "conan":
+            print("\n=== Conan Build (C/C++ Package Manager) ===")
+            print("This will create a Conan package for the C/C++ library")
+
+            # Get the build script from ccgo build_scripts directory
+            build_scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_scripts")
+            build_conan_script = os.path.join(build_scripts_dir, "build_conan.py")
+
+            if not os.path.isfile(build_conan_script):
+                print(f"ERROR: build_conan.py not found at {build_conan_script}")
+                self._print_build_time(start_time)
+                sys.exit(1)
+
+            # Execute conan build
+            cmd = f"cd '{project_subdir}' && python3 '{build_conan_script}'"
+            print(f"\nProject directory: {project_subdir}")
+            print(f"Build script: {build_conan_script}")
+            print(f"Execute command:")
+            print(cmd)
+
+            err_code = os.system(cmd)
+            self._print_build_time(start_time)
             sys.exit(err_code)
 
         # If OHOS build without --native-only flag, use Hvigor archiveProject task
@@ -302,6 +505,7 @@ REQUIREMENTS:
 
             if not os.path.isfile(build_script_path):
                 print(f"ERROR: Build script {build_script_path} not found")
+                self._print_build_time(start_time)
                 sys.exit(1)
 
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
@@ -314,6 +518,7 @@ REQUIREMENTS:
             err_code = os.system(native_cmd)
             if err_code != 0:
                 print("ERROR: Native library build failed")
+                self._print_build_time(start_time)
                 sys.exit(err_code)
 
             # Step 2: Use Hvigor archiveProject task (packages HAR and creates archive)
@@ -324,6 +529,7 @@ REQUIREMENTS:
             err_code = os.system(hvigor_cmd)
             if err_code != 0:
                 print("ERROR: HAR packaging failed")
+                self._print_build_time(start_time)
                 sys.exit(err_code)
 
             # Step 3: Print build results and organize artifacts
@@ -332,6 +538,7 @@ REQUIREMENTS:
             print(f"Executing: {results_cmd}")
 
             err_code = os.system(results_cmd)
+            self._print_build_time(start_time)
             sys.exit(err_code)
 
         # For native-only builds or other platforms, use Python build scripts
@@ -344,6 +551,7 @@ REQUIREMENTS:
 
         if not os.path.isfile(build_script_path):
             print(f"ERROR: Build script {build_script_path} not found")
+            self._print_build_time(start_time)
             sys.exit(1)
 
         # Prepare command arguments based on target platform
@@ -363,4 +571,5 @@ REQUIREMENTS:
         print(cmd)
 
         err_code = os.system(cmd)
+        self._print_build_time(start_time)
         sys.exit(err_code)

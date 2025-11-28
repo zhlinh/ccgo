@@ -1,21 +1,21 @@
 # CCGO Dependencies Guide
 
-本文档介绍如何使用CCGO的依赖管理系统，包括安装、配置和使用第三方库。
+This document describes how to use CCGO's dependency management system, including installing, configuring, and using third-party libraries.
 
-## 目录
+## Table of Contents
 
-- [快速开始](#快速开始)
-- [CCGO.toml配置](#ccgotoml配置)
-- [安装依赖](#安装依赖)
-- [CMake集成](#cmake集成)
-- [Link Type支持](#link-type支持)
-- [打包SDK](#打包sdk)
+- [Quick Start](#quick-start)
+- [CCGO.toml Configuration](#ccgotoml-configuration)
+- [Installing Dependencies](#installing-dependencies)
+- [CMake Integration](#cmake-integration)
+- [Link Type Support](#link-type-support)
+- [Packaging SDK](#packaging-sdk)
 
-## 快速开始
+## Quick Start
 
-### 1. 配置依赖
+### 1. Configure Dependencies
 
-在项目的`CCGO.toml`文件中声明依赖：
+Declare dependencies in your project's `CCGO.toml` file:
 
 ```toml
 [project]
@@ -23,182 +23,182 @@ name = "myproject"
 version = "1.0.0"
 
 [dependencies]
-# 从远程URL下载
-libfoo = { version = "1.0.0", source = "https://example.com/libfoo_SDK-1.0.0.zip" }
+# Download from remote URL
+libfoo = { version = "1.0.0", source = "https://example.com/LIBFOO_SDK-1.0.0.zip" }
 
-# 使用本地路径
-libbar = { path = "../libbar/sdk_package/libbar_SDK-1.0.0" }
+# Use local path
+libbar = { path = "../libbar/target/package/LIBBAR_SDK-1.0.0" }
 ```
 
-### 2. 安装依赖
+### 2. Install Dependencies
 
 ```bash
-# 安装所有依赖
+# Install all dependencies
 ccgo install
 
-# 安装特定依赖
+# Install specific dependency
 ccgo install libfoo
 
-# 强制重新安装
+# Force reinstall
 ccgo install --force
 ```
 
-### 3. 在CMake中使用
+### 3. Use in CMake
 
 ```cmake
-# 在CMakeLists.txt中
+# In CMakeLists.txt
 include(${CCGO_CMAKE_DIR}/FindCCGODependencies.cmake)
 find_ccgo_dependencies()
 
-# 链接依赖到目标
+# Link dependencies to target
 ccgo_link_dependency(myapp libfoo)
 ```
 
-### 4. 构建项目
+### 4. Build Project
 
 ```bash
-# 正常构建
+# Normal build
 ccgo build android
 ccgo build ios
 ```
 
-## CCGO.toml配置
+## CCGO.toml Configuration
 
-### 基本格式
+### Basic Format
 
 ```toml
 [dependencies]
-# 库名 = { 配置选项 }
+# library_name = { configuration_options }
 ```
 
-### 配置选项
+### Configuration Options
 
-#### 1. 远程URL依赖
+#### 1. Remote URL Dependencies
 
 ```toml
 [dependencies]
 libfoo = {
     version = "1.0.0",
-    source = "https://example.com/libfoo_SDK-1.0.0.zip"
+    source = "https://example.com/LIBFOO_SDK-1.0.0.zip"
 }
 ```
 
-支持的格式：
-- `.zip` - ZIP压缩包
-- `.tar.gz` - Gzip压缩的tar包
-- `.tgz` - Gzip压缩的tar包（简写）
+Supported formats:
+- `.zip` - ZIP archive
+- `.tar.gz` - Gzip-compressed tar archive
+- `.tgz` - Gzip-compressed tar archive (shorthand)
 
-#### 2. 本地路径依赖
-
-```toml
-[dependencies]
-# 相对路径（相对于项目根目录）
-libbar = { path = "../libbar/sdk_package/libbar_SDK-1.0.0" }
-
-# 绝对路径
-libbaz = { path = "/absolute/path/to/libbaz_SDK-1.0.0" }
-```
-
-#### 3. 本地归档文件
+#### 2. Local Path Dependencies
 
 ```toml
 [dependencies]
-libqux = { source = "../archives/libqux_SDK-1.0.0.tar.gz" }
+# Relative path (relative to project root)
+libbar = { path = "../libbar/target/package/LIBBAR_SDK-1.0.0" }
+
+# Absolute path
+libbaz = { path = "/absolute/path/to/LIBBAZ_SDK-1.0.0" }
 ```
 
-### 平台特定依赖
-
-为不同平台配置不同的依赖：
+#### 3. Local Archive Files
 
 ```toml
-# 通用依赖（所有平台）
+[dependencies]
+libqux = { source = "../archives/LIBQUX_SDK-1.0.0.tar.gz" }
+```
+
+### Platform-Specific Dependencies
+
+Configure different dependencies for different platforms:
+
+```toml
+# Common dependencies (all platforms)
 [dependencies]
 common_lib = { version = "1.0.0", source = "https://example.com/common.zip" }
 
-# Android专用依赖
+# Android-specific dependencies
 [dependencies.android]
 android_lib = { version = "1.0.0", source = "https://example.com/android.zip" }
 
-# iOS专用依赖
+# iOS-specific dependencies
 [dependencies.ios]
 ios_lib = { version = "1.0.0", source = "https://example.com/ios.zip" }
 
-# macOS专用依赖
+# macOS-specific dependencies
 [dependencies.macos]
 macos_lib = { version = "1.0.0", source = "https://example.com/macos.zip" }
 
-# tvOS专用依赖
+# tvOS-specific dependencies
 [dependencies.tvos]
 tvos_lib = { version = "1.0.0", source = "https://example.com/tvos.zip" }
 
-# watchOS专用依赖
+# watchOS-specific dependencies
 [dependencies.watchos]
 watchos_lib = { version = "1.0.0", source = "https://example.com/watchos.zip" }
 
-# Windows专用依赖
+# Windows-specific dependencies
 [dependencies.windows]
 windows_lib = { version = "1.0.0", source = "https://example.com/windows.zip" }
 
-# Linux专用依赖
+# Linux-specific dependencies
 [dependencies.linux]
 linux_lib = { version = "1.0.0", source = "https://example.com/linux.zip" }
 
-# OpenHarmony专用依赖
+# OpenHarmony-specific dependencies
 [dependencies.ohos]
 ohos_lib = { version = "1.0.0", source = "https://example.com/ohos.zip" }
 ```
 
-## 安装依赖
+## Installing Dependencies
 
-### 基本命令
+### Basic Commands
 
 ```bash
-# 安装所有依赖
+# Install all dependencies
 ccgo install
 
-# 安装特定依赖
+# Install specific dependency
 ccgo install libfoo
 
-# 强制重新安装
+# Force reinstall
 ccgo install --force
 
-# 清理缓存后安装
+# Clean cache before install
 ccgo install --clean-cache
 ```
 
-### 平台特定安装
+### Platform-Specific Installation
 
 ```bash
-# 只安装Android依赖
+# Install only Android dependencies
 ccgo install --platform android
 
-# 只安装iOS依赖
+# Install only iOS dependencies
 ccgo install --platform ios
 ```
 
-### 自定义缓存目录
+### Custom Cache Directory
 
 ```bash
-# 使用自定义缓存目录
+# Use custom cache directory
 ccgo install --cache-dir /tmp/ccgo-cache
 ```
 
-### 安装目录结构
+### Installation Directory Structure
 
-依赖安装后的目录结构：
+Directory structure after dependencies are installed:
 
 ```
 myproject/
-├── third_party/                    # 依赖安装目录
-│   ├── libfoo/                     # 库名
-│   │   ├── include/               # 头文件
-│   │   ├── lib/                   # 库文件
+├── third_party/                    # Dependency installation directory
+│   ├── libfoo/                     # Library name
+│   │   ├── include/               # Header files
+│   │   ├── lib/                   # Library files
 │   │   │   ├── android/
-│   │   │   │   ├── static/       # 静态库
+│   │   │   │   ├── static/       # Static libraries
 │   │   │   │   │   ├── arm64-v8a/
 │   │   │   │   │   ├── armeabi-v7a/
 │   │   │   │   │   └── x86_64/
-│   │   │   │   └── shared/       # 动态库
+│   │   │   │   └── shared/       # Shared libraries
 │   │   │   │       ├── arm64-v8a/
 │   │   │   │       ├── armeabi-v7a/
 │   │   │   │       └── x86_64/
@@ -206,56 +206,56 @@ myproject/
 │   │   │   │   ├── static/
 │   │   │   │   └── shared/
 │   │   │   └── ...
-│   │   └── ccgo-package.json      # 包元数据
+│   │   └── ccgo-package.json      # Package metadata
 │   └── libbar/
 │       └── ...
 └── .ccgo/
-    └── cache/                      # 下载缓存
+    └── cache/                      # Download cache
         └── abc123_libfoo.zip
 ```
 
-## CMake集成
+## CMake Integration
 
-### 基本用法
+### Basic Usage
 
-在`CMakeLists.txt`中引入FindCCGODependencies：
+Include FindCCGODependencies in `CMakeLists.txt`:
 
 ```cmake
 cmake_minimum_required(VERSION 3.10)
 project(MyProject)
 
-# 引入CCGO依赖查找器
+# Include CCGO dependency finder
 include(${CCGO_CMAKE_DIR}/FindCCGODependencies.cmake)
 
-# 查找所有已安装的依赖
+# Find all installed dependencies
 find_ccgo_dependencies()
 
-# 创建目标
+# Create target
 add_executable(myapp src/main.cpp)
 
-# 链接依赖
+# Link dependencies
 if(CCGO_DEPENDENCY_LIBFOO_FOUND)
     ccgo_link_dependency(myapp libfoo)
 endif()
 ```
 
-### 可用的CMake变量
+### Available CMake Variables
 
-查找依赖后，会设置以下变量（以libfoo为例）：
+After finding dependencies, the following variables are set (using libfoo as example):
 
 ```cmake
-CCGO_DEPENDENCIES_FOUND                     # 是否找到任何依赖
-CCGO_DEPENDENCY_LIBFOO_FOUND                # 是否找到libfoo
-CCGO_DEPENDENCY_LIBFOO_INCLUDE_DIRS         # libfoo的include目录
-CCGO_DEPENDENCY_LIBFOO_LIBRARIES            # libfoo的库文件
-CCGO_DEPENDENCY_LIBFOO_STATIC_LIBRARIES     # libfoo的静态库
-CCGO_DEPENDENCY_LIBFOO_SHARED_LIBRARIES     # libfoo的动态库
+CCGO_DEPENDENCIES_FOUND                     # Whether any dependencies were found
+CCGO_DEPENDENCY_LIBFOO_FOUND                # Whether libfoo was found
+CCGO_DEPENDENCY_LIBFOO_INCLUDE_DIRS         # libfoo's include directories
+CCGO_DEPENDENCY_LIBFOO_LIBRARIES            # libfoo's library files
+CCGO_DEPENDENCY_LIBFOO_STATIC_LIBRARIES     # libfoo's static libraries
+CCGO_DEPENDENCY_LIBFOO_SHARED_LIBRARIES     # libfoo's shared libraries
 ```
 
-### 手动链接依赖
+### Manual Dependency Linking
 
 ```cmake
-# 不使用helper函数，手动链接
+# Link manually without helper function
 if(CCGO_DEPENDENCY_LIBFOO_FOUND)
     target_include_directories(myapp PRIVATE
         ${CCGO_DEPENDENCY_LIBFOO_INCLUDE_DIRS}
@@ -266,34 +266,34 @@ if(CCGO_DEPENDENCY_LIBFOO_FOUND)
 endif()
 ```
 
-### 控制Link Type
+### Controlling Link Type
 
 ```cmake
-# 在find_ccgo_dependencies()之前设置
-set(CCGO_DEPENDENCY_LINK_TYPE "static")   # 使用静态库
-# set(CCGO_DEPENDENCY_LINK_TYPE "shared")  # 使用动态库
+# Set before find_ccgo_dependencies()
+set(CCGO_DEPENDENCY_LINK_TYPE "static")   # Use static libraries
+# set(CCGO_DEPENDENCY_LINK_TYPE "shared")  # Use shared libraries
 
 find_ccgo_dependencies()
 ```
 
-### 平台特定依赖
+### Platform-Specific Dependencies
 
 ```cmake
-# Android平台
+# Android platform
 if(ANDROID)
     if(CCGO_DEPENDENCY_LIBANDROID_FOUND)
         ccgo_link_dependency(myapp libandroid)
     endif()
 endif()
 
-# iOS平台
+# iOS platform
 if(IOS)
     if(CCGO_DEPENDENCY_LIBIOS_FOUND)
         ccgo_link_dependency(myapp libios)
     endif()
 endif()
 
-# macOS平台
+# macOS platform
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT IOS)
     if(CCGO_DEPENDENCY_LIBMACOS_FOUND)
         ccgo_link_dependency(myapp libmacos)
@@ -301,30 +301,30 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT IOS)
 endif()
 ```
 
-## Link Type支持
+## Link Type Support
 
-CCGO支持构建和使用static（静态）和shared（动态）两种类型的库。
+CCGO supports building and using both static and shared library types.
 
-### 构建时指定Link Type
+### Specifying Link Type During Build
 
-所有平台的构建脚本都支持`link_type`参数：
+All platform build scripts support the `link_type` parameter:
 
 ```python
-# build_config.py中
+# In build_config.py
 def main():
-    # 构建静态库（默认）
+    # Build static library (default)
     build_platform(link_type='static')
 
-    # 构建动态库
+    # Build shared library
     build_platform(link_type='shared')
 
-    # 同时构建两种类型
+    # Build both types
     build_platform(link_type='both')
 ```
 
-### 平台支持情况
+### Platform Support
 
-| 平台 | Static (.a/.lib) | Shared (.so/.dll/.dylib) |
+| Platform | Static (.a/.lib) | Shared (.so/.dll/.dylib) |
 |------|------------------|-------------------------|
 | Android | ✅ | ✅ |
 | iOS | ✅ | ✅ |
@@ -335,55 +335,55 @@ def main():
 | Linux | ✅ | ✅ |
 | OHOS | ✅ | ✅ |
 
-### 输出目录结构
+### Output Directory Structure
 
-构建后的输出目录结构：
+Output directory structure after build:
 
 ```
 cmake_build/
 └── <Platform>/
     └── <Platform>.out/
-        ├── static/                 # 静态库输出
-        │   ├── <arch>/            # 架构目录（Android/OHOS/Windows）
-        │   │   └── lib*.a         # 或 *.lib
-        │   └── *.framework        # Apple平台
-        └── shared/                # 动态库输出
+        ├── static/                 # Static library output
+        │   ├── <arch>/            # Architecture directory (Android/OHOS/Windows)
+        │   │   └── lib*.a         # or *.lib
+        │   └── *.framework        # Apple platforms
+        └── shared/                # Shared library output
             ├── <arch>/
-            │   └── lib*.so        # 或 *.dll
+            │   └── lib*.so        # or *.dll
             └── *.framework
 ```
 
-## 打包SDK
+## Packaging SDK
 
-### 生成SDK包
+### Generating SDK Package
 
 ```bash
-# 打包所有平台
+# Package all platforms
 ccgo package
 
-# 打包特定平台
+# Package specific platforms
 ccgo package --platforms android,ios,macos
 
-# 指定版本
+# Specify version
 ccgo package --version 1.0.0
 
-# 包含文档
+# Include documentation
 ccgo package --include-docs
 
-# 清理输出目录
+# Clean output directory
 ccgo package --clean --output ./release
 ```
 
-### SDK包结构
+### SDK Package Structure
 
-生成的SDK包结构：
+Generated SDK package structure:
 
 ```
-myproject_SDK-1.0.0/
-├── include/                       # 公共头文件
+MYPROJECT_SDK-1.0.0/
+├── include/                       # Public header files
 │   └── myproject/
 │       └── *.h
-├── lib/                           # 平台库文件
+├── lib/                           # Platform library files
 │   ├── android/
 │   │   ├── static/
 │   │   │   ├── arm64-v8a/
@@ -406,11 +406,11 @@ myproject_SDK-1.0.0/
 │   ├── windows/
 │   ├── linux/
 │   └── ohos/
-├── ccgo-package.json              # 包元数据
-└── README.md                      # 包说明
+├── ccgo-package.json              # Package metadata
+└── README.md                      # Package documentation
 ```
 
-### ccgo-package.json格式
+### ccgo-package.json Format
 
 ```json
 {
@@ -441,28 +441,28 @@ myproject_SDK-1.0.0/
 }
 ```
 
-### 使用SDK包作为依赖
+### Using SDK Package as Dependency
 
-生成的SDK包可以被其他项目作为依赖使用：
+Generated SDK packages can be used as dependencies in other projects:
 
 ```toml
-# 在另一个项目的CCGO.toml中
+# In another project's CCGO.toml
 [dependencies]
 myproject = {
     version = "1.0.0",
-    path = "../myproject/sdk_package/myproject_SDK-1.0.0"
+    path = "../myproject/target/package/MYPROJECT_SDK-1.0.0"
 }
 ```
 
-## 完整示例
+## Complete Example
 
-### 1. 创建项目并配置依赖
+### 1. Create Project and Configure Dependencies
 
 ```bash
-# 创建新项目
+# Create new project
 ccgo new myapp
 
-# 编辑CCGO.toml
+# Edit CCGO.toml
 cd myapp
 ```
 
@@ -473,17 +473,17 @@ name = "myapp"
 version = "1.0.0"
 
 [dependencies]
-curl = { version = "8.0.0", source = "https://example.com/curl_SDK-8.0.0.zip" }
+curl = { version = "8.0.0", source = "https://example.com/CURL_SDK-8.0.0.zip" }
 openssl = { path = "../openssl/sdk" }
 ```
 
-### 2. 安装依赖
+### 2. Install Dependencies
 
 ```bash
 ccgo install
 ```
 
-输出：
+Output:
 ```
 ================================================================================
 CCGO Install - Install Project Dependencies
@@ -503,11 +503,11 @@ Installing Dependencies
 
 📦 Installing curl...
    Source type: remote_url
-   Source: https://example.com/curl_SDK-8.0.0.zip
-   📥 Downloading from https://example.com/curl_SDK-8.0.0.zip...
+   Source: https://example.com/CURL_SDK-8.0.0.zip
+   📥 Downloading from https://example.com/CURL_SDK-8.0.0.zip...
    Progress: 100%
-   ✓ Downloaded to .ccgo/cache/abc123_curl_SDK-8.0.0.zip
-   📦 Extracting curl_SDK-8.0.0.zip...
+   ✓ Downloaded to .ccgo/cache/abc123_CURL_SDK-8.0.0.zip
+   📦 Extracting CURL_SDK-8.0.0.zip...
    ✓ Extracted to .ccgo/temp/curl
    ✓ Installed to third_party/curl
 
@@ -524,26 +524,26 @@ Installation Summary
 ✓ Successfully installed: 2
 ```
 
-### 3. 在CMake中使用
+### 3. Use in CMake
 
 ```cmake
 # CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
 project(myapp)
 
-# 引入CCGO依赖
+# Include CCGO dependencies
 include(${CCGO_CMAKE_DIR}/FindCCGODependencies.cmake)
 find_ccgo_dependencies()
 
-# 创建应用
+# Create application
 add_executable(myapp src/main.cpp)
 
-# 链接依赖
+# Link dependencies
 ccgo_link_dependency(myapp curl)
 ccgo_link_dependency(myapp openssl)
 ```
 
-### 4. 构建
+### 4. Build
 
 ```bash
 # Android
@@ -556,61 +556,61 @@ ccgo build ios
 ccgo build macos
 ```
 
-### 5. 打包SDK
+### 5. Package SDK
 
 ```bash
 ccgo package --version 1.0.0 --include-docs
 ```
 
-## 故障排除
+## Troubleshooting
 
-### 问题：依赖未找到
+### Issue: Dependency Not Found
 
 ```
 ERROR: CCGO.toml not found in project directory
 ```
 
-**解决方案：** 确保在项目根目录执行命令，且存在CCGO.toml文件。
+**Solution:** Ensure you run commands from the project root directory and that CCGO.toml exists.
 
-### 问题：下载失败
+### Issue: Download Failed
 
 ```
 ✗ Download failed: HTTP Error 404
 ```
 
-**解决方案：** 检查依赖的source URL是否正确，网络是否可访问。
+**Solution:** Check if the dependency's source URL is correct and network is accessible.
 
-### 问题：CMake找不到依赖
+### Issue: CMake Cannot Find Dependency
 
 ```
 WARNING: Library directory not found for libfoo
 ```
 
-**解决方案：**
-1. 确保运行了`ccgo install`
-2. 检查`third_party/libfoo`目录是否存在
-3. 检查是否有对应平台的库文件
+**Solution:**
+1. Ensure you ran `ccgo install`
+2. Check if `third_party/libfoo` directory exists
+3. Check if platform-specific library files exist
 
-### 问题：Link Type不匹配
+### Issue: Link Type Mismatch
 
-**解决方案：** 在CMake中设置正确的link type：
+**Solution:** Set the correct link type in CMake:
 
 ```cmake
-set(CCGO_DEPENDENCY_LINK_TYPE "static")  # 或 "shared"
+set(CCGO_DEPENDENCY_LINK_TYPE "static")  # or "shared"
 find_ccgo_dependencies()
 ```
 
-## 最佳实践
+## Best Practices
 
-1. **版本管理**：在CCGO.toml中明确指定版本号
-2. **缓存管理**：定期清理`.ccgo/cache`目录
-3. **平台依赖**：只为需要的平台配置依赖
-4. **路径使用**：开发时使用相对路径，生产环境使用URL
-5. **Link Type**：根据需求选择static或shared
-6. **依赖更新**：使用`--force`强制更新依赖
+1. **Version Management**: Explicitly specify version numbers in CCGO.toml
+2. **Cache Management**: Regularly clean `.ccgo/cache` directory
+3. **Platform Dependencies**: Only configure dependencies for needed platforms
+4. **Path Usage**: Use relative paths during development, URLs for production
+5. **Link Type**: Choose static or shared based on requirements
+6. **Dependency Updates**: Use `--force` to force update dependencies
 
-## 参考资料
+## Reference
 
-- [CCGO.toml.example](build_scripts/CCGO.toml.example) - 完整配置示例
-- [CMakeLists.txt.dependencies.example](build_scripts/cmake/CMakeLists.txt.dependencies.example) - CMake使用示例
-- [FindCCGODependencies.cmake](build_scripts/cmake/FindCCGODependencies.cmake) - CMake模块源码
+- [CCGO.toml.example](build_scripts/CCGO.toml.example) - Complete configuration example
+- [CMakeLists.txt.dependencies.example](build_scripts/cmake/CMakeLists.txt.dependencies.example) - CMake usage example
+- [FindCCGODependencies.cmake](build_scripts/cmake/FindCCGODependencies.cmake) - CMake module source code

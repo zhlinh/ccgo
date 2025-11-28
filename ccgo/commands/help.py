@@ -234,7 +234,7 @@ Use 'ccgo <command> --help' for command-specific help.
         print("\n  Options:")
         print("    --version <version>        SDK version (default: auto-detect)")
         print(
-            "    --output <dir>             Output directory (default: ./sdk_package)"
+            "    --output <dir>             Output directory (default: ./target/package)"
         )
         print(
             "    --format <format>          Archive format: zip, tar.gz, both, none (default: zip)"

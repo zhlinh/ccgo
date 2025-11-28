@@ -31,7 +31,7 @@ add_ccgo_deps() {
 }
 
 # Update each Dockerfile
-for dockerfile in Dockerfile.linux Dockerfile.windows Dockerfile.apple Dockerfile.android; do
+for dockerfile in Dockerfile.linux Dockerfile.windows-mingw Dockerfile.windows-msvc Dockerfile.apple Dockerfile.android; do
     if [ -f "$DOCKER_DIR/$dockerfile" ]; then
         add_ccgo_deps "$DOCKER_DIR/$dockerfile"
     else

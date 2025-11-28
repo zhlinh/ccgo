@@ -105,7 +105,7 @@ ccgo build android --docker
 ┌─────────────────────────────────┐
 │   Build Artifacts (Host)        │
 │   - cmake_build/                │
-│   - bin/linux/ or bin/windows/  │
+│   - target/linux/ or target/windows/  │
 └─────────────────────────────────┘
 ```
 
@@ -163,14 +163,14 @@ You can also use the Docker build script directly:
 
 ```bash
 # Build any platform
-python3 /path/to/ccgo/docker/build_docker.py <platform> /path/to/project
+python3 /path/to/ccgo/dockers/build_docker.py <platform> /path/to/project
 
 # Examples
-python3 /path/to/ccgo/docker/build_docker.py linux /path/to/project
-python3 /path/to/ccgo/docker/build_docker.py windows /path/to/project
-python3 /path/to/ccgo/docker/build_docker.py macos /path/to/project
-python3 /path/to/ccgo/docker/build_docker.py ios /path/to/project
-python3 /path/to/ccgo/docker/build_docker.py android /path/to/project
+python3 /path/to/ccgo/dockers/build_docker.py linux /path/to/project
+python3 /path/to/ccgo/dockers/build_docker.py windows /path/to/project
+python3 /path/to/ccgo/dockers/build_docker.py macos /path/to/project
+python3 /path/to/ccgo/dockers/build_docker.py ios /path/to/project
+python3 /path/to/ccgo/dockers/build_docker.py android /path/to/project
 ```
 
 ### Rebuild Docker Images
@@ -373,7 +373,7 @@ jobs:
 
 To improve Docker build support:
 
-1. **Update Dockerfiles**: Modify `Dockerfile.linux` or `Dockerfile.windows`
+1. **Update Dockerfiles**: Modify `Dockerfile.linux`, `Dockerfile.windows-mingw`, or `Dockerfile.windows-msvc`
 2. **Test changes**: Rebuild images and test builds
 3. **Document changes**: Update this README
 4. **Submit PR**: Contribute back to the project

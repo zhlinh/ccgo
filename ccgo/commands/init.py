@@ -26,6 +26,7 @@ PACKAGE_NAME = os.path.basename(SCRIPT_PATH)
 from utils.context.namespace import CliNameSpace
 from utils.context.context import CliContext
 from utils.context.command import CliCommand
+from utils.template_version import resolve_template_version
 
 
 class Init(CliCommand):
@@ -38,9 +39,21 @@ class Init(CliCommand):
 
         WARNING: This will add/overwrite files in the current directory!
 
+        By default, the command runs in non-interactive mode using default values.
+        Use --interact to enable interactive mode with prompts.
+
+        Version Resolution:
+            - Specify X.0.0 to use the highest X.y.z version (e.g., 2.0.0 -> 2.3.5)
+            - Specify X.Y.0 to use the highest X.Y.z version (e.g., 2.1.0 -> 2.1.8)
+            - Specify X.Y.Z to use exact version (e.g., 2.2.3 -> 2.2.3)
+            - Use --use-latest to always use the latest master/main branch
+
         Examples:
             ccgo init
-            ccgo init --defaults
+            ccgo init --interact
+            ccgo init --template-version=2.0.0
+            ccgo init --template-version=2.1.0
+            ccgo init --use-latest
             ccgo init --template-url=https://github.com/user/custom-template.git
             ccgo init --data cpy_project_version=2.0.0
         """
@@ -58,14 +71,25 @@ class Init(CliCommand):
             help="Template repository URL (default: official CCGO template)",
         )
         parser.add_argument(
+            "--template-version",
+            action="store",
+            default=None,
+            help="Template version to use (e.g., 2.0.0, 2.1.0). If not specified, uses latest stable tag",
+        )
+        parser.add_argument(
+            "--use-latest",
+            action="store_true",
+            help="Use latest master/main branch instead of tagged version",
+        )
+        parser.add_argument(
             "--data",
             action="append",
             help="Template data in KEY=VALUE format (can be used multiple times)",
         )
         parser.add_argument(
-            "--defaults",
+            "--interact",
             action="store_true",
-            help="Use default values for all questions not provided via --data",
+            help="Enable interactive mode with prompts (default is non-interactive)",
         )
         parser.add_argument(
             "--force",
@@ -95,6 +119,17 @@ class Init(CliCommand):
                     print("Aborted.")
                     sys.exit(0)
 
+        # Resolve template version
+        template_version = resolve_template_version(
+            args.template_url,
+            requested_version=getattr(args, "template_version", None),
+            use_latest=getattr(args, "use_latest", False),
+        )
+
+        if template_version is None:
+            print("Error: Failed to resolve template version")
+            sys.exit(1)
+
         # Use current directory name as default project name
         default_project_name = dir_name
 
@@ -113,14 +148,16 @@ class Init(CliCommand):
                         value = False
                     data[key] = value
 
-        # Use defaults for unspecified questions if --defaults is provided
-        use_defaults = hasattr(args, "defaults") and args.defaults
+        # Use defaults for unspecified questions unless --interact is provided
+        use_defaults = not (hasattr(args, "interact") and args.interact)
 
-        print(f"\nInitializing project from template: {args.template_url}")
+        print(f"\nUsing template version: {template_version}")
+        print(f"Initializing project from template: {args.template_url}")
 
         run_copy(
             args.template_url,
             current_dir,
+            vcs_ref=template_version,
             data=data,
             unsafe=True,
             defaults=use_defaults,

@@ -12,13 +12,13 @@ authors = ["Your Name <your.email@example.com>"]
 [dependencies]
 
 # Example 1: Remote URL dependency
-libfoo = { version = "1.0.0", source = "https://example.com/releases/libfoo_SDK-1.0.0.zip" }
+libfoo = { version = "1.0.0", source = "https://example.com/releases/LIBFOO_SDK-1.0.0.zip" }
 
 # Example 2: Local path dependency (relative to project root)
-libbar = { path = "../libbar/sdk_package/libbar_SDK-1.0.0" }
+libbar = { path = "../libbar/target/package/LIBBAR_SDK-1.0.0" }
 
 # Example 3: Local archive dependency (absolute path)
-libbaz = { source = "/absolute/path/to/libbaz_SDK-2.1.0.tar.gz" }
+libbaz = { source = "/absolute/path/to/LIBBAZ_SDK-2.1.0.tar.gz" }
 
 # Example 4: Simple version string (requires manual source configuration)
 # libqux = "2.0.0"
@@ -37,7 +37,7 @@ libios = { version = "1.0.0", source = "https://example.com/libios-1.0.0.tar.gz"
 
 [dependencies.macos]
 # macOS-specific dependency
-libmacos = { path = "../libs/macos/libmacos_SDK-1.0.0" }
+libmacos = { path = "../libs/macos/LIBMACOS_SDK-1.0.0" }
 
 [dependencies.tvos]
 # tvOS-specific dependency

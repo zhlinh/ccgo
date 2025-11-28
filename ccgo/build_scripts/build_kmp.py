@@ -43,6 +43,7 @@ import sys
 import subprocess
 import argparse
 import platform
+import shutil
 from pathlib import Path
 
 # Get the script directory (where this build script is located)
@@ -257,6 +258,93 @@ def build_kmp_library():
 
     print(f"\n  Tip: For publishable artifacts, use:")
     print(f"  ccgo publish kmp  # Publish to Maven")
+    print()
+
+    # Copy artifacts to target/kmp directory
+    print("\n" + "=" * 80)
+    print("Organizing Build Artifacts")
+    print("=" * 80 + "\n")
+
+    target_kmp_dir = PROJECT_DIR / "target" / "kmp"
+
+    # Clean and create target/kmp directory
+    if target_kmp_dir.exists():
+        print(f"Cleaning existing target/kmp directory...")
+        shutil.rmtree(target_kmp_dir)
+
+    target_kmp_dir.mkdir(parents=True, exist_ok=True)
+
+    artifacts_copied = []
+
+    # Copy Android AAR files
+    if aar_dir.exists():
+        aar_files = list(aar_dir.glob("*.aar"))
+        if aar_files:
+            android_target = target_kmp_dir / "android"
+            android_target.mkdir(exist_ok=True)
+            for aar_file in aar_files:
+                dest = android_target / aar_file.name
+                shutil.copy2(aar_file, dest)
+                artifacts_copied.append(f"android/{aar_file.name}")
+
+    # Copy Desktop JAR files
+    if jar_dir.exists():
+        jar_files = list(jar_dir.glob("*.jar"))
+        if jar_files:
+            desktop_target = target_kmp_dir / "desktop"
+            desktop_target.mkdir(exist_ok=True)
+            for jar_file in jar_files:
+                dest = desktop_target / jar_file.name
+                shutil.copy2(jar_file, dest)
+                artifacts_copied.append(f"desktop/{jar_file.name}")
+
+    # Copy native klib files (iOS/macOS/Linux)
+    classes_dir = KMP_DIR / "build" / "classes" / "kotlin"
+    if classes_dir.exists():
+        # Copy all klib directories
+        for klib_dir in classes_dir.glob("*/main"):
+            if klib_dir.is_dir():
+                platform_name = klib_dir.parent.name  # e.g., iosArm64, macosX64, etc.
+                native_target = target_kmp_dir / "native" / platform_name
+                native_target.mkdir(parents=True, exist_ok=True)
+
+                # Copy the entire main directory content
+                if (klib_dir / "klib").exists():
+                    dest = native_target / "klib"
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(klib_dir / "klib", dest)
+                    artifacts_copied.append(f"native/{platform_name}/klib")
+
+                # Copy cinterop if exists
+                if (klib_dir / "cinterop").exists():
+                    dest = native_target / "cinterop"
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(klib_dir / "cinterop", dest)
+                    artifacts_copied.append(f"native/{platform_name}/cinterop")
+
+    if artifacts_copied:
+        print(f"✅ Copied {len(artifacts_copied)} artifact(s) to target/kmp/\n")
+        print("Build artifacts in target/kmp/:")
+        print("-" * 60)
+
+        # List all files in target/kmp directory with sizes
+        for root, dirs, files in os.walk(target_kmp_dir):
+            rel_root = Path(root).relative_to(target_kmp_dir)
+            for file in sorted(files):
+                file_path = Path(root) / file
+                size = file_path.stat().st_size / (1024 * 1024)  # MB
+                if rel_root == Path("."):
+                    print(f"  {file} ({size:.2f} MB)")
+                else:
+                    print(f"  {rel_root}/{file} ({size:.2f} MB)")
+
+        print()
+        print(f"All KMP artifacts organized in: {target_kmp_dir}")
+    else:
+        print("⚠️  No artifacts were copied to target/kmp/")
+
     print()
 
 

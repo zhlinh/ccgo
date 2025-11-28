@@ -79,12 +79,21 @@ PLATFORM_CONFIG = {
         "size_estimate": "~800MB"
     },
     "windows": {
-        "dockerfile": "Dockerfile.windows",
+        "dockerfile": "Dockerfile.windows-mingw",
         "image_name": "ccgo-builder-windows",
         "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-windows:latest",
         "build_script": "build_windows.py",
         "build_mode": "1",
         "size_estimate": "~1.2GB"
+    },
+    "windows-msvc": {
+        "dockerfile": "Dockerfile.windows-msvc",
+        "image_name": "ccgo-builder-windows-msvc",
+        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-windows-msvc:latest",
+        "build_script": "build_windows.py",
+        "build_mode": "1",
+        "size_estimate": "~1.5GB",
+        "build_args": "--toolchain=msvc"
     },
     "macos": {
         "dockerfile": "Dockerfile.apple",
@@ -133,7 +142,7 @@ PLATFORM_CONFIG = {
 class DockerBuilder:
     """Docker-based cross-platform builder."""
 
-    def __init__(self, platform: str, project_dir: str, dev_mode: bool = False):
+    def __init__(self, platform: str, project_dir: str, dev_mode: bool = False, toolchain: str = "auto"):
         """
         Initialize Docker builder.
 
@@ -141,18 +150,45 @@ class DockerBuilder:
             platform: Target platform (linux, windows, macos, ios, watchos, tvos, android)
             project_dir: Absolute path to project directory
             dev_mode: Use local ccgo source instead of PyPI (for development)
+            toolchain: For Windows, specify toolchain: msvc, gnu/mingw, or auto
         """
         self.platform = platform.lower()
         self.project_dir = Path(project_dir).resolve()
+        self.toolchain = toolchain.lower() if toolchain else "auto"
         self.docker_dir = Path(__file__).parent.resolve()
+
+        # Auto-detect dev mode if not explicitly specified
+        if not dev_mode:
+            # Check if local ccgo source is available
+            ccgo_source = self._find_ccgo_source()
+            if ccgo_source:
+                print(f"ℹ Auto-detected local ccgo source at {ccgo_source}")
+                print(f"  Using development mode (local source in Docker)")
+                print(f"  To disable, use production PyPI version (requires v2.1.1+ with cmake files)")
+                dev_mode = True
+
         self.dev_mode = dev_mode
+
+        # Handle Windows toolchain selection
+        if self.platform == "windows" and self.toolchain != "auto":
+            if self.toolchain in ["msvc"]:
+                # Use MSVC Docker configuration
+                self.platform = "windows-msvc"
+                print(f"ℹ Using MSVC toolchain for Windows build")
+            elif self.toolchain in ["gnu", "mingw"]:
+                # Use default MinGW configuration
+                print(f"ℹ Using MinGW toolchain for Windows build")
+            else:
+                print(f"⚠ Unknown toolchain '{self.toolchain}', using default MinGW")
 
         # Validate platform
         if self.platform not in PLATFORM_CONFIG:
-            supported = ", ".join(PLATFORM_CONFIG.keys())
+            # Filter out internal platform variants for error message
+            supported = [p for p in PLATFORM_CONFIG.keys() if not p.startswith("windows-") or p == "windows"]
+            supported_str = ", ".join(supported)
             raise ValueError(
                 f"Unsupported platform: {platform}\n"
-                f"Supported platforms: {supported}"
+                f"Supported platforms: {supported_str}"
             )
 
         # Get platform configuration
@@ -323,7 +359,7 @@ class DockerBuilder:
             Path to ccgo repo root, or None if not found
         """
         # Start from docker_dir and search upward for setup.py
-        # docker_dir is .../ccgo/ccgo/docker
+        # docker_dir is .../ccgo/ccgo/dockers
         # We need to find .../ccgo (repo root with setup.py)
         current = self.docker_dir
         for _ in range(5):  # Search up to 5 levels
@@ -378,10 +414,11 @@ class DockerBuilder:
         # Construct ccgo build command
         if self.platform == "android" and self.config.get("native_only"):
             # Android native-only build
-            ccgo_cmd = f"ccgo build android --native-only --arch armeabi-v7a,arm64-v8a,x86_64"
+            ccgo_cmd = f"ccgo build android --native-only --arch armeabi-v7a,arm64-v8a,x86_64 --no-docker"
         else:
             # Standard build command
-            ccgo_cmd = f"ccgo build {self.platform}"
+            # IMPORTANT: Add --no-docker to prevent recursive Docker calls inside container
+            ccgo_cmd = f"ccgo build {self.platform} --no-docker"
 
         if build_args:
             ccgo_cmd += " " + " ".join(build_args)
@@ -396,6 +433,14 @@ class DockerBuilder:
             "docker", "run",
             "--rm",  # Remove container after execution
         ]
+
+        # Add environment variables for Windows toolchain selection
+        if self.platform.startswith("windows"):
+            if "msvc" in self.platform:
+                docker_cmd.extend(["-e", "CCGO_WINDOWS_TOOLCHAIN=msvc"])
+            elif self.toolchain != "auto":
+                docker_cmd.extend(["-e", f"CCGO_WINDOWS_TOOLCHAIN={self.toolchain}"])
+
         docker_cmd.extend(docker_volumes)
         docker_cmd.extend([
             "-w", "/workspace",  # Set working directory
@@ -425,17 +470,29 @@ class DockerBuilder:
     def print_results(self):
         """Print build results location."""
         print(f"\n=== Build Results ===")
-        build_output = self.project_dir / "cmake_build" / self.platform.capitalize()
+
+        # Normalize platform name for Windows variants
+        # Windows-msvc and windows should both use "Windows" for cmake_build
+        platform_name = self.platform
+        if platform_name.startswith("windows"):
+            cmake_platform = "Windows"
+            target_platform = "windows"
+        else:
+            cmake_platform = platform_name.capitalize()
+            target_platform = platform_name
+
+        build_output = self.project_dir / "cmake_build" / cmake_platform
         if build_output.exists():
             print(f"Build artifacts: {build_output}")
         else:
             print(f"WARNING: Build output directory not found: {build_output}")
 
-        bin_output = self.project_dir / "bin" / self.platform
-        if bin_output.exists():
-            print(f"Packaged artifacts: {bin_output}")
-            # List files in bin directory
-            for item in sorted(bin_output.iterdir()):
+        # Check target directory (new unified location for all platforms)
+        target_output = self.project_dir / "target" / target_platform
+        if target_output.exists():
+            print(f"Packaged artifacts: {target_output}")
+            # List files in target directory
+            for item in sorted(target_output.iterdir()):
                 if item.is_file():
                     size = item.stat().st_size / (1024 * 1024)
                     print(f"  {item.name} ({size:.2f} MB)")
@@ -445,15 +502,20 @@ class DockerBuilder:
 
 def print_usage():
     """Print usage information."""
-    print("Usage: python3 build_docker.py <platform> <project_dir> [--dev] [build_args...]")
+    print("Usage: python3 build_docker.py <platform> <project_dir> [options] [build_args...]")
     print("\nSupported platforms:")
+    # Filter out internal platform variants for display
     for platform, config in PLATFORM_CONFIG.items():
-        print(f"  {platform:12} - {config['size_estimate']:10} Docker image")
+        if not platform.startswith("windows-"):
+            print(f"  {platform:12} - {config['size_estimate']:10} Docker image")
     print("\nOptions:")
-    print("  --dev        Use local ccgo source (for development, not published to PyPI)")
+    print("  --dev              Use local ccgo source (for development, not published to PyPI)")
+    print("  --toolchain=<type> Windows toolchain: msvc, gnu/mingw, or auto (default: auto)")
     print("\nExamples:")
     print("  python3 build_docker.py linux /path/to/project")
     print("  python3 build_docker.py windows /path/to/project --dev")
+    print("  python3 build_docker.py windows /path/to/project --toolchain=msvc")
+    print("  python3 build_docker.py windows /path/to/project --toolchain=mingw")
     print("  python3 build_docker.py macos /path/to/project")
     print("  python3 build_docker.py ios /path/to/project")
     print("  python3 build_docker.py android /path/to/project")
@@ -468,13 +530,16 @@ def main():
     platform = sys.argv[1]
     project_dir = sys.argv[2]
 
-    # Parse --dev flag and remaining build args
+    # Parse --dev flag, --toolchain flag and remaining build args
     dev_mode = False
+    toolchain = "auto"
     build_args = []
 
     for arg in sys.argv[3:]:
         if arg == "--dev":
             dev_mode = True
+        elif arg.startswith("--toolchain="):
+            toolchain = arg.split("=", 1)[1]
         else:
             build_args.append(arg)
 
@@ -482,7 +547,7 @@ def main():
         build_args = None
 
     try:
-        builder = DockerBuilder(platform, project_dir, dev_mode=dev_mode)
+        builder = DockerBuilder(platform, project_dir, dev_mode=dev_mode, toolchain=toolchain)
         builder.check_docker()
         builder.build_image()
         builder.run_build(build_args)

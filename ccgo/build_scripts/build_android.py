@@ -207,7 +207,8 @@ def build_android(incremental, arch, target_option, tag, link_type='both'):
 
     if 0 != ret:
         print("!!!!!!!!!!!!!!!!!!build fail!!!!!!!!!!!!!!!!!!!!")
-        return False
+        print(f"ERROR: Native build failed for {arch}. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
 
     # Determine which link types to process based on link_type parameter
     link_types_to_build = []
@@ -332,6 +333,18 @@ def build_android(incremental, arch, target_option, tag, link_type='both'):
             print(f"symbols(must store permanently): {symbol_path}")
         else:
             print(f"symbols: not needed (identical to release)")
+
+        # Check the built libraries architecture
+        print(f"\n==================Verifying {arch} {current_link_type} Libraries========================")
+        lib_pattern = os.path.join(lib_path, "*.so" if current_link_type == 'shared' else "*.a")
+        lib_files = glob.glob(lib_pattern)
+        if lib_files:
+            # Only check first few libraries to avoid too much output
+            for lib_file in lib_files[:3]:
+                check_library_architecture(lib_file, platform_hint="android")
+        else:
+            print(f"WARNING: No {current_link_type} libraries found in {lib_path}")
+        print(f"===================================================================================")
 
     after_time = time.time()
 

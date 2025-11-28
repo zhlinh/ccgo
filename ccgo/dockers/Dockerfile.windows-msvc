@@ -1,0 +1,80 @@
+# Dockerfile for building Windows libraries using MSVC toolchain via Wine/LLVM
+# This provides an alternative to MinGW for better Windows ecosystem compatibility
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Wine and LLVM/Clang for MSVC-compatible builds
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    dpkg --add-architecture i386 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    # Wine for running Windows tools
+    wine64 wine32 \
+    # LLVM/Clang with MSVC compatibility
+    clang \
+    lld \
+    llvm \
+    # Build tools
+    cmake \
+    make \
+    ninja-build \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    zip \
+    unzip \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Windows SDK headers and libraries via xwin
+# xwin downloads Windows SDK files directly from Microsoft
+RUN pip3 install --no-cache-dir xwin
+
+# Download Windows SDK headers and libraries
+RUN mkdir -p /opt/xwin && \
+    cd /opt/xwin && \
+    python3 -m xwin splat --accept-license --output /opt/xwin/sdk
+
+# Install Python dependencies for CCGO
+RUN pip3 install --no-cache-dir \
+    tomli \
+    copier>=9.2.0 \
+    copier-templates-extensions>=0.3.0
+
+# Set environment variables for MSVC-compatible cross-compilation
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    # Use clang-cl for MSVC ABI compatibility
+    CC="clang-cl" \
+    CXX="clang-cl" \
+    # Set Windows SDK paths
+    INCLUDE="/opt/xwin/sdk/crt/include:/opt/xwin/sdk/sdk/include/um:/opt/xwin/sdk/sdk/include/shared" \
+    LIB="/opt/xwin/sdk/crt/lib/x64:/opt/xwin/sdk/sdk/lib/um/x64" \
+    # Target Windows x64
+    CLANG_TARGET="x86_64-pc-windows-msvc"
+
+# Create wrapper scripts for MSVC-compatible compilation
+RUN echo '#!/bin/bash\nclang-cl --target=x86_64-pc-windows-msvc "$@"' > /usr/local/bin/cl && \
+    chmod +x /usr/local/bin/cl && \
+    echo '#!/bin/bash\nlld-link "$@"' > /usr/local/bin/link && \
+    chmod +x /usr/local/bin/link && \
+    echo '#!/bin/bash\nllvm-lib "$@"' > /usr/local/bin/lib && \
+    chmod +x /usr/local/bin/lib
+
+# Verify toolchain installation
+RUN echo "=== MSVC-compatible Toolchain Verification ===" && \
+    clang --version && \
+    lld --version && \
+    cmake --version && \
+    python3 --version && \
+    echo "Windows SDK installed at /opt/xwin/sdk"
+
+# Set working directory
+WORKDIR /workspace
+
+# Entry point
+ENTRYPOINT ["/bin/bash", "-c"]

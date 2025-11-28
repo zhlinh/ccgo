@@ -143,7 +143,8 @@ def build_macos(target_option="", tag="", link_type='static'):
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build os fail!!!!!!!!!!!!!!!")
-        return False
+        print("ERROR: Native build failed for macOS ARM. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
 
     lipo_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}"
     libtool_os_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}_os"
@@ -157,7 +158,8 @@ def build_macos(target_option="", tag="", link_type='static'):
     print(f"libtool src lib: {len(libtool_src_lib)}/{len(total_src_lib)}")
 
     if not libtool_libs(libtool_src_lib, libtool_os_dst_lib):
-        return False
+        print("ERROR: Failed to merge ARM libraries. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on merge failure
 
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
@@ -167,9 +169,11 @@ def build_macos(target_option="", tag="", link_type='static'):
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build simulator fail!!!!!!!!!!!!!!!")
-        return False
+        print("ERROR: Native build failed for macOS x86. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
     if not libtool_libs(glob.glob(INSTALL_PATH + "/*.a"), libtool_simulator_dst_lib):
-        return False
+        print("ERROR: Failed to merge x86 libraries. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on merge failure
 
     # src libs to be libtool
     lipo_src_libs = []
@@ -179,9 +183,22 @@ def build_macos(target_option="", tag="", link_type='static'):
     #    lipo_src_libs.append(libtool_xlog_dst_lib)
 
     if not libtool_libs(lipo_src_libs, lipo_dst_lib):
-        return False
+        print("ERROR: Failed to create universal binary. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on universal binary creation failure
 
     make_static_framework(lipo_dst_lib, dst_framework_path, dst_framework_headers, "./")
+
+    # Check the built universal binary architecture
+    print("\n==================Verifying macOS Universal Binary========================")
+    framework_lib = os.path.join(dst_framework_path, PROJECT_NAME_LOWER)
+    if os.path.exists(framework_lib):
+        check_library_architecture(framework_lib, platform_hint="macos")
+    else:
+        # Try with .a extension
+        framework_lib_a = f"{framework_lib}.a"
+        if os.path.exists(framework_lib_a):
+            check_library_architecture(framework_lib_a, platform_hint="macos")
+    print("========================================================================")
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     print("==================Output========================")

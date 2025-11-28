@@ -23,7 +23,7 @@ on:
     branches:
       - main
     paths:
-      - 'ccgo/docker/Dockerfile.*'
+      - 'ccgo/dockers/Dockerfile.*'
       - '.github/workflows/publish-docker-images.yml'
   schedule:
     # Run weekly on Sunday at 2am UTC
@@ -45,7 +45,7 @@ jobs:
             dockerfile: Dockerfile.linux
             image: ccgo-builder-linux
           - platform: windows
-            dockerfile: Dockerfile.windows
+            dockerfile: Dockerfile.windows-mingw
             image: ccgo-builder-windows
           - platform: apple
             dockerfile: Dockerfile.apple
@@ -98,8 +98,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./ccgo/docker
-          file: ./ccgo/docker/${{ matrix.dockerfile }}
+          context: ./ccgo/dockers
+          file: ./ccgo/dockers/${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

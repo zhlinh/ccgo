@@ -59,12 +59,8 @@ except ImportError:
 
 # Script configuration
 SCRIPT_PATH = os.getcwd()
-# Directory name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-
-# Ensure cmake directory exists in project
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils
+# which loads them from CCGO.toml configuration file
 
 # Build output paths
 BUILD_OUT_PATH = "cmake_build/Windows"
@@ -81,7 +77,7 @@ WIN_SRC_DIR = "src"  # Source directory name for PDB collection
 THIRD_PARTY_MERGE_LIBS = ["pthread"]  # Third-party libraries to merge into final .lib
 
 
-def build_windows(incremental, tag="", config="Release", link_type='static', use_mingw=False):
+def build_windows(incremental, tag="", config="Release", link_type='static', use_mingw=False, use_msvc_compat=False):
     """
     Build Windows static library with Visual Studio or MinGW toolchain.
 
@@ -157,6 +153,28 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
         )
         cmake_build_cmd = 'cmake --build . --target install'
         cmd = f'{cmake_config_cmd} && {cmake_build_cmd}'
+    elif use_msvc_compat:
+        # MSVC-compatible build using clang-cl (for Docker with MSVC ABI)
+        # Use Ninja generator for better cross-platform support
+        cmake_config_cmd = (
+            f'cmake ../.. '
+            f'-G "Ninja" '
+            f'-DCMAKE_SYSTEM_NAME=Windows '
+            f'-DCMAKE_C_COMPILER=clang-cl '
+            f'-DCMAKE_CXX_COMPILER=clang-cl '
+            f'-DCMAKE_AR=llvm-lib '
+            f'-DCMAKE_LINKER=lld-link '
+            f'-DCMAKE_MT=llvm-mt '
+            f'-DCMAKE_RC_COMPILER=llvm-rc '
+            f'-DCMAKE_BUILD_TYPE={config} '
+            f'-DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags}'
+        )
+        # Set environment for Windows SDK paths if available
+        if os.environ.get('INCLUDE'):
+            cmake_config_cmd += f' -DCMAKE_C_FLAGS="/I{os.environ["INCLUDE"]}"'
+            cmake_config_cmd += f' -DCMAKE_CXX_FLAGS="/I{os.environ["INCLUDE"]}"'
+        cmake_build_cmd = 'cmake --build . --target install'
+        cmd = f'{cmake_config_cmd} && {cmake_build_cmd}'
     else:
         # Visual Studio build (native Windows)
         cmd = f'cmake ../.. -G "Visual Studio 16 2019" -T v142 -DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags} && cmake --build . --target install --config {config}'
@@ -167,9 +185,12 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
 
     if 0 != ret:
         print("!!!!!!!!!!!!!!!!!!build fail!!!!!!!!!!!!!!!!!!!!")
-        return False
+        print("ERROR: Native build failed for Windows. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
 
-    win_result_dir = INSTALL_PATH + f"{PROJECT_NAME_LOWER}.dir/" + WIN_ARCH
+    # Create result directory without architecture subdirectory (x64)
+    # Windows only supports x64, so no need for architecture-specific subdirectories
+    win_result_dir = INSTALL_PATH + f"{PROJECT_NAME_LOWER}.dir"
     if os.path.exists(win_result_dir):
         shutil.rmtree(win_result_dir)
     os.makedirs(win_result_dir)
@@ -190,20 +211,36 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
     print(f"build merge libs: {needed_libs}")
 
     if use_mingw:
-        # MinGW builds: Copy libraries directly without merging
+        # MinGW builds: Merge multiple .a files into a single library
         # MinGW produces .a files, not .lib files
-        # Just copy the built library to the output directory
+        # Merge all .a files from INSTALL_PATH
         mingw_libs = glob.glob(INSTALL_PATH + "*.a")
-        for lib in mingw_libs:
-            shutil.copy(lib, win_result_dir)
-        print(f"Copied MinGW libraries: {mingw_libs}")
+
+        # Add third-party libraries to merge list
+        for other_lib in THIRD_PARTY_MERGE_LIBS:
+            temp_libs_path = (
+                SCRIPT_PATH + f"/third_party/{other_lib}/lib/windows/{WIN_ARCH}/"
+            )
+            temp_libs = glob.glob(temp_libs_path + "*.a")
+            mingw_libs.extend(temp_libs)
+
+        print(f"MinGW: Merging libraries: {mingw_libs}")
+
+        # Merge all .a files into a single library using MinGW-specific merge
+        output_lib = win_result_dir + f"/{PROJECT_NAME_LOWER}.a"
+        if not merge_mingw_static_libs(mingw_libs, output_lib):
+            print("!!!!!!!!!!!!!!!!!!merge MinGW libs fail!!!!!!!!!!!!!!!!!!!!")
+            return False
+
+        print(f"MinGW: Merged library created: {output_lib}")
     else:
         # Visual Studio builds: Merge multiple .lib files into one
         if not merge_win_static_libs(
             needed_libs, win_result_dir + f"/{PROJECT_NAME_LOWER}.lib"
         ):
             print("!!!!!!!!!!!!!!!!!!merge libs fail!!!!!!!!!!!!!!!!!!!!")
-            return False
+            print("ERROR: Failed to merge Windows libraries. Stopping immediately.")
+            sys.exit(1)  # Exit immediately on merge failure
 
     headers = dict()
     headers.update(WINDOWS_BUILD_COPY_HEADER_FILES)
@@ -234,6 +271,24 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
             pdf_suffix,
             win_result_dir + f"/{PROJECT_NAME_LOWER}{pdf_suffix}.zip",
         )
+
+    # Check the built library architecture
+    print("\n==================Verifying Windows Library========================")
+    if use_mingw:
+        # MinGW builds .a files
+        final_lib = os.path.join(win_result_dir, f"{PROJECT_NAME_LOWER}.a")
+    else:
+        # MSVC builds .lib files
+        final_lib = os.path.join(win_result_dir, f"{PROJECT_NAME_LOWER}.lib")
+
+    if os.path.exists(final_lib):
+        check_library_architecture(final_lib, platform_hint="windows")
+    else:
+        # Try to find any .lib or .a file
+        lib_files = glob.glob(os.path.join(win_result_dir, "*.lib")) + glob.glob(os.path.join(win_result_dir, "*.a"))
+        if lib_files:
+            check_library_architecture(lib_files[0], platform_hint="windows")
+    print("====================================================================")
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     print("==================Output========================")
@@ -309,15 +364,14 @@ def archive_windows_project():
     """
     Archive Windows static library and related build artifacts.
 
-    This function creates an archive package containing:
-    1. Static library (.lib file) and headers
-    2. Build artifacts
-
-    The archive is packaged into a ZIP file named:
-    (ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
+    This function creates two archive packages (matching Linux packaging style):
+    1. Main package: {PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
+       - Contains library with simplified structure: {project}.libdir/{project}.lib
+    2. Archive package: (ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
+       - Contains full library for debugging (includes version info)
 
     Output:
-        - target/windows/{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.dir/
+        - target/windows/{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
         - target/windows/(ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip
     """
     import zipfile
@@ -348,14 +402,15 @@ def archive_windows_project():
     # Build full version name with suffix
     full_version = f"{version_name}-{suffix}" if suffix else version_name
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - create artifacts directly in target/windows/
+    target_dir = os.path.join(SCRIPT_PATH, "target")
+    bin_dir = os.path.join(target_dir, "windows")
     windows_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
-    # Create target directory
+    # Create target/windows directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Find and copy library directory
+    # Find source library directory
     lib_dir_name = f"{PROJECT_NAME_LOWER}.dir"
     lib_dir_src = os.path.join(windows_install_path, lib_dir_name)
 
@@ -363,94 +418,126 @@ def archive_windows_project():
         print(f"WARNING: Library directory not found at {lib_dir_src}")
         return
 
-    lib_dir_dest = os.path.join(
-        bin_dir, f"{project_name_upper}_WINDOWS_SDK-{full_version}.dir"
-    )
-    if os.path.exists(lib_dir_dest):
-        shutil.rmtree(lib_dir_dest)
-    shutil.copytree(lib_dir_src, lib_dir_dest)
-    print(f"Copied library directory: {lib_dir_dest}")
+    # Create temporary .libdir directory for packaging
+    temp_lib_dir = os.path.join(bin_dir, f"{PROJECT_NAME_LOWER}.libdir")
+    if os.path.exists(temp_lib_dir):
+        shutil.rmtree(temp_lib_dir)
+    shutil.copytree(lib_dir_src, temp_lib_dir)
+    print(f"Prepared library directory: {temp_lib_dir}")
 
-    # Create archive directory structure
-    archive_name = f"(ARCHIVE)_{project_name_upper}_WINDOWS_SDK-{full_version}"
-    archive_dir = os.path.join(bin_dir, archive_name)
+    # Rename .a file to .lib for Windows standard (if exists)
+    for root, dirs, files in os.walk(temp_lib_dir):
+        for file in files:
+            if file.endswith('.a'):
+                old_path = os.path.join(root, file)
+                new_path = os.path.join(root, file[:-2] + '.lib')
+                shutil.move(old_path, new_path)
+                print(f"Renamed: {file} -> {os.path.basename(new_path)}")
 
-    if os.path.exists(archive_dir):
-        shutil.rmtree(archive_dir)
-    os.makedirs(archive_dir, exist_ok=True)
+    # Create main ZIP archive with simplified structure
+    main_zip_name = f"{project_name_upper}_WINDOWS_SDK-{full_version}.zip"
+    main_zip_path = os.path.join(bin_dir, main_zip_name)
 
-    # Copy library directory to archive
-    archive_lib_dir = os.path.join(archive_dir, lib_dir_name)
-    shutil.copytree(lib_dir_src, archive_lib_dir)
-    print(f"Copied library directory to archive: {lib_dir_name}")
-
-    # Create ZIP archive
-    zip_file_path = os.path.join(bin_dir, f"{archive_name}.zip")
-    with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(archive_dir):
+    print(f"Creating main ZIP archive: {main_zip_name}")
+    with zipfile.ZipFile(main_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(temp_lib_dir):
             for file in files:
                 file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, bin_dir)
+                # Use .libdir suffix to distinguish directory from library file
+                arcname = os.path.join(
+                    f"{PROJECT_NAME_LOWER}.libdir",
+                    os.path.relpath(file_path, temp_lib_dir)
+                )
                 zipf.write(file_path, arcname)
 
-    # Remove temporary archive directory
-    shutil.rmtree(archive_dir)
+    print(f"Created main archive: {main_zip_path}")
+
+    # Create archive package with full library (includes version info)
+    archive_zip_name = f"(ARCHIVE)_{project_name_upper}_WINDOWS_SDK-{full_version}.zip"
+    archive_zip_path = os.path.join(bin_dir, archive_zip_name)
+
+    print(f"Creating archive package: {archive_zip_name}")
+    with zipfile.ZipFile(archive_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        # Find the library file (should be .lib after renaming)
+        lib_files_found = []
+        for root, dirs, files in os.walk(temp_lib_dir):
+            for file in files:
+                if file.endswith('.lib') or file.endswith('.a'):
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.join(
+                        f"{PROJECT_NAME_LOWER}.libdir",
+                        os.path.relpath(file_path, temp_lib_dir)
+                    )
+                    zipf.write(file_path, arcname)
+                    lib_files_found.append(arcname)
+                    print(f"Added library: {arcname}")
+
+        # Also include headers and other subdirectories
+        for subdir in ["include", "Headers"]:
+            subdir_path = os.path.join(temp_lib_dir, subdir)
+            if os.path.exists(subdir_path):
+                for root, dirs, files in os.walk(subdir_path):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.join(
+                            f"{PROJECT_NAME_LOWER}.libdir",
+                            os.path.relpath(file_path, temp_lib_dir)
+                        )
+                        zipf.write(file_path, arcname)
+
+        if not lib_files_found:
+            print("WARNING: No library files found for archive package")
+
+    print(f"Created archive package: {archive_zip_path}")
+
+    # Remove temporary .libdir directory after zipping
+    shutil.rmtree(temp_lib_dir)
+    print(f"Removed temporary directory: {temp_lib_dir}")
 
     print("==================Archive Complete========================")
-    print(f"Library directory: {lib_dir_dest}")
-    print(f"Archive ZIP: {zip_file_path}")
+    print(f"Main package: {main_zip_path}")
+    print(f"Archive package: {archive_zip_path}")
 
 
 def print_build_results():
     """
-    Print Windows build results from target directory.
+    Print Windows build results from target/windows directory.
 
-    This function displays the build artifacts and moves them to target/windows/:
-    1. Static library directory
-    2. ARCHIVE zip
-    3. Other build artifacts
+    This function displays the build artifacts:
+    1. Main ZIP archive ({PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip)
+    2. Archive package ((ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-{version}-{suffix}.zip)
+    3. build_info.json
     """
     print("==================Windows Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - artifacts are already in target/windows/
+    bin_windows_dir = os.path.join(SCRIPT_PATH, "target", "windows")
 
-    # Check if target directory exists
-    if not os.path.exists(bin_dir):
-        print(f"ERROR: target directory not found. Please run build first.")
+    # Check if target/windows directory exists
+    if not os.path.exists(bin_windows_dir):
+        print(f"ERROR: target/windows directory not found. Please run build first.")
         sys.exit(1)
 
-    # Check for build artifacts
-    lib_dirs = [
-        f for f in glob.glob(f"{bin_dir}/*.dir") if "WINDOWS_SDK" in os.path.basename(f)
+    # Main package: {PROJECT_NAME}_WINDOWS_SDK-*.zip (not starting with (ARCHIVE)_)
+    main_zips = [
+        f for f in glob.glob(f"{bin_windows_dir}/*_WINDOWS_SDK-*.zip")
+        if not os.path.basename(f).startswith("(ARCHIVE)_")
     ]
-    archive_zips = glob.glob(f"{bin_dir}/(ARCHIVE)*.zip")
 
-    if not lib_dirs and not archive_zips:
-        print(f"ERROR: No build artifacts found in {bin_dir}")
+    # Archive package: (ARCHIVE)_{PROJECT_NAME}_WINDOWS_SDK-*.zip
+    archive_zips = [
+        f for f in glob.glob(f"{bin_windows_dir}/(ARCHIVE)_*_WINDOWS_SDK-*.zip")
+    ]
+
+    if not main_zips and not archive_zips:
+        print(f"ERROR: No build artifacts found in {bin_windows_dir}")
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create target/windows directory for platform-specific artifacts
-    bin_windows_dir = os.path.join(bin_dir, "windows")
-    os.makedirs(bin_windows_dir, exist_ok=True)
-
-    # Move library directories and archive files to target/windows/
-    artifacts_moved = []
-    for lib_dir in lib_dirs:
-        dest = os.path.join(bin_windows_dir, os.path.basename(lib_dir))
-        if os.path.exists(dest):
-            shutil.rmtree(dest)
-        shutil.move(lib_dir, dest)
-        artifacts_moved.append(os.path.basename(lib_dir))
-
-    for archive_zip in archive_zips:
-        dest = os.path.join(bin_windows_dir, os.path.basename(archive_zip))
-        shutil.move(archive_zip, dest)
-        artifacts_moved.append(os.path.basename(archive_zip))
-
-    if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/windows/")
+    # List artifacts (no need to move - already in correct location)
+    artifacts_found = main_zips + archive_zips
+    if artifacts_found:
+        print(f"[SUCCESS] Found {len(artifacts_found)} artifact(s) in target/windows/")
 
     # Copy build_info.json from cmake_build to target/windows
     copy_build_info_to_target("windows", SCRIPT_PATH)
@@ -500,15 +587,53 @@ def main():
         for cross-compilation from Linux/macOS (Docker containers).
         The VS environment check ensures required tools are available.
     """
-    # Check if MinGW is available (for Docker/cross-compilation)
+    # Check toolchain availability
     mingw_available = shutil.which("x86_64-w64-mingw32-gcc") is not None
+    clang_cl_available = shutil.which("clang-cl") is not None or shutil.which("cl") is not None
+    vs_available = check_vs_env()
 
-    if not mingw_available and not check_vs_env():
-        # Neither MinGW nor Visual Studio available
-        return
+    # Determine which toolchain to use based on environment and explicit selection
+    use_mingw = False
+    use_msvc_compat = False
 
-    # Use MinGW if available (takes precedence in Docker/Linux environments)
-    use_mingw = mingw_available
+    # Check for explicit toolchain selection via environment variable
+    # This can be set by Docker or command line
+    toolchain_env = os.environ.get("CCGO_WINDOWS_TOOLCHAIN", "").lower()
+
+    if toolchain_env == "msvc":
+        # Explicit MSVC request - use clang-cl if available (Docker), otherwise native VS
+        if clang_cl_available:
+            use_msvc_compat = True
+            print("ℹ Using MSVC-compatible toolchain (clang-cl)")
+        elif vs_available:
+            use_msvc_compat = False  # Use native Visual Studio
+            print("ℹ Using native Visual Studio toolchain")
+        else:
+            print("ERROR: MSVC toolchain requested but not available")
+            return
+    elif toolchain_env in ["gnu", "mingw"]:
+        # Explicit MinGW request
+        if mingw_available:
+            use_mingw = True
+            print("ℹ Using MinGW toolchain")
+        else:
+            print("ERROR: MinGW toolchain requested but not available")
+            return
+    else:
+        # Auto-detect: prefer MinGW in Docker/Linux, VS on Windows
+        if mingw_available:
+            use_mingw = True
+            print("ℹ Auto-detected MinGW toolchain")
+        elif clang_cl_available:
+            use_msvc_compat = True
+            print("ℹ Auto-detected MSVC-compatible toolchain (clang-cl)")
+        elif vs_available:
+            use_msvc_compat = False
+            print("ℹ Auto-detected Visual Studio toolchain")
+        else:
+            print("ERROR: No compatible Windows toolchain found")
+            print("Please install MinGW-w64, Visual Studio, or run in Docker")
+            return
 
     # Command-line interface for Windows builds
     # Supports two invocation modes:
@@ -533,23 +658,26 @@ def main():
             )
         print(f"==================Windows Choose num: {num}==================")
         if num == "1":
-            build_windows(incremental=False, tag=num, config="Release", use_mingw=use_mingw)
+            build_windows(incremental=False, tag=num, config="Release",
+                        use_mingw=use_mingw, use_msvc_compat=use_msvc_compat)
             # Archive and organize artifacts
             archive_windows_project()
             print_build_results()
             break
         elif num == "2":
-            if use_mingw:
-                print("WARNING: Project generation not supported with MinGW")
-                print("Using MinGW cross-compilation instead")
-                build_windows(incremental=False, tag=num, config="Release", use_mingw=use_mingw)
+            if use_mingw or use_msvc_compat:
+                print("WARNING: Project generation not supported with MinGW/clang-cl")
+                print("Using cross-compilation instead")
+                build_windows(incremental=False, tag=num, config="Release",
+                            use_mingw=use_mingw, use_msvc_compat=use_msvc_compat)
                 archive_windows_project()
                 print_build_results()
             else:
                 gen_win_project(tag=num, config="Release")
             break
         elif num == "3":
-            build_windows(incremental=False, tag=num, config="Debug", use_mingw=use_mingw)
+            build_windows(incremental=False, tag=num, config="Debug",
+                        use_mingw=use_mingw, use_msvc_compat=use_msvc_compat)
             # Archive and organize artifacts
             archive_windows_project()
             print_build_results()

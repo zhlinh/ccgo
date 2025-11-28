@@ -220,9 +220,9 @@ ccgo build linux --docker  # Will rebuild image
 
 ## 📚 Additional Resources
 
-- **Detailed Docker documentation**: See `ccgo/docker/README.md`
-- **Troubleshooting guide**: See `ccgo/docker/README.md#troubleshooting`
-- **CI/CD integration examples**: See `ccgo/docker/README.md#cicd-integration`
+- **Detailed Docker documentation**: See `ccgo/dockers/README.md`
+- **Troubleshooting guide**: See `ccgo/dockers/README.md#troubleshooting`
+- **CI/CD integration examples**: See `ccgo/dockers/README.md#cicd-integration`
 - **CCGO documentation**: See `CLAUDE.md`
 
 ## 💡 Pro Tips

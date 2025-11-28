@@ -140,7 +140,8 @@ def build_linux(target_option="", tag="", link_type='static'):
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build fail!!!!!!!!!!!!!!!")
-        return False
+        print("ERROR: Native build failed. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
 
     # Dynamically find the actual install directory (could be Darwin.out, Linux.out, etc.)
     # This is needed because CMAKE_SYSTEM_NAME varies by host OS
@@ -161,12 +162,20 @@ def build_linux(target_option="", tag="", link_type='static'):
 
     libtool_dst_lib = actual_install_path + f"/{PROJECT_NAME_LOWER}.a"
     if not libtool_libs(libtool_src_libs, libtool_dst_lib):
-        return False
+        print("ERROR: Failed to merge static libraries. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on merge failure
 
     dst_framework_path = actual_install_path + f"/{PROJECT_NAME_LOWER}.dir"
     make_static_framework(
         libtool_dst_lib, dst_framework_path, LINUX_BUILD_COPY_HEADER_FILES, "./"
     )
+
+    # Check the built library architecture
+    print("\n==================Verifying Built Library========================")
+    final_lib = os.path.join(dst_framework_path, f"{PROJECT_NAME_LOWER}.a")
+    if not check_build_libraries(final_lib, platform_hint="linux"):
+        print("ERROR: Library verification failed!")
+        sys.exit(1)
 
     print("==================Output========================")
     print(dst_framework_path)
@@ -234,7 +243,7 @@ def archive_linux_project():
 
     This function creates two archive packages:
     1. Main package: {PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
-       - Contains stripped library with simplified structure: {project}.lib/{project}.a
+       - Contains stripped library with simplified structure: {project}.libdir/{project}.a
     2. Archive package: (ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
        - Contains unstripped library for debugging (includes version info)
 
@@ -304,8 +313,8 @@ def archive_linux_project():
         print(f"WARNING: Library directory not found at {lib_dir_src}")
         return
 
-    # Create temporary .lib directory for packaging
-    temp_lib_dir = os.path.join(bin_dir, f"{PROJECT_NAME_LOWER}.lib")
+    # Create temporary .libdir directory for packaging
+    temp_lib_dir = os.path.join(bin_dir, f"{PROJECT_NAME_LOWER}.libdir")
     if os.path.exists(temp_lib_dir):
         shutil.rmtree(temp_lib_dir)
     shutil.copytree(lib_dir_src, temp_lib_dir)
@@ -320,9 +329,9 @@ def archive_linux_project():
         for root, dirs, files in os.walk(temp_lib_dir):
             for file in files:
                 file_path = os.path.join(root, file)
-                # Use simplified structure: {project}.lib/* instead of long version name
+                # Use .libdir suffix to distinguish directory from library file
                 arcname = os.path.join(
-                    f"{PROJECT_NAME_LOWER}.lib",
+                    f"{PROJECT_NAME_LOWER}.libdir",
                     os.path.relpath(file_path, temp_lib_dir)
                 )
                 zipf.write(file_path, arcname)
@@ -338,25 +347,25 @@ def archive_linux_project():
         # Find the .a file (unstripped)
         static_lib = os.path.join(temp_lib_dir, f"{PROJECT_NAME_LOWER}.a")
         if os.path.exists(static_lib):
-            arcname = f"{PROJECT_NAME_LOWER}.lib/{PROJECT_NAME_LOWER}.a"
+            arcname = f"{PROJECT_NAME_LOWER}.libdir/{PROJECT_NAME_LOWER}.a"
             zipf.write(static_lib, arcname)
             print(f"Added unstripped library: {arcname}")
 
         # Also include headers
-        headers_dir = os.path.join(temp_lib_dir, "Headers")
+        headers_dir = os.path.join(temp_lib_dir, "include")
         if os.path.exists(headers_dir):
             for root, dirs, files in os.walk(headers_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
                     arcname = os.path.join(
-                        f"{PROJECT_NAME_LOWER}.lib",
+                        f"{PROJECT_NAME_LOWER}.libdir",
                         os.path.relpath(file_path, temp_lib_dir)
                     )
                     zipf.write(file_path, arcname)
 
     print(f"Created archive package: {archive_zip_path}")
 
-    # Remove temporary .lib directory after zipping
+    # Remove temporary .libdir directory after zipping
     shutil.rmtree(temp_lib_dir)
     print(f"Removed temporary directory: {temp_lib_dir}")
 

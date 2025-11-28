@@ -146,7 +146,8 @@ def build_ios(target_option="", tag="", link_type='static'):
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build os fail!!!!!!!!!!!!!!!")
-        return False
+        print("ERROR: Native build failed for iOS device. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
 
     # target_option is set, then build project
     lipo_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}"
@@ -161,7 +162,8 @@ def build_ios(target_option="", tag="", link_type='static'):
     print(f"libtool src lib: {len(libtool_src_lib)}/{len(total_src_lib)}")
 
     if not libtool_libs(libtool_src_lib, libtool_os_dst_lib):
-        return False
+        print("ERROR: Failed to merge device libraries. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on merge failure
 
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
@@ -176,17 +178,20 @@ def build_ios(target_option="", tag="", link_type='static'):
     os.chdir(SCRIPT_PATH)
     if ret != 0:
         print("!!!!!!!!!!!build simulator fail!!!!!!!!!!!!!!!")
-        return False
+        print("ERROR: Native build failed for iOS simulator. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
 
     if not libtool_libs(glob.glob(INSTALL_PATH + "/*.a"), libtool_simulator_dst_lib):
-        return False
+        print("ERROR: Failed to merge simulator libraries. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on merge failure
 
     # os
     lipo_src_libs = []
     lipo_src_libs.append(libtool_os_dst_lib)
     os_lipo_dst_lib = INSTALL_PATH + f"/os/{PROJECT_NAME_LOWER}"
     if not libtool_libs(lipo_src_libs, os_lipo_dst_lib):
-        return False
+        print("ERROR: Failed to create device lipo library. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on lipo failure
     os_dst_framework_path = INSTALL_PATH + f"/os/{PROJECT_NAME_LOWER}.framework"
     make_static_framework(
         os_lipo_dst_lib, os_dst_framework_path, dst_framework_headers, "./"
@@ -196,7 +201,8 @@ def build_ios(target_option="", tag="", link_type='static'):
     lipo_src_libs.append(libtool_simulator_dst_lib)
     simulator_lipo_dst_lib = INSTALL_PATH + f"/simulator/{PROJECT_NAME_LOWER}"
     if not libtool_libs(lipo_src_libs, simulator_lipo_dst_lib):
-        return False
+        print("ERROR: Failed to create simulator lipo library. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on lipo failure
     simulator_dst_framework_path = (
         INSTALL_PATH + f"/simulator/{PROJECT_NAME_LOWER}.framework"
     )
@@ -211,7 +217,23 @@ def build_ios(target_option="", tag="", link_type='static'):
     if not make_xcframework(
         os_dst_framework_path, simulator_dst_framework_path, dst_xcframework_path
     ):
-        return False
+        print("ERROR: Failed to create XCFramework. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on XCFramework creation failure
+
+    # Check the built frameworks architecture
+    print("\n==================Verifying iOS Frameworks========================")
+    # Check device framework
+    os_lib = os.path.join(os_dst_framework_path, PROJECT_NAME_LOWER)
+    if os.path.exists(os_lib):
+        print("Device Framework:")
+        check_library_architecture(os_lib, platform_hint="ios")
+
+    # Check simulator framework
+    simulator_lib = os.path.join(simulator_dst_framework_path, PROJECT_NAME_LOWER)
+    if os.path.exists(simulator_lib):
+        print("\nSimulator Framework:")
+        check_library_architecture(simulator_lib, platform_hint="ios")
+    print("=====================================================================")
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     print("==================Output========================")

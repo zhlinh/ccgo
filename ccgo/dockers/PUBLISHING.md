@@ -50,8 +50,8 @@ docker info | grep Username
 Use the provided script to build and push images manually:
 
 ```bash
-# Navigate to docker directory
-cd ccgo/ccgo/docker
+# Navigate to dockers directory
+cd ccgo/ccgo/dockers
 
 # Publish all platforms
 ./publish_images.sh <your-docker-hub-username>
@@ -118,7 +118,7 @@ env:
 
 ## 📝 Update CCGO to Use Your Images
 
-After publishing, update `ccgo/docker/build_docker.py`:
+After publishing, update `ccgo/dockers/build_docker.py`:
 
 ```python
 # Change this line:

@@ -111,7 +111,7 @@ for PLATFORM in "${SELECTED_PLATFORMS[@]}"; do
             IMAGE_NAME="ccgo-builder-linux"
             ;;
         windows)
-            DOCKERFILE="Dockerfile.windows"
+            DOCKERFILE="Dockerfile.windows-mingw"
             IMAGE_NAME="ccgo-builder-windows"
             ;;
         apple|macos|ios|watchos|tvos)
