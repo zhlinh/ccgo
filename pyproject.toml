@@ -41,9 +41,9 @@ Issues = "https://github.com/zhlinh/ccgo/issues"
 [project.scripts]
 ccgo = "ccgo.main:main"
 
-[tool.setuptools]
-packages = ["ccgo"]
-include-package-data = true
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ccgo*"]
 
 [tool.setuptools.package-data]
 ccgo = [
