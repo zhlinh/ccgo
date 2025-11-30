@@ -23,10 +23,16 @@ sys.path.append(PROJECT_ROOT_PATH)
 PACKAGE_NAME = os.path.basename(SCRIPT_PATH)
 # <<<<<<<<<<<<<
 # import this project modules
-from utils.context.namespace import CliNameSpace
-from utils.context.context import CliContext
-from utils.context.command import CliCommand
-from utils.template_version import resolve_template_version
+try:
+    from ccgo.utils.context.namespace import CliNameSpace
+    from ccgo.utils.context.context import CliContext
+    from ccgo.utils.context.command import CliCommand
+    from ccgo.utils.template_version import resolve_template_version
+except ImportError:
+    from utils.context.namespace import CliNameSpace
+    from utils.context.context import CliContext
+    from utils.context.command import CliCommand
+    from utils.template_version import resolve_template_version
 
 
 class Init(CliCommand):

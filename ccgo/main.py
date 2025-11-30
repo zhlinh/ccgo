@@ -21,8 +21,12 @@ sys.path.append(PROJECT_ROOT_PATH)
 PACKAGE_NAME = os.path.basename(SCRIPT_PATH)
 # <<<<<<<<<<<<<<
 # import this project module
-from cli import Cli
-from utils.context.context import CliContext
+try:
+    from ccgo.cli import Cli
+    from ccgo.utils.context.context import CliContext
+except ImportError:
+    from cli import Cli
+    from utils.context.context import CliContext
 
 
 def main():
