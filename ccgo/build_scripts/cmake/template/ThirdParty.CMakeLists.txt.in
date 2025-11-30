@@ -35,7 +35,17 @@ endif()
 set(TEMP_DIR_LIST "")
 get_third_party_src_directories(TEMP_DIR_LIST ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Collect include directories and source files from each dependency
+set(SELF_TEMP_INCLUDE_DIRS "")
 foreach(dir IN LISTS TEMP_DIR_LIST)
+    # Add include directory if it exists
+    set(TEMP_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${dir}/include")
+    if(EXISTS "${TEMP_INCLUDE_PATH}")
+        list(APPEND SELF_TEMP_INCLUDE_DIRS ${TEMP_INCLUDE_PATH})
+        message(STATUS "Generating ThirdParty library [${TEMPLATE_SUB_LIB_NAME}] adding include [${TEMP_INCLUDE_PATH}]")
+    endif()
+
+    # Collect source files
     set(TEMP_CHILD_PATH "${dir}/src")
     set(DIR_FILES "")
     add_sub_layer_sources_recursively(DIR_FILES ${CMAKE_CURRENT_SOURCE_DIR}/${TEMP_CHILD_PATH})
@@ -45,9 +55,20 @@ endforeach()
 
 message(STATUS "Generating ThirdParty library [${TEMPLATE_SUB_LIB_NAME}] with source files [${SELF_TEMP_SRC_FILES}]")
 
-add_cc_library(
-        NAME
-        ${TEMPLATE_SUB_LIB_NAME}
-        SRCS
-        ${SELF_TEMP_SRC_FILES}
-)
+# Only create library if there are source files
+if(SELF_TEMP_SRC_FILES)
+    add_cc_library(
+            NAME
+            ${TEMPLATE_SUB_LIB_NAME}
+            SRCS
+            ${SELF_TEMP_SRC_FILES}
+    )
+
+    # Add include directories for the library target (both PRIVATE for self and PUBLIC for dependents)
+    if(SELF_TEMP_INCLUDE_DIRS)
+        target_include_directories(${TEMPLATE_SUB_LIB_NAME} PUBLIC ${SELF_TEMP_INCLUDE_DIRS})
+        message(STATUS "Generating ThirdParty library [${TEMPLATE_SUB_LIB_NAME}] include dirs [${SELF_TEMP_INCLUDE_DIRS}]")
+    endif()
+else()
+    message(STATUS "[${TEMPLATE_SUB_LIB_NAME}] No source files found, skipping library creation")
+endif()

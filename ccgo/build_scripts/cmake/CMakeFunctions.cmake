@@ -1106,3 +1106,67 @@ function(add_cc_external)
     # include entry cmake
     include(${COMM_EXTERNAL_ENTRY_DIR}/CMakeLists.txt)
 endfunction()
+
+# ccgo_configure_file()
+#
+# CMake function to conditionally configure (copy) a template file to a destination.
+#
+# This function only copies the template file in the following cases:
+# 1. The destination file does not exist
+# 2. The destination file exists but its first line is "# CCGO generated file: DO NOT EDIT!"
+#
+# This allows users to customize the generated CMakeLists.txt files and prevent
+# them from being overwritten on subsequent builds.
+#
+# Parameters:
+# INPUT: The source template file (typically a .in file)
+# OUTPUT: The destination file to generate
+#
+# Notes:
+# - Uses configure_file() with NEWLINE_STYLE LF and @ONLY
+# - The magic first line "# CCGO generated file: DO NOT EDIT!" indicates a CCGO-managed file
+# - If a user removes or modifies the first line, the file will not be overwritten
+#
+# Sample:
+# ccgo_configure_file(
+#     INPUT ${CCGO_CMAKE_DIR}/template/Src.CMakeLists.txt.in
+#     OUTPUT ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt
+# )
+#
+function(ccgo_configure_file)
+    cmake_parse_arguments(CCGO_CF
+        ""
+        "INPUT;OUTPUT"
+        ""
+        ${ARGN}
+    )
+
+    set(CCGO_MAGIC_LINE "# CCGO generated file: DO NOT EDIT!")
+    set(should_copy FALSE)
+
+    if(NOT EXISTS "${CCGO_CF_OUTPUT}")
+        # File doesn't exist, should copy
+        set(should_copy TRUE)
+        message(STATUS "[CCGO] Creating ${CCGO_CF_OUTPUT} (file not found)")
+    else()
+        # File exists, check if it's a CCGO-managed file
+        file(STRINGS "${CCGO_CF_OUTPUT}" first_line LIMIT_COUNT 1)
+        if("${first_line}" STREQUAL "${CCGO_MAGIC_LINE}")
+            # It's a CCGO-managed file, should update
+            set(should_copy TRUE)
+            message(STATUS "[CCGO] Updating ${CCGO_CF_OUTPUT} (CCGO-managed file)")
+        else()
+            # User has modified the file, skip
+            message(STATUS "[CCGO] Skipping ${CCGO_CF_OUTPUT} (user-modified file)")
+        endif()
+    endif()
+
+    if(should_copy)
+        configure_file(
+            ${CCGO_CF_INPUT}
+            ${CCGO_CF_OUTPUT}
+            NEWLINE_STYLE LF
+            @ONLY
+        )
+    endif()
+endfunction()

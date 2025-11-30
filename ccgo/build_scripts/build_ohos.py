@@ -327,78 +327,44 @@ def build_ohos(incremental, arch, target_option, tag, link_type='both'):
 
 def print_build_results():
     """
-    Print OHOS build results from target directory.
+    Print OHOS build results from target/ohos directory.
 
-    This function displays the build artifacts and moves them to target/ohos/:
+    This function displays the build artifacts in target/ohos/:
     1. HAR file
-    2. ARCHIVE zip (created by hvigor build process)
-    3. Other build artifacts
+    2. ARCHIVE zip (created by hvigor archiveProject task)
+    3. build_info.json
 
     Note:
-        OHOS's hvigor build process creates the HAR file.
-        This function organizes artifacts into platform-specific directory.
+        The hvigor archive-plugin.ts directly outputs to target/ohos/,
+        so this function only needs to display the results.
     """
     print("==================OHOS Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - artifacts are directly in target/ohos/
+    target_ohos_dir = os.path.join(SCRIPT_PATH, "target", "ohos")
 
-    # Check if target directory exists
-    if not os.path.exists(bin_dir):
-        print(f"ERROR: target directory not found. Please run 'hvigorw assembleHar' first.")
-        sys.exit(1)
-
-    # Check for build artifacts
-    all_har_files = glob.glob(f"{bin_dir}/*.har")
-    archive_zips = glob.glob(f"{bin_dir}/(ARCHIVE)*.zip")
-
-    # Filter HAR files: only move renamed ones (containing OHOS_SDK), not original hvigor output
-    # The hvigor archiveProject task creates both:
-    # - Original: bin/projectname.har (from assembleHar)
-    # - Renamed: bin/PROJECTNAME_OHOS_SDK-version.har (from archiveProject)
-    # We only want to move the renamed version
-    har_files = [f for f in all_har_files if "OHOS_SDK" in os.path.basename(f)]
-
-    if not har_files and not archive_zips:
-        print(f"ERROR: No build artifacts found in {bin_dir}")
+    # Check if target/ohos directory exists
+    if not os.path.exists(target_ohos_dir):
+        print(f"ERROR: target/ohos directory not found.")
         print("Please ensure hvigor archiveProject was executed successfully.")
         sys.exit(1)
 
-    # Create target/ohos directory for platform-specific artifacts
-    bin_ohos_dir = os.path.join(bin_dir, "ohos")
-    os.makedirs(bin_ohos_dir, exist_ok=True)
+    # Check for build artifacts in target/ohos/
+    har_files = glob.glob(f"{target_ohos_dir}/*OHOS_SDK*.har")
+    archive_zips = glob.glob(f"{target_ohos_dir}/(ARCHIVE)*.zip")
+    build_info = os.path.join(target_ohos_dir, "build_info.json")
 
-    # Move renamed .har and (ARCHIVE)*.zip files to target/ohos/
-    artifacts_moved = []
-    for har_file in har_files:
-        dest = os.path.join(bin_ohos_dir, os.path.basename(har_file))
-        shutil.move(har_file, dest)
-        artifacts_moved.append(os.path.basename(har_file))
-
-    for archive_zip in archive_zips:
-        dest = os.path.join(bin_ohos_dir, os.path.basename(archive_zip))
-        shutil.move(archive_zip, dest)
-        artifacts_moved.append(os.path.basename(archive_zip))
-
-    # Clean up original HAR files left by assembleHar (not needed in target/)
-    original_har_files = [f for f in all_har_files if "OHOS_SDK" not in os.path.basename(f)]
-    for har_file in original_har_files:
-        if os.path.exists(har_file):
-            os.remove(har_file)
-            print(f"[INFO] Removed original HAR file: {os.path.basename(har_file)}")
-
-    if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/ohos/")
-
-    # Copy build_info.json from cmake_build to target/ohos
-    copy_build_info_to_target("ohos", SCRIPT_PATH)
+    if not har_files and not archive_zips:
+        print(f"ERROR: No build artifacts found in {target_ohos_dir}")
+        print("Please ensure hvigor archiveProject was executed successfully.")
+        sys.exit(1)
 
     print(f"\nBuild artifacts in target/ohos/:")
     print("-" * 60)
 
     # List all files in target/ohos directory with sizes
-    for item in sorted(os.listdir(bin_ohos_dir)):
-        item_path = os.path.join(bin_ohos_dir, item)
+    for item in sorted(os.listdir(target_ohos_dir)):
+        item_path = os.path.join(target_ohos_dir, item)
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")

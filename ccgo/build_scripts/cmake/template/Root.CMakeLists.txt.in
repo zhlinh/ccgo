@@ -34,45 +34,113 @@ include(${CCGO_CMAKE_DIR}/CMakeExtraFlags.cmake)   # Platform-specific compiler 
 # Add project root to include paths for header file resolution
 include_directories(./)
 
-## Auto-discover CCGO dependencies from third_party directory
-# This automatically finds and configures all dependencies installed via 'ccgo install'
+## Auto-discover CCGO dependencies from multiple directories
+# Dependencies are scanned from (in priority order):
+#   1. vendor/        - Vendored dependencies (committed to git)
+#   2. .ccgo/deps/    - Dependencies from 'ccgo install' (not committed)
+#   3. third_party/   - Manual third-party libraries (committed to git)
 include(${CCGO_CMAKE_DIR}/FindCCGODependencies.cmake)
 find_ccgo_dependencies()
+
+# Auto-enable THIRD_PARTY_OPTION if any source dependency directories exist
+# This ensures dependencies are compiled even for platform builds (Android, OHOS, etc.)
+if(NOT DEFINED THIRD_PARTY_OPTION)
+    # Check for source dependencies in any of the dependency directories
+    set(HAS_SOURCE_DEPS FALSE)
+    foreach(DEP_DIR_NAME vendor .ccgo/deps third_party)
+        set(DEP_BASE_DIR "${CMAKE_SOURCE_DIR}/${DEP_DIR_NAME}")
+        if(EXISTS "${DEP_BASE_DIR}")
+            file(GLOB DEP_SUBDIRS "${DEP_BASE_DIR}/*")
+            foreach(DEP_SUBDIR ${DEP_SUBDIRS})
+                if(IS_DIRECTORY "${DEP_SUBDIR}" AND EXISTS "${DEP_SUBDIR}/src")
+                    set(HAS_SOURCE_DEPS TRUE)
+                    message(STATUS "[CCGO] Found source dependency: ${DEP_SUBDIR}")
+                    break()
+                endif()
+            endforeach()
+            if(HAS_SOURCE_DEPS)
+                break()
+            endif()
+        endif()
+    endforeach()
+
+    if(HAS_SOURCE_DEPS)
+        set(THIRD_PARTY_OPTION ON CACHE BOOL "Build third-party source dependencies" FORCE)
+        message(STATUS "[CCGO] Auto-enabled THIRD_PARTY_OPTION for source dependencies")
+    endif()
+endif()
 
 ## Configure and build third-party dependencies (optional)
 # Subdirectories are added in file system order to ensure consistent build behavior
 if(THIRD_PARTY_OPTION)
-    # Dynamically generate third_party/CMakeLists.txt from template
-    # This allows runtime customization of third-party dependencies
-    configure_file(
-            ${CCGO_CMAKE_DIR}/template/ThirdParty.CMakeLists.txt.in
-            ${CMAKE_SOURCE_DIR}/third_party/CMakeLists.txt
-            NEWLINE_STYLE LF  # Use Unix-style line endings for cross-platform compatibility
-            @ONLY             # Only replace @VAR@ syntax, not ${VAR}
-    )
-
     # Set CCGO_AS_DEPENDENCY for all third-party subdirectories
     # This tells dependencies to disable their JNI_OnLoad and other standalone features
     # Keep this variable throughout the build so main target can also use it
     set(CCGO_AS_DEPENDENCY ON CACHE INTERNAL "Building as CCGO dependency")
-    message(STATUS "[CCGO] Setting CCGO_AS_DEPENDENCY=ON for third_party dependencies")
+    message(STATUS "[CCGO] Setting CCGO_AS_DEPENDENCY=ON for dependencies")
     # Define as global compile definition so all targets can see it
     add_compile_definitions(CCGO_AS_DEPENDENCY)
 
-    # Add third_party as subdirectory with custom binary directory name
-    add_subdirectory(third_party ${PROJECT_NAME}-third_party)
+    # Process vendor/ directory (vendored dependencies - highest priority)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/vendor")
+        ccgo_configure_file(
+            INPUT ${CCGO_CMAKE_DIR}/template/ThirdParty.CMakeLists.txt.in
+            OUTPUT ${CMAKE_SOURCE_DIR}/vendor/CMakeLists.txt
+        )
+        add_subdirectory(vendor ${PROJECT_NAME}-vendor)
+        message(STATUS "[CCGO] Added vendor/ directory")
+    endif()
 
-    # Note: We do NOT unset CCGO_AS_DEPENDENCY because main target also compiles third_party sources
+    # Process .ccgo/deps/ directory (ccgo install dependencies)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/.ccgo/deps")
+        ccgo_configure_file(
+            INPUT ${CCGO_CMAKE_DIR}/template/ThirdParty.CMakeLists.txt.in
+            OUTPUT ${CMAKE_SOURCE_DIR}/.ccgo/deps/CMakeLists.txt
+        )
+        add_subdirectory(.ccgo/deps ${PROJECT_NAME}-ccgo-deps)
+        message(STATUS "[CCGO] Added .ccgo/deps/ directory")
+    endif()
+
+    # Process third_party/ directory (manual third-party - lowest priority)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/third_party")
+        ccgo_configure_file(
+            INPUT ${CCGO_CMAKE_DIR}/template/ThirdParty.CMakeLists.txt.in
+            OUTPUT ${CMAKE_SOURCE_DIR}/third_party/CMakeLists.txt
+        )
+        add_subdirectory(third_party ${PROJECT_NAME}-third_party)
+        message(STATUS "[CCGO] Added third_party/ directory")
+    endif()
+
+    # Note: We do NOT unset CCGO_AS_DEPENDENCY because main target also compiles dependency sources
     message(STATUS "[CCGO] CCGO_AS_DEPENDENCY remains active for main target")
 endif()
 
+# Add dependency include directories globally so src/ targets can find them
+# This is done outside THIRD_PARTY_OPTION so headers are always available
+# (even for platform builds that don't compile dependencies from source)
+# Scan for include directories in all dependency locations
+foreach(DEP_DIR_NAME vendor .ccgo/deps third_party)
+    set(DEP_BASE_DIR "${CMAKE_SOURCE_DIR}/${DEP_DIR_NAME}")
+    if(EXISTS "${DEP_BASE_DIR}")
+        file(GLOB DEP_SUBDIRS "${DEP_BASE_DIR}/*")
+        foreach(DEP_SUBDIR ${DEP_SUBDIRS})
+            if(IS_DIRECTORY "${DEP_SUBDIR}")
+                set(DEP_INCLUDE_DIR "${DEP_SUBDIR}/include")
+                if(EXISTS "${DEP_INCLUDE_DIR}")
+                    include_directories(${DEP_INCLUDE_DIR})
+                    message(STATUS "[CCGO] Added include directory: ${DEP_INCLUDE_DIR}")
+                endif()
+            endif()
+        endforeach()
+    endif()
+endforeach()
+
 ## Configure and build main source code
 # Generate src/CMakeLists.txt from template
-configure_file(
-        ${CCGO_CMAKE_DIR}/template/Src.CMakeLists.txt.in
-        ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt
-        NEWLINE_STYLE LF
-        @ONLY
+# Only copies if file doesn't exist or is CCGO-managed (has magic first line)
+ccgo_configure_file(
+    INPUT ${CCGO_CMAKE_DIR}/template/Src.CMakeLists.txt.in
+    OUTPUT ${CMAKE_SOURCE_DIR}/src/CMakeLists.txt
 )
 # Add source directory with custom binary directory name
 add_subdirectory(src ${PROJECT_NAME}-src)
@@ -97,11 +165,10 @@ if(GOOGLETEST_SUPPORT)
         SHARED                    # Build as shared library
     )
     # Generate tests/CMakeLists.txt from template
-    configure_file(
-            ${CCGO_CMAKE_DIR}/template/Tests.CMakeLists.txt.in
-            ${CMAKE_SOURCE_DIR}/tests/CMakeLists.txt
-            NEWLINE_STYLE LF
-            @ONLY
+    # Only copies if file doesn't exist or is CCGO-managed (has magic first line)
+    ccgo_configure_file(
+        INPUT ${CCGO_CMAKE_DIR}/template/Tests.CMakeLists.txt.in
+        OUTPUT ${CMAKE_SOURCE_DIR}/tests/CMakeLists.txt
     )
     # Add tests subdirectory for unit test compilation
     add_subdirectory("tests" "${PROJECT_NAME}-tests")
@@ -120,11 +187,10 @@ if(BENCHMARK_SUPPORT)
         SHARED                    # Build as shared library
     )
     # Generate benches/CMakeLists.txt from template
-    configure_file(
-            ${CCGO_CMAKE_DIR}/template/Benches.CMakeLists.txt.in
-            ${CMAKE_SOURCE_DIR}/benches/CMakeLists.txt
-            NEWLINE_STYLE LF
-            @ONLY
+    # Only copies if file doesn't exist or is CCGO-managed (has magic first line)
+    ccgo_configure_file(
+        INPUT ${CCGO_CMAKE_DIR}/template/Benches.CMakeLists.txt.in
+        OUTPUT ${CMAKE_SOURCE_DIR}/benches/CMakeLists.txt
     )
     # Add benches subdirectory for benchmark compilation
     add_subdirectory("benches" "${PROJECT_NAME}-benches")
@@ -155,8 +221,18 @@ if(GOOGLETEST_SUPPORT)
     get_third_party_binary_files(TEMP_TARGET_SRC_LINKS TEMP_TARGET_LINK_FLAGS)
     list(APPEND TARGET_SRC_LINKS ${TEMP_TARGET_SRC_LINKS})
 
+    # Add dependency libraries if they exist (may not exist if directory is empty)
+    # Note: target names are derived from directory name (e.g., vendor/, deps/, third_party/)
     if(THIRD_PARTY_OPTION)
-        list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-third_party)
+        if(TARGET ${PROJECT_NAME}-vendor)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-vendor)
+        endif()
+        if(TARGET ${PROJECT_NAME}-deps)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-deps)
+        endif()
+        if(TARGET ${PROJECT_NAME}-third_party)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-third_party)
+        endif()
     endif()
 
     # Create test executable from collected test sources
@@ -236,8 +312,18 @@ elseif(BENCHMARK_SUPPORT)
     get_third_party_binary_files(TEMP_TARGET_SRC_LINKS TEMP_TARGET_LINK_FLAGS)
     list(APPEND TARGET_SRC_LINKS ${TEMP_TARGET_SRC_LINKS})
 
+    # Add dependency libraries if they exist (may not exist if directory is empty)
+    # Note: target names are derived from directory name (e.g., vendor/, deps/, third_party/)
     if(THIRD_PARTY_OPTION)
-        list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-third_party)
+        if(TARGET ${PROJECT_NAME}-vendor)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-vendor)
+        endif()
+        if(TARGET ${PROJECT_NAME}-deps)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-deps)
+        endif()
+        if(TARGET ${PROJECT_NAME}-third_party)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-third_party)
+        endif()
     endif()
 
     # macOS/iOS-specific: Link required system frameworks
@@ -321,9 +407,19 @@ else()
         get_third_party_binary_files(TEMP_TARGET_SRC_LINKS TEMP_TARGET_LINK_FLAGS)
         list(APPEND TARGET_SRC_LINKS ${TEMP_TARGET_SRC_LINKS})
 
-        if(THIRD_PARTY_OPTION)
-            message(STATUS "FOUND ${PROJECT_NAME}-third_party")
+        # Add dependency libraries if they exist
+        # Note: target names are derived from directory name (e.g., vendor/, deps/, third_party/)
+        if(TARGET ${PROJECT_NAME}-vendor)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-vendor)
+            message(STATUS "FOUND ${PROJECT_NAME}-vendor")
+        endif()
+        if(TARGET ${PROJECT_NAME}-deps)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-deps)
+            message(STATUS "FOUND ${PROJECT_NAME}-deps")
+        endif()
+        if(TARGET ${PROJECT_NAME}-third_party)
             list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-third_party)
+            message(STATUS "FOUND ${PROJECT_NAME}-third_party")
         endif()
 
         # Configure library search patterns for Android
@@ -443,9 +539,19 @@ else()
         get_third_party_binary_files(TEMP_TARGET_SRC_LINKS TEMP_TARGET_LINK_FLAGS)
         list(APPEND TARGET_SRC_LINKS ${TEMP_TARGET_SRC_LINKS})
 
-        if(THIRD_PARTY_OPTION)
-            message(STATUS "FOUND ${PROJECT_NAME}-third_party")
+        # Add dependency libraries if they exist
+        # Note: target names are derived from directory name (e.g., vendor/, deps/, third_party/)
+        if(TARGET ${PROJECT_NAME}-vendor)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-vendor)
+            message(STATUS "FOUND ${PROJECT_NAME}-vendor")
+        endif()
+        if(TARGET ${PROJECT_NAME}-deps)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-deps)
+            message(STATUS "FOUND ${PROJECT_NAME}-deps")
+        endif()
+        if(TARGET ${PROJECT_NAME}-third_party)
             list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-third_party)
+            message(STATUS "FOUND ${PROJECT_NAME}-third_party")
         endif()
 
         # Configure library search patterns for OHOS

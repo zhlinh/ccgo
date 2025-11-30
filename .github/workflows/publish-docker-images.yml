@@ -33,6 +33,11 @@ env:
   # Default to GHCR for scheduled/push builds, can be overridden by workflow_dispatch
   REGISTRY: ${{ github.event.inputs.registry || 'ghcr.io' }}
 
+# Required permissions for pushing to GHCR
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-and-push:
     name: Build and Push ${{ matrix.platform }}

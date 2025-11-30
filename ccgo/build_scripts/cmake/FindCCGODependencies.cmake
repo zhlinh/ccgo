@@ -1,7 +1,10 @@
 # FindCCGODependencies.cmake
 #
 # Automatically discover and configure dependencies installed via 'ccgo install'
-# Dependencies are expected to be in third_party/ directory
+# Dependencies are scanned from multiple directories (in priority order):
+#   1. vendor/           - Vendored dependencies (committed to git)
+#   2. .ccgo/deps/       - Dependencies from 'ccgo install' (not committed)
+#   3. third_party/      - Manual third-party libraries (committed to git)
 #
 # This module sets:
 #   CCGO_DEPENDENCIES_FOUND    - TRUE if any dependencies found
@@ -160,15 +163,16 @@ function(find_ccgo_dependencies)
 
     message(STATUS "CCGO Dependencies: Scanning for platform=${PLATFORM}, arch=${ARCH}")
 
-    # Find project root (where third_party should be)
+    # Find project root
     set(PROJECT_ROOT "${CMAKE_SOURCE_DIR}")
-    set(THIRD_PARTY_DIR "${PROJECT_ROOT}/third_party")
 
-    if(NOT EXISTS "${THIRD_PARTY_DIR}")
-        message(STATUS "CCGO Dependencies: third_party directory not found")
-        set(CCGO_DEPENDENCIES_FOUND FALSE PARENT_SCOPE)
-        return()
-    endif()
+    # Define dependency directories in priority order
+    # Higher priority directories are scanned first, and their dependencies take precedence
+    set(CCGO_DEP_DIRS
+        "${PROJECT_ROOT}/vendor"        # Vendored dependencies (highest priority)
+        "${PROJECT_ROOT}/.ccgo/deps"    # Dependencies from 'ccgo install'
+        "${PROJECT_ROOT}/third_party"   # Manual third-party libraries (lowest priority)
+    )
 
     # Determine link type preference (for backward compatibility)
     if(NOT DEFINED CCGO_DEPENDENCY_LINK_TYPE)
@@ -176,60 +180,79 @@ function(find_ccgo_dependencies)
         set(CCGO_DEPENDENCY_LINK_TYPE "static")
     endif()
 
-    # Scan third_party directory
-    file(GLOB DEPENDENCY_DIRS "${THIRD_PARTY_DIR}/*")
     set(FOUND_COUNT 0)
+    set(FOUND_DEP_NAMES "")  # Track found dependencies to avoid duplicates
 
-    foreach(DEP_DIR ${DEPENDENCY_DIRS})
-        if(IS_DIRECTORY "${DEP_DIR}")
-            get_filename_component(DEP_NAME ${DEP_DIR} NAME)
-            string(TOUPPER ${DEP_NAME} DEP_NAME_UPPER)
-            message(STATUS "CCGO Dependencies: Found ${DEP_NAME}")
+    # Scan each dependency directory
+    foreach(DEP_SEARCH_DIR ${CCGO_DEP_DIRS})
+        if(NOT EXISTS "${DEP_SEARCH_DIR}")
+            continue()
+        endif()
 
-            # Try to find both static and shared libraries
-            ccgo_find_dependency_libraries(
-                "${DEP_NAME}"
-                "${DEP_DIR}"
-                "${PLATFORM}"
-                "${ARCH}"
-                "static"
-            )
+        message(STATUS "CCGO Dependencies: Scanning ${DEP_SEARCH_DIR}")
 
-            ccgo_find_dependency_libraries(
-                "${DEP_NAME}"
-                "${DEP_DIR}"
-                "${PLATFORM}"
-                "${ARCH}"
-                "shared"
-            )
+        file(GLOB DEPENDENCY_DIRS "${DEP_SEARCH_DIR}/*")
 
-            # Check if found and set default LIBRARIES based on preference
-            if(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_FOUND)
-                math(EXPR FOUND_COUNT "${FOUND_COUNT} + 1")
+        foreach(DEP_DIR ${DEPENDENCY_DIRS})
+            if(IS_DIRECTORY "${DEP_DIR}")
+                get_filename_component(DEP_NAME ${DEP_DIR} NAME)
+                string(TOUPPER ${DEP_NAME} DEP_NAME_UPPER)
 
-                # Set default LIBRARIES based on preference
-                if(CCGO_DEPENDENCY_LINK_TYPE STREQUAL "shared" AND CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES)
-                    set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES} PARENT_SCOPE)
-                    message(STATUS "  - Include: ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS}")
-                    message(STATUS "  - Libraries (shared): ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES}")
-                elseif(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES)
-                    set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES} PARENT_SCOPE)
-                    message(STATUS "  - Include: ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS}")
-                    message(STATUS "  - Libraries (static): ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES}")
+                # Skip if already found in a higher priority directory
+                list(FIND FOUND_DEP_NAMES ${DEP_NAME} DEP_FOUND_INDEX)
+                if(NOT DEP_FOUND_INDEX EQUAL -1)
+                    message(STATUS "CCGO Dependencies: Skipping ${DEP_NAME} (already found in higher priority dir)")
+                    continue()
                 endif()
 
-                # Export both static and shared libraries
-                set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES} PARENT_SCOPE)
-                set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES} PARENT_SCOPE)
-                set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS} PARENT_SCOPE)
-                set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_FOUND ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_FOUND} PARENT_SCOPE)
+                message(STATUS "CCGO Dependencies: Found ${DEP_NAME} in ${DEP_SEARCH_DIR}")
+
+                # Try to find both static and shared libraries
+                ccgo_find_dependency_libraries(
+                    "${DEP_NAME}"
+                    "${DEP_DIR}"
+                    "${PLATFORM}"
+                    "${ARCH}"
+                    "static"
+                )
+
+                ccgo_find_dependency_libraries(
+                    "${DEP_NAME}"
+                    "${DEP_DIR}"
+                    "${PLATFORM}"
+                    "${ARCH}"
+                    "shared"
+                )
+
+                # Check if found and set default LIBRARIES based on preference
+                if(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_FOUND)
+                    math(EXPR FOUND_COUNT "${FOUND_COUNT} + 1")
+                    list(APPEND FOUND_DEP_NAMES ${DEP_NAME})
+
+                    # Set default LIBRARIES based on preference
+                    if(CCGO_DEPENDENCY_LINK_TYPE STREQUAL "shared" AND CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES)
+                        set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES} PARENT_SCOPE)
+                        message(STATUS "  - Include: ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS}")
+                        message(STATUS "  - Libraries (shared): ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES}")
+                    elseif(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES)
+                        set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES} PARENT_SCOPE)
+                        message(STATUS "  - Include: ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS}")
+                        message(STATUS "  - Libraries (static): ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES}")
+                    endif()
+
+                    # Export both static and shared libraries
+                    set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_STATIC_LIBRARIES} PARENT_SCOPE)
+                    set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_SHARED_LIBRARIES} PARENT_SCOPE)
+                    set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_INCLUDE_DIRS} PARENT_SCOPE)
+                    set(CCGO_DEPENDENCY_${DEP_NAME_UPPER}_FOUND ${CCGO_DEPENDENCY_${DEP_NAME_UPPER}_FOUND} PARENT_SCOPE)
+                endif()
             endif()
-        endif()
+        endforeach()
     endforeach()
 
     if(FOUND_COUNT GREATER 0)
         set(CCGO_DEPENDENCIES_FOUND TRUE PARENT_SCOPE)
-        message(STATUS "CCGO Dependencies: Found ${FOUND_COUNT} dependency(ies)")
+        message(STATUS "CCGO Dependencies: Found ${FOUND_COUNT} dependency(ies) total")
     else()
         set(CCGO_DEPENDENCIES_FOUND FALSE PARENT_SCOPE)
         message(STATUS "CCGO Dependencies: No dependencies found for current platform")

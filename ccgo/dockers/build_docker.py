@@ -64,16 +64,16 @@ import shutil
 from pathlib import Path
 
 
-# Docker Hub organization/username for prebuilt images
-# Change this to your Docker Hub username when publishing
-DOCKER_HUB_REPO = "ccgo"  # e.g., "yourname/ccgo" or just "yourname" if image is "yourname/ccgo-builder-linux"
+# GitHub Container Registry (GHCR) organization/username for prebuilt images
+# Change this to your GHCR username when publishing
+GHCR_REPO = "ghcr.io/zhlinh"  # e.g., "ghcr.io/yourname"
 
 # Platform configuration mapping
 PLATFORM_CONFIG = {
     "linux": {
         "dockerfile": "Dockerfile.linux",
         "image_name": "ccgo-builder-linux",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-linux:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-linux:latest",
         "build_script": "build_linux.py",
         "build_mode": "1",
         "size_estimate": "~800MB"
@@ -81,7 +81,7 @@ PLATFORM_CONFIG = {
     "windows": {
         "dockerfile": "Dockerfile.windows-mingw",
         "image_name": "ccgo-builder-windows",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-windows:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-windows:latest",
         "build_script": "build_windows.py",
         "build_mode": "1",
         "size_estimate": "~1.2GB"
@@ -89,7 +89,7 @@ PLATFORM_CONFIG = {
     "windows-msvc": {
         "dockerfile": "Dockerfile.windows-msvc",
         "image_name": "ccgo-builder-windows-msvc",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-windows-msvc:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-windows-msvc:latest",
         "build_script": "build_windows.py",
         "build_mode": "1",
         "size_estimate": "~1.5GB",
@@ -98,7 +98,7 @@ PLATFORM_CONFIG = {
     "macos": {
         "dockerfile": "Dockerfile.apple",
         "image_name": "ccgo-builder-apple",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-apple:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-apple:latest",
         "build_script": "build_macos.py",
         "build_mode": "1",
         "size_estimate": "~2.5GB"
@@ -106,7 +106,7 @@ PLATFORM_CONFIG = {
     "ios": {
         "dockerfile": "Dockerfile.apple",
         "image_name": "ccgo-builder-apple",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-apple:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-apple:latest",
         "build_script": "build_ios.py",
         "build_mode": "1",
         "size_estimate": "~2.5GB"
@@ -114,7 +114,7 @@ PLATFORM_CONFIG = {
     "watchos": {
         "dockerfile": "Dockerfile.apple",
         "image_name": "ccgo-builder-apple",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-apple:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-apple:latest",
         "build_script": "build_watchos.py",
         "build_mode": "1",
         "size_estimate": "~2.5GB"
@@ -122,7 +122,7 @@ PLATFORM_CONFIG = {
     "tvos": {
         "dockerfile": "Dockerfile.apple",
         "image_name": "ccgo-builder-apple",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-apple:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-apple:latest",
         "build_script": "build_tvos.py",
         "build_mode": "1",
         "size_estimate": "~2.5GB"
@@ -130,7 +130,7 @@ PLATFORM_CONFIG = {
     "android": {
         "dockerfile": "Dockerfile.android",
         "image_name": "ccgo-builder-android",
-        "remote_image": f"{DOCKER_HUB_REPO}/ccgo-builder-android:latest",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-android:latest",
         "build_script": "build_android.py",
         "build_mode": "1",
         "native_only": True,  # For Android, we build native libs only
@@ -264,7 +264,7 @@ class DockerBuilder:
                 print(f"✓ Tagged as: {self.image_name}")
                 return True
             else:
-                print(f"⚠ Could not pull prebuilt image from Docker Hub")
+                print(f"⚠ Could not pull prebuilt image from GHCR")
                 print(f"  Reason: {result.stderr}")
                 return False
 
