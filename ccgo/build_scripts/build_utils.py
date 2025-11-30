@@ -1032,28 +1032,52 @@ def parse_as_git(path):
 
     Returns:
         tuple: (revision, branch_or_path, url)
-            - revision: Short commit hash
-            - branch_or_path: Current branch name
-            - url: Remote origin URL (with OAuth2 credentials removed)
+            - revision: Short commit hash (default: "unknown" if not available)
+            - branch_or_path: Current branch name (default: "unknown" if not available)
+            - url: Remote origin URL (default: "" if not available, with OAuth2 credentials removed)
 
     Note:
         Changes current working directory temporarily during execution.
+        Returns default values if git commands fail (e.g., not a git repository).
     """
     curdir = os.getcwd()
     os.chdir(path)
-    revision = os.popen("git rev-parse --short HEAD").read().strip()
-    path = os.popen("git rev-parse --abbrev-ref HEAD").read().strip()
-    url = os.popen("git remote get-url origin").read().strip()
+
+    # Get revision with default fallback
+    try:
+        revision = os.popen("git rev-parse --short HEAD 2>/dev/null").read().strip()
+        if not revision:
+            revision = "unknown"
+    except:
+        revision = "unknown"
+
+    # Get branch with default fallback
+    try:
+        branch = os.popen("git rev-parse --abbrev-ref HEAD 2>/dev/null").read().strip()
+        if not branch:
+            branch = "unknown"
+    except:
+        branch = "unknown"
+
+    # Get remote URL with default fallback
+    try:
+        url = os.popen("git remote get-url origin 2>/dev/null").read().strip()
+        if not url:
+            url = ""
+    except:
+        url = ""
+
     # Remove OAuth2 credentials from URL for security
-    pos = url.find("oauth2")
-    if pos >= 0:
-        pos_to_trim = url.find("@")
-        if pos_to_trim >= 0:
-            url = "git" + url[pos_to_trim:]
+    if url:
+        pos = url.find("oauth2")
+        if pos >= 0:
+            pos_to_trim = url.find("@")
+            if pos_to_trim >= 0:
+                url = "git" + url[pos_to_trim:]
 
     os.chdir(curdir)
 
-    return revision, path, url
+    return revision, branch, url
 
 
 def normalize_git_url(url):
