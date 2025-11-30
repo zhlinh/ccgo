@@ -17,12 +17,36 @@ from typing import Dict, Any, Optional
 # Import build utilities
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_utils import (
-    run_cmd,
+    exec_command,
     load_ccgo_config,
-    get_project_version,
-    find_project_root,
-    ensure_directory_exists,
 )
+
+
+def run_cmd(cmd_args: list, cwd: str = None) -> int:
+    """Run a command and return exit code."""
+    cmd = " ".join(cmd_args)
+    if cwd:
+        cmd = f"cd '{cwd}' && {cmd}"
+    err_code, _ = exec_command(cmd)
+    return err_code
+
+
+def find_project_root() -> Optional[str]:
+    """Find the project root directory containing CCGO.toml."""
+    current = os.getcwd()
+    while current != os.path.dirname(current):
+        if os.path.isfile(os.path.join(current, "CCGO.toml")):
+            return current
+        current = os.path.dirname(current)
+    # Check current directory
+    if os.path.isfile(os.path.join(os.getcwd(), "CCGO.toml")):
+        return os.getcwd()
+    return None
+
+
+def ensure_directory_exists(path: str) -> None:
+    """Ensure a directory exists, creating it if necessary."""
+    os.makedirs(path, exist_ok=True)
 
 
 def check_conan_installation() -> bool:
@@ -331,8 +355,11 @@ def main():
         print("Please install Conan: pip install conan")
         sys.exit(1)
 
-    # Load CCGO configuration
-    config = load_ccgo_config(project_dir)
+    # Change to project directory and load CCGO configuration
+    original_dir = os.getcwd()
+    os.chdir(project_dir)
+    config = load_ccgo_config()
+    os.chdir(original_dir)
     if not config:
         print("ERROR: Failed to load CCGO.toml configuration")
         sys.exit(1)
