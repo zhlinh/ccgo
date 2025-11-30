@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_utils import (
     exec_command,
     load_ccgo_config,
+    CCGO_CMAKE_DIR,
 )
 
 
@@ -27,7 +28,9 @@ def run_cmd(cmd_args: list, cwd: str = None) -> int:
     cmd = " ".join(cmd_args)
     if cwd:
         cmd = f"cd '{cwd}' && {cmd}"
-    err_code, _ = exec_command(cmd)
+    err_code, output = exec_command(cmd)
+    if output:
+        print(output)
     return err_code
 
 
@@ -60,10 +63,36 @@ def check_conan_installation() -> bool:
         )
         if result.returncode == 0:
             print(f"Found Conan: {result.stdout.strip()}")
+            # Check if default profile exists, create if not
+            ensure_conan_profile()
             return True
         return False
     except FileNotFoundError:
         return False
+
+
+def ensure_conan_profile() -> None:
+    """Ensure Conan default profile exists."""
+    try:
+        # Check if default profile exists
+        result = subprocess.run(
+            ["conan", "profile", "show"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode != 0:
+            # Profile doesn't exist, create it
+            print("Creating Conan default profile...")
+            subprocess.run(
+                ["conan", "profile", "detect"],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            print("Conan default profile created")
+    except Exception as e:
+        print(f"Warning: Could not check/create Conan profile: {e}")
 
 
 def generate_conanfile(project_dir: str, config: Dict[str, Any]) -> str:
@@ -72,28 +101,26 @@ def generate_conanfile(project_dir: str, config: Dict[str, Any]) -> str:
 
     Args:
         project_dir: Root directory of the project
-        config: CCGO configuration dictionary
+        config: CCGO configuration dictionary (from load_ccgo_config())
 
     Returns:
         Path to the generated conanfile.py
     """
-    project_config = config.get('project', {})
-    conan_config = config.get('build', {}).get('conan', {})
+    # Get project information from load_ccgo_config() format
+    # config contains PROJECT_NAME, PROJECT_NAME_LOWER, CONFIG_PROJECT_VERSION, etc.
+    name = config.get('PROJECT_NAME_LOWER', 'unknown')
+    version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
+    description = f"{name} library"
+    author = ""
+    license = "MIT"
+    url = ""
 
-    # Get project information
-    name = conan_config.get('name', project_config.get('name', 'unknown'))
-    version = conan_config.get('version', project_config.get('version', '1.0.0'))
-    description = conan_config.get('description', project_config.get('description', ''))
-    author = conan_config.get('author', project_config.get('author', ''))
-    license = conan_config.get('license', project_config.get('license', 'MIT'))
-    url = conan_config.get('url', project_config.get('url', ''))
-
-    # Get Conan-specific settings
-    settings = conan_config.get('settings', ['os', 'compiler', 'build_type', 'arch'])
-    options = conan_config.get('options', {})
-    default_options = conan_config.get('default_options', {})
-    requires = conan_config.get('requires', [])
-    build_requires = conan_config.get('build_requires', [])
+    # Get Conan-specific settings (using defaults since CCGO.toml doesn't have conan section)
+    settings = ['os', 'compiler', 'build_type', 'arch']
+    options = {}
+    default_options = {}
+    requires = []
+    build_requires = []
 
     # Generate conanfile.py content
     conanfile_content = f'''from conan import ConanFile
@@ -153,8 +180,8 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
             conanfile_content += f'        self.tool_requires("{req}")\n'
         conanfile_content += '\n'
 
-    # Add config_options
-    conanfile_content += '''    def config_options(self):
+    # Add config_options - pass CCGO_CMAKE_DIR as a variable
+    conanfile_content += f'''    def config_options(self):
         if self.settings.os == "Windows":
             del self.options.fPIC
 
@@ -167,6 +194,8 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
 
     def generate(self):
         tc = CMakeToolchain(self)
+        # Set CCGO_CMAKE_DIR for ccgo build system
+        tc.variables["CCGO_CMAKE_DIR"] = "{CCGO_CMAKE_DIR}"
         tc.generate()
 
         deps = CMakeDeps(self)
@@ -364,12 +393,6 @@ def main():
         print("ERROR: Failed to load CCGO.toml configuration")
         sys.exit(1)
 
-    # Check if Conan configuration exists
-    conan_config = config.get('build', {}).get('conan', {})
-    if not conan_config:
-        print("WARNING: No Conan configuration found in CCGO.toml")
-        print("Using default settings...")
-
     # Generate conanfile.py if it doesn't exist
     conanfile_path = os.path.join(project_dir, 'conanfile.py')
     if not os.path.exists(conanfile_path):
@@ -378,8 +401,8 @@ def main():
     else:
         print(f"Using existing conanfile.py at {conanfile_path}")
 
-    # Determine build mode
-    build_mode = conan_config.get('mode', 'create')
+    # Determine build mode (default: create)
+    build_mode = 'create'
 
     if build_mode == 'create':
         # Create full package (default)
@@ -399,9 +422,8 @@ def main():
         print("\n=== Conan Build Complete ===")
 
         # Print package information
-        project_config = config.get('project', {})
-        name = conan_config.get('name', project_config.get('name', 'unknown'))
-        version = conan_config.get('version', project_config.get('version', '1.0.0'))
+        name = config.get('PROJECT_NAME_LOWER', 'unknown')
+        version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
 
         print(f"Package: {name}/{version}")
         print("\nTo use this package in another project, add to conanfile.txt or conanfile.py:")
