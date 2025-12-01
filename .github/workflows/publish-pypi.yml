@@ -1,0 +1,96 @@
+name: Publish to PyPI
+
+# Trigger on tag push (e.g., v2.1.0)
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      test_pypi:
+        description: 'Publish to TestPyPI instead of PyPI'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    name: Build and Publish to PyPI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' pyproject.toml || grep -oP "version\s*=\s*'\K[^']+" setup.py)
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Publishing version: ${VERSION}"
+
+      - name: Build package
+        run: python -m build
+
+      - name: Check package
+        run: python -m twine check dist/*
+
+      - name: List built packages
+        run: ls -la dist/
+
+      - name: Publish to TestPyPI
+        if: ${{ github.event.inputs.test_pypi == 'true' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        run: |
+          python -m twine upload --repository testpypi dist/*
+          echo "Published to TestPyPI!"
+          echo "Install with: pip install --index-url https://test.pypi.org/simple/ ccgo==${{ steps.version.outputs.version }}"
+
+      - name: Publish to PyPI
+        if: ${{ github.event.inputs.test_pypi != 'true' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m twine upload dist/*
+          echo "Published to PyPI!"
+
+      - name: Create summary
+        run: |
+          echo "## PyPI Package Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.test_pypi }}" = "true" ]; then
+            echo "**Published to:** TestPyPI" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Install:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "pip install --index-url https://test.pypi.org/simple/ ccgo==${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Published to:** PyPI" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Install:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "pip install ccgo==${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            echo "# or" >> $GITHUB_STEP_SUMMARY
+            echo "pip install --upgrade ccgo" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi

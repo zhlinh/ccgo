@@ -18,6 +18,11 @@ Usage:
     python3 publish_to_pypi.py --test   # Publish to TestPyPI
     python3 publish_to_pypi.py --check  # Only build and check, don't upload
     python3 publish_to_pypi.py --clean  # Only clean build artifacts
+    python3 publish_to_pypi.py -y       # Publish without confirmation prompts
+
+Environment Variables:
+    PYPI_API_TOKEN      - API token for PyPI (used with twine --password)
+    TEST_PYPI_API_TOKEN - API token for TestPyPI (used with twine --password)
 """
 
 import os
@@ -191,7 +196,7 @@ def check_package():
     print_success("Package check passed")
 
 
-def get_git_status():
+def get_git_status(skip_confirm=False):
     """Check git status."""
     print_step("Checking git status")
 
@@ -200,10 +205,13 @@ def get_git_status():
     if status:
         print_warning("There are uncommitted changes:")
         run_command("git status --short")
-        response = input(f"\n{Colors.WARNING}Continue anyway? (y/N): {Colors.ENDC}")
-        if response.lower() != 'y':
-            print("Aborted.")
-            sys.exit(0)
+        if not skip_confirm:
+            response = input(f"\n{Colors.WARNING}Continue anyway? (y/N): {Colors.ENDC}")
+            if response.lower() != 'y':
+                print("Aborted.")
+                sys.exit(0)
+        else:
+            print_warning("Continuing anyway (--yes flag set)")
     else:
         print_success("Working directory is clean")
 
@@ -220,16 +228,18 @@ def get_git_status():
         print(f"Git tag v{version} does not exist yet")
 
 
-def upload_to_pypi(test=False):
+def upload_to_pypi(test=False, skip_confirm=False):
     """Upload package to PyPI or TestPyPI."""
     if test:
         print_step("Uploading to TestPyPI")
         repository_url = "https://test.pypi.org/legacy/"
         repository_flag = "--repository testpypi"
+        token_env_var = "TEST_PYPI_API_TOKEN"
     else:
         print_step("Uploading to PyPI")
         repository_url = "https://upload.pypi.org/legacy/"
         repository_flag = ""
+        token_env_var = "PYPI_API_TOKEN"
 
     print(f"Target: {repository_url}")
     print()
@@ -237,14 +247,35 @@ def upload_to_pypi(test=False):
     # Confirm upload
     version = get_current_version()
     print(f"{Colors.WARNING}About to upload version {version} to {'TestPyPI' if test else 'PyPI'}{Colors.ENDC}")
-    response = input(f"{Colors.WARNING}Continue? (y/N): {Colors.ENDC}")
-    if response.lower() != 'y':
-        print("Upload cancelled.")
-        sys.exit(0)
+    if not skip_confirm:
+        response = input(f"{Colors.WARNING}Continue? (y/N): {Colors.ENDC}")
+        if response.lower() != 'y':
+            print("Upload cancelled.")
+            sys.exit(0)
+    else:
+        print_warning("Skipping confirmation (--yes flag set)")
 
-    # Upload using twine
+    # Check for API token in environment variable
+    api_token = os.environ.get(token_env_var)
+
+    # Build twine command
     cmd = f"python3 -m twine upload {repository_flag} dist/*"
-    run_command(cmd)
+
+    if api_token:
+        print_success(f"Using API token from {token_env_var} environment variable")
+        # Set twine environment variables for authentication (more secure than command line args)
+        env = os.environ.copy()
+        env["TWINE_USERNAME"] = "__token__"
+        env["TWINE_PASSWORD"] = api_token
+        print(f"{Colors.OKCYAN}$ {cmd}{Colors.ENDC}")
+        try:
+            subprocess.run(cmd, shell=True, check=True, env=env)
+        except subprocess.CalledProcessError:
+            print_error(f"Command failed: {cmd}")
+            sys.exit(1)
+    else:
+        print_warning(f"{token_env_var} environment variable not set, twine will prompt for credentials")
+        run_command(cmd)
 
     print_success(f"Package uploaded to {'TestPyPI' if test else 'PyPI'}")
 
@@ -301,6 +332,14 @@ Examples:
   python3 publish_to_pypi.py --test        # Upload to TestPyPI
   python3 publish_to_pypi.py               # Upload to PyPI
   python3 publish_to_pypi.py --clean       # Clean build artifacts
+
+  # Non-interactive mode (CI/CD)
+  PYPI_API_TOKEN=pypi-xxx python3 publish_to_pypi.py -y
+  TEST_PYPI_API_TOKEN=pypi-xxx python3 publish_to_pypi.py --test -y
+
+Environment Variables:
+  PYPI_API_TOKEN      - API token for PyPI
+  TEST_PYPI_API_TOKEN - API token for TestPyPI
         """
     )
     parser.add_argument(
@@ -337,6 +376,11 @@ Examples:
         "--skip-git-check",
         action="store_true",
         help="Skip git status check"
+    )
+    parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Skip all confirmation prompts (non-interactive mode)"
     )
 
     args = parser.parse_args()
@@ -377,7 +421,7 @@ Examples:
 
     # Check git status
     if not args.skip_git_check:
-        get_git_status()
+        get_git_status(skip_confirm=args.yes)
 
     # Clean previous builds
     clean_build_artifacts()
@@ -399,7 +443,7 @@ Examples:
         print(f"\n{Colors.OKGREEN}To upload to TestPyPI, run:{Colors.ENDC}")
         print(f"  python3 publish_to_pypi.py --test")
     else:
-        upload_to_pypi(test=args.test)
+        upload_to_pypi(test=args.test, skip_confirm=args.yes)
         print(f"\n{Colors.OKGREEN}{Colors.BOLD}✓ Publishing completed successfully!{Colors.ENDC}\n")
 
 
