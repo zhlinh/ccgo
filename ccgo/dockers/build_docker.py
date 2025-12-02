@@ -351,21 +351,22 @@ class DockerBuilder:
 
     def _find_ccgo_source(self):
         """
-        Find local ccgo source directory (repo root with setup.py).
+        Find local ccgo source directory (repo root with setup.py or pyproject.toml).
 
         This is used in development mode to mount local ccgo source.
 
         Returns:
             Path to ccgo repo root, or None if not found
         """
-        # Start from docker_dir and search upward for setup.py
+        # Start from docker_dir and search upward for setup.py or pyproject.toml
         # docker_dir is .../ccgo/ccgo/dockers
-        # We need to find .../ccgo (repo root with setup.py)
+        # We need to find .../ccgo (repo root with setup.py or pyproject.toml)
         current = self.docker_dir
         for _ in range(5):  # Search up to 5 levels
             parent = current.parent
             setup_py = parent / "setup.py"
-            if setup_py.exists():
+            pyproject_toml = parent / "pyproject.toml"
+            if setup_py.exists() or pyproject_toml.exists():
                 # Verify it's the ccgo repo by checking for ccgo package
                 ccgo_dir = parent / "ccgo"
                 if ccgo_dir.exists() and ccgo_dir.is_dir():
@@ -395,7 +396,8 @@ class DockerBuilder:
             if ccgo_source:
                 print(f"Development mode: Using local ccgo source from {ccgo_source}")
                 docker_volumes.extend(["-v", f"{ccgo_source}:/ccgo"])
-                install_cmd = "pip3 install -q -e /ccgo"
+                # Use non-editable install to avoid PEP 660 compatibility issues in containers
+                install_cmd = "pip3 install -q /ccgo"
             else:
                 print("⚠ Development mode requested but ccgo source not found!")
                 print("  Falling back to PyPI installation")

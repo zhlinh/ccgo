@@ -80,10 +80,11 @@ if(COMM_LOG_TAG_SUFFIX)
 endif()
 
 if(NOT COMM_REVISION)
-    # get revision
+    # get revision (suppress errors if not in a git repository)
     execute_process(COMMAND git rev-parse --short HEAD
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         OUTPUT_VARIABLE COMM_REVISION
+        ERROR_QUIET
         OUTPUT_STRIP_TRAILING_WHITESPACE)
 endif()
 

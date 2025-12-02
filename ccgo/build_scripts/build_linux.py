@@ -45,6 +45,7 @@ Output:
 import os
 import sys
 import glob
+import multiprocessing
 
 # Use absolute import for module compatibility
 try:
@@ -74,15 +75,16 @@ BUILD_OUT_PATH = "cmake_build/Linux"
 INSTALL_PATH = BUILD_OUT_PATH + "/Linux.out"
 
 # CMake build command for Linux Release configuration
-# Uses Unix Makefiles generator with parallel build (-j8)
-BUILD_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCCGO_CMAKE_DIR="%s" && make -j8 && make install'
+# Uses Unix Makefiles generator with parallel build
+# Parameters: ccgo_cmake_dir, link_type_flags, jobs
+BUILD_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # CodeLite IDE project generation command
 # CodeLite is a lightweight, cross-platform C/C++ IDE
 GEN_PROJECT_CMD = 'cmake ../.. -G "CodeLite - Unix Makefiles" -DCCGO_CMAKE_DIR="%s"'
 
 
-def build_linux(target_option="", tag="", link_type='static'):
+def build_linux(target_option="", tag="", link_type='static', jobs=None):
     """
     Build Linux static library with GCC/Clang toolchain.
 
@@ -97,6 +99,7 @@ def build_linux(target_option="", tag="", link_type='static'):
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
         link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -110,8 +113,12 @@ def build_linux(target_option="", tag="", link_type='static'):
         On Linux, the ar tool is used for merging (similar to libtool on macOS).
         The resulting library can be linked into applications using -l flag.
     """
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
     before_time = time.time()
-    print(f"==================build_linux (link_type: {link_type})========================")
+    print(f"==================build_linux (link_type: {link_type}, jobs: {jobs})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
@@ -130,8 +137,8 @@ def build_linux(target_option="", tag="", link_type='static'):
     else:  # both
         link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
 
-    # Update BUILD_CMD to include link_type_flags
-    build_cmd = f'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags} && make -j8 && make install'
+    # Build command with link_type_flags and jobs
+    build_cmd = BUILD_CMD % (CCGO_CMAKE_DIR, link_type_flags, jobs)
 
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
@@ -459,7 +466,7 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def main(target_option="", tag="", link_type='static'):
+def main(target_option="", tag="", link_type='static', jobs=None):
     """
     Main entry point for Linux static library build.
 
@@ -469,12 +476,20 @@ def main(target_option="", tag="", link_type='static'):
     Args:
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Note:
         This function calls build_linux() to create the static library,
         then archives it and moves artifacts to target/linux/ directory.
         For CodeLite project generation, use gen_linux_project() instead.
     """
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
+    print(f"main tag {tag}, link_type: {link_type}, jobs: {jobs}")
+
     # Clean target/linux directory at the start of build
     # Note: build_info.json will be regenerated at the end of the build process
     target_linux_dir = os.path.join(SCRIPT_PATH, "target/linux")
@@ -483,7 +498,7 @@ def main(target_option="", tag="", link_type='static'):
         print(f"[CLEAN] Removed target/linux directory")
 
     # Build static library
-    build_linux(target_option=target_option, tag=tag)
+    build_linux(target_option=target_option, tag=tag, link_type=link_type, jobs=jobs)
 
     # Archive and organize artifacts
     archive_linux_project()
@@ -494,35 +509,68 @@ def main(target_option="", tag="", link_type='static'):
 # Supports two invocation modes:
 # 1. Interactive mode (no args): Prompts user for build mode
 # 2. Mode only (1 arg): Uses specified mode directly
+# 3. Argparse mode: Uses --jobs and other options
 #
 # Build modes:
 # 1 - Build static library: Creates .a archive with merged libraries
 # 2 - Generate CodeLite project: Creates workspace and opens in CodeLite IDE
 # 3 - Exit: Quit without building
 if __name__ == "__main__":
-    while True:
-        if len(sys.argv) >= 2:
-            num = sys.argv[1]
-        else:
-            num = str(
-                input(
-                    "Enter menu:"
-                    + "\n1. Clean && Build Linux."
-                    + "\n2. Gen Linux CodeLite Project."
-                    + "\n3. Exit\n"
-                )
-            )
-        if num == "1":
-            main(tag=num)
-            break
-        elif num == "2":
-            gen_linux_project(tag=num)
-            break
-        elif num == "3":
-            break
-        else:
-            main()
-            break
+    import argparse
 
-if __name__ == "__main__":
-    main()
+    # Check if using new argparse-style arguments
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        parser = argparse.ArgumentParser(
+            description="Build Linux static library",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        parser.add_argument(
+            "-j", "--jobs",
+            type=int,
+            default=None,
+            help="Number of parallel build jobs (default: CPU count)",
+        )
+        parser.add_argument(
+            "--link-type",
+            type=str,
+            choices=['static', 'shared', 'both'],
+            default='static',
+            help="Library link type (default: static)",
+        )
+        parser.add_argument(
+            "--ide-project",
+            action="store_true",
+            help="Generate CodeLite project instead of building",
+        )
+
+        args = parser.parse_args()
+
+        if args.ide_project:
+            gen_linux_project()
+        else:
+            main(tag="1", link_type=args.link_type, jobs=args.jobs)
+    else:
+        # Legacy positional argument mode
+        while True:
+            if len(sys.argv) >= 2:
+                num = sys.argv[1]
+            else:
+                num = str(
+                    input(
+                        "Enter menu:"
+                        + "\n1. Clean && Build Linux."
+                        + "\n2. Gen Linux CodeLite Project."
+                        + "\n3. Exit\n"
+                    )
+                )
+            if num == "1":
+                main(tag=num)
+                break
+            elif num == "2":
+                gen_linux_project(tag=num)
+                break
+            elif num == "3":
+                break
+            else:
+                main()
+                break

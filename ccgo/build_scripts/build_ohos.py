@@ -45,6 +45,7 @@ import platform
 import shutil
 import sys
 import time
+import multiprocessing
 
 # Use absolute import for module compatibility
 try:
@@ -83,7 +84,7 @@ OHOS_LIBS_INSTALL_PATH = BUILD_OUT_PATH + "/"
 OHOS_PROJECT_PATH = "ohos/main_ohos_sdk"
 
 # CMake build command template with OHOS toolchain configuration
-# Parameters: source_path, generator, arch, sdk_root (4x), min_sdk, stl, ccgo_cmake_dir, target_option
+# Parameters: source_path, generator, arch, sdk_root (4x), min_sdk, stl, ccgo_cmake_dir, target_option, jobs
 OHOS_BUILD_CMD = (
     'cmake "%s" %s -DOHOS_ARCH="%s" '
     "-DOHOS=1 "
@@ -96,7 +97,7 @@ OHOS_BUILD_CMD = (
     "-DOHOS_SDK_NATIVE_PLATFORM=ohos-%s "
     '-DOHOS_STL="%s" '
     '-DCCGO_CMAKE_DIR="%s" %s '
-    "&& cmake --build . --config Release -- -j8"
+    "&& cmake --build . --config Release -- -j%d"
 )
 
 # Output paths for symbol and release libraries
@@ -137,7 +138,7 @@ def get_ohos_strip_path(arch):
     return strip_path
 
 
-def build_ohos(incremental, arch, target_option, tag, link_type='both'):
+def build_ohos(incremental, arch, target_option, tag, link_type='both', jobs=None):
     """
     Build native libraries for a specific OHOS ABI.
 
@@ -156,6 +157,7 @@ def build_ohos(incremental, arch, target_option, tag, link_type='both'):
         target_option: Additional CMake target options
         tag: Version tag string for metadata
         link_type: Library link type ('static', 'shared', or 'both')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -170,6 +172,10 @@ def build_ohos(incremental, arch, target_option, tag, link_type='both'):
         Requires OHOS_SDK_HOME or HOS_SDK_HOME environment variable to be set.
         Symbol libraries should be stored permanently for crash symbolication.
     """
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
     before_time = time.time()
 
     clean(os.path.join(SCRIPT_PATH, BUILD_OUT_PATH), incremental)
@@ -197,6 +203,7 @@ def build_ohos(incremental, arch, target_option, tag, link_type='both'):
         get_ohos_stl(SCRIPT_PATH),
         CCGO_CMAKE_DIR,
         full_target_option,
+        jobs,
     )
     print(f"build cmd: [{build_cmd}]")
     ret = os.system(build_cmd)
@@ -502,7 +509,7 @@ def archive_ohos_project():
     print_build_results()
 
 
-def main(incremental, build_archs, target_option="", tag="", link_type='both'):
+def main(incremental, build_archs, target_option="", tag="", link_type='both', jobs=None):
     """
     Main entry point for building OHOS native libraries across multiple ABIs.
 
@@ -518,6 +525,7 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both'):
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
         link_type: Library link type ('static', 'shared', or 'both', default: 'both')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Raises:
         RuntimeError: If OHOS SDK environment check fails or any build fails
@@ -538,7 +546,11 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both'):
             f"Exception occurs when check ohos native env, please install ndk {get_ohos_native_desc()} and put in env OHOS_SDK_HOME"
         )
 
-    print(f"main tag {tag}, archs [{build_archs}], link_type:{link_type}")
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
+    print(f"main tag {tag}, archs [{build_archs}], link_type:{link_type}, jobs:{jobs}")
 
     # generate verinfo.h
     gen_project_revision_file(
@@ -574,7 +586,7 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both'):
     has_error = False
     success_archs = []
     for arch in build_archs:
-        if not build_ohos(incremental, arch, target_option, tag, link_type):
+        if not build_ohos(incremental, arch, target_option, tag, link_type, jobs):
             has_error = True
             break
         success_archs.append(arch)
@@ -639,14 +651,20 @@ if __name__ == "__main__":
         default='both',
         help="Library link type (default: both)",
     )
+    parser.add_argument(
+        "-j", "--jobs",
+        type=int,
+        default=None,
+        help="Number of parallel build jobs (default: CPU count)",
+    )
 
     args = parser.parse_args()
 
     if args.native_only:
         # Build native libraries only
         archs = [arch.strip() for arch in args.arch.split(",")]
-        print(f"==================OHOS Native Build, archs: {archs}, link_type: {args.link_type}==================")
-        main(args.incremental, archs, tag="native", link_type=args.link_type)
+        print(f"==================OHOS Native Build, archs: {archs}, link_type: {args.link_type}, jobs: {args.jobs or 'auto'}==================")
+        main(args.incremental, archs, tag="native", link_type=args.link_type, jobs=args.jobs)
     else:
         # Default: Print build results (hvigor assembleHar already handles building)
         print("==================OHOS Build Results Mode==================")

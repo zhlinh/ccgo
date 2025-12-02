@@ -45,6 +45,7 @@ import glob
 import os
 import sys
 import time
+import multiprocessing
 
 # Use absolute import for module compatibility
 try:
@@ -68,22 +69,25 @@ INSTALL_PATH = BUILD_OUT_PATH + "/Darwin.out"
 
 # CMake build command for macOS (defaults to x86_64 if no arch specified)
 # Disables ARC and Bitcode for C/C++ native libraries
-MACOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s && make -j8 && make install'
+# Parameters: ccgo_cmake_dir, target_option, jobs
+MACOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # CMake build command for Apple Silicon Macs (M1, M2, M3, etc.)
 # Builds for arm64 and arm64e architectures
-MACOS_BUILD_ARM_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCCGO_CMAKE_DIR="%s" %s && make -j8 && make install'
+# Parameters: ccgo_cmake_dir, target_option, jobs
+MACOS_BUILD_ARM_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # CMake build command for Intel Macs
 # Builds for x86_64 architecture only
-MACOS_BUILD_X86_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="x86_64" -DCCGO_CMAKE_DIR="%s" %s && make -j8 && make install'
+# Parameters: ccgo_cmake_dir, target_option, jobs
+MACOS_BUILD_X86_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="x86_64" -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # Xcode project generation command
 # Targets macOS 10.9+ for broad compatibility, disables Bitcode
 GEN_MACOS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.9 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s'
 
 
-def build_macos(target_option="", tag="", link_type='static'):
+def build_macos(target_option="", tag="", link_type='static', jobs=None):
     """
     Build universal macOS framework supporting both Intel and Apple Silicon.
 
@@ -100,6 +104,7 @@ def build_macos(target_option="", tag="", link_type='static'):
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
         link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -112,8 +117,12 @@ def build_macos(target_option="", tag="", link_type='static'):
         Intel and Apple Silicon Macs. This provides optimal performance on all
         Mac architectures without requiring Rosetta 2 translation.
     """
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
     before_time = time.time()
-    print(f"==================build_macos (link_type: {link_type})========================")
+    print(f"==================build_macos (link_type: {link_type}, jobs: {jobs})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
@@ -138,7 +147,7 @@ def build_macos(target_option="", tag="", link_type='static'):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    build_cmd = MACOS_BUILD_ARM_CMD % (CCGO_CMAKE_DIR, full_target_option)
+    build_cmd = MACOS_BUILD_ARM_CMD % (CCGO_CMAKE_DIR, full_target_option, jobs)
     ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
@@ -164,7 +173,7 @@ def build_macos(target_option="", tag="", link_type='static'):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    build_cmd = MACOS_BUILD_X86_CMD % (CCGO_CMAKE_DIR, full_target_option)
+    build_cmd = MACOS_BUILD_X86_CMD % (CCGO_CMAKE_DIR, full_target_option, jobs)
     ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
@@ -481,7 +490,7 @@ def gen_macos_project(target_option="", tag=""):
     return True
 
 
-def main(target_option="", tag="", link_type='static'):
+def main(target_option="", tag="", link_type='static', jobs=None):
     """
     Main entry point for macOS universal framework build.
 
@@ -491,16 +500,22 @@ def main(target_option="", tag="", link_type='static'):
     Args:
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Note:
         This function calls build_macos() to create the universal framework,
         then archives it and moves artifacts to target/macos/ directory.
         For Xcode project generation, use gen_macos_project() instead.
     """
-    print("main tag %s" % tag)
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
+    print(f"main tag {tag}, link_type: {link_type}, jobs: {jobs}")
 
     # Build universal framework
-    if not build_macos(target_option, tag, link_type):
+    if not build_macos(target_option, tag, link_type, jobs):
         print("ERROR: macOS build failed")
         sys.exit(1)
 
@@ -513,31 +528,67 @@ def main(target_option="", tag="", link_type='static'):
 # Supports two invocation modes:
 # 1. Interactive mode (no args): Prompts user for build mode
 # 2. Mode only (1 arg): Uses specified mode directly
+# 3. Argparse mode: Uses --jobs and other options
 #
 # Build modes:
 # 1 - Build universal framework: Creates .framework with Intel + Apple Silicon binaries
 # 2 - Generate Xcode project: Creates .xcodeproj and opens in Xcode for development
 # 3 - Exit: Quit without building
 if __name__ == "__main__":
-    while True:
-        if len(sys.argv) >= 2:
-            num = sys.argv[1]
+    import argparse
+
+    # Check if using new argparse-style arguments
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        parser = argparse.ArgumentParser(
+            description="Build macOS universal framework",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        parser.add_argument(
+            "-j", "--jobs",
+            type=int,
+            default=None,
+            help="Number of parallel build jobs (default: CPU count)",
+        )
+        parser.add_argument(
+            "--link-type",
+            type=str,
+            choices=['static', 'shared', 'both'],
+            default='static',
+            help="Library link type (default: static)",
+        )
+        parser.add_argument(
+            "--ide-project",
+            action="store_true",
+            help="Generate Xcode project instead of building",
+        )
+
+        args = parser.parse_args()
+
+        if args.ide_project:
+            gen_macos_project()
         else:
-            archs = set(["armeabi-v7a"])
-            num = str(
-                input(
-                    "Enter menu:"
-                    + f"\n1. Clean && Build macOS {PROJECT_NAME_LOWER}."
-                    + f"\n2. Gen macOS {PROJECT_NAME_LOWER} Project."
-                    + "\n3. Exit.\n"
+            main(tag="1", link_type=args.link_type, jobs=args.jobs)
+    else:
+        # Legacy positional argument mode
+        while True:
+            if len(sys.argv) >= 2:
+                num = sys.argv[1]
+            else:
+                archs = set(["armeabi-v7a"])
+                num = str(
+                    input(
+                        "Enter menu:"
+                        + f"\n1. Clean && Build macOS {PROJECT_NAME_LOWER}."
+                        + f"\n2. Gen macOS {PROJECT_NAME_LOWER} Project."
+                        + "\n3. Exit.\n"
+                    )
                 )
-            )
-        print(f"==================MacOS Choose num: {num}==================")
-        if num == "1":
-            main(tag=num)
-            break
-        elif num == "2":
-            gen_macos_project(tag=num)
-            break
-        else:
-            break
+            print(f"==================MacOS Choose num: {num}==================")
+            if num == "1":
+                main(tag=num)
+                break
+            elif num == "2":
+                gen_macos_project(tag=num)
+                break
+            else:
+                break

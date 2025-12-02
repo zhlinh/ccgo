@@ -45,6 +45,7 @@ import platform
 import shutil
 import sys
 import time
+import multiprocessing
 
 # Use absolute import for module compatibility
 try:
@@ -82,7 +83,7 @@ ANDROID_LIBS_INSTALL_PATH = BUILD_OUT_PATH + "/"
 ANDROID_PROJECT_PATH = "android/main_android_sdk"
 
 # CMake build command template with Android toolchain configuration
-# Parameters: source_path, generator, abi, ndk_root, ndk_root, min_sdk, stl, ccgo_cmake_dir, target_option
+# Parameters: source_path, generator, abi, ndk_root, ndk_root, min_sdk, stl, ccgo_cmake_dir, target_option, jobs
 ANDROID_BUILD_CMD = (
     'cmake "%s" %s -DANDROID_ABI="%s" '
     "-DCMAKE_BUILD_TYPE=Release "
@@ -92,7 +93,7 @@ ANDROID_BUILD_CMD = (
     "-DANDROID_PLATFORM=android-%s "
     f'-DANDROID_STL="%s" '
     '-DCCGO_CMAKE_DIR="%s" %s '
-    "&& cmake --build . --config Release -- -j8"
+    "&& cmake --build . --config Release -- -j%d"
 )
 
 # Output paths for symbol and release libraries
@@ -142,7 +143,7 @@ def get_android_strip_path(arch):
     return strip_path
 
 
-def build_android(incremental, arch, target_option, tag, link_type='both'):
+def build_android(incremental, arch, target_option, tag, link_type='both', jobs=None):
     """
     Build native libraries for a specific Android ABI.
 
@@ -161,6 +162,7 @@ def build_android(incremental, arch, target_option, tag, link_type='both'):
         target_option: Additional CMake target options
         tag: Version tag string for metadata
         link_type: Library link type ('static', 'shared', or 'both')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -173,6 +175,9 @@ def build_android(incremental, arch, target_option, tag, link_type='both'):
         Requires NDK_ROOT environment variable to be set.
         Symbol libraries should be stored permanently for crash symbolication.
     """
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
     before_time = time.time()
 
     clean(os.path.join(SCRIPT_PATH, BUILD_OUT_PATH), incremental)
@@ -200,6 +205,7 @@ def build_android(incremental, arch, target_option, tag, link_type='both'):
         get_android_stl(SCRIPT_PATH),
         CCGO_CMAKE_DIR,
         full_target_option,
+        jobs,
     )
     print(f"build cmd: [{build_cmd}]")
     ret = os.system(build_cmd)
@@ -432,7 +438,7 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def main(incremental, build_archs, target_option="", tag="", link_type='both'):
+def main(incremental, build_archs, target_option="", tag="", link_type='both', jobs=None):
     """
     Main entry point for building Android native libraries across multiple ABIs.
 
@@ -448,6 +454,7 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both'):
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
         link_type: Library link type ('static', 'shared', or 'both', default: 'both')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Raises:
         RuntimeError: If NDK environment check fails or any build fails
@@ -468,7 +475,11 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both'):
             f"Exception occurs when check ndk env, please install ndk {get_ndk_desc()} and put in env NDK_ROOT"
         )
 
-    print(f"main tag {tag}, archs:{build_archs}, link_type:{link_type}")
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
+    print(f"main tag {tag}, archs:{build_archs}, link_type:{link_type}, jobs:{jobs}")
 
     # generate verinfo.h
     gen_project_revision_file(
@@ -483,7 +494,7 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both'):
     has_error = False
     success_archs = []
     for arch in build_archs:
-        if not build_android(incremental, arch, target_option, tag, link_type):
+        if not build_android(incremental, arch, target_option, tag, link_type, jobs):
             has_error = True
             break
         success_archs.append(arch)
@@ -554,6 +565,12 @@ if __name__ == "__main__":
         default='both',
         help="Library link type (default: both)",
     )
+    parser.add_argument(
+        "-j", "--jobs",
+        type=int,
+        default=None,
+        help="Number of parallel build jobs (default: CPU count)",
+    )
 
     args = parser.parse_args()
 
@@ -561,9 +578,9 @@ if __name__ == "__main__":
         # Build native libraries only
         archs = [arch.strip() for arch in args.arch.split(",")]
         print(
-            f"==================Android Native Build, archs: {archs}, link_type: {args.link_type}=================="
+            f"==================Android Native Build, archs: {archs}, link_type: {args.link_type}, jobs: {args.jobs or 'auto'}=================="
         )
-        main(args.incremental, archs, tag="native", link_type=args.link_type)
+        main(args.incremental, archs, tag="native", link_type=args.link_type, jobs=args.jobs)
     else:
         # Default: Print build results (Gradle archiveProject already handles archiving)
         print("==================Android Build Results Mode==================")

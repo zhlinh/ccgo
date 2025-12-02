@@ -49,6 +49,7 @@ import glob
 import time
 import shutil
 import platform
+import multiprocessing
 
 # Use absolute import for module compatibility
 try:
@@ -68,7 +69,8 @@ INSTALL_PATH = BUILD_OUT_PATH + "/Windows.out/"
 
 # Visual Studio 2019 build configuration
 # Uses Visual Studio 16 2019 generator with v142 platform toolset (C++17 support)
-WIN_BUILD_CMD = 'cmake ../.. -G "Visual Studio 16 2019" -T v142 -DCCGO_CMAKE_DIR="%s" && cmake --build . --target install --config %s'
+# Parameters: ccgo_cmake_dir, config, jobs
+WIN_BUILD_CMD = 'cmake ../.. -G "Visual Studio 16 2019" -T v142 -DCCGO_CMAKE_DIR="%s" && cmake --build . --target install --config %s --parallel %d'
 WIN_GEN_PROJECT_CMD = (
     'cmake ../.. -G "Visual Studio 16 2019" -T v142 -DCCGO_CMAKE_DIR="%s"'
 )
@@ -77,7 +79,7 @@ WIN_SRC_DIR = "src"  # Source directory name for PDB collection
 THIRD_PARTY_MERGE_LIBS = ["pthread"]  # Third-party libraries to merge into final .lib
 
 
-def build_windows(incremental, tag="", config="Release", link_type='static', use_mingw=False, use_msvc_compat=False):
+def build_windows(incremental, tag="", config="Release", link_type='static', use_mingw=False, use_msvc_compat=False, jobs=None):
     """
     Build Windows static library with Visual Studio or MinGW toolchain.
 
@@ -95,6 +97,9 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
         tag: Version tag string for metadata (default: '')
         config: Build configuration - 'Release' or 'Debug' (default: 'Release')
         link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        use_mingw: If True, use MinGW-w64 toolchain for cross-compilation
+        use_msvc_compat: If True, use clang-cl for MSVC-compatible builds
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -110,8 +115,12 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
         The lib file contains merged static libraries from both
         project sources and third-party dependencies.
     """
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
     before_time = time.time()
-    print(f"==================build_windows (link_type: {link_type})========================")
+    print(f"==================build_windows (link_type: {link_type}, jobs: {jobs})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
@@ -151,7 +160,7 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
             f'-DCMAKE_BUILD_TYPE={config} '
             f'-DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags}'
         )
-        cmake_build_cmd = 'cmake --build . --target install'
+        cmake_build_cmd = f'cmake --build . --target install -- -j{jobs}'
         cmd = f'{cmake_config_cmd} && {cmake_build_cmd}'
     elif use_msvc_compat:
         # MSVC-compatible build using clang-cl (for Docker with MSVC ABI)
@@ -173,11 +182,11 @@ def build_windows(incremental, tag="", config="Release", link_type='static', use
         if os.environ.get('INCLUDE'):
             cmake_config_cmd += f' -DCMAKE_C_FLAGS="/I{os.environ["INCLUDE"]}"'
             cmake_config_cmd += f' -DCMAKE_CXX_FLAGS="/I{os.environ["INCLUDE"]}"'
-        cmake_build_cmd = 'cmake --build . --target install'
+        cmake_build_cmd = f'cmake --build . --target install -- -j{jobs}'
         cmd = f'{cmake_config_cmd} && {cmake_build_cmd}'
     else:
         # Visual Studio build (native Windows)
-        cmd = f'cmake ../.. -G "Visual Studio 16 2019" -T v142 -DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags} && cmake --build . --target install --config {config}'
+        cmd = f'cmake ../.. -G "Visual Studio 16 2019" -T v142 -DCCGO_CMAKE_DIR="{CCGO_CMAKE_DIR}" {link_type_flags} && cmake --build . --target install --config {config} --parallel {jobs}'
 
     print("build cmd:" + cmd)
     ret = os.system(cmd)
@@ -384,13 +393,15 @@ def archive_windows_project():
     project_name_upper = PROJECT_NAME.upper()
 
     # Try to get publish suffix from git tags or use beta.0 as default
+    # Use cross-platform null device
+    null_device = "nul" if sys.platform == "win32" else "/dev/null"
     try:
-        git_tags = os.popen("git describe --tags --abbrev=0 2>nul").read().strip()
+        git_tags = os.popen(f"git describe --tags --abbrev=0 2>{null_device}").read().strip()
         if git_tags and "-" in git_tags:
             suffix = git_tags.split("-", 1)[1]
         else:
             git_branch = (
-                os.popen("git rev-parse --abbrev-ref HEAD 2>nul").read().strip()
+                os.popen(f"git rev-parse --abbrev-ref HEAD 2>{null_device}").read().strip()
             )
             if git_branch == "master" or git_branch == "main":
                 suffix = "release"
@@ -689,4 +700,87 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    # Check if using new argparse-style arguments
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        parser = argparse.ArgumentParser(
+            description="Build Windows static library",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        parser.add_argument(
+            "-j", "--jobs",
+            type=int,
+            default=None,
+            help="Number of parallel build jobs (default: CPU count)",
+        )
+        parser.add_argument(
+            "--link-type",
+            type=str,
+            choices=['static', 'shared', 'both'],
+            default='static',
+            help="Library link type (default: static)",
+        )
+        parser.add_argument(
+            "--ide-project",
+            action="store_true",
+            help="Generate Visual Studio project instead of building",
+        )
+        parser.add_argument(
+            "--config",
+            type=str,
+            choices=['Release', 'Debug'],
+            default='Release',
+            help="Build configuration (default: Release)",
+        )
+
+        args = parser.parse_args()
+
+        # Check toolchain availability
+        mingw_available = shutil.which("x86_64-w64-mingw32-gcc") is not None
+        clang_cl_available = shutil.which("clang-cl") is not None or shutil.which("cl") is not None
+        vs_available = check_vs_env()
+
+        # Determine which toolchain to use
+        use_mingw = False
+        use_msvc_compat = False
+        toolchain_env = os.environ.get("CCGO_WINDOWS_TOOLCHAIN", "").lower()
+
+        if toolchain_env == "msvc":
+            if clang_cl_available:
+                use_msvc_compat = True
+            elif not vs_available:
+                print("ERROR: MSVC toolchain requested but not available")
+                sys.exit(1)
+        elif toolchain_env in ["gnu", "mingw"]:
+            if mingw_available:
+                use_mingw = True
+            else:
+                print("ERROR: MinGW toolchain requested but not available")
+                sys.exit(1)
+        else:
+            # Auto-detect
+            if mingw_available:
+                use_mingw = True
+            elif clang_cl_available:
+                use_msvc_compat = True
+            elif not vs_available:
+                print("ERROR: No compatible Windows toolchain found")
+                sys.exit(1)
+
+        if args.ide_project:
+            if use_mingw or use_msvc_compat:
+                print("WARNING: Project generation not supported with MinGW/clang-cl")
+                sys.exit(1)
+            else:
+                gen_win_project(tag="1", config=args.config)
+        else:
+            build_windows(incremental=False, tag="1", config=args.config,
+                        link_type=args.link_type,
+                        use_mingw=use_mingw, use_msvc_compat=use_msvc_compat,
+                        jobs=args.jobs)
+            archive_windows_project()
+            print_build_results()
+    else:
+        # Legacy positional argument mode
+        main()

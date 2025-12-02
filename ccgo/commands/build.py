@@ -16,6 +16,8 @@ import subprocess
 import importlib.util
 import platform
 import time
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # setup path
@@ -99,8 +101,14 @@ SUPPORTED PLATFORMS:
     include     Build and package header files only
 
 EXAMPLES:
-    # Build all platforms
+    # Build all platforms (parallel by default, using CPU count workers)
     ccgo build all
+
+    # Build all platforms with 4 parallel workers
+    ccgo build all -j 4
+
+    # Build all platforms sequentially (no parallelism)
+    ccgo build all --no-parallel
 
     # Build Android with default architectures (armeabi-v7a, arm64-v8a, x86_64)
     ccgo build android
@@ -147,6 +155,10 @@ PLATFORM-SPECIFIC OPTIONS:
 
     All platforms:
         --ide-project      Generate IDE project files for development
+
+    Build all:
+        -j, --jobs N       Number of parallel build jobs (default: CPU count)
+        --no-parallel      Disable parallel builds (equivalent to --jobs=1)
 
 REQUIREMENTS:
     Native builds (without --docker):
@@ -217,6 +229,17 @@ REQUIREMENTS:
             default="auto",
             help="Windows toolchain: msvc (Visual Studio), gnu/mingw (MinGW-w64), auto (detect)",
         )
+        parser.add_argument(
+            "-j", "--jobs",
+            type=int,
+            default=None,
+            help="Number of parallel build jobs for 'all' target (default: CPU count). Use 1 to disable parallel builds.",
+        )
+        parser.add_argument(
+            "--no-parallel",
+            action="store_true",
+            help="Disable parallel builds for 'all' target (equivalent to --jobs=1)",
+        )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
         args, unknown = parser.parse_known_args(input_argv)
@@ -237,6 +260,75 @@ REQUIREMENTS:
             seconds = elapsed % 60
             print(f"\n⏱ Build completed in {hours} hr {minutes} min {seconds:.0f} sec")
 
+    def _build_platform_subprocess(self, target_platform: str, args: CliNameSpace, project_subdir: str) -> tuple:
+        """
+        Build a single platform in a subprocess.
+        Returns (target_platform, success, error_message, elapsed_time)
+        """
+        import subprocess
+        import shlex
+
+        platform_start = time.time()
+
+        # Build command line arguments
+        cmd_args = ["ccgo", "build", target_platform]
+
+        # Pass through relevant arguments
+        if hasattr(args, 'arch') and args.arch:
+            cmd_args.extend(["--arch", args.arch])
+        if hasattr(args, 'native_only') and args.native_only:
+            cmd_args.append("--native-only")
+        if hasattr(args, 'docker') and args.docker:
+            cmd_args.append("--docker")
+        if hasattr(args, 'no_docker') and args.no_docker:
+            cmd_args.append("--no-docker")
+        if hasattr(args, 'docker_dev') and args.docker_dev:
+            cmd_args.append("--docker-dev")
+        if hasattr(args, 'toolchain') and args.toolchain and args.toolchain != "auto":
+            cmd_args.extend(["--toolchain", args.toolchain])
+        if hasattr(args, 'ide_project') and args.ide_project:
+            cmd_args.extend(["--ide-project", args.ide_project])
+        # Always pass -j to ensure build scripts use argparse mode (not legacy interactive mode)
+        effective_jobs = args.jobs if hasattr(args, 'jobs') and args.jobs else multiprocessing.cpu_count()
+        cmd_args.extend(["-j", str(effective_jobs)])
+
+        try:
+            result = subprocess.run(
+                cmd_args,
+                cwd=project_subdir,
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1 hour timeout per platform
+            )
+
+            elapsed = time.time() - platform_start
+
+            if result.returncode == 0:
+                return (target_platform, True, None, elapsed, result.stdout, result.stderr)
+            else:
+                error_msg = result.stderr or result.stdout or f"Exit code: {result.returncode}"
+                return (target_platform, False, error_msg, elapsed, result.stdout, result.stderr)
+
+        except subprocess.TimeoutExpired:
+            elapsed = time.time() - platform_start
+            return (target_platform, False, "Build timed out after 1 hour", elapsed, "", "")
+        except Exception as e:
+            elapsed = time.time() - platform_start
+            return (target_platform, False, str(e), elapsed, "", "")
+
+    def _format_elapsed_time(self, elapsed: float) -> str:
+        """Format elapsed time in a human-readable format."""
+        if elapsed < 60:
+            return f"{elapsed:.1f}s"
+        elif elapsed < 3600:
+            minutes = int(elapsed // 60)
+            seconds = elapsed % 60
+            return f"{minutes}m {seconds:.0f}s"
+        else:
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            return f"{hours}h {minutes}m"
+
     def exec(self, context: CliContext, args: CliNameSpace):
         # Record start time
         start_time = time.time()
@@ -247,40 +339,195 @@ REQUIREMENTS:
             print("Building library for ALL platforms")
             print("="*80)
 
+            # Determine number of parallel jobs
+            if args.no_parallel:
+                num_jobs = 1
+            elif args.jobs is not None:
+                num_jobs = max(1, args.jobs)
+            else:
+                # Default to CPU count
+                num_jobs = multiprocessing.cpu_count()
+
             platforms = self.get_build_platforms()
             total_platforms = len(platforms)
             failed_platforms = []
             successful_platforms = []
+            platform_times = {}
+
+            # Get project directory for subprocess builds
+            try:
+                project_dir = os.getcwd()
+            except (OSError, FileNotFoundError) as e:
+                project_dir = os.environ.get('PWD')
+                if not project_dir or not os.path.exists(project_dir):
+                    print(f"ERROR: Current working directory no longer exists: {e}")
+                    self._print_build_time(start_time)
+                    sys.exit(1)
+
+            # Find CCGO.toml to determine project_subdir
+            config_path = None
+            project_subdir = project_dir
+            for subdir in os.listdir(project_dir):
+                potential_config = os.path.join(project_dir, subdir, "CCGO.toml")
+                if os.path.isfile(potential_config):
+                    config_path = potential_config
+                    project_subdir = os.path.join(project_dir, subdir)
+                    break
+            if not config_path and os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+                config_path = os.path.join(project_dir, "CCGO.toml")
+                project_subdir = project_dir
+
+            if not config_path:
+                print("ERROR: CCGO.toml not found in project directory")
+                self._print_build_time(start_time)
+                sys.exit(1)
 
             print(f"\nWill build {total_platforms} platforms: {', '.join(platforms)}")
+            print(f"Parallel jobs: {num_jobs}" + (" (sequential)" if num_jobs == 1 else f" (parallel)"))
             print("="*80)
 
-            for index, target_platform in enumerate(platforms, 1):
-                print(f"\n{'='*80}")
-                print(f"Building platform {index}/{total_platforms}: {target_platform.upper()}")
-                print(f"{'='*80}\n")
+            if num_jobs == 1:
+                # Sequential build (original behavior)
+                for index, target_platform in enumerate(platforms, 1):
+                    print(f"\n{'='*80}")
+                    print(f"Building platform {index}/{total_platforms}: {target_platform.upper()}")
+                    print(f"{'='*80}\n")
 
-                # Create a copy of args with the specific platform
-                platform_args = argparse.Namespace(**vars(args))
-                platform_args.target = target_platform
+                    # Create a copy of args with the specific platform
+                    platform_args = argparse.Namespace(**vars(args))
+                    platform_args.target = target_platform
 
-                # Build the platform
-                platform_start = time.time()
-                try:
-                    # Call exec recursively with the specific platform
-                    self.exec(context, platform_args)
-                    successful_platforms.append(target_platform)
-                    print(f"\n✅ {target_platform.upper()} build completed successfully")
-                except SystemExit as e:
-                    if e.code != 0:
-                        failed_platforms.append(target_platform)
-                        print(f"\n❌ {target_platform.upper()} build failed with exit code {e.code}")
-                    else:
+                    # Build the platform
+                    platform_start = time.time()
+                    try:
+                        # Call exec recursively with the specific platform
+                        self.exec(context, platform_args)
                         successful_platforms.append(target_platform)
-                        print(f"\n✅ {target_platform.upper()} build completed successfully")
-                except Exception as e:
-                    failed_platforms.append(target_platform)
-                    print(f"\n❌ {target_platform.upper()} build failed with error: {e}")
+                        elapsed = time.time() - platform_start
+                        platform_times[target_platform] = elapsed
+                        print(f"\n✅ {target_platform.upper()} build completed successfully ({self._format_elapsed_time(elapsed)})")
+                    except SystemExit as e:
+                        elapsed = time.time() - platform_start
+                        platform_times[target_platform] = elapsed
+                        if e.code != 0:
+                            failed_platforms.append(target_platform)
+                            print(f"\n❌ {target_platform.upper()} build failed with exit code {e.code} ({self._format_elapsed_time(elapsed)})")
+                        else:
+                            successful_platforms.append(target_platform)
+                            print(f"\n✅ {target_platform.upper()} build completed successfully ({self._format_elapsed_time(elapsed)})")
+                    except Exception as e:
+                        elapsed = time.time() - platform_start
+                        platform_times[target_platform] = elapsed
+                        failed_platforms.append(target_platform)
+                        print(f"\n❌ {target_platform.upper()} build failed with error: {e} ({self._format_elapsed_time(elapsed)})")
+            else:
+                # Parallel build using ThreadPoolExecutor
+                # Note: Apple platforms (ios, macos, watchos, tvos) share Xcode toolchain
+                # and may conflict when built in parallel, so we group them together
+                apple_platforms = {'ios', 'macos', 'watchos', 'tvos'}
+                apple_to_build = [p for p in platforms if p in apple_platforms]
+                other_platforms = [p for p in platforms if p not in apple_platforms]
+
+                print(f"\n🚀 Starting parallel build with {num_jobs} workers...")
+                if apple_to_build:
+                    print(f"   ℹ Apple platforms ({', '.join(apple_to_build)}) will be built sequentially to avoid Xcode conflicts")
+                print()
+
+                def build_apple_sequential():
+                    """Build all Apple platforms sequentially and return results."""
+                    results = []
+                    for plat in apple_to_build:
+                        result = self._build_platform_subprocess(plat, args, project_subdir)
+                        results.append(result)
+                    return results
+
+                with ThreadPoolExecutor(max_workers=num_jobs) as executor:
+                    # Submit non-Apple platforms individually
+                    futures = {}
+                    for target_platform in other_platforms:
+                        future = executor.submit(
+                            self._build_platform_subprocess,
+                            target_platform,
+                            args,
+                            project_subdir
+                        )
+                        futures[future] = target_platform
+
+                    # Submit all Apple platforms as a single sequential task
+                    if apple_to_build:
+                        apple_future = executor.submit(build_apple_sequential)
+                        futures[apple_future] = "apple_group"
+
+                    # Track in-progress builds
+                    in_progress = set(platforms)
+                    completed_count = 0
+
+                    # Process completed builds as they finish
+                    for future in as_completed(futures):
+                        future_id = futures[future]
+
+                        try:
+                            if future_id == "apple_group":
+                                # Handle Apple group results
+                                apple_results = future.result()
+                                for platform_name, success, error_msg, elapsed, stdout, stderr in apple_results:
+                                    completed_count += 1
+                                    platform_times[platform_name] = elapsed
+                                    in_progress.discard(platform_name)
+
+                                    if success:
+                                        successful_platforms.append(platform_name)
+                                        print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                                    else:
+                                        failed_platforms.append(platform_name)
+                                        print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
+                                        if error_msg:
+                                            error_lines = error_msg.strip().split('\n')
+                                            for line in error_lines[:5]:
+                                                print(f"   {line}")
+                                            if len(error_lines) > 5:
+                                                print(f"   ... ({len(error_lines) - 5} more lines)")
+
+                                    if in_progress:
+                                        print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
+                            else:
+                                # Handle individual platform result
+                                platform_name, success, error_msg, elapsed, stdout, stderr = future.result()
+                                completed_count += 1
+                                platform_times[platform_name] = elapsed
+                                in_progress.discard(platform_name)
+
+                                if success:
+                                    successful_platforms.append(platform_name)
+                                    print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                                else:
+                                    failed_platforms.append(platform_name)
+                                    print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
+                                    if error_msg:
+                                        # Print first few lines of error
+                                        error_lines = error_msg.strip().split('\n')
+                                        for line in error_lines[:5]:
+                                            print(f"   {line}")
+                                        if len(error_lines) > 5:
+                                            print(f"   ... ({len(error_lines) - 5} more lines)")
+
+                                # Show remaining in-progress builds
+                                if in_progress:
+                                    print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
+
+                        except Exception as e:
+                            if future_id == "apple_group":
+                                # All Apple platforms failed
+                                for plat in apple_to_build:
+                                    platform_times[plat] = 0
+                                    failed_platforms.append(plat)
+                                    in_progress.discard(plat)
+                                print(f"❌ Apple platforms failed with exception: {e}")
+                            else:
+                                platform_times[future_id] = 0
+                                failed_platforms.append(future_id)
+                                in_progress.discard(future_id)
+                                print(f"❌ [{completed_count}/{total_platforms}] {future_id.upper()} failed with exception: {e}")
 
             # Print summary
             print(f"\n{'='*80}")
@@ -289,16 +536,20 @@ REQUIREMENTS:
             print(f"\nTotal platforms: {total_platforms}")
             print(f"Successful: {len(successful_platforms)}")
             print(f"Failed: {len(failed_platforms)}")
+            if num_jobs > 1:
+                print(f"Parallel workers: {num_jobs}")
 
             if successful_platforms:
                 print(f"\n✅ Successful builds:")
-                for p in successful_platforms:
-                    print(f"   - {p}")
+                for p in sorted(successful_platforms):
+                    elapsed_str = self._format_elapsed_time(platform_times.get(p, 0))
+                    print(f"   - {p} ({elapsed_str})")
 
             if failed_platforms:
                 print(f"\n❌ Failed builds:")
-                for p in failed_platforms:
-                    print(f"   - {p}")
+                for p in sorted(failed_platforms):
+                    elapsed_str = self._format_elapsed_time(platform_times.get(p, 0))
+                    print(f"   - {p} ({elapsed_str})")
 
             self._print_build_time(start_time)
 
@@ -410,10 +661,13 @@ REQUIREMENTS:
                 sys.exit(1)
 
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
+            # Always pass -j to ensure build scripts use argparse mode
+            effective_jobs = args.jobs if args.jobs else multiprocessing.cpu_count()
+            jobs_arg = f" -j {effective_jobs}"
 
             # Step 1: Build native libraries
             print("\n--- Step 1: Building native libraries ---")
-            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}"
+            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
             print(f"Executing: {native_cmd}")
 
             err_code = os.system(native_cmd)
@@ -515,10 +769,13 @@ REQUIREMENTS:
                 sys.exit(1)
 
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
+            # Always pass -j to ensure build scripts use argparse mode
+            effective_jobs = args.jobs if args.jobs else multiprocessing.cpu_count()
+            jobs_arg = f" -j {effective_jobs}"
 
             # Step 1: Build native libraries
             print("\n--- Step 1: Building native libraries ---")
-            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}"
+            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
             print(f"Executing: {native_cmd}")
 
             err_code = os.system(native_cmd)
@@ -561,15 +818,26 @@ REQUIREMENTS:
             sys.exit(1)
 
         # Prepare command arguments based on target platform
+        # Always pass -j to ensure build scripts use argparse mode (not legacy interactive mode)
+        effective_jobs = args.jobs if args.jobs else multiprocessing.cpu_count()
+        jobs_arg = f" -j {effective_jobs}"
+
         if args.target == "ohos":
             # OHOS uses new argument-based interface
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
-            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}"
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
+        elif args.target in ["ios", "macos", "linux", "watchos", "tvos"]:
+            # Apple/Linux platforms use new argument-based interface
+            ide_arg = " --ide-project" if args.ide_project else ""
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'{jobs_arg}{ide_arg}"
+        elif args.target == "android":
+            # Android uses new argument-based interface
+            arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
         else:
-            # Other platforms use legacy positional arguments
-            num = 2 if args.ide_project else 1
-            arch = args.arch if args.target == "android" else ""
-            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' {num} {arch.replace(',', ' ')}"
+            # Other platforms (windows, etc.) - try new interface first, fallback to legacy
+            ide_arg = " --ide-project" if args.ide_project else ""
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'{jobs_arg}{ide_arg}"
 
         print(f"\nProject directory: {project_subdir}")
         print(f"Build script: {build_script_path}")

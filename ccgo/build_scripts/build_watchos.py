@@ -46,6 +46,7 @@ import glob
 import os
 import sys
 import time
+import multiprocessing
 
 # Use absolute import for module compatibility
 try:
@@ -68,13 +69,13 @@ INSTALL_PATH = BUILD_OUT_PATH + "/Darwin.out"
 
 # CMake build command for watchOS Simulator (x86_64 for Intel Macs, arm64 for M1+ simulators)
 # Targets watchOS 3.0+, disables ARC and Bitcode, enables symbol visibility
-# Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
-WATCHOS_BUILD_SIMULATOR_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_WATCHOS -DIOS_ARCH="x86_64;arm64" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
+# Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option, jobs
+WATCHOS_BUILD_SIMULATOR_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_WATCHOS -DIOS_ARCH="x86_64;arm64" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j%d && make install'
 
 # CMake build command for watchOS physical devices (armv7k for Series 3 and earlier, arm64_32 for Series 4+)
 # arm64_32 is a special 32-bit ABI running on 64-bit ARM processors for better memory efficiency
-# Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
-WATCHOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j8 && make install'
+# Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option, jobs
+WATCHOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j%d && make install'
 
 # Xcode project generation command (for development/debugging)
 # Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
@@ -84,7 +85,7 @@ GEN_WATCHOS_OS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_TOOLCHAIN_FILE="%s/watchos.t
 THIRD_PARTY_ARCHS = ["x86_64", "arm64", "armv7k", "arm64_32"]
 
 
-def build_watchos(target_option="", tag="", link_type='static'):
+def build_watchos(target_option="", tag="", link_type='static', jobs=None):
     """
     Build watchOS XCFramework containing both device and simulator frameworks.
 
@@ -102,6 +103,7 @@ def build_watchos(target_option="", tag="", link_type='static'):
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
         link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
         bool: True if build succeeded, False otherwise
@@ -118,8 +120,12 @@ def build_watchos(target_option="", tag="", link_type='static'):
         arm64_32 is a special 32-bit ABI that runs on 64-bit ARM processors for
         better memory efficiency on Apple Watch Series 4 and later.
     """
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
     before_time = time.time()
-    print(f"==================build_watchos (link_type: {link_type})========================")
+    print(f"==================build_watchos (link_type: {link_type}, jobs: {jobs})========================")
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
@@ -144,7 +150,7 @@ def build_watchos(target_option="", tag="", link_type='static'):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    build_cmd = WATCHOS_BUILD_OS_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option)
+    build_cmd = WATCHOS_BUILD_OS_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option, jobs)
     ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
@@ -173,6 +179,7 @@ def build_watchos(target_option="", tag="", link_type='static'):
         CCGO_CMAKE_DIR,
         CCGO_CMAKE_DIR,
         full_target_option,
+        jobs,
     )
     ret = os.system(build_cmd)
 
@@ -493,7 +500,7 @@ def gen_watchos_project(target_option="", tag=""):
     return True
 
 
-def main(target_option="", tag="", link_type='static'):
+def main(target_option="", tag="", link_type='static', jobs=None):
     """
     Main entry point for watchOS XCFramework build.
 
@@ -504,16 +511,21 @@ def main(target_option="", tag="", link_type='static'):
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
         link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        jobs: Number of parallel build jobs (default: CPU count)
 
     Note:
         This function calls build_watchos() to create the XCFramework,
         then archives it and moves artifacts to target/watchos/ directory.
         For Xcode project generation, use gen_watchos_project() instead.
     """
-    print(f"main tag {tag}, link_type: {link_type}")
+    # Determine number of parallel jobs
+    if jobs is None or jobs <= 0:
+        jobs = multiprocessing.cpu_count()
+
+    print(f"main tag {tag}, link_type: {link_type}, jobs: {jobs}")
 
     # Build XCFramework
-    if not build_watchos(target_option, tag, link_type):
+    if not build_watchos(target_option, tag, link_type, jobs):
         print("ERROR: watchOS build failed")
         sys.exit(1)
 
@@ -526,32 +538,68 @@ def main(target_option="", tag="", link_type='static'):
 # Supports two invocation modes:
 # 1. Interactive mode (no args): Prompts user for build mode
 # 2. Mode only (1 arg): Uses specified mode directly
+# 3. Argparse mode: Uses --jobs and other options
 #
 # Build modes:
 # 1 - Build XCFramework: Creates distributable framework with device + simulator binaries
 # 2 - Generate Xcode project: Creates .xcodeproj for development/debugging in Xcode
 # 3 - Exit: Quit without building
 if __name__ == "__main__":
-    PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-    while True:
-        if len(sys.argv) >= 2:
-            num = sys.argv[1]
-        else:
-            archs = set(["armeabi-v7a"])
-            num = str(
-                input(
-                    "Enter menu:"
-                    + f"\n1. Clean && build watchOS {PROJECT_NAME_LOWER}."
-                    + f"\n2. Gen watchOS {PROJECT_NAME_LOWER} Project."
-                    + f"\n3. Exit."
-                )
-            )
-        print(f"==================watchOS Choose num: {num}==================")
-        if num == "1":
-            main(tag=num)
-            break
-        elif num == "2":
+    import argparse
+
+    # Check if using new argparse-style arguments
+    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
+        parser = argparse.ArgumentParser(
+            description="Build watchOS XCFramework",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        parser.add_argument(
+            "-j", "--jobs",
+            type=int,
+            default=None,
+            help="Number of parallel build jobs (default: CPU count)",
+        )
+        parser.add_argument(
+            "--link-type",
+            type=str,
+            choices=['static', 'shared', 'both'],
+            default='static',
+            help="Library link type (default: static)",
+        )
+        parser.add_argument(
+            "--ide-project",
+            action="store_true",
+            help="Generate Xcode project instead of building",
+        )
+
+        args = parser.parse_args()
+
+        if args.ide_project:
             gen_watchos_project()
-            break
         else:
-            break
+            main(tag="1", link_type=args.link_type, jobs=args.jobs)
+    else:
+        # Legacy positional argument mode
+        PROJECT_NAME_LOWER = PROJECT_NAME.lower()
+        while True:
+            if len(sys.argv) >= 2:
+                num = sys.argv[1]
+            else:
+                archs = set(["armeabi-v7a"])
+                num = str(
+                    input(
+                        "Enter menu:"
+                        + f"\n1. Clean && build watchOS {PROJECT_NAME_LOWER}."
+                        + f"\n2. Gen watchOS {PROJECT_NAME_LOWER} Project."
+                        + f"\n3. Exit."
+                    )
+                )
+            print(f"==================watchOS Choose num: {num}==================")
+            if num == "1":
+                main(tag=num)
+                break
+            elif num == "2":
+                gen_watchos_project()
+                break
+            else:
+                break
