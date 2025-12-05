@@ -54,6 +54,38 @@ else:
     except ImportError:
         tomllib = None
 
+# Files to exclude when archiving include/headers directories
+# These are development/tooling files that should not be distributed
+ARCHIVE_INCLUDE_EXCLUDE_FILES = [
+    "CPPLINT.cfg",
+    ".clang-format",
+    ".clang-tidy",
+]
+
+
+def get_archive_include_ignore_patterns():
+    """
+    Get ignore patterns for shutil.copytree when copying include directories.
+
+    Returns:
+        A callable suitable for shutil.copytree's ignore parameter.
+    """
+    return shutil.ignore_patterns(*ARCHIVE_INCLUDE_EXCLUDE_FILES)
+
+
+def should_include_file_in_archive(filename):
+    """
+    Check if a file should be included in the archive.
+
+    Args:
+        filename: The filename to check (not the full path).
+
+    Returns:
+        bool: True if the file should be included, False if it should be excluded.
+    """
+    return filename not in ARCHIVE_INCLUDE_EXCLUDE_FILES
+
+
 # Load configuration from CCGO.toml in project directory (current working directory)
 PROJECT_DIR = os.getcwd()
 
@@ -155,10 +187,12 @@ def load_ccgo_config():
                     header_dict[header["src"]] = header["dest"]
             return header_dict
 
-        ios_headers = convert_headers(toml_data.get("ios", {}))
-        watchos_headers = convert_headers(toml_data.get("watchos", {}))
-        tvos_headers = convert_headers(toml_data.get("tvos", {}))
-        macos_headers = convert_headers(toml_data.get("macos", {}))
+        # Apple platforms: use [apple] as base config, platform-specific can override
+        apple_headers = convert_headers(toml_data.get("apple", {}))
+        ios_headers = convert_headers(toml_data.get("ios", {})) or apple_headers
+        watchos_headers = convert_headers(toml_data.get("watchos", {})) or apple_headers
+        tvos_headers = convert_headers(toml_data.get("tvos", {})) or apple_headers
+        macos_headers = convert_headers(toml_data.get("macos", {})) or apple_headers
         windows_headers = convert_headers(toml_data.get("windows", {}))
         linux_headers = convert_headers(toml_data.get("linux", {}))
         include_headers = convert_headers(toml_data.get("include", {}))
@@ -712,20 +746,23 @@ def copy_file_mapping(
 
 
 def make_static_framework(
-    src_lib, dst_framework, header_file_mappings, header_files_src_base="./"
+    src_lib, dst_framework, header_file_mappings, header_files_src_base="./",
+    apple_headers_src=None
 ):
     """
     Create an iOS/macOS static framework bundle from a library and headers.
 
     A framework is a bundle directory containing:
     - The compiled library binary
-    - include/ directory with public headers
+    - Headers/ directory with public headers (Apple standard convention)
+    - An umbrella header that imports all public headers
 
     Args:
         src_lib: Source library file path (.a static library)
         dst_framework: Destination framework bundle path (.framework)
         header_file_mappings: Dict mapping header source paths to subdirectory destinations
         header_files_src_base: Base path for header source files
+        apple_headers_src: Optional path to apple API headers directory (e.g., include/project/api/apple/)
 
     Returns:
         bool: True if framework creation succeeded
@@ -739,14 +776,56 @@ def make_static_framework(
     os.makedirs(dst_framework)
     shutil.copy(src_lib, dst_framework)
 
-    framework_path = dst_framework + "/include"
+    # Use Headers/ directory following Apple framework convention
+    framework_headers_path = dst_framework + "/Headers"
+    os.makedirs(framework_headers_path, exist_ok=True)
+
+    # Track all copied headers for umbrella header generation
+    copied_headers = []
+
+    # Copy headers from header_file_mappings
     for src, dst in header_file_mappings.items():
         if not os.path.exists(src):
             continue
+        header_filename = src[src.rfind("/") + 1:]
+        relative_path = dst + "/" + header_filename
         copy_file(
             header_files_src_base + src,
-            framework_path + "/" + dst + "/" + src[src.rfind("/") :],
+            framework_headers_path + "/" + relative_path,
         )
+        copied_headers.append(relative_path)
+
+    # Generate umbrella header that imports all other headers
+    if apple_headers_src and os.path.exists(apple_headers_src):
+        # Get framework name from path (e.g., ccgonow.framework -> Ccgonow)
+        framework_name = os.path.basename(dst_framework).replace('.framework', '')
+        umbrella_name = framework_name[0].upper() + framework_name[1:] + ".h"
+        umbrella_path = os.path.join(framework_headers_path, umbrella_name)
+
+        # Generate umbrella header content
+        umbrella_content = f"""//
+//  {umbrella_name}
+//  {framework_name}.framework
+//
+//  Auto-generated umbrella header by CCGO
+//
+
+#ifndef {framework_name.upper()}_UMBRELLA_H
+#define {framework_name.upper()}_UMBRELLA_H
+
+"""
+        # Add imports for all copied headers
+        for header in sorted(copied_headers):
+            umbrella_content += f'#import "{header}"\n'
+
+        umbrella_content += f"""
+#endif // {framework_name.upper()}_UMBRELLA_H
+"""
+
+        # Write umbrella header
+        with open(umbrella_path, 'w') as f:
+            f.write(umbrella_content)
+        print(f"  Generated umbrella header: {umbrella_name}")
 
     return True
 
@@ -1110,7 +1189,6 @@ def _gen_build_info_json(
     project_name,
     project_dir_path,
     version_name,
-    tag,
     revision,
     path,
     url,
@@ -1136,7 +1214,6 @@ def _gen_build_info_json(
         project_name: Project name
         project_dir_path: Path to project root directory
         version_name: Project version string
-        tag: Release tag
         revision: Git commit hash
         path: Git branch name
         url: Git remote URL (anonymized)
@@ -1167,6 +1244,21 @@ def _gen_build_info_json(
         )
         if result.returncode == 0:
             full_revision = result.stdout.strip()
+    except Exception:
+        pass
+
+    # Get git tag if available
+    git_tag = ""
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=project_dir_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode == 0:
+            git_tag = result.stdout.strip()
     except Exception:
         pass
 
@@ -1212,7 +1304,7 @@ def _gen_build_info_json(
             "branch": path,
             "revision": revision,
             "revision_full": full_revision if full_revision else revision,
-            "tag": tag,
+            "tag": git_tag,
             "is_dirty": is_dirty,
             "remote_url": url,
         },
@@ -1419,7 +1511,6 @@ def gen_project_revision_file(
     project_name,
     origin_version_file_path,
     version_name,
-    tag="",
     incremental=False,
     json_output=None,
     platform=None,
@@ -1433,7 +1524,7 @@ def gen_project_revision_file(
     - Git branch name
     - Git remote URL (anonymized)
     - Build timestamp
-    - Release tag
+    - Git tag (auto-detected)
     - Android NDK/STL configuration
 
     The function also outputs a simple build description for CI/CD systems
@@ -1443,7 +1534,6 @@ def gen_project_revision_file(
         project_name: Project name (used in macro names, uppercased)
         origin_version_file_path: Relative path where verinfo.h will be created
         version_name: Version string (e.g., "1.2.3")
-        tag: Release tag string (e.g., "v1.2.3" or "beta.23")
         incremental: If True, only includes date (not time) in build timestamp
         json_output: If True, generates build_info.json. If None, reads from CCGO.toml (default: None)
         platform: Target platform (e.g., "android", "ios", "macos", "windows", "linux", "ohos")
@@ -1451,6 +1541,7 @@ def gen_project_revision_file(
     Note:
         - Only writes file if content has changed (avoids unnecessary rebuilds)
         - Retrieves git info from the version file directory
+        - Git tag is auto-detected using 'git describe --tags --abbrev=0'
         - Outputs build description to stdout for CI/CD parsing
         - JSON output is saved to target/{platform}/build_info.json for platform-specific builds
         - Falls back to <project_root>/build_info.json if platform is not specified
@@ -1466,6 +1557,21 @@ def gen_project_revision_file(
     os.makedirs(version_file_path, exist_ok=True)
     revision, path, url = parse_as_git(version_file_path)
     url = normalize_git_url(url)
+
+    # Get git tag automatically
+    git_tag = ""
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=project_dir_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode == 0:
+            git_tag = result.stdout.strip()
+    except Exception:
+        pass
 
     build_date = time.strftime("%Y-%m-%d", time.localtime(time.time()))
     build_time = (
@@ -1506,7 +1612,7 @@ def gen_project_revision_file(
         path=path,
         url=url,
         build_time=build_time,
-        tag=tag,
+        tag=git_tag,
         android_stl=get_android_stl(project_dir_path),
         android_ndk_version=ndk_revision,
         android_min_sdk_version=get_android_min_sdk_version(project_dir_path),
@@ -1535,7 +1641,6 @@ def gen_project_revision_file(
             project_name=project_name,
             project_dir_path=project_dir_path,
             version_name=version_name,
-            tag=tag,
             revision=revision,
             path=path,
             url=url,
@@ -2636,6 +2741,395 @@ def check_build_libraries(lib_paths, platform_hint=None):
         print("==================================================================\n")
 
     return len(missing_libs) == 0
+
+
+# =============================================================================
+# Unified Archive Structure Constants and Functions
+# =============================================================================
+
+# Standard directory names for unified archive structure
+ARCHIVE_DIR_LIB = "lib"
+ARCHIVE_DIR_STATIC = "static"
+ARCHIVE_DIR_SHARED = "shared"
+ARCHIVE_DIR_INCLUDE = "include"
+ARCHIVE_DIR_FRAMEWORKS = "frameworks"
+ARCHIVE_DIR_HAARS = "haars"
+ARCHIVE_DIR_SYMBOLS = "symbols"
+ARCHIVE_DIR_OBJ = "obj"
+
+# Platform-specific subdirectories
+ARCHIVE_DIR_MSVC = "msvc"
+ARCHIVE_DIR_MINGW = "mingw"
+
+# Build info file name
+BUILD_INFO_FILE = "build_info.json"
+
+
+def get_archive_version_info(script_path):
+    """
+    Get version information for archive naming.
+
+    Args:
+        script_path: Path to the project script directory
+
+    Returns:
+        tuple: (version_name, suffix, full_version)
+            - version_name: Base version (e.g., "1.0.0")
+            - suffix: Version suffix (e.g., "release", "beta.0")
+            - full_version: Combined version (e.g., "1.0.0-release")
+    """
+    version_name = get_version_name(script_path)
+
+    # Try to get publish suffix from git tags or use beta.0 as default
+    try:
+        git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
+        if git_tags and "-" in git_tags:
+            suffix = git_tags.split("-", 1)[1]
+        else:
+            git_branch = (
+                os.popen("git rev-parse --abbrev-ref HEAD 2>/dev/null").read().strip()
+            )
+            if git_branch == "master" or git_branch == "main":
+                suffix = "release"
+            else:
+                suffix = "beta.0"
+    except:
+        suffix = "beta.0"
+
+    full_version = f"{version_name}-{suffix}" if suffix else version_name
+    return version_name, suffix, full_version
+
+
+def generate_build_info(
+    project_name,
+    target_platform,
+    version,
+    link_type="both",
+    architectures=None,
+    toolchain=None,
+    extra_info=None
+):
+    """
+    Generate build_info.json content for archive packages.
+
+    Args:
+        project_name: Project name (lowercase)
+        target_platform: Target platform (linux, windows, macos, ios, android, ohos, etc.)
+        version: Full version string (e.g., "1.0.0-release")
+        link_type: Library link type (static, shared, both)
+        architectures: List of target architectures (e.g., ["arm64", "x86_64"])
+        toolchain: Toolchain used (e.g., "msvc", "mingw", "auto")
+        extra_info: Additional platform-specific information dict
+
+    Returns:
+        dict: Build information suitable for JSON serialization
+    """
+    build_info = {
+        "project": project_name,
+        "platform": target_platform,
+        "version": version,
+        "link_type": link_type,
+        "build_time": datetime.now().isoformat(),
+        "build_host": platform.system(),
+    }
+
+    if architectures:
+        build_info["architectures"] = architectures
+
+    if toolchain:
+        build_info["toolchain"] = toolchain
+
+    if extra_info:
+        build_info.update(extra_info)
+
+    return build_info
+
+
+def create_unified_archive(
+    output_dir,
+    project_name,
+    platform_name,
+    version,
+    link_type="both",
+    static_libs=None,
+    shared_libs=None,
+    include_dirs=None,
+    frameworks=None,
+    haars=None,
+    symbols_static=None,
+    symbols_shared=None,
+    obj_files=None,
+    architectures=None,
+    toolchain=None,
+    extra_info=None
+):
+    """
+    Create unified archive packages with standard directory structure.
+
+    This function creates two packages:
+    1. Main package: {PROJECT}_{PLATFORM}_SDK-{version}.zip
+       - lib/static/  : Static libraries
+       - lib/shared/  : Shared libraries
+       - include/     : Header files
+       - frameworks/  : Apple frameworks (iOS/macOS/watchOS/tvOS)
+       - haars/       : Android AAR / OHOS HAR packages
+       - build_info.json
+
+    2. Symbols package: {PROJECT}_{PLATFORM}_SDK-{version}-SYMBOLS.zip
+       - symbols/static/ : Debug symbols for static libraries
+       - symbols/shared/ : Debug symbols for shared libraries
+       - obj/            : Unstripped libraries (Android/OHOS/Linux)
+
+    Args:
+        output_dir: Output directory for ZIP files
+        project_name: Project name (used in ZIP file naming)
+        platform_name: Platform name (LINUX, WINDOWS, MACOS, IOS, ANDROID, OHOS, etc.)
+        version: Full version string (e.g., "1.0.0-release")
+        link_type: Library link type ("static", "shared", "both")
+        static_libs: Dict mapping archive paths to source file paths for static libs
+                     e.g., {"lib/static/libfoo.a": "/path/to/libfoo.a"}
+                     or {"lib/static/arm64/libfoo.a": "/path/to/libfoo.a"} for multi-arch
+        shared_libs: Dict mapping archive paths to source file paths for shared libs
+        include_dirs: Dict mapping archive paths to source directories for headers
+                      e.g., {"include/foo": "/path/to/headers"}
+        frameworks: Dict mapping archive paths to source paths for frameworks
+                    e.g., {"frameworks/static/Foo.xcframework": "/path/to/xcframework"}
+        haars: Dict mapping archive paths to source file paths for AAR/HAR
+               e.g., {"haars/foo.aar": "/path/to/foo.aar"}
+        symbols_static: Dict mapping archive paths to source paths for static lib symbols
+        symbols_shared: Dict mapping archive paths to source paths for shared lib symbols
+        obj_files: Dict mapping archive paths to source paths for unstripped objects
+        architectures: List of target architectures for build_info
+        toolchain: Toolchain name for build_info (e.g., "msvc", "mingw")
+        extra_info: Additional info for build_info.json
+
+    Returns:
+        tuple: (main_zip_path, symbols_zip_path) or (main_zip_path, None) if no symbols
+    """
+    import zipfile
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    project_upper = project_name.upper()
+    main_zip_name = f"{project_upper}_{platform_name}_SDK-{version}.zip"
+    main_zip_path = os.path.join(output_dir, main_zip_name)
+
+    print(f"Creating unified archive: {main_zip_name}")
+
+    # Helper function to add files/directories to zip
+    def add_to_zip(zipf, items, item_type="file"):
+        """Add files or directories to zip archive."""
+        if not items:
+            return
+
+        for arc_path, src_path in items.items():
+            if not os.path.exists(src_path):
+                print(f"  Warning: {item_type} not found: {src_path}")
+                continue
+
+            if os.path.isdir(src_path):
+                # Add directory recursively
+                for root, dirs, files in os.walk(src_path):
+                    for file in files:
+                        if not should_include_file_in_archive(file):
+                            continue
+                        file_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(file_path, src_path)
+                        arcname = os.path.join(arc_path, rel_path)
+                        zipf.write(file_path, arcname)
+                        print(f"  + {arcname}")
+            else:
+                # Add single file
+                zipf.write(src_path, arc_path)
+                print(f"  + {arc_path}")
+
+    # Create main package
+    with zipfile.ZipFile(main_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+        # Add static libraries (if link_type is static or both)
+        if link_type in ("static", "both") and static_libs:
+            print("Adding static libraries...")
+            add_to_zip(zipf, static_libs, "static library")
+
+        # Add shared libraries (if link_type is shared or both)
+        if link_type in ("shared", "both") and shared_libs:
+            print("Adding shared libraries...")
+            add_to_zip(zipf, shared_libs, "shared library")
+
+        # Add include directories
+        if include_dirs:
+            print("Adding header files...")
+            add_to_zip(zipf, include_dirs, "include directory")
+
+        # Add frameworks (Apple platforms)
+        if frameworks:
+            print("Adding frameworks...")
+            # Filter frameworks based on link_type
+            filtered_frameworks = {}
+            for arc_path, src_path in frameworks.items():
+                if link_type == "both":
+                    filtered_frameworks[arc_path] = src_path
+                elif link_type == "static" and "/static/" in arc_path:
+                    filtered_frameworks[arc_path] = src_path
+                elif link_type == "shared" and "/shared/" in arc_path:
+                    filtered_frameworks[arc_path] = src_path
+            add_to_zip(zipf, filtered_frameworks, "framework")
+
+        # Add haars (Android/OHOS)
+        if haars:
+            print("Adding AAR/HAR packages...")
+            add_to_zip(zipf, haars, "AAR/HAR")
+
+        # Generate and add build_info.json
+        build_info = generate_build_info(
+            project_name=project_name.lower(),
+            target_platform=platform_name.lower(),
+            version=version,
+            link_type=link_type,
+            architectures=architectures,
+            toolchain=toolchain,
+            extra_info=extra_info
+        )
+        build_info_json = json.dumps(build_info, indent=2)
+        zipf.writestr(BUILD_INFO_FILE, build_info_json)
+        print(f"  + {BUILD_INFO_FILE}")
+
+    print(f"Created main package: {main_zip_path}")
+
+    # Create symbols package if any symbols are provided
+    has_symbols = any([symbols_static, symbols_shared, obj_files])
+    symbols_zip_path = None
+
+    if has_symbols:
+        symbols_zip_name = f"{project_upper}_{platform_name}_SDK-{version}-SYMBOLS.zip"
+        symbols_zip_path = os.path.join(output_dir, symbols_zip_name)
+
+        print(f"Creating symbols package: {symbols_zip_name}")
+
+        with zipfile.ZipFile(symbols_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            # Add static library symbols
+            if symbols_static and link_type in ("static", "both"):
+                print("Adding static library symbols...")
+                add_to_zip(zipf, symbols_static, "static symbol")
+
+            # Add shared library symbols
+            if symbols_shared and link_type in ("shared", "both"):
+                print("Adding shared library symbols...")
+                add_to_zip(zipf, symbols_shared, "shared symbol")
+
+            # Add unstripped object files
+            if obj_files:
+                print("Adding unstripped objects...")
+                add_to_zip(zipf, obj_files, "object file")
+
+        print(f"Created symbols package: {symbols_zip_path}")
+
+    return main_zip_path, symbols_zip_path
+
+
+def get_unified_lib_path(link_type, arch=None, toolchain=None, lib_name=None, extension=None):
+    """
+    Get the standard archive path for a library file.
+
+    Args:
+        link_type: "static" or "shared"
+        arch: Architecture name (e.g., "arm64", "x86_64") - optional for single-arch
+        toolchain: Toolchain name (e.g., "msvc", "mingw") - Windows only
+        lib_name: Library file name (e.g., "libfoo.a", "foo.lib")
+        extension: File extension to use (overrides lib_name extension)
+
+    Returns:
+        str: Archive path like "lib/static/arm64/libfoo.a"
+    """
+    parts = [ARCHIVE_DIR_LIB, link_type]
+
+    if toolchain:
+        parts.append(toolchain)
+
+    if arch:
+        parts.append(arch)
+
+    if lib_name:
+        if extension:
+            base_name = os.path.splitext(lib_name)[0]
+            lib_name = f"{base_name}{extension}"
+        parts.append(lib_name)
+
+    return "/".join(parts)
+
+
+def get_unified_framework_path(link_type, framework_name):
+    """
+    Get the standard archive path for an Apple framework.
+
+    Args:
+        link_type: "static" or "shared"
+        framework_name: Framework name (e.g., "Foo.xcframework")
+
+    Returns:
+        str: Archive path like "frameworks/static/Foo.xcframework"
+    """
+    return f"{ARCHIVE_DIR_FRAMEWORKS}/{link_type}/{framework_name}"
+
+
+def get_unified_haar_path(haar_name):
+    """
+    Get the standard archive path for an Android AAR or OHOS HAR package.
+
+    Args:
+        haar_name: Package file name (e.g., "foo.aar", "foo.har")
+
+    Returns:
+        str: Archive path like "haars/foo.aar"
+    """
+    return f"{ARCHIVE_DIR_HAARS}/{haar_name}"
+
+
+def get_unified_include_path(project_name):
+    """
+    Get the standard archive path for include directory.
+
+    Args:
+        project_name: Project name (lowercase)
+
+    Returns:
+        str: Archive path like "include/foo"
+    """
+    return f"{ARCHIVE_DIR_INCLUDE}/{project_name}"
+
+
+def get_unified_symbol_path(link_type, symbol_name, arch=None):
+    """
+    Get the standard archive path for debug symbols.
+
+    Args:
+        link_type: "static" or "shared"
+        symbol_name: Symbol file/directory name (e.g., "foo.dSYM", "foo.pdb")
+        arch: Architecture name - optional for single-arch
+
+    Returns:
+        str: Archive path like "symbols/static/foo.dSYM"
+    """
+    parts = [ARCHIVE_DIR_SYMBOLS, link_type]
+
+    if arch:
+        parts.append(arch)
+
+    parts.append(symbol_name)
+    return "/".join(parts)
+
+
+def get_unified_obj_path(arch, lib_name):
+    """
+    Get the standard archive path for unstripped object files.
+
+    Args:
+        arch: Architecture name (e.g., "arm64-v8a")
+        lib_name: Library file name (e.g., "libfoo.so")
+
+    Returns:
+        str: Archive path like "obj/arm64-v8a/libfoo.so"
+    """
+    return f"{ARCHIVE_DIR_OBJ}/{arch}/{lib_name}"
 
 
 def main():

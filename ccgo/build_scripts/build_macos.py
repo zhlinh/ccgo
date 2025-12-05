@@ -43,6 +43,7 @@ Output:
 
 import glob
 import os
+import shutil
 import sys
 import time
 import multiprocessing
@@ -56,66 +57,251 @@ except ImportError:
 
 # Script configuration
 SCRIPT_PATH = os.getcwd()
-# Directory name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
-# Ensure cmake directory exists in project
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# Build output paths - now separated by link type
+# Static: cmake_build/macOS/static/Darwin.out/
+# Shared: cmake_build/macOS/shared/Darwin.out/
+BUILD_OUT_PATH_BASE = "cmake_build/macOS"
 
-# Build output paths
-BUILD_OUT_PATH = "cmake_build/macOS"
+def get_build_out_path(link_type):
+    """Get build output path for specified link type."""
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}"
+
+def get_install_path(link_type):
+    """Get install path for specified link type."""
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}/Darwin.out"
+
+# Legacy paths for backward compatibility
+BUILD_OUT_PATH = BUILD_OUT_PATH_BASE + "/static"
 INSTALL_PATH = BUILD_OUT_PATH + "/Darwin.out"
 
 # CMake build command for macOS (defaults to x86_64 if no arch specified)
 # Disables ARC and Bitcode for C/C++ native libraries
 # Parameters: ccgo_cmake_dir, target_option, jobs
-MACOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
+# Note: ../../.. because we're now in cmake_build/macOS/<link_type>/
+MACOS_BUILD_OS_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # CMake build command for Apple Silicon Macs (M1, M2, M3, etc.)
 # Builds for arm64 and arm64e architectures
 # Parameters: ccgo_cmake_dir, target_option, jobs
-MACOS_BUILD_ARM_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
+MACOS_BUILD_ARM_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="arm64;arm64e" -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # CMake build command for Intel Macs
 # Builds for x86_64 architecture only
 # Parameters: ccgo_cmake_dir, target_option, jobs
-MACOS_BUILD_X86_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="x86_64" -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
+MACOS_BUILD_X86_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCMAKE_OSX_ARCHITECTURES="x86_64" -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # Xcode project generation command
 # Targets macOS 10.9+ for broad compatibility, disables Bitcode
-GEN_MACOS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.9 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s'
+# Note: Uses ../../.. because build directory is now cmake_build/macOS/{link_type}/
+GEN_MACOS_PROJ = 'cmake ../../.. -G Xcode -DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.9 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s'
 
 
-def build_macos(target_option="", tag="", link_type='static', jobs=None):
+def _build_macos_single(target_option, single_link_type, jobs):
+    """
+    Internal function to build macOS library for a single link type.
+
+    Args:
+        target_option: Additional CMake target options
+        single_link_type: Either 'static' or 'shared' (not 'both')
+        jobs: Number of parallel build jobs
+
+    Returns:
+        bool: True if build succeeded, False otherwise
+    """
+    build_out_path = get_build_out_path(single_link_type)
+    install_path = get_install_path(single_link_type)
+
+    # Set CMake flags for this specific link type
+    if single_link_type == 'static':
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=OFF"
+    else:  # shared
+        link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
+
+    full_target_option = f"{link_type_flags} {target_option}".strip()
+
+    print(f"\n--- Building {single_link_type} library ---")
+    print(f"Build directory: {build_out_path}")
+
+    clean(build_out_path)
+    os.chdir(build_out_path)
+
+    # Build for ARM (Apple Silicon)
+    build_cmd = MACOS_BUILD_ARM_CMD % (CCGO_CMAKE_DIR, full_target_option, jobs)
+    ret = os.system(build_cmd)
+    os.chdir(SCRIPT_PATH)
+    if ret != 0:
+        print(f"!!!!!!!!!!!build ARM fail for {single_link_type}!!!!!!!!!!!!!!!")
+        print(f"ERROR: Native build failed for macOS ARM ({single_link_type}). Stopping immediately.")
+        sys.exit(1)
+
+    # Collect and merge ARM libraries, then save before clean
+    arm_lib_saved = None  # For static: merged .a, for shared: .dylib
+
+    if single_link_type == 'static':
+        total_src_lib = glob.glob(install_path + "/*.a")
+        rm_src_lib = []
+        libtool_src_lib = [x for x in total_src_lib if x not in rm_src_lib]
+        print(f"libtool src lib (ARM): {len(libtool_src_lib)}/{len(total_src_lib)}")
+
+        # Merge ARM libraries
+        arm_merged_lib = install_path + f"/{PROJECT_NAME_LOWER}_arm"
+        if not libtool_libs(libtool_src_lib, arm_merged_lib):
+            print("ERROR: Failed to merge ARM libraries. Stopping immediately.")
+            sys.exit(1)
+
+        # Save merged ARM library before clean (since clean will delete it)
+        arm_lib_saved = os.path.join(SCRIPT_PATH, f"_temp_arm_{PROJECT_NAME_LOWER}.a")
+        shutil.copy2(arm_merged_lib, arm_lib_saved)
+        print(f"Saved ARM merged library: {arm_lib_saved}")
+    else:
+        # For shared, save ARM dylib before clean (since clean will delete it)
+        arm_dylib_src = glob.glob(install_path + "/shared/*.dylib")
+        if arm_dylib_src:
+            # Save to a temporary location outside the build directory
+            arm_lib_saved = os.path.join(SCRIPT_PATH, f"_temp_arm_{PROJECT_NAME_LOWER}.dylib")
+            shutil.copy2(arm_dylib_src[0], arm_lib_saved)
+            print(f"Saved ARM dylib: {arm_lib_saved}")
+        else:
+            print("WARNING: No ARM dylib found to save")
+
+    clean(build_out_path)
+    os.chdir(build_out_path)
+
+    # Build for x86_64 (Intel)
+    build_cmd = MACOS_BUILD_X86_CMD % (CCGO_CMAKE_DIR, full_target_option, jobs)
+    ret = os.system(build_cmd)
+    os.chdir(SCRIPT_PATH)
+    if ret != 0:
+        print(f"!!!!!!!!!!!build x86 fail for {single_link_type}!!!!!!!!!!!!!!!")
+        print(f"ERROR: Native build failed for macOS x86 ({single_link_type}). Stopping immediately.")
+        sys.exit(1)
+
+    if single_link_type == 'static':
+        # Merge x86 libraries
+        libtool_x86_dst_lib = install_path + f"/{PROJECT_NAME_LOWER}_x86"
+        if not libtool_libs(glob.glob(install_path + "/*.a"), libtool_x86_dst_lib):
+            print("ERROR: Failed to merge x86 libraries. Stopping immediately.")
+            sys.exit(1)
+
+        # Restore saved ARM library
+        arm_restored_lib = install_path + f"/{PROJECT_NAME_LOWER}_arm"
+        if arm_lib_saved and os.path.exists(arm_lib_saved):
+            shutil.copy2(arm_lib_saved, arm_restored_lib)
+            os.remove(arm_lib_saved)
+            print(f"Restored ARM merged library: {arm_restored_lib}")
+        else:
+            print("WARNING: Saved ARM library not found, universal binary may be x86-only")
+
+        # Create universal binary from ARM and x86
+        lipo_dst_lib = install_path + f"/{PROJECT_NAME_LOWER}"
+        lipo_src_libs = []
+        if os.path.exists(arm_restored_lib):
+            lipo_src_libs.append(arm_restored_lib)
+        if os.path.exists(libtool_x86_dst_lib):
+            lipo_src_libs.append(libtool_x86_dst_lib)
+
+        if not lipo_src_libs:
+            print("ERROR: No libraries to merge for universal binary. Stopping immediately.")
+            sys.exit(1)
+
+        if not libtool_libs(lipo_src_libs, lipo_dst_lib):
+            print("ERROR: Failed to create universal binary. Stopping immediately.")
+            sys.exit(1)
+
+        # Create framework
+        dst_framework_path = install_path + f"/{PROJECT_NAME_LOWER}.framework"
+        dst_framework_headers = MACOS_BUILD_COPY_HEADER_FILES
+        apple_headers_src = f"include/{PROJECT_NAME_LOWER}/api/apple/"
+        make_static_framework(
+            lipo_dst_lib, dst_framework_path, dst_framework_headers, "./",
+            apple_headers_src=apple_headers_src
+        )
+
+        # Verify the built framework
+        print(f"\n==================Verifying macOS {single_link_type} Universal Binary========================")
+        framework_lib = os.path.join(dst_framework_path, PROJECT_NAME_LOWER)
+        if os.path.exists(framework_lib):
+            check_library_architecture(framework_lib, platform_hint="macos")
+        print("========================================================================")
+    else:
+        # For shared library, create universal dylib using lipo
+        x86_dylib_src = glob.glob(install_path + "/shared/*.dylib")
+        print(f"[DEBUG] x86 dylib search path: {install_path}/shared/*.dylib")
+        print(f"[DEBUG] x86 dylib found: {x86_dylib_src}")
+        print(f"[DEBUG] arm_lib_saved: {arm_lib_saved}")
+
+        if x86_dylib_src and arm_lib_saved and os.path.exists(arm_lib_saved):
+            # We have both x86 and ARM dylibs, merge them
+            x86_dylib = install_path + f"/lib{PROJECT_NAME_LOWER}_x86.dylib"
+            shutil.copy2(x86_dylib_src[0], x86_dylib)
+
+            arm_dylib = install_path + f"/lib{PROJECT_NAME_LOWER}_arm.dylib"
+            shutil.copy2(arm_lib_saved, arm_dylib)
+
+            # Clean up temp file
+            os.remove(arm_lib_saved)
+
+            # Create universal dylib using lipo
+            universal_dylib = install_path + f"/lib{PROJECT_NAME_LOWER}.dylib"
+            lipo_cmd = f'lipo -create "{arm_dylib}" "{x86_dylib}" -output "{universal_dylib}"'
+            print(f"[DEBUG] Running lipo: {lipo_cmd}")
+            ret = os.system(lipo_cmd)
+            if ret != 0:
+                print("WARNING: Failed to create universal dylib")
+            else:
+                print(f"Created universal dylib: {universal_dylib}")
+                check_library_architecture(universal_dylib, platform_hint="macos")
+        elif x86_dylib_src:
+            # Only x86 available, use it directly
+            universal_dylib = install_path + f"/lib{PROJECT_NAME_LOWER}.dylib"
+            shutil.copy2(x86_dylib_src[0], universal_dylib)
+            print(f"Using x86-only dylib: {universal_dylib}")
+            # Clean up temp file if it exists
+            if arm_lib_saved and os.path.exists(arm_lib_saved):
+                os.remove(arm_lib_saved)
+        elif arm_lib_saved and os.path.exists(arm_lib_saved):
+            # Only ARM available, use it directly
+            universal_dylib = install_path + f"/lib{PROJECT_NAME_LOWER}.dylib"
+            shutil.copy2(arm_lib_saved, universal_dylib)
+            # Clean up temp file
+            os.remove(arm_lib_saved)
+            print(f"Using ARM-only dylib: {universal_dylib}")
+        else:
+            print("WARNING: No shared library found to create universal dylib")
+
+    return True
+
+
+def build_macos(target_option="",  link_type='both', jobs=None):
     """
     Build universal macOS framework supporting both Intel and Apple Silicon.
 
     This function performs the complete macOS build process:
     1. Generates version info header file
-    2. Builds static libraries for Apple Silicon (arm64, arm64e)
-    3. Merges ARM static libraries using libtool
-    4. Builds static libraries for Intel (x86_64)
-    5. Merges Intel static libraries using libtool
-    6. Combines ARM and Intel libraries into universal binary with libtool
-    7. Creates .framework bundle with universal binary
+    2. For each link type (static and/or shared):
+       - Builds libraries for Apple Silicon (arm64, arm64e)
+       - Builds libraries for Intel (x86_64)
+       - Creates universal binary with libtool/lipo
+       - Creates .framework bundle (for static)
+
+    Build directories:
+    - Static: cmake_build/macOS/static/Darwin.out/
+    - Shared: cmake_build/macOS/shared/Darwin.out/
 
     Args:
         target_option: Additional CMake target options (default: '')
-        tag: Version tag string for metadata (default: '')
-        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
         jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Universal framework: cmake_build/macOS/Darwin.out/{project}.framework
-
-    Note:
-        The resulting framework is a universal binary that runs natively on both
-        Intel and Apple Silicon Macs. This provides optimal performance on all
-        Mac architectures without requiring Rosetta 2 translation.
+        - Static framework: cmake_build/macOS/static/Darwin.out/{project}.framework
+        - Shared library: cmake_build/macOS/shared/Darwin.out/lib{project}.dylib
     """
     # Determine number of parallel jobs
     if jobs is None or jobs <= 0:
@@ -123,246 +309,182 @@ def build_macos(target_option="", tag="", link_type='static', jobs=None):
 
     before_time = time.time()
     print(f"==================build_macos (link_type: {link_type}, jobs: {jobs})========================")
+
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         platform="macos",
     )
 
-    # Add link type CMake flags
-    link_type_flags = ""
-    if link_type == 'static':
-        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=OFF"
-    elif link_type == 'shared':
-        link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
-    else:  # both
-        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
-
-    # Combine with existing target options
-    full_target_option = f"{link_type_flags} {target_option}".strip()
-
-    clean(BUILD_OUT_PATH)
-    os.chdir(BUILD_OUT_PATH)
-
-    build_cmd = MACOS_BUILD_ARM_CMD % (CCGO_CMAKE_DIR, full_target_option, jobs)
-    ret = os.system(build_cmd)
-    os.chdir(SCRIPT_PATH)
-    if ret != 0:
-        print("!!!!!!!!!!!build os fail!!!!!!!!!!!!!!!")
-        print("ERROR: Native build failed for macOS ARM. Stopping immediately.")
-        sys.exit(1)  # Exit immediately on build failure
-
-    lipo_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}"
-    libtool_os_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}_os"
-    libtool_simulator_dst_lib = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}_simulator"
-    dst_framework_path = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}.framework"
-    dst_framework_headers = MACOS_BUILD_COPY_HEADER_FILES
-    # add static libs
-    total_src_lib = glob.glob(INSTALL_PATH + "/*.a")
-    rm_src_lib = []
-    libtool_src_lib = [x for x in total_src_lib if x not in rm_src_lib]
-    print(f"libtool src lib: {len(libtool_src_lib)}/{len(total_src_lib)}")
-
-    if not libtool_libs(libtool_src_lib, libtool_os_dst_lib):
-        print("ERROR: Failed to merge ARM libraries. Stopping immediately.")
-        sys.exit(1)  # Exit immediately on merge failure
-
-    clean(BUILD_OUT_PATH)
-    os.chdir(BUILD_OUT_PATH)
-
-    build_cmd = MACOS_BUILD_X86_CMD % (CCGO_CMAKE_DIR, full_target_option, jobs)
-    ret = os.system(build_cmd)
-    os.chdir(SCRIPT_PATH)
-    if ret != 0:
-        print("!!!!!!!!!!!build simulator fail!!!!!!!!!!!!!!!")
-        print("ERROR: Native build failed for macOS x86. Stopping immediately.")
-        sys.exit(1)  # Exit immediately on build failure
-    if not libtool_libs(glob.glob(INSTALL_PATH + "/*.a"), libtool_simulator_dst_lib):
-        print("ERROR: Failed to merge x86 libraries. Stopping immediately.")
-        sys.exit(1)  # Exit immediately on merge failure
-
-    # src libs to be libtool
-    lipo_src_libs = []
-    lipo_src_libs.append(libtool_os_dst_lib)
-    lipo_src_libs.append(libtool_simulator_dst_lib)
-    # if len(target_option) <= 0:
-    #    lipo_src_libs.append(libtool_xlog_dst_lib)
-
-    if not libtool_libs(lipo_src_libs, lipo_dst_lib):
-        print("ERROR: Failed to create universal binary. Stopping immediately.")
-        sys.exit(1)  # Exit immediately on universal binary creation failure
-
-    make_static_framework(lipo_dst_lib, dst_framework_path, dst_framework_headers, "./")
-
-    # Check the built universal binary architecture
-    print("\n==================Verifying macOS Universal Binary========================")
-    framework_lib = os.path.join(dst_framework_path, PROJECT_NAME_LOWER)
-    if os.path.exists(framework_lib):
-        check_library_architecture(framework_lib, platform_hint="macos")
+    # Build for each link type
+    if link_type == 'both':
+        # Build static first
+        _build_macos_single(target_option, 'static', jobs)
+        # Then build shared
+        _build_macos_single(target_option, 'shared', jobs)
     else:
-        # Try with .a extension
-        framework_lib_a = f"{framework_lib}.a"
-        if os.path.exists(framework_lib_a):
-            check_library_architecture(framework_lib_a, platform_hint="macos")
-    print("========================================================================")
+        # Build only the specified type
+        _build_macos_single(target_option, link_type, jobs)
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    print("==================Output========================")
-    print(dst_framework_path)
-
     after_time = time.time()
-
     print(f"use time: {int(after_time - before_time)} s")
     return True
 
 
-def archive_macos_project():
+def archive_macos_project(link_type='both'):
     """
-    Archive macOS framework into ZIP packages.
+    Archive macOS framework and libraries with unified structure.
 
-    This function creates two ZIP packages:
-    1. Release ZIP (framework only): {PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
-    2. Archive ZIP (with symbols, headers, etc.): (ARCHIVE)_{PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
+    This function creates two archive packages:
+    1. Main package: {PROJECT_NAME}_MACOS_SDK-{version}.zip
+       - frameworks/static/{Project}.framework (if link_type is static or both)
+       - lib/static/lib{project}.a (universal static library)
+       - lib/shared/lib{project}.dylib (universal dynamic library)
+       - include/{project}/
+       - build_info.json
+    2. Symbols package: {PROJECT_NAME}_MACOS_SDK-{version}-SYMBOLS.zip
+       - symbols/static/*.dSYM
+       - symbols/shared/*.dSYM
+
+    Build directories used:
+    - Static: cmake_build/macOS/static/Darwin.out/
+    - Shared: cmake_build/macOS/shared/Darwin.out/
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
 
     Output:
-        - target/macos/{PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
-          (contains {project_name}.framework)
-        - target/macos/(ARCHIVE)_{PROJECT_NAME}_MACOS_SDK-{version}-{suffix}.zip
-          (contains framework, headers, symbols, etc.)
+        - target/macos/{PROJECT_NAME}_MACOS_SDK-{version}.zip
+        - target/macos/{PROJECT_NAME}_MACOS_SDK-{version}-SYMBOLS.zip
     """
-    import zipfile
-    from pathlib import Path
-
     print("==================Archive macOS Project========================")
 
-    # Get project version info
-    version_name = get_version_name(SCRIPT_PATH)
-    project_name_upper = PROJECT_NAME.upper()
-
-    # Try to get publish suffix from git tags or use beta.0 as default
-    try:
-        git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
-        if git_tags and "-" in git_tags:
-            suffix = git_tags.split("-", 1)[1]
-        else:
-            git_branch = (
-                os.popen("git rev-parse --abbrev-ref HEAD 2>/dev/null").read().strip()
-            )
-            if git_branch == "master" or git_branch == "main":
-                suffix = "release"
-            else:
-                suffix = "beta.0"
-    except:
-        suffix = "beta.0"
-
-    # Build full version name with suffix
-    full_version = f"{version_name}-{suffix}" if suffix else version_name
+    # Get version info using unified function
+    _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
-    macos_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
+    static_install_path = os.path.join(SCRIPT_PATH, get_install_path("static"))
+    shared_install_path = os.path.join(SCRIPT_PATH, get_install_path("shared"))
 
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Find framework
+    # Prepare frameworks mapping
+    frameworks = {}
     framework_name = f"{PROJECT_NAME_LOWER}.framework"
-    framework_src = os.path.join(macos_install_path, framework_name)
 
-    if not os.path.exists(framework_src):
-        print(f"WARNING: Framework not found at {framework_src}")
-        return
+    # Static framework (from static build directory)
+    if link_type in ('static', 'both'):
+        static_framework_src = os.path.join(static_install_path, framework_name)
+        if os.path.exists(static_framework_src):
+            arc_path = get_unified_framework_path("static", framework_name)
+            frameworks[arc_path] = static_framework_src
 
-    # ========== 1. Create Release ZIP (framework only) ==========
-    print("\n--- Creating Release ZIP (framework only) ---")
-    temp_release_dir = os.path.join(bin_dir, f"_temp_release_{project_name_upper}")
-    if os.path.exists(temp_release_dir):
-        shutil.rmtree(temp_release_dir)
-    os.makedirs(temp_release_dir, exist_ok=True)
+    # Prepare static libraries mapping (universal .a from static build directory)
+    static_libs = {}
+    if link_type in ('static', 'both'):
+        # Check for universal binary in static install path
+        static_lib_path = os.path.join(static_install_path, PROJECT_NAME_LOWER)
+        if not os.path.exists(static_lib_path):
+            # Also check in framework directory
+            static_lib_path = os.path.join(static_install_path, framework_name, PROJECT_NAME_LOWER)
+        if os.path.exists(static_lib_path):
+            arc_path = get_unified_lib_path("static", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
+            static_libs[arc_path] = static_lib_path
 
-    # Copy Framework to temporary directory
-    temp_framework = os.path.join(temp_release_dir, framework_name)
-    shutil.copytree(framework_src, temp_framework)
-    print(f"Copied Framework: {framework_name}")
+    # Prepare shared libraries mapping (universal .dylib from shared build directory)
+    shared_libs = {}
+    if link_type in ('shared', 'both'):
+        # Debug: print search paths
+        print(f"[DEBUG] Looking for shared library in: {shared_install_path}")
 
-    # Create Release ZIP
-    release_zip_name = f"{project_name_upper}_MACOS_SDK-{full_version}.zip"
-    release_zip_path = os.path.join(bin_dir, release_zip_name)
+        # Check for universal dylib in shared install path (root level)
+        dylib_path = os.path.join(shared_install_path, f"lib{PROJECT_NAME_LOWER}.dylib")
+        print(f"[DEBUG] Checking path 1: {dylib_path} -> exists: {os.path.exists(dylib_path)}")
 
-    if os.path.exists(release_zip_path):
-        os.remove(release_zip_path)
+        if not os.path.exists(dylib_path):
+            # Also check in shared/ subdirectory (CMake output location)
+            dylib_path = os.path.join(shared_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.dylib")
+            print(f"[DEBUG] Checking path 2: {dylib_path} -> exists: {os.path.exists(dylib_path)}")
 
-    with zipfile.ZipFile(release_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(temp_release_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, temp_release_dir)
-                zipf.write(file_path, arcname)
+        if os.path.exists(dylib_path):
+            arc_path = get_unified_lib_path("shared", lib_name=f"lib{PROJECT_NAME_LOWER}.dylib")
+            shared_libs[arc_path] = dylib_path
+            print(f"[DEBUG] Added shared lib: {arc_path} -> {dylib_path}")
+        else:
+            print(f"WARNING: Shared library not found at {shared_install_path}")
+            # List what's actually in the directory
+            if os.path.exists(shared_install_path):
+                print(f"[DEBUG] Contents of {shared_install_path}:")
+                for item in os.listdir(shared_install_path):
+                    print(f"  - {item}")
 
-    shutil.rmtree(temp_release_dir)
-    print(f"Created Release ZIP: {release_zip_name}")
-
-    # ========== 2. Create Archive ZIP (with additional files) ==========
-    print("\n--- Creating Archive ZIP (with symbols and headers) ---")
-    archive_name = f"(ARCHIVE)_{project_name_upper}_MACOS_SDK-{full_version}"
-    archive_dir = os.path.join(bin_dir, archive_name)
-
-    if os.path.exists(archive_dir):
-        shutil.rmtree(archive_dir)
-    os.makedirs(archive_dir, exist_ok=True)
-
-    # Copy Framework to archive
-    archive_framework = os.path.join(archive_dir, framework_name)
-    shutil.copytree(framework_src, archive_framework)
-    print(f"Copied Framework to archive: {framework_name}")
-
-    # Copy header files if they exist
+    # Prepare include directories mapping
+    include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        headers_dest = os.path.join(archive_dir, "include")
-        shutil.copytree(headers_src, headers_dest)
-        print(f"Copied headers: include/")
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        include_dirs[arc_path] = headers_src
 
-    # Copy symbol files if they exist (dSYM for macOS)
-    dsym_pattern = f"{macos_install_path}/*.dSYM"
-    dsym_files = glob.glob(dsym_pattern)
-    if dsym_files:
+    # Prepare symbols (dSYM files from both directories)
+    symbols_static = {}
+    symbols_shared = {}
+
+    # Collect from static build directory
+    if link_type in ('static', 'both'):
+        dsym_pattern = f"{static_install_path}/*.dSYM"
+        dsym_files = glob.glob(dsym_pattern)
         for dsym_file in dsym_files:
             dsym_name = os.path.basename(dsym_file)
-            dsym_dest = os.path.join(archive_dir, dsym_name)
-            shutil.copytree(dsym_file, dsym_dest)
-            print(f"Copied symbols: {dsym_name}")
+            arc_path = get_unified_symbol_path("static", dsym_name)
+            symbols_static[arc_path] = dsym_file
 
-    # Create Archive ZIP
-    archive_zip_path = os.path.join(bin_dir, f"{archive_name}.zip")
-    if os.path.exists(archive_zip_path):
-        os.remove(archive_zip_path)
+    # Collect from shared build directory
+    if link_type in ('shared', 'both'):
+        dsym_pattern = f"{shared_install_path}/*.dSYM"
+        dsym_files = glob.glob(dsym_pattern)
+        for dsym_file in dsym_files:
+            dsym_name = os.path.basename(dsym_file)
+            arc_path = get_unified_symbol_path("shared", dsym_name)
+            symbols_shared[arc_path] = dsym_file
 
-    with zipfile.ZipFile(archive_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(archive_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, bin_dir)
-                zipf.write(file_path, arcname)
-
-    shutil.rmtree(archive_dir)
-    print(f"Created Archive ZIP: {archive_name}.zip")
+    # Create unified archive packages
+    main_zip_path, symbols_zip_path = create_unified_archive(
+        output_dir=bin_dir,
+        project_name=PROJECT_NAME,
+        platform_name="MACOS",
+        version=full_version,
+        link_type=link_type,
+        static_libs=static_libs,
+        shared_libs=shared_libs,
+        include_dirs=include_dirs,
+        frameworks=frameworks,
+        symbols_static=symbols_static if symbols_static else None,
+        symbols_shared=symbols_shared if symbols_shared else None,
+        architectures=["x86_64", "arm64"],  # Universal binary
+    )
 
     print("\n==================Archive Complete========================")
-    print(f"Release ZIP: {release_zip_path}")
-    print(f"Archive ZIP: {archive_zip_path}")
+    print(f"Main package: {main_zip_path}")
+    if symbols_zip_path:
+        print(f"Symbols package: {symbols_zip_path}")
 
 
-def print_build_results():
+def print_build_results(link_type='both'):
     """
     Print macOS build results from target directory.
 
     This function displays the build artifacts and moves them to target/macos/:
-    - Release SDK ZIP packages (framework only)
-    - Archive SDK ZIP packages (with symbols, headers, etc.)
+    - Main SDK ZIP package
+    - Symbols ZIP package (if available)
+    - build_info.json
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
     """
     print("==================macOS Build Results========================")
 
@@ -374,37 +496,45 @@ def print_build_results():
         print(f"ERROR: target directory not found. Please run build first.")
         sys.exit(1)
 
-    # Check for SDK ZIP packages (both release and archive)
-    all_zips = glob.glob(f"{bin_dir}/*.zip")
-    sdk_zips = [
-        f for f in all_zips
-        if "MACOS_SDK" in os.path.basename(f) and not os.path.basename(f).startswith("_temp_")
+    # Check for SDK ZIP packages (main and symbols)
+    # Main package: {PROJECT_NAME}_MACOS_SDK-*.zip (not ending with -SYMBOLS.zip)
+    main_zips = [
+        f for f in glob.glob(f"{bin_dir}/*_MACOS_SDK-*.zip")
+        if not f.endswith("-SYMBOLS.zip") and not os.path.basename(f).startswith("_temp_")
     ]
 
-    if not sdk_zips:
+    # Symbols package: {PROJECT_NAME}_MACOS_SDK-*-SYMBOLS.zip
+    symbols_zips = [
+        f for f in glob.glob(f"{bin_dir}/*_MACOS_SDK-*-SYMBOLS.zip")
+    ]
+
+    if not main_zips:
         print(f"ERROR: No build artifacts found in {bin_dir}")
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create target/macos directory for platform-specific artifacts
+    # Clean and recreate target/macos directory for platform-specific artifacts
     bin_macos_dir = os.path.join(bin_dir, "macos")
+    if os.path.exists(bin_macos_dir):
+        shutil.rmtree(bin_macos_dir)
+        print(f"Cleaned up old target/macos/ directory")
     os.makedirs(bin_macos_dir, exist_ok=True)
-
-    # Clean up old framework directories in target/macos/
-    for item in os.listdir(bin_macos_dir):
-        item_path = os.path.join(bin_macos_dir, item)
-        if os.path.isdir(item_path) and item.endswith('.framework'):
-            shutil.rmtree(item_path)
-            print(f"Cleaned up old framework: {item}")
 
     # Move SDK ZIP files to target/macos/
     artifacts_moved = []
-    for sdk_zip in sdk_zips:
-        dest = os.path.join(bin_macos_dir, os.path.basename(sdk_zip))
+    for main_zip in main_zips:
+        dest = os.path.join(bin_macos_dir, os.path.basename(main_zip))
         if os.path.exists(dest):
             os.remove(dest)
-        shutil.move(sdk_zip, dest)
-        artifacts_moved.append(os.path.basename(sdk_zip))
+        shutil.move(main_zip, dest)
+        artifacts_moved.append(os.path.basename(main_zip))
+
+    for symbols_zip in symbols_zips:
+        dest = os.path.join(bin_macos_dir, os.path.basename(symbols_zip))
+        if os.path.exists(dest):
+            os.remove(dest)
+        shutil.move(symbols_zip, dest)
+        artifacts_moved.append(os.path.basename(symbols_zip))
 
     if artifacts_moved:
         print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/macos/")
@@ -435,7 +565,7 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def gen_macos_project(target_option="", tag=""):
+def gen_macos_project(target_option=""):
     """
     Generate Xcode project for macOS development and debugging.
 
@@ -445,13 +575,12 @@ def gen_macos_project(target_option="", tag=""):
 
     Args:
         target_option: Additional CMake target options (default: '')
-        tag: Version tag string for metadata (default: '')
 
     Returns:
         bool: True if project generation succeeded, False otherwise
 
     Output:
-        - Xcode project: cmake_build/macOS/{project}.xcodeproj (auto-opened)
+        - Xcode project: cmake_build/macOS/static/{project}.xcodeproj (auto-opened)
 
     Note:
         The project targets macOS 10.9+ for broad compatibility.
@@ -465,11 +594,12 @@ def gen_macos_project(target_option="", tag=""):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         platform="macos",
     )
-    clean(BUILD_OUT_PATH)
-    os.chdir(BUILD_OUT_PATH)
+    # Use static directory for IDE project
+    build_out_path = get_build_out_path("static")
+    clean(build_out_path)
+    os.chdir(build_out_path)
 
     cmd = GEN_MACOS_PROJ % (CCGO_CMAKE_DIR, target_option)
     ret = os.system(cmd)
@@ -478,7 +608,7 @@ def gen_macos_project(target_option="", tag=""):
         print("!!!!!!!!!!!gen fail!!!!!!!!!!!!!!!")
         return False
 
-    project_file_prefix = os.path.join(SCRIPT_PATH, BUILD_OUT_PATH, PROJECT_NAME_LOWER)
+    project_file_prefix = os.path.join(SCRIPT_PATH, build_out_path, PROJECT_NAME_LOWER)
     project_file = get_project_file_name(project_file_prefix)
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
@@ -490,7 +620,7 @@ def gen_macos_project(target_option="", tag=""):
     return True
 
 
-def main(target_option="", tag="", link_type='static', jobs=None):
+def main(target_option="", link_type='both', jobs=None):
     """
     Main entry point for macOS universal framework build.
 
@@ -499,8 +629,7 @@ def main(target_option="", tag="", link_type='static', jobs=None):
 
     Args:
         target_option: Additional CMake target options (default: '')
-        tag: Version tag string for metadata (default: '')
-        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
         jobs: Number of parallel build jobs (default: CPU count)
 
     Note:
@@ -512,83 +641,54 @@ def main(target_option="", tag="", link_type='static', jobs=None):
     if jobs is None or jobs <= 0:
         jobs = multiprocessing.cpu_count()
 
-    print(f"main tag {tag}, link_type: {link_type}, jobs: {jobs}")
+    print(f"main link_type: {link_type}, jobs: {jobs}")
 
     # Build universal framework
-    if not build_macos(target_option, tag, link_type, jobs):
+    if not build_macos(target_option, link_type, jobs):
         print("ERROR: macOS build failed")
         sys.exit(1)
 
     # Archive and organize artifacts
-    archive_macos_project()
-    print_build_results()
+    archive_macos_project(link_type=link_type)
+    print_build_results(link_type=link_type)
 
 
 # Command-line interface for macOS builds
-# Supports two invocation modes:
-# 1. Interactive mode (no args): Prompts user for build mode
-# 2. Mode only (1 arg): Uses specified mode directly
-# 3. Argparse mode: Uses --jobs and other options
 #
-# Build modes:
-# 1 - Build universal framework: Creates .framework with Intel + Apple Silicon binaries
-# 2 - Generate Xcode project: Creates .xcodeproj and opens in Xcode for development
-# 3 - Exit: Quit without building
+# Usage:
+#   python build_macos.py                    # Build static library (default)
+#   python build_macos.py --ide-project      # Generate Xcode project
+#   python build_macos.py -j 8               # Build with 8 parallel jobs
+#   python build_macos.py --link-type shared # Build shared library
 if __name__ == "__main__":
     import argparse
 
-    # Check if using new argparse-style arguments
-    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
-        parser = argparse.ArgumentParser(
-            description="Build macOS universal framework",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-        parser.add_argument(
-            "-j", "--jobs",
-            type=int,
-            default=None,
-            help="Number of parallel build jobs (default: CPU count)",
-        )
-        parser.add_argument(
-            "--link-type",
-            type=str,
-            choices=['static', 'shared', 'both'],
-            default='static',
-            help="Library link type (default: static)",
-        )
-        parser.add_argument(
-            "--ide-project",
-            action="store_true",
-            help="Generate Xcode project instead of building",
-        )
+    parser = argparse.ArgumentParser(
+        description="Build macOS universal framework",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "-j", "--jobs",
+        type=int,
+        default=None,
+        help="Number of parallel build jobs (default: CPU count)",
+    )
+    parser.add_argument(
+        "--link-type",
+        type=str,
+        choices=['static', 'shared', 'both'],
+        default='both',
+        help="Library link type (default: both)",
+    )
+    parser.add_argument(
+        "--ide-project",
+        action="store_true",
+        help="Generate Xcode project instead of building",
+    )
 
-        args = parser.parse_args()
+    args = parser.parse_args()
 
-        if args.ide_project:
-            gen_macos_project()
-        else:
-            main(tag="1", link_type=args.link_type, jobs=args.jobs)
+    if args.ide_project:
+        gen_macos_project()
     else:
-        # Legacy positional argument mode
-        while True:
-            if len(sys.argv) >= 2:
-                num = sys.argv[1]
-            else:
-                archs = set(["armeabi-v7a"])
-                num = str(
-                    input(
-                        "Enter menu:"
-                        + f"\n1. Clean && Build macOS {PROJECT_NAME_LOWER}."
-                        + f"\n2. Gen macOS {PROJECT_NAME_LOWER} Project."
-                        + "\n3. Exit.\n"
-                    )
-                )
-            print(f"==================MacOS Choose num: {num}==================")
-            if num == "1":
-                main(tag=num)
-                break
-            elif num == "2":
-                gen_macos_project(tag=num)
-                break
-            else:
-                break
+        main(link_type=args.link_type, jobs=args.jobs)

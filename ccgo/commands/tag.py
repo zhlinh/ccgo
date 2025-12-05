@@ -144,7 +144,7 @@ class Tag(CliCommand):
         # Check if CCGO.toml exists
         ccgo_toml_path = os.path.join(project_dir, "CCGO.toml")
         if not os.path.isfile(ccgo_toml_path):
-            print("ERROR: CCGO.toml not found in project root directory")
+            print("❌ ERROR: CCGO.toml not found in project root directory")
             print(f"Expected location: {ccgo_toml_path}")
             print("\nPlease run this command from the project root directory.")
             sys.exit(1)

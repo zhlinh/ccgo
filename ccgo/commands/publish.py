@@ -208,7 +208,7 @@ class Publish(CliCommand):
                     config_path = os.path.join(project_dir, "CCGO.toml")
                     project_subdir = project_dir
                 else:
-                    print("ERROR: CCGO.toml not found in project directory")
+                    print("\n❌ ERROR: CCGO.toml not found in project directory")
                     print("Please ensure you are in a CCGO project directory")
                     sys.exit(1)
 
@@ -222,15 +222,19 @@ class Publish(CliCommand):
 
             # Ask user whether to publish to local or remote Maven
             print("\nKMP Publish Options:")
-            print("  2 - Publish to Maven Local (~/.m2/repository/)")
-            print("  3 - Publish to Maven Remote (requires credentials)")
-            mode = input("Select option (2 or 3): ").strip()
+            print("  1 - Publish to Maven Local (~/.m2/repository/)")
+            print("  2 - Publish to Maven Remote (requires credentials)")
+            choice = input("Select option (1 or 2): ").strip()
 
-            if mode not in ["2", "3"]:
-                print("Invalid option. Please select 2 or 3.")
+            if choice == "1":
+                publish_flag = "--publish-local"
+            elif choice == "2":
+                publish_flag = "--publish-remote"
+            else:
+                print("Invalid option. Please select 1 or 2.")
                 sys.exit(1)
 
-            cmd = f"cd '{project_subdir}' && python3 '{build_kmp_script}' {mode}"
+            cmd = f"cd '{project_subdir}' && python3 '{build_kmp_script}' {publish_flag}"
             print(f"\nExecuting: {cmd}")
 
             err_code = os.system(cmd)
@@ -272,7 +276,7 @@ class Publish(CliCommand):
         # Check if CCGO.toml exists
         ccgo_toml_path = os.path.join(project_dir, "CCGO.toml")
         if not os.path.isfile(ccgo_toml_path):
-            print("ERROR: CCGO.toml not found in project root directory")
+            print("❌ ERROR: CCGO.toml not found in project root directory")
             print(f"Expected location: {ccgo_toml_path}")
             print("\nPlease run this command from the project root directory.")
             sys.exit(1)

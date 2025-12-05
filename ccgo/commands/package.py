@@ -334,7 +334,7 @@ OUTPUT STRUCTURE:
             archive_files = []
 
             for f in os.listdir(target_platform_dir):
-                if f.startswith('(ARCHIVE)'):
+                if f.startswith('ARCHIVE'):
                     continue  # Skip archive markers
                 full_path = os.path.join(target_platform_dir, f)
                 if f.endswith(('.zip', '.aar', '.har')) and os.path.isfile(full_path):

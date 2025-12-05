@@ -29,12 +29,8 @@ except ImportError:
     from build_utils import *
 
 SCRIPT_PATH = os.getcwd()
-# dir name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-
-# Ensure cmake directory exists in project
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
 
 BUILD_OUT_PATH = os.path.join("cmake_build", "Benches")
@@ -73,10 +69,10 @@ else:
     )
 
 
-def build_googlebenchmark(incremental, tag=""):
+def build_googlebenchmark(incremental):
     before_time = time.time()
     print(
-        f"==================build_googlebenchmark with tag: {tag}, install path: {INSTALL_PATH} ========================"
+        f"==================build_googlebenchmark install path: {INSTALL_PATH} ========================"
     )
 
     # generate verinfo.h
@@ -84,7 +80,6 @@ def build_googlebenchmark(incremental, tag=""):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         incremental=incremental,
         platform="benches",
     )
@@ -139,14 +134,13 @@ def run_googlebenchmark(filter_rules=""):
     return True
 
 
-def gen_googlebenchmark_project(tag=""):
-    print("==================gen_macos_project========================")
+def gen_googlebenchmark_project():
+    print("==================gen_googlebenchmark_project========================")
     # generate verinfo.h
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
-        get_version_name(SCRIPT_PATH, platform="benches"),
-        tag,
+        get_version_name(SCRIPT_PATH),
         platform="benches",
     )
 
@@ -172,62 +166,85 @@ def gen_googlebenchmark_project(tag=""):
     return True
 
 
-def main(choose, filter_rules=""):
-    print(f"==========Choose num: [{choose}], filter: [{filter_rules}]===========")
+def main(filter_rules=""):
+    """
+    Main entry point for building and running benchmarks.
+
+    Args:
+        filter_rules: Optional benchmark filter rules (e.g., --benchmark_filter=BenchSuite.*)
+    """
     if system_is_windows() and (not check_vs_env()):
-        return
+        sys.exit(1)
 
-    result = True
-    if choose == "1":
-        result = build_googlebenchmark(incremental=False, tag=choose)
-    elif choose == "2":
-        result = gen_googlebenchmark_project(tag=choose)
-    elif choose == "3":
-        # build and run
-        if not build_googlebenchmark(incremental=True, tag=choose):
-            return False
-        result = run_googlebenchmark(filter_rules=filter_rules)
-    elif choose == "4":
-        # run
-        result = run_googlebenchmark(filter_rules=filter_rules)
-    else:
-        result = build_googlebenchmark(incremental=False, tag=choose)
+    if not build_googlebenchmark(incremental=False):
+        raise RuntimeError("Exception occurs when build googlebenchmark")
 
-    if not result:
-        raise RuntimeError("Exception occurs when build or run googlebenchmark")
+    if filter_rules:
+        if not run_googlebenchmark(filter_rules=filter_rules):
+            raise RuntimeError("Exception occurs when run googlebenchmark")
 
 
+# Command-line interface for benchmark builds
+#
+# Usage:
+#   python build_benches.py                    # Build benchmarks (default)
+#   python build_benches.py --ide-project      # Generate IDE project
+#   python build_benches.py --run              # Build and run benchmarks
+#   python build_benches.py --run BenchSuite   # Build and run specific benchmarks
+#   python build_benches.py --run-only         # Run benchmarks without building
 if __name__ == "__main__":
-    while True:
-        if len(sys.argv) >= 2:
-            filter = ""
-            if len(sys.argv) >= 3:
-                benchmark_filter_list = []
-                for i in range(2, len(sys.argv)):
-                    cur_filter = sys.argv[i]
-                    if not cur_filter.startswith("-"):
-                        if ("." not in cur_filter) and (not cur_filter.endswith("*")):
-                            # add '.*' at the end if not begins with '-'
-                            cur_filter = cur_filter + ".*"
-                        benchmark_filter_list.append(cur_filter)
-                    else:
-                        filter = f"{filter} {cur_filter}"
-                if len(benchmark_filter_list) > 0:
-                    # add '--benchmark_filter=' if benchmark_filter_list is not empty, ":" as separator
-                    filter = (
-                        f'{filter} --benchmark_filter={":".join(benchmark_filter_list)}'
-                    )
-            main(sys.argv[1], filter)
-            break
-        else:
-            num = str(
-                input(
-                    f"Enter menu:(or usage: python3 {os.path.basename(__file__)} <tag> <benchmark_filters separated by space>)"
-                    f"\n1. Clean && Build {PROJECT_NAME_LOWER} googlebenchmark"
-                    f"\n2. Gen {PROJECT_NAME_LOWER} googlebenchmark Project"
-                    f"\n3. Build && Run {PROJECT_NAME_LOWER} googlebenchmark"
-                    f"\n4. Exit\n"
-                )
-            )
-            main(num)
-            break
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Build and run googlebenchmark",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--ide-project",
+        action="store_true",
+        help="Generate IDE project instead of building",
+    )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Build and run benchmarks after building",
+    )
+    parser.add_argument(
+        "--run-only",
+        action="store_true",
+        help="Run benchmarks without building (assumes already built)",
+    )
+    parser.add_argument(
+        "filters",
+        nargs="*",
+        help="Benchmark filters (e.g., BenchSuite BenchCase.Bench)",
+    )
+
+    args = parser.parse_args()
+
+    # Build filter string from filter arguments
+    filter_rules = ""
+    if args.filters:
+        benchmark_filter_list = []
+        for cur_filter in args.filters:
+            if not cur_filter.startswith("-"):
+                if ("." not in cur_filter) and (not cur_filter.endswith("*")):
+                    cur_filter = cur_filter + ".*"
+                benchmark_filter_list.append(cur_filter)
+            else:
+                filter_rules = f"{filter_rules} {cur_filter}"
+        if benchmark_filter_list:
+            filter_rules = f'{filter_rules} --benchmark_filter={":".join(benchmark_filter_list)}'
+
+    if args.ide_project:
+        gen_googlebenchmark_project()
+    elif args.run_only:
+        if not run_googlebenchmark(filter_rules=filter_rules):
+            raise RuntimeError("Exception occurs when run googlebenchmark")
+    elif args.run:
+        if not build_googlebenchmark(incremental=True):
+            raise RuntimeError("Exception occurs when build googlebenchmark")
+        if not run_googlebenchmark(filter_rules=filter_rules):
+            raise RuntimeError("Exception occurs when run googlebenchmark")
+    else:
+        main(filter_rules=filter_rules)

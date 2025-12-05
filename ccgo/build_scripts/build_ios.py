@@ -57,10 +57,8 @@ except ImportError:
 
 # Script configuration
 SCRIPT_PATH = os.getcwd()
-# Directory name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
 # Build output paths
 BUILD_OUT_PATH = "cmake_build/iOS"
@@ -84,7 +82,7 @@ GEN_IOS_OS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_TOOLCHAIN_FILE="%s/ios.toolchain
 THIRD_PARTY_ARCHS = ["x86_64", "arm64e", "arm64", "armv7", "armv7s"]
 
 
-def build_ios(target_option="", tag="", link_type='static', jobs=None):
+def build_ios(target_option="",  link_type='both', jobs=None):
     """
     Build iOS XCFramework containing both device and simulator frameworks.
 
@@ -101,7 +99,7 @@ def build_ios(target_option="", tag="", link_type='static', jobs=None):
     Args:
         target_option: Additional CMake target options (default: '')
         tag: Version tag string for metadata (default: '')
-        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
         jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
@@ -128,7 +126,7 @@ def build_ios(target_option="", tag="", link_type='static', jobs=None):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
+        
         platform="ios",
     )
 
@@ -200,8 +198,10 @@ def build_ios(target_option="", tag="", link_type='static', jobs=None):
         print("ERROR: Failed to create device lipo library. Stopping immediately.")
         sys.exit(1)  # Exit immediately on lipo failure
     os_dst_framework_path = INSTALL_PATH + f"/os/{PROJECT_NAME_LOWER}.framework"
+    apple_headers_src = f"include/{PROJECT_NAME_LOWER}/api/apple/"
     make_static_framework(
-        os_lipo_dst_lib, os_dst_framework_path, dst_framework_headers, "./"
+        os_lipo_dst_lib, os_dst_framework_path, dst_framework_headers, "./",
+        apple_headers_src=apple_headers_src
     )
     # simulator
     lipo_src_libs = []
@@ -218,6 +218,7 @@ def build_ios(target_option="", tag="", link_type='static', jobs=None):
         simulator_dst_framework_path,
         dst_framework_headers,
         "./",
+        apple_headers_src=apple_headers_src
     )
     # xcframework
     dst_xcframework_path = INSTALL_PATH + f"/{PROJECT_NAME_LOWER}.xcframework"
@@ -252,47 +253,33 @@ def build_ios(target_option="", tag="", link_type='static', jobs=None):
     return True
 
 
-def archive_ios_project():
+def archive_ios_project(link_type='both'):
     """
-    Archive iOS XCFramework into ZIP packages.
+    Archive iOS XCFramework with unified structure.
 
-    This function creates two ZIP packages:
-    1. Release ZIP (xcframework only): {PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
-    2. Archive ZIP (with symbols, headers, etc.): (ARCHIVE)_{PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
+    This function creates two archive packages:
+    1. Main package: {PROJECT_NAME}_IOS_SDK-{version}.zip
+       - lib/static/os/lib{project}.a (device universal static library)
+       - lib/static/simulator/lib{project}.a (simulator universal static library)
+       - frameworks/static/{Project}.xcframework (if link_type is static or both)
+       - frameworks/shared/{Project}.xcframework (if link_type is shared or both)
+       - include/{project}/
+       - build_info.json
+    2. Symbols package: {PROJECT_NAME}_IOS_SDK-{version}-SYMBOLS.zip
+       - symbols/static/*.dSYM
+       - symbols/shared/*.dSYM
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
 
     Output:
-        - target/ios/{PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
-          (contains {project_name}.xcframework)
-        - target/ios/(ARCHIVE)_{PROJECT_NAME}_IOS_SDK-{version}-{suffix}.zip
-          (contains xcframework, headers, symbols, etc.)
+        - target/ios/{PROJECT_NAME}_IOS_SDK-{version}.zip
+        - target/ios/{PROJECT_NAME}_IOS_SDK-{version}-SYMBOLS.zip
     """
-    import zipfile
-    from pathlib import Path
-
     print("==================Archive iOS Project========================")
 
-    # Get project version info
-    version_name = get_version_name(SCRIPT_PATH)
-    project_name_upper = PROJECT_NAME.upper()
-
-    # Try to get publish suffix from git tags or use beta.0 as default
-    try:
-        git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
-        if git_tags and "-" in git_tags:
-            suffix = git_tags.split("-", 1)[1]
-        else:
-            git_branch = (
-                os.popen("git rev-parse --abbrev-ref HEAD 2>/dev/null").read().strip()
-            )
-            if git_branch == "master" or git_branch == "main":
-                suffix = "release"
-            else:
-                suffix = "beta.0"
-    except:
-        suffix = "beta.0"
-
-    # Build full version name with suffix
-    full_version = f"{version_name}-{suffix}" if suffix else version_name
+    # Get version info using unified function
+    _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
@@ -301,101 +288,98 @@ def archive_ios_project():
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Find xcframework
+    # Prepare static libraries mapping (device and simulator universal libs)
+    static_libs = {}
+    if link_type in ('static', 'both'):
+        # Device universal static library (merged from arm64, arm64e, armv7, armv7s)
+        device_lib_path = os.path.join(ios_install_path, "os", PROJECT_NAME_LOWER)
+        if os.path.exists(device_lib_path):
+            arc_path = get_unified_lib_path("static", arch="os", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
+            static_libs[arc_path] = device_lib_path
+        else:
+            print(f"WARNING: Device static library not found at {device_lib_path}")
+
+        # Simulator universal static library (merged from x86_64, arm64, arm64e)
+        simulator_lib_path = os.path.join(ios_install_path, "simulator", PROJECT_NAME_LOWER)
+        if os.path.exists(simulator_lib_path):
+            arc_path = get_unified_lib_path("static", arch="simulator", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
+            static_libs[arc_path] = simulator_lib_path
+        else:
+            print(f"WARNING: Simulator static library not found at {simulator_lib_path}")
+
+    # Prepare frameworks mapping
+    frameworks = {}
     xcframework_name = f"{PROJECT_NAME_LOWER}.xcframework"
     xcframework_src = os.path.join(ios_install_path, xcframework_name)
 
-    if not os.path.exists(xcframework_src):
+    if os.path.exists(xcframework_src):
+        # For iOS, the same XCFramework may contain both static and dynamic libs
+        # depending on how it was built. We'll add it to the appropriate directory
+        # based on link_type
+        if link_type in ('static', 'both'):
+            arc_path = get_unified_framework_path("static", xcframework_name)
+            frameworks[arc_path] = xcframework_src
+        if link_type in ('shared', 'both'):
+            arc_path = get_unified_framework_path("shared", xcframework_name)
+            frameworks[arc_path] = xcframework_src
+    else:
         print(f"WARNING: XCFramework not found at {xcframework_src}")
         return
 
-    # ========== 1. Create Release ZIP (xcframework only) ==========
-    print("\n--- Creating Release ZIP (xcframework only) ---")
-    temp_release_dir = os.path.join(bin_dir, f"_temp_release_{project_name_upper}")
-    if os.path.exists(temp_release_dir):
-        shutil.rmtree(temp_release_dir)
-    os.makedirs(temp_release_dir, exist_ok=True)
-
-    # Copy XCFramework to temporary directory
-    temp_xcframework = os.path.join(temp_release_dir, xcframework_name)
-    shutil.copytree(xcframework_src, temp_xcframework)
-    print(f"Copied XCFramework: {xcframework_name}")
-
-    # Create Release ZIP
-    release_zip_name = f"{project_name_upper}_IOS_SDK-{full_version}.zip"
-    release_zip_path = os.path.join(bin_dir, release_zip_name)
-
-    if os.path.exists(release_zip_path):
-        os.remove(release_zip_path)
-
-    with zipfile.ZipFile(release_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(temp_release_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, temp_release_dir)
-                zipf.write(file_path, arcname)
-
-    shutil.rmtree(temp_release_dir)
-    print(f"Created Release ZIP: {release_zip_name}")
-
-    # ========== 2. Create Archive ZIP (with additional files) ==========
-    print("\n--- Creating Archive ZIP (with symbols and headers) ---")
-    archive_name = f"(ARCHIVE)_{project_name_upper}_IOS_SDK-{full_version}"
-    archive_dir = os.path.join(bin_dir, archive_name)
-
-    if os.path.exists(archive_dir):
-        shutil.rmtree(archive_dir)
-    os.makedirs(archive_dir, exist_ok=True)
-
-    # Copy XCFramework to archive
-    archive_xcframework = os.path.join(archive_dir, xcframework_name)
-    shutil.copytree(xcframework_src, archive_xcframework)
-    print(f"Copied XCFramework to archive: {xcframework_name}")
-
-    # Copy header files if they exist
+    # Prepare include directories mapping
+    include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        headers_dest = os.path.join(archive_dir, "include")
-        shutil.copytree(headers_src, headers_dest)
-        print(f"Copied headers: include/")
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        include_dirs[arc_path] = headers_src
 
-    # Copy symbol files if they exist (dSYM for iOS)
+    # Prepare symbols (dSYM files)
+    symbols_static = {}
+    symbols_shared = {}
     dsym_pattern = f"{ios_install_path}/*.dSYM"
     dsym_files = glob.glob(dsym_pattern)
-    if dsym_files:
-        for dsym_file in dsym_files:
-            dsym_name = os.path.basename(dsym_file)
-            dsym_dest = os.path.join(archive_dir, dsym_name)
-            shutil.copytree(dsym_file, dsym_dest)
-            print(f"Copied symbols: {dsym_name}")
+    for dsym_file in dsym_files:
+        dsym_name = os.path.basename(dsym_file)
+        # For iOS, dSYM files correspond to the framework type
+        if link_type in ('static', 'both'):
+            arc_path = get_unified_symbol_path("static", dsym_name)
+            symbols_static[arc_path] = dsym_file
+        if link_type in ('shared', 'both'):
+            arc_path = get_unified_symbol_path("shared", dsym_name)
+            symbols_shared[arc_path] = dsym_file
 
-    # Create Archive ZIP
-    archive_zip_path = os.path.join(bin_dir, f"{archive_name}.zip")
-    if os.path.exists(archive_zip_path):
-        os.remove(archive_zip_path)
-
-    with zipfile.ZipFile(archive_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(archive_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, bin_dir)
-                zipf.write(file_path, arcname)
-
-    shutil.rmtree(archive_dir)
-    print(f"Created Archive ZIP: {archive_name}.zip")
+    # Create unified archive packages
+    main_zip_path, symbols_zip_path = create_unified_archive(
+        output_dir=bin_dir,
+        project_name=PROJECT_NAME,
+        platform_name="IOS",
+        version=full_version,
+        link_type=link_type,
+        static_libs=static_libs if static_libs else None,
+        include_dirs=include_dirs,
+        frameworks=frameworks,
+        symbols_static=symbols_static if symbols_static else None,
+        symbols_shared=symbols_shared if symbols_shared else None,
+        architectures=["arm64", "x86_64"],  # Device + Simulator
+    )
 
     print("\n==================Archive Complete========================")
-    print(f"Release ZIP: {release_zip_path}")
-    print(f"Archive ZIP: {archive_zip_path}")
+    print(f"Main package: {main_zip_path}")
+    if symbols_zip_path:
+        print(f"Symbols package: {symbols_zip_path}")
 
 
-def print_build_results():
+def print_build_results(link_type='both'):
     """
     Print iOS build results from target directory.
 
     This function displays the build artifacts and moves them to target/ios/:
-    - Release SDK ZIP packages (xcframework only)
-    - Archive SDK ZIP packages (with symbols, headers, etc.)
+    - Main SDK ZIP package
+    - Symbols ZIP package (if available)
+    - build_info.json
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
     """
     print("==================iOS Build Results========================")
 
@@ -407,37 +391,45 @@ def print_build_results():
         print(f"ERROR: target directory not found. Please run build first.")
         sys.exit(1)
 
-    # Check for SDK ZIP packages (both release and archive)
-    all_zips = glob.glob(f"{bin_dir}/*.zip")
-    sdk_zips = [
-        f for f in all_zips
-        if "IOS_SDK" in os.path.basename(f) and not os.path.basename(f).startswith("_temp_")
+    # Check for SDK ZIP packages (main and symbols)
+    # Main package: {PROJECT_NAME}_IOS_SDK-*.zip (not ending with -SYMBOLS.zip)
+    main_zips = [
+        f for f in glob.glob(f"{bin_dir}/*_IOS_SDK-*.zip")
+        if not f.endswith("-SYMBOLS.zip") and not os.path.basename(f).startswith("_temp_")
     ]
 
-    if not sdk_zips:
+    # Symbols package: {PROJECT_NAME}_IOS_SDK-*-SYMBOLS.zip
+    symbols_zips = [
+        f for f in glob.glob(f"{bin_dir}/*_IOS_SDK-*-SYMBOLS.zip")
+    ]
+
+    if not main_zips:
         print(f"ERROR: No build artifacts found in {bin_dir}")
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create target/ios directory for platform-specific artifacts
+    # Clean and recreate target/ios directory for platform-specific artifacts
     bin_ios_dir = os.path.join(bin_dir, "ios")
+    if os.path.exists(bin_ios_dir):
+        shutil.rmtree(bin_ios_dir)
+        print(f"Cleaned up old target/ios/ directory")
     os.makedirs(bin_ios_dir, exist_ok=True)
-
-    # Clean up old xcframework directories in target/ios/
-    for item in os.listdir(bin_ios_dir):
-        item_path = os.path.join(bin_ios_dir, item)
-        if os.path.isdir(item_path) and item.endswith('.xcframework'):
-            shutil.rmtree(item_path)
-            print(f"Cleaned up old xcframework: {item}")
 
     # Move SDK ZIP files to target/ios/
     artifacts_moved = []
-    for sdk_zip in sdk_zips:
-        dest = os.path.join(bin_ios_dir, os.path.basename(sdk_zip))
+    for main_zip in main_zips:
+        dest = os.path.join(bin_ios_dir, os.path.basename(main_zip))
         if os.path.exists(dest):
             os.remove(dest)
-        shutil.move(sdk_zip, dest)
-        artifacts_moved.append(os.path.basename(sdk_zip))
+        shutil.move(main_zip, dest)
+        artifacts_moved.append(os.path.basename(main_zip))
+
+    for symbols_zip in symbols_zips:
+        dest = os.path.join(bin_ios_dir, os.path.basename(symbols_zip))
+        if os.path.exists(dest):
+            os.remove(dest)
+        shutil.move(symbols_zip, dest)
+        artifacts_moved.append(os.path.basename(symbols_zip))
 
     if artifacts_moved:
         print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/ios/")
@@ -468,7 +460,7 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def gen_ios_project(target_option="", tag=""):
+def gen_ios_project(target_option=""):
     """
     Generate Xcode project for iOS development and debugging.
 
@@ -498,7 +490,7 @@ def gen_ios_project(target_option="", tag=""):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
+        
         platform="ios",
     )
 
@@ -519,7 +511,7 @@ def gen_ios_project(target_option="", tag=""):
     return True
 
 
-def main(target_option="", tag="", link_type='static', jobs=None):
+def main(target_option="", link_type='both', jobs=None):
     """
     Main entry point for iOS XCFramework build.
 
@@ -528,8 +520,7 @@ def main(target_option="", tag="", link_type='static', jobs=None):
 
     Args:
         target_option: Additional CMake target options (default: '')
-        tag: Version tag string for metadata (default: '')
-        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
         jobs: Number of parallel build jobs (default: CPU count)
 
     Note:
@@ -541,84 +532,54 @@ def main(target_option="", tag="", link_type='static', jobs=None):
     if jobs is None or jobs <= 0:
         jobs = multiprocessing.cpu_count()
 
-    print(f"main tag {tag}, link_type: {link_type}, jobs: {jobs}")
+    print(f"main link_type: {link_type}, jobs: {jobs}")
 
     # Build XCFramework
-    if not build_ios(target_option, tag, link_type, jobs):
+    if not build_ios(target_option, link_type, jobs):
         print("ERROR: iOS build failed")
         sys.exit(1)
 
     # Archive and organize artifacts
-    archive_ios_project()
-    print_build_results()
+    archive_ios_project(link_type=link_type)
+    print_build_results(link_type=link_type)
 
 
 # Command-line interface for iOS builds
-# Supports two invocation modes:
-# 1. Interactive mode (no args): Prompts user for build mode
-# 2. Mode only (1 arg): Uses specified mode directly
-# 3. Argparse mode: Uses --jobs and other options
 #
-# Build modes:
-# 1 - Build XCFramework: Creates distributable framework with device + simulator binaries
-# 2 - Generate Xcode project: Creates .xcodeproj for development/debugging in Xcode
-# 3 - Exit: Quit without building
+# Usage:
+#   python build_ios.py                    # Build static library (default)
+#   python build_ios.py --ide-project      # Generate Xcode project
+#   python build_ios.py -j 8               # Build with 8 parallel jobs
+#   python build_ios.py --link-type shared # Build shared library
 if __name__ == "__main__":
     import argparse
 
-    # Check if using new argparse-style arguments
-    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
-        parser = argparse.ArgumentParser(
-            description="Build iOS XCFramework",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-        parser.add_argument(
-            "-j", "--jobs",
-            type=int,
-            default=None,
-            help="Number of parallel build jobs (default: CPU count)",
-        )
-        parser.add_argument(
-            "--link-type",
-            type=str,
-            choices=['static', 'shared', 'both'],
-            default='static',
-            help="Library link type (default: static)",
-        )
-        parser.add_argument(
-            "--ide-project",
-            action="store_true",
-            help="Generate Xcode project instead of building",
-        )
+    parser = argparse.ArgumentParser(
+        description="Build iOS XCFramework",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "-j", "--jobs",
+        type=int,
+        default=None,
+        help="Number of parallel build jobs (default: CPU count)",
+    )
+    parser.add_argument(
+        "--link-type",
+        type=str,
+        choices=['static', 'shared', 'both'],
+        default='both',
+        help="Library link type (default: both)",
+    )
+    parser.add_argument(
+        "--ide-project",
+        action="store_true",
+        help="Generate Xcode project instead of building",
+    )
 
-        args = parser.parse_args()
+    args = parser.parse_args()
 
-        if args.ide_project:
-            gen_ios_project()
-        else:
-            main(tag="1", link_type=args.link_type, jobs=args.jobs)
+    if args.ide_project:
+        gen_ios_project()
     else:
-        # Legacy positional argument mode
-        PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-        while True:
-            if len(sys.argv) >= 2:
-                num = sys.argv[1]
-            else:
-                archs = set(["armeabi-v7a"])
-                num = str(
-                    input(
-                        "Enter menu:"
-                        + f"\n1. Clean && build iOS {PROJECT_NAME_LOWER}."
-                        + f"\n2. Gen iOS {PROJECT_NAME_LOWER} Project."
-                        + f"\n3. Exit."
-                    )
-                )
-            print(f"==================iOS Choose num: {num}==================")
-            if num == "1":
-                main(tag=num)
-                break
-            elif num == "2":
-                gen_ios_project()
-                break
-            else:
-                break
+        main(link_type=args.link_type, jobs=args.jobs)

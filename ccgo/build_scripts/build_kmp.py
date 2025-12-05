@@ -407,27 +407,43 @@ def publish_to_maven_remote():
     print("=" * 80 + "\n")
 
 
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description="Build Kotlin Multiplatform Library")
+def main(publish_local=False, publish_remote=False):
+    """
+    Main entry point for building and publishing KMP library.
+
+    Args:
+        publish_local: If True, publish to Maven local repository
+        publish_remote: If True, publish to remote Maven repository
+    """
+    if publish_local:
+        publish_to_maven_local()
+    elif publish_remote:
+        publish_to_maven_remote()
+    else:
+        build_kmp_library()
+
+
+# Command-line interface for KMP builds
+#
+# Usage:
+#   python build_kmp.py                  # Build KMP library (default)
+#   python build_kmp.py --publish-local  # Publish to Maven local
+#   python build_kmp.py --publish-remote # Publish to Maven remote
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Build Kotlin Multiplatform Library",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
-        "mode",
-        nargs="?",
-        type=int,
-        default=1,
-        choices=[1, 2, 3],
-        help="Build mode: 1=build (default), 2=publish to Maven local, 3=publish to Maven remote",
+        "--publish-local",
+        action="store_true",
+        help="Publish to Maven local repository",
+    )
+    parser.add_argument(
+        "--publish-remote",
+        action="store_true",
+        help="Publish to remote Maven repository",
     )
 
     args = parser.parse_args()
-
-    if args.mode == 1:
-        build_kmp_library()
-    elif args.mode == 2:
-        publish_to_maven_local()
-    elif args.mode == 3:
-        publish_to_maven_remote()
-
-
-if __name__ == "__main__":
-    main()
+    main(publish_local=args.publish_local, publish_remote=args.publish_remote)

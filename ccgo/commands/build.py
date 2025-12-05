@@ -17,6 +17,7 @@ import importlib.util
 import platform
 import time
 import multiprocessing
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -153,7 +154,8 @@ PLATFORM-SPECIFIC OPTIONS:
         --docker           Build using Docker containers (enables cross-platform builds)
                           Allows building any platform on any OS without local toolchains
 
-    All platforms:
+    All native platforms:
+        --link-type        Library type to build: static, shared, or both (default: both)
         --ide-project      Generate IDE project files for development
 
     Build all:
@@ -230,6 +232,12 @@ REQUIREMENTS:
             help="Windows toolchain: msvc (Visual Studio), gnu/mingw (MinGW-w64), auto (detect)",
         )
         parser.add_argument(
+            "--link-type",
+            choices=["static", "shared", "both"],
+            default="both",
+            help="Library link type: static (only .a/.lib), shared (only .so/.dll/.dylib), both (default)",
+        )
+        parser.add_argument(
             "-j", "--jobs",
             type=int,
             default=None,
@@ -286,6 +294,8 @@ REQUIREMENTS:
             cmd_args.append("--docker-dev")
         if hasattr(args, 'toolchain') and args.toolchain and args.toolchain != "auto":
             cmd_args.extend(["--toolchain", args.toolchain])
+        if hasattr(args, 'link_type') and args.link_type:
+            cmd_args.extend(["--link-type", args.link_type])
         if hasattr(args, 'ide_project') and args.ide_project:
             cmd_args.extend(["--ide-project", args.ide_project])
         # Always pass -j to ensure build scripts use argparse mode (not legacy interactive mode)
@@ -378,7 +388,7 @@ REQUIREMENTS:
                 project_subdir = project_dir
 
             if not config_path:
-                print("ERROR: CCGO.toml not found in project directory")
+                print("❌ ERROR: CCGO.toml not found in project directory")
                 self._print_build_time(start_time)
                 sys.exit(1)
 
@@ -415,6 +425,18 @@ REQUIREMENTS:
                         else:
                             successful_platforms.append(target_platform)
                             print(f"\n✅ {target_platform.upper()} build completed successfully ({self._format_elapsed_time(elapsed)})")
+                    except KeyboardInterrupt:
+                        elapsed = time.time() - platform_start
+                        platform_times[target_platform] = elapsed
+                        print(f"\n⚠️  {target_platform.upper()} build interrupted by user ({self._format_elapsed_time(elapsed)})")
+                        failed_platforms.append(target_platform)
+                        print(f"\nSkipping {target_platform}, continuing with next platform...")
+                        print("(Press Ctrl+C again within 2 seconds to abort all builds)")
+                        try:
+                            time.sleep(2)
+                        except KeyboardInterrupt:
+                            print("\n\n🛑 Build aborted by user")
+                            break
                     except Exception as e:
                         elapsed = time.time() - platform_start
                         platform_times[target_platform] = elapsed
@@ -441,36 +463,59 @@ REQUIREMENTS:
                         results.append(result)
                     return results
 
-                with ThreadPoolExecutor(max_workers=num_jobs) as executor:
-                    # Submit non-Apple platforms individually
-                    futures = {}
-                    for target_platform in other_platforms:
-                        future = executor.submit(
-                            self._build_platform_subprocess,
-                            target_platform,
-                            args,
-                            project_subdir
-                        )
-                        futures[future] = target_platform
+                # Track in-progress builds (initialized outside try for KeyboardInterrupt handler)
+                in_progress = set(platforms)
+                completed_count = 0
 
-                    # Submit all Apple platforms as a single sequential task
-                    if apple_to_build:
-                        apple_future = executor.submit(build_apple_sequential)
-                        futures[apple_future] = "apple_group"
+                try:
+                    with ThreadPoolExecutor(max_workers=num_jobs) as executor:
+                        # Submit non-Apple platforms individually
+                        futures = {}
+                        for target_platform in other_platforms:
+                            future = executor.submit(
+                                self._build_platform_subprocess,
+                                target_platform,
+                                args,
+                                project_subdir
+                            )
+                            futures[future] = target_platform
 
-                    # Track in-progress builds
-                    in_progress = set(platforms)
-                    completed_count = 0
+                        # Submit all Apple platforms as a single sequential task
+                        if apple_to_build:
+                            apple_future = executor.submit(build_apple_sequential)
+                            futures[apple_future] = "apple_group"
 
-                    # Process completed builds as they finish
-                    for future in as_completed(futures):
-                        future_id = futures[future]
+                        # Process completed builds as they finish
+                        for future in as_completed(futures):
+                            future_id = futures[future]
 
-                        try:
-                            if future_id == "apple_group":
-                                # Handle Apple group results
-                                apple_results = future.result()
-                                for platform_name, success, error_msg, elapsed, stdout, stderr in apple_results:
+                            try:
+                                if future_id == "apple_group":
+                                    # Handle Apple group results
+                                    apple_results = future.result()
+                                    for platform_name, success, error_msg, elapsed, stdout, stderr in apple_results:
+                                        completed_count += 1
+                                        platform_times[platform_name] = elapsed
+                                        in_progress.discard(platform_name)
+
+                                        if success:
+                                            successful_platforms.append(platform_name)
+                                            print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                                        else:
+                                            failed_platforms.append(platform_name)
+                                            print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
+                                            if error_msg:
+                                                error_lines = error_msg.strip().split('\n')
+                                                for line in error_lines[:5]:
+                                                    print(f"   {line}")
+                                                if len(error_lines) > 5:
+                                                    print(f"   ... ({len(error_lines) - 5} more lines)")
+
+                                        if in_progress:
+                                            print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
+                                else:
+                                    # Handle individual platform result
+                                    platform_name, success, error_msg, elapsed, stdout, stderr = future.result()
                                     completed_count += 1
                                     platform_times[platform_name] = elapsed
                                     in_progress.discard(platform_name)
@@ -482,52 +527,37 @@ REQUIREMENTS:
                                         failed_platforms.append(platform_name)
                                         print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
                                         if error_msg:
+                                            # Print first few lines of error
                                             error_lines = error_msg.strip().split('\n')
                                             for line in error_lines[:5]:
                                                 print(f"   {line}")
                                             if len(error_lines) > 5:
                                                 print(f"   ... ({len(error_lines) - 5} more lines)")
 
+                                    # Show remaining in-progress builds
                                     if in_progress:
                                         print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
-                            else:
-                                # Handle individual platform result
-                                platform_name, success, error_msg, elapsed, stdout, stderr = future.result()
-                                completed_count += 1
-                                platform_times[platform_name] = elapsed
-                                in_progress.discard(platform_name)
 
-                                if success:
-                                    successful_platforms.append(platform_name)
-                                    print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                            except Exception as e:
+                                if future_id == "apple_group":
+                                    # All Apple platforms failed
+                                    for plat in apple_to_build:
+                                        platform_times[plat] = 0
+                                        failed_platforms.append(plat)
+                                        in_progress.discard(plat)
+                                    print(f"❌ Apple platforms failed with exception: {e}")
                                 else:
-                                    failed_platforms.append(platform_name)
-                                    print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
-                                    if error_msg:
-                                        # Print first few lines of error
-                                        error_lines = error_msg.strip().split('\n')
-                                        for line in error_lines[:5]:
-                                            print(f"   {line}")
-                                        if len(error_lines) > 5:
-                                            print(f"   ... ({len(error_lines) - 5} more lines)")
-
-                                # Show remaining in-progress builds
-                                if in_progress:
-                                    print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
-
-                        except Exception as e:
-                            if future_id == "apple_group":
-                                # All Apple platforms failed
-                                for plat in apple_to_build:
-                                    platform_times[plat] = 0
-                                    failed_platforms.append(plat)
-                                    in_progress.discard(plat)
-                                print(f"❌ Apple platforms failed with exception: {e}")
-                            else:
-                                platform_times[future_id] = 0
-                                failed_platforms.append(future_id)
-                                in_progress.discard(future_id)
-                                print(f"❌ [{completed_count}/{total_platforms}] {future_id.upper()} failed with exception: {e}")
+                                    platform_times[future_id] = 0
+                                    failed_platforms.append(future_id)
+                                    in_progress.discard(future_id)
+                                    print(f"❌ [{completed_count}/{total_platforms}] {future_id.upper()} failed with exception: {e}")
+                except KeyboardInterrupt:
+                    print("\n\n🛑 Parallel build aborted by user")
+                    # Mark remaining platforms as failed
+                    for plat in in_progress:
+                        if plat not in failed_platforms and plat not in successful_platforms:
+                            failed_platforms.append(plat)
+                            platform_times[plat] = 0
 
             # Print summary
             print(f"\n{'='*80}")
@@ -596,7 +626,7 @@ REQUIREMENTS:
                 config_path = os.path.join(project_dir, "CCGO.toml")
                 project_subdir = project_dir
             else:
-                print("ERROR: CCGO.toml not found in project directory")
+                print("❌ ERROR: CCGO.toml not found in project directory")
                 print("Please create a CCGO.toml file in your project root directory")
                 self._print_build_time(start_time)
                 sys.exit(1)
@@ -634,7 +664,11 @@ REQUIREMENTS:
                 toolchain_flag = ""
                 if args.target == "windows" and hasattr(args, 'toolchain') and args.toolchain != "auto":
                     toolchain_flag = f" --toolchain={args.toolchain}"
-                cmd = f"python3 '{docker_script}' {args.target} '{project_subdir}'{dev_flag}{toolchain_flag}"
+                # Add link-type option
+                link_type_flag = ""
+                if hasattr(args, 'link_type') and args.link_type:
+                    link_type_flag = f" --link-type={args.link_type}"
+                cmd = f"python3 '{docker_script}' {args.target} '{project_subdir}'{dev_flag}{toolchain_flag}{link_type_flag}"
                 print(f"Executing: {cmd}")
 
                 err_code = os.system(cmd)
@@ -650,6 +684,12 @@ REQUIREMENTS:
             print("\n=== Android Full Build (Native + Gradle + Archive) ===")
             print("This will build native libraries, package AAR, and create archive")
 
+            # Clean target/android directory before build
+            target_android_dir = os.path.join(project_subdir, "target", "android")
+            if os.path.exists(target_android_dir):
+                shutil.rmtree(target_android_dir)
+                print(f"Cleaned up old target/android/ directory")
+
             # Get build script path
             build_script_name = "build_android"
             build_scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_scripts")
@@ -661,13 +701,15 @@ REQUIREMENTS:
                 sys.exit(1)
 
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
+            link_type = args.link_type if args.link_type else "both"
             # Always pass -j to ensure build scripts use argparse mode
             effective_jobs = args.jobs if args.jobs else multiprocessing.cpu_count()
             jobs_arg = f" -j {effective_jobs}"
+            link_type_arg = f" --link-type {link_type}"
 
             # Step 1: Build native libraries
             print("\n--- Step 1: Building native libraries ---")
-            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
+            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}{link_type_arg}"
             print(f"Executing: {native_cmd}")
 
             err_code = os.system(native_cmd)
@@ -676,29 +718,29 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(err_code)
 
-            # Step 2: Use Gradle to package into AAR
-            print("\n--- Step 2: Packaging into AAR ---")
+            # Step 2: Use Gradle to build and copy AAR to target/android/
+            print("\n--- Step 2: Building AAR ---")
             gradlew_path = os.path.join(project_subdir, "android", "gradlew")
             if not os.path.isfile(gradlew_path):
                 print(f"ERROR: gradlew not found at {gradlew_path}")
                 self._print_build_time(start_time)
                 sys.exit(1)
 
-            gradle_cmd = f"cd '{project_subdir}/android' && chmod +x gradlew && ./gradlew --no-daemon :archiveProject"
+            gradle_cmd = f"cd '{project_subdir}/android' && chmod +x gradlew && ./gradlew --no-daemon :buildAAR"
             print(f"Executing: {gradle_cmd}")
 
             err_code = os.system(gradle_cmd)
             if err_code != 0:
-                print("ERROR: AAR packaging failed")
+                print("ERROR: AAR build failed")
                 self._print_build_time(start_time)
                 sys.exit(err_code)
 
-            # Step 3: Print build results (Gradle archiveProject already created archive)
-            print("\n--- Step 3: Displaying build results ---")
-            results_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'"
-            print(f"Executing: {results_cmd}")
+            # Step 3: Create unified archive using Python's archive_android_project()
+            print("\n--- Step 3: Creating unified archive ---")
+            archive_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --archive-only{link_type_arg}"
+            print(f"Executing: {archive_cmd}")
 
-            err_code = os.system(results_cmd)
+            err_code = os.system(archive_cmd)
             self._print_build_time(start_time)
             sys.exit(err_code)
 
@@ -716,9 +758,8 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(1)
 
-            # Mode 1 = build library (default)
-            mode = 1
-            cmd = f"cd '{project_subdir}' && python3 '{build_kmp_script}' {mode}"
+            # Build library (default mode, no flags needed)
+            cmd = f"cd '{project_subdir}' && python3 '{build_kmp_script}'"
             print(f"\nProject directory: {project_subdir}")
             print(f"Build script: {build_kmp_script}")
             print(f"Execute command:")
@@ -753,9 +794,9 @@ REQUIREMENTS:
             self._print_build_time(start_time)
             sys.exit(err_code)
 
-        # If OHOS build without --native-only flag, use Hvigor archiveProject task
+        # If OHOS build without --native-only flag, use Hvigor buildHAR task
         if args.target == "ohos" and not args.native_only:
-            print("\n=== OHOS Full Build (using Hvigor) ===")
+            print("\n=== OHOS Full Build (Native + Hvigor + Archive) ===")
             print("This will build native libraries, package HAR, and create archive")
 
             # Get build script path for native build
@@ -769,13 +810,15 @@ REQUIREMENTS:
                 sys.exit(1)
 
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
+            link_type = args.link_type if args.link_type else "both"
             # Always pass -j to ensure build scripts use argparse mode
             effective_jobs = args.jobs if args.jobs else multiprocessing.cpu_count()
             jobs_arg = f" -j {effective_jobs}"
+            link_type_arg = f" --link-type {link_type}"
 
             # Step 1: Build native libraries
             print("\n--- Step 1: Building native libraries ---")
-            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
+            native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}{link_type_arg}"
             print(f"Executing: {native_cmd}")
 
             err_code = os.system(native_cmd)
@@ -784,23 +827,23 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(err_code)
 
-            # Step 2: Use Hvigor archiveProject task (packages HAR and creates archive)
-            print("\n--- Step 2: Packaging HAR and creating archive ---")
-            hvigor_cmd = f"cd '{project_subdir}/ohos' && hvigorw archiveProject --mode module -p product=default --no-daemon --info"
+            # Step 2: Use Hvigor buildHAR task (packages HAR and copies to target/ohos/)
+            print("\n--- Step 2: Building HAR ---")
+            hvigor_cmd = f"cd '{project_subdir}/ohos' && hvigorw buildHAR --mode module -p product=default --no-daemon --info"
             print(f"Executing: {hvigor_cmd}")
 
             err_code = os.system(hvigor_cmd)
             if err_code != 0:
-                print("ERROR: HAR packaging failed")
+                print("ERROR: HAR build failed")
                 self._print_build_time(start_time)
                 sys.exit(err_code)
 
-            # Step 3: Print build results and organize artifacts
-            print("\n--- Step 3: Displaying build results ---")
-            results_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'"
-            print(f"Executing: {results_cmd}")
+            # Step 3: Create unified archive using Python's archive_ohos_project()
+            print("\n--- Step 3: Creating unified archive ---")
+            archive_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --archive-only{link_type_arg}"
+            print(f"Executing: {archive_cmd}")
 
-            err_code = os.system(results_cmd)
+            err_code = os.system(archive_cmd)
             self._print_build_time(start_time)
             sys.exit(err_code)
 
@@ -821,23 +864,27 @@ REQUIREMENTS:
         # Always pass -j to ensure build scripts use argparse mode (not legacy interactive mode)
         effective_jobs = args.jobs if args.jobs else multiprocessing.cpu_count()
         jobs_arg = f" -j {effective_jobs}"
+        link_type = args.link_type if args.link_type else "both"
+        link_type_arg = f" --link-type {link_type}"
 
         if args.target == "ohos":
             # OHOS uses new argument-based interface
+            # Add --archive to create ZIP package (since Hvigor is not used in native-only mode)
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
-            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --archive --arch {arch}{jobs_arg}{link_type_arg}"
         elif args.target in ["ios", "macos", "linux", "watchos", "tvos"]:
             # Apple/Linux platforms use new argument-based interface
             ide_arg = " --ide-project" if args.ide_project else ""
-            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'{jobs_arg}{ide_arg}"
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'{jobs_arg}{ide_arg}{link_type_arg}"
         elif args.target == "android":
             # Android uses new argument-based interface
+            # Add --archive to create ZIP package (since Gradle is not used in native-only mode)
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
-            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}"
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --archive --arch {arch}{jobs_arg}{link_type_arg}"
         else:
             # Other platforms (windows, etc.) - try new interface first, fallback to legacy
             ide_arg = " --ide-project" if args.ide_project else ""
-            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'{jobs_arg}{ide_arg}"
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'{jobs_arg}{ide_arg}{link_type_arg}"
 
         print(f"\nProject directory: {project_subdir}")
         print(f"Build script: {build_script_path}")

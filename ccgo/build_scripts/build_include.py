@@ -29,22 +29,18 @@ except ImportError:
     from build_utils import *
 
 SCRIPT_PATH = os.getcwd()
-# dir name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-
-# Ensure cmake directory exists in project
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
 BUILD_OUT_PATH = "cmake_build/Include"
 CMAKE_SYSTEM_NAME = platform.system()
 INSTALL_PATH = BUILD_OUT_PATH + "/" + CMAKE_SYSTEM_NAME + ".out"
 
 
-def build_include(incremental, tag=""):
+def build_include(incremental):
     before_time = time.time()
     print(
-        f"==================build docs with tag: {tag}, install path: {INSTALL_PATH} ========================"
+        f"==================build include install path: {INSTALL_PATH} ========================"
     )
 
     # generate verinfo.h
@@ -52,7 +48,6 @@ def build_include(incremental, tag=""):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         incremental=incremental,
         platform="include",
     )
@@ -84,11 +79,11 @@ def archive_include_project():
     1. Header files from include directory
 
     The archive is packaged into a ZIP file named:
-    (ARCHIVE)_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
+    ARCHIVE_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
 
     Output:
         - target/include/{PROJECT_NAME}_INCLUDE-{version}-{suffix}/
-        - target/include/(ARCHIVE)_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
+        - target/include/ARCHIVE_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
     """
     import zipfile
     from pathlib import Path
@@ -137,20 +132,20 @@ def archive_include_project():
     )
     if os.path.exists(include_dir_dest):
         shutil.rmtree(include_dir_dest)
-    shutil.copytree(include_dir_src, include_dir_dest)
+    shutil.copytree(include_dir_src, include_dir_dest, ignore=get_archive_include_ignore_patterns())
     print(f"Copied include directory: {include_dir_dest}")
 
     # Create archive directory structure
-    archive_name = f"(ARCHIVE)_{project_name_upper}_INCLUDE-{full_version}"
+    archive_name = f"ARCHIVE_{project_name_upper}_INCLUDE-{full_version}"
     archive_dir = os.path.join(bin_dir, archive_name)
 
     if os.path.exists(archive_dir):
         shutil.rmtree(archive_dir)
     os.makedirs(archive_dir, exist_ok=True)
 
-    # Copy include directory to archive
+    # Copy include directory to archive (excluding CPPLINT.cfg and other dev files)
     archive_include_dir = os.path.join(archive_dir, "include")
-    shutil.copytree(include_dir_src, archive_include_dir)
+    shutil.copytree(include_dir_src, archive_include_dir, ignore=get_archive_include_ignore_patterns())
     print(f"Copied include directory to archive: include")
 
     # Create ZIP archive
@@ -194,15 +189,18 @@ def print_build_results():
         for f in glob.glob(f"{bin_dir}/*_INCLUDE-*")
         if os.path.isdir(f) and "ARCHIVE" not in f
     ]
-    archive_zips = glob.glob(f"{bin_dir}/(ARCHIVE)*_INCLUDE-*.zip")
+    archive_zips = glob.glob(f"{bin_dir}/ARCHIVE*_INCLUDE-*.zip")
 
     if not include_dirs and not archive_zips:
         print(f"ERROR: No build artifacts found in {bin_dir}")
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Create bin/include directory for platform-specific artifacts
+    # Clean and recreate target/include directory for platform-specific artifacts
     bin_include_dir = os.path.join(bin_dir, "include")
+    if os.path.exists(bin_include_dir):
+        shutil.rmtree(bin_include_dir)
+        print(f"Cleaned up old target/include/ directory")
     os.makedirs(bin_include_dir, exist_ok=True)
 
     # Move include directories and archive files to target/include/
@@ -248,39 +246,29 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def main(choose, filter_rules=""):
-    print(f"==========Choose num: [{choose}], filter: [{filter_rules}]===========")
-
-    result = True
-    if choose == "1":
-        result = build_include(False, choose)
-        if result:
-            # Archive and organize artifacts
-            archive_include_project()
-            print_build_results()
-    else:
-        return
-
-    if not result:
+def main():
+    """
+    Main entry point for building include headers.
+    """
+    if not build_include(False):
         raise RuntimeError("Exception occurs when build include")
 
+    # Archive and organize artifacts
+    archive_include_project()
+    print_build_results()
 
+
+# Command-line interface for include builds
+#
+# Usage:
+#   python build_include.py    # Build and package include headers
 if __name__ == "__main__":
-    while True:
-        if len(sys.argv) >= 2:
-            tag = ""
-            if len(sys.argv) >= 3:
-                tag = sys.argv[2]
-            main(sys.argv[1], tag)
+    import argparse
 
-            break
-        else:
-            num = str(
-                input(
-                    "Enter menu:"
-                    + f"\n1. Clean && build {PROJECT_NAME_LOWER} include"
-                    + f"\n2. Exit"
-                )
-            )
-            main(num)
-            break
+    parser = argparse.ArgumentParser(
+        description="Build and package include headers",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+    args = parser.parse_args()
+    main()

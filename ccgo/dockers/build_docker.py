@@ -142,7 +142,7 @@ PLATFORM_CONFIG = {
 class DockerBuilder:
     """Docker-based cross-platform builder."""
 
-    def __init__(self, platform: str, project_dir: str, dev_mode: bool = False, toolchain: str = "auto"):
+    def __init__(self, platform: str, project_dir: str, dev_mode: bool = False, toolchain: str = "auto", link_type: str = "both"):
         """
         Initialize Docker builder.
 
@@ -151,10 +151,12 @@ class DockerBuilder:
             project_dir: Absolute path to project directory
             dev_mode: Use local ccgo source instead of PyPI (for development)
             toolchain: For Windows, specify toolchain: msvc, gnu/mingw, or auto
+            link_type: Library link type: static, shared, or both (default: both)
         """
         self.platform = platform.lower()
         self.project_dir = Path(project_dir).resolve()
         self.toolchain = toolchain.lower() if toolchain else "auto"
+        self.link_type = link_type.lower() if link_type else "both"
         self.docker_dir = Path(__file__).parent.resolve()
 
         # Auto-detect dev mode if not explicitly specified
@@ -375,6 +377,47 @@ class DockerBuilder:
 
         return None
 
+    def _find_git_root(self):
+        """
+        Find git repository root by searching upward from project directory.
+
+        The .git directory may be in the project directory itself or in a parent
+        directory. This method searches upward to find the git root.
+
+        Returns:
+            Path to .git directory, or None if not found
+        """
+        current = self.project_dir
+        for _ in range(10):  # Search up to 10 levels
+            git_dir = current / ".git"
+            if git_dir.exists():
+                # .git can be a directory (normal repo) or a file (worktree/submodule)
+                if git_dir.is_dir():
+                    # Verify it's a valid git directory by checking for HEAD file
+                    head_file = git_dir / "HEAD"
+                    if head_file.exists():
+                        return git_dir
+                    # Empty .git directory (possibly created by Docker), skip it
+                elif git_dir.is_file():
+                    # Handle git worktree or submodule
+                    # The file contains: "gitdir: /path/to/actual/.git/worktrees/xxx"
+                    try:
+                        with open(git_dir, 'r') as f:
+                            content = f.read().strip()
+                            if content.startswith('gitdir:'):
+                                # Valid git worktree/submodule reference
+                                return git_dir
+                    except Exception:
+                        pass
+            # Move to parent directory
+            parent = current.parent
+            if parent == current:
+                # Reached filesystem root
+                break
+            current = parent
+
+        return None
+
     def run_build(self, build_args: list = None):
         """
         Run build inside Docker container using ccgo command.
@@ -385,10 +428,26 @@ class DockerBuilder:
         print(f"\n=== Running {self.platform} build in Docker container ===")
         print(f"Project directory: {self.project_dir}")
 
+        # Clean target/{platform} directory before Docker build to avoid stale artifacts
+        target_platform_dir = Path(self.project_dir) / "target" / self.platform
+        if target_platform_dir.exists():
+            shutil.rmtree(target_platform_dir)
+            print(f"Cleaned up: {target_platform_dir}")
+
         # Determine installation method based on dev_mode
         docker_volumes = [
             "-v", f"{self.project_dir}:/workspace",  # Always mount project directory
         ]
+
+        # Mount .git directory if found (for git info in build_info.json)
+        # The .git may be in parent directory, so we search upward
+        git_dir = self._find_git_root()
+        if git_dir:
+            # Mount .git to /workspace/.git so git commands work in container
+            docker_volumes.extend(["-v", f"{git_dir}:/workspace/.git:ro"])
+            print(f"Git repository: {git_dir.parent} (mounted .git to container)")
+        else:
+            print(f"⚠ No git repository found (git info will be 'unknown')")
 
         if self.dev_mode:
             # Development mode: Use local ccgo source
@@ -397,7 +456,8 @@ class DockerBuilder:
                 print(f"Development mode: Using local ccgo source from {ccgo_source}")
                 docker_volumes.extend(["-v", f"{ccgo_source}:/ccgo"])
                 # Use non-editable install to avoid PEP 660 compatibility issues in containers
-                install_cmd = "pip3 install -q /ccgo"
+                # Upgrade pip first to support --break-system-packages if needed (for newer Ubuntu)
+                install_cmd = "pip3 install -q --upgrade pip && pip3 install -q /ccgo"
             else:
                 print("⚠ Development mode requested but ccgo source not found!")
                 print("  Falling back to PyPI installation")
@@ -405,22 +465,25 @@ class DockerBuilder:
 
         if not self.dev_mode:
             # Production mode: Install from PyPI with version matching
+            # Upgrade pip first to ensure compatibility
             ccgo_version = self._get_ccgo_version()
             if ccgo_version:
                 print(f"CCGO version: {ccgo_version} (will install same version in container)")
-                install_cmd = f"pip3 install -q ccgo=={ccgo_version}"
+                install_cmd = f"pip3 install -q --upgrade pip && pip3 install -q ccgo=={ccgo_version}"
             else:
                 print(f"CCGO installation: Latest from PyPI (version not detected)")
-                install_cmd = f"pip3 install -q ccgo"
+                install_cmd = f"pip3 install -q --upgrade pip && pip3 install -q ccgo"
 
         # Construct ccgo build command
-        if self.platform == "android" and self.config.get("native_only"):
-            # Android native-only build
-            ccgo_cmd = f"ccgo build android --native-only --arch armeabi-v7a,arm64-v8a,x86_64 --no-docker"
+        # Use python3 -m ccgo.main instead of ccgo command to avoid PATH issues in Docker
+        link_type_arg = f" --link-type {self.link_type}" if self.link_type else ""
+        if self.platform == "android":
+            # Android build in Docker: native-only with archive (no Gradle in Docker)
+            ccgo_cmd = f"python3 -m ccgo.main build android --native-only --archive --arch armeabi-v7a,arm64-v8a,x86_64 --no-docker{link_type_arg}"
         else:
             # Standard build command
             # IMPORTANT: Add --no-docker to prevent recursive Docker calls inside container
-            ccgo_cmd = f"ccgo build {self.platform} --no-docker"
+            ccgo_cmd = f"python3 -m ccgo.main build {self.platform} --no-docker{link_type_arg}"
 
         if build_args:
             ccgo_cmd += " " + " ".join(build_args)
@@ -513,8 +576,10 @@ def print_usage():
     print("\nOptions:")
     print("  --dev              Use local ccgo source (for development, not published to PyPI)")
     print("  --toolchain=<type> Windows toolchain: msvc, gnu/mingw, or auto (default: auto)")
+    print("  --link-type=<type> Library link type: static, shared, or both (default: both)")
     print("\nExamples:")
     print("  python3 build_docker.py linux /path/to/project")
+    print("  python3 build_docker.py linux /path/to/project --link-type=static")
     print("  python3 build_docker.py windows /path/to/project --dev")
     print("  python3 build_docker.py windows /path/to/project --toolchain=msvc")
     print("  python3 build_docker.py windows /path/to/project --toolchain=mingw")
@@ -532,9 +597,10 @@ def main():
     platform = sys.argv[1]
     project_dir = sys.argv[2]
 
-    # Parse --dev flag, --toolchain flag and remaining build args
+    # Parse --dev flag, --toolchain flag, --link-type flag and remaining build args
     dev_mode = False
     toolchain = "auto"
+    link_type = "both"
     build_args = []
 
     for arg in sys.argv[3:]:
@@ -542,6 +608,8 @@ def main():
             dev_mode = True
         elif arg.startswith("--toolchain="):
             toolchain = arg.split("=", 1)[1]
+        elif arg.startswith("--link-type="):
+            link_type = arg.split("=", 1)[1]
         else:
             build_args.append(arg)
 
@@ -549,7 +617,7 @@ def main():
         build_args = None
 
     try:
-        builder = DockerBuilder(platform, project_dir, dev_mode=dev_mode, toolchain=toolchain)
+        builder = DockerBuilder(platform, project_dir, dev_mode=dev_mode, toolchain=toolchain, link_type=link_type)
         builder.check_docker()
         builder.build_image()
         builder.run_build(build_args)

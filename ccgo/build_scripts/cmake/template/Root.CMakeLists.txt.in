@@ -646,10 +646,121 @@ else()
         message(STATUS "TARGET_SRC_LINKS=${TARGET_SRC_LINKS}")
 
     elseif(APPLE)
-        # Apple platforms (iOS/macOS): Static libraries are built and installed
-        # via src/CMakeLists.txt and assembled into frameworks by build scripts
+        ### Apple (macOS/iOS) Libraries Build (Static/Shared)
+        # Link all source module static libraries
+        foreach(DIR IN LISTS SRC_SUB_DIR_LIST)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-${DIR})
+        endforeach()
+
+        # Include Apple-specific public API headers
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} include/${PROJECT_NAME}/api/apple/*.h)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+        source_group(api FILES ${SELF_TEMP_SRC_FILES})
+
+        # Include Apple-specific implementation
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/apple/*.h src/api/apple/*.mm src/api/apple/*.m)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+        source_group(src\\api FILES ${SELF_TEMP_SRC_FILES})
+
+        # ========== Build Shared Library ==========
+        if(CCGO_BUILD_SHARED AND NOT IOS AND NOT TVOS AND NOT WATCHOS)
+            # Only build .dylib for macOS, not for iOS/tvOS/watchOS
+            set(SHARED_TARGET ${PROJECT_NAME})
+            add_library(${SHARED_TARGET} SHARED ${SELF_SRC_FILES})
+
+            target_link_libraries(${SHARED_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            target_compile_options(${SHARED_TARGET} PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+            target_include_directories(${SHARED_TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+
+            set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
+
+            # Set install name for proper dylib loading
+            set_target_properties(${SHARED_TARGET} PROPERTIES
+                INSTALL_NAME_DIR "@rpath"
+                BUILD_WITH_INSTALL_RPATH TRUE
+                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
+            )
+
+            install(TARGETS ${SHARED_TARGET}
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared)
+
+            message(STATUS "Building macOS shared library: lib${PROJECT_NAME}.dylib")
+        endif()
+
     elseif(MSVC)
-        # Windows (MSVC): Static libraries are built and installed
-        # via src/CMakeLists.txt and merged by build scripts
+        ### Windows (MSVC) Libraries Build (Static/Shared)
+        # Link all source module static libraries
+        foreach(DIR IN LISTS SRC_SUB_DIR_LIST)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-${DIR})
+        endforeach()
+
+        # Include Windows-specific implementation
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/windows/*.h src/api/windows/*.cpp)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+        source_group(src\\api FILES ${SELF_TEMP_SRC_FILES})
+
+        # ========== Build Shared Library (DLL) ==========
+        if(CCGO_BUILD_SHARED)
+            set(SHARED_TARGET ${PROJECT_NAME})
+            add_library(${SHARED_TARGET} SHARED ${SELF_SRC_FILES})
+
+            target_link_libraries(${SHARED_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            target_include_directories(${SHARED_TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+
+            # Enable DLL export
+            target_compile_definitions(${SHARED_TARGET} PRIVATE COMM_ENABLE_EXPORTS=1)
+
+            set_target_properties(${SHARED_TARGET} PROPERTIES
+                RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
+                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
+                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
+            )
+
+            install(TARGETS ${SHARED_TARGET}
+                    RUNTIME DESTINATION ${SELF_LIBS_OUT}/shared
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/shared)
+
+            message(STATUS "Building Windows shared library: ${PROJECT_NAME}.dll")
+        endif()
+
+    else()
+        ### Linux/Unix Libraries Build (Static/Shared)
+        # Link all source module static libraries
+        foreach(DIR IN LISTS SRC_SUB_DIR_LIST)
+            list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-${DIR})
+        endforeach()
+
+        # Include Native API headers
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} include/${PROJECT_NAME}/api/native/*.h)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+        source_group(api FILES ${SELF_TEMP_SRC_FILES})
+
+        # ========== Build Shared Library ==========
+        if(CCGO_BUILD_SHARED)
+            set(SHARED_TARGET ${PROJECT_NAME})
+            add_library(${SHARED_TARGET} SHARED ${SELF_SRC_FILES})
+
+            target_link_libraries(${SHARED_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            target_compile_options(${SHARED_TARGET} PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+            target_include_directories(${SHARED_TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+
+            set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
+
+            # Set SO-NAME for proper runtime linking
+            set_target_properties(${SHARED_TARGET} PROPERTIES
+                SOVERSION 1
+                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
+            )
+
+            install(TARGETS ${SHARED_TARGET}
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared)
+
+            message(STATUS "Building Linux shared library: lib${PROJECT_NAME}.so")
+        endif()
+
     endif()
 endif()

@@ -125,7 +125,10 @@ ccgo build <target> [options]
 - `--arch <architectures>` - Comma-separated architecture list (Android/OHOS only)
   - Android: `armeabi-v7a`, `arm64-v8a`, `x86_64`
   - OHOS: `armeabi-v7a`, `arm64-v8a`, `x86_64`
+- `--link-type <type>` - Library link type: `static`, `shared`, or `both` (default: `both`)
+- `--toolchain <toolchain>` - Windows toolchain: `auto`, `msvc`, or `mingw` (default: `auto`)
 - `--ide-project` - Generate IDE project files
+- `--docker` - Build using Docker (cross-platform builds)
 
 **Examples:**
 ```bash
@@ -144,8 +147,21 @@ ccgo build macos
 # Build for Windows
 ccgo build windows
 
+# Build for Windows with specific toolchain
+ccgo build windows --toolchain msvc
+ccgo build windows --toolchain mingw
+
 # Build for Linux
 ccgo build linux
+
+# Build static libraries only
+ccgo build linux --link-type static
+
+# Build shared libraries only
+ccgo build macos --link-type shared
+
+# Build both static and shared libraries (default)
+ccgo build ios --link-type both
 
 # Build Kotlin Multiplatform library
 ccgo build kmp
@@ -155,6 +171,10 @@ ccgo build conan
 
 # Generate IDE project for Android
 ccgo build android --ide-project
+
+# Cross-platform build using Docker
+ccgo build linux --docker
+ccgo build windows --docker
 ```
 
 ### 3. Testing & Benchmarking

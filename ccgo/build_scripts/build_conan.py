@@ -59,7 +59,8 @@ def check_conan_installation() -> bool:
             ["conan", "--version"],
             capture_output=True,
             text=True,
-            check=False
+            check=False,
+            timeout=10  # 10 seconds timeout
         )
         if result.returncode == 0:
             print(f"Found Conan: {result.stdout.strip()}")
@@ -68,6 +69,12 @@ def check_conan_installation() -> bool:
             return True
         return False
     except FileNotFoundError:
+        print("Conan not found. Please install Conan first:")
+        print("  pip install conan")
+        print("  or visit: https://conan.io/downloads")
+        return False
+    except subprocess.TimeoutExpired:
+        print("Conan check timed out. Please verify Conan installation.")
         return False
 
 
@@ -79,7 +86,8 @@ def ensure_conan_profile() -> None:
             ["conan", "profile", "show"],
             capture_output=True,
             text=True,
-            check=False
+            check=False,
+            timeout=10
         )
         if result.returncode != 0:
             # Profile doesn't exist, create it
@@ -88,9 +96,12 @@ def ensure_conan_profile() -> None:
                 ["conan", "profile", "detect"],
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
+                timeout=30
             )
             print("Conan default profile created")
+    except subprocess.TimeoutExpired:
+        print("Warning: Conan profile check timed out")
     except Exception as e:
         print(f"Warning: Could not check/create Conan profile: {e}")
 

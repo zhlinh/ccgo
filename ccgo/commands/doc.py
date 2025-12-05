@@ -120,7 +120,7 @@ class Doc(CliCommand):
                 config_path = os.path.join(project_dir, "CCGO.toml")
                 project_subdir = project_dir
             else:
-                print("ERROR: CCGO.toml not found in project directory")
+                print("❌ ERROR: CCGO.toml not found in project directory")
                 print("Please ensure you are in a CCGO project directory")
                 sys.exit(1)
 
@@ -139,17 +139,17 @@ class Doc(CliCommand):
         print(f"Build script: {build_script_path}")
 
         # Determine the mode
+        cmd_args = []
         if args.open:
-            # Mode 2: Build and open in browser
-            mode = 2
             print("Mode: Build and open in browser\n")
+            cmd_args.append("--open")
         else:
-            # Mode 1: Just build
-            mode = 1
             print("Mode: Build only\n")
 
         # Build the command
-        cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' {mode}"
+        cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'"
+        if cmd_args:
+            cmd = f"{cmd} {' '.join(cmd_args)}"
         print(f"Execute command:")
         print(cmd)
         print()

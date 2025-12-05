@@ -58,10 +58,8 @@ except ImportError:
 # Script configuration
 # Get the current working directory (project directory)
 SCRIPT_PATH = os.getcwd()
-# Directory name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
 # CMake generator selection (Windows requires Unix Makefiles for Android builds)
 if system_is_windows():
@@ -143,7 +141,7 @@ def get_android_strip_path(arch):
     return strip_path
 
 
-def build_android(incremental, arch, target_option, tag, link_type='both', jobs=None):
+def build_android(incremental, arch, target_option, link_type='both', jobs=None):
     """
     Build native libraries for a specific Android ABI.
 
@@ -358,56 +356,181 @@ def build_android(incremental, arch, target_option, tag, link_type='both', jobs=
     return True
 
 
-def print_build_results():
+def archive_android_project(link_type='both', archs=None):
     """
-    Print Android build results from target directory.
+    Archive Android native libraries with unified structure.
 
-    This function displays the build artifacts that were created by Gradle's archiveProject task:
-    1. AAR file
-    2. ARCHIVE zip (created by Gradle)
-    3. Other build artifacts
+    This function creates two archive packages:
+    1. Main package: {PROJECT_NAME}_ANDROID_SDK-{version}.zip
+       - lib/static/{arch}/lib{project}.a (if link_type is static or both)
+       - lib/shared/{arch}/lib{project}.so (if link_type is shared or both)
+       - haars/{project}.aar (if exists)
+       - include/{project}/
+       - build_info.json
+    2. Symbols package: {PROJECT_NAME}_ANDROID_SDK-{version}-SYMBOLS.zip
+       - obj/{arch}/*.so (unstripped shared libs)
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
+        archs: List of architectures built (for metadata)
+
+    Output:
+        - target/{PROJECT_NAME}_ANDROID_SDK-{version}.zip
+        - target/{PROJECT_NAME}_ANDROID_SDK-{version}-SYMBOLS.zip
+    """
+    print("==================Archive Android Project========================")
+
+    # Get version info using unified function
+    _, _, full_version = get_archive_version_info(SCRIPT_PATH)
+
+    # Define paths
+    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    android_sdk_path = os.path.join(SCRIPT_PATH, ANDROID_PROJECT_PATH)
+
+    # Create target directory
+    os.makedirs(bin_dir, exist_ok=True)
+
+    # Prepare static libs mapping: lib/static/{arch}/*.a
+    static_libs = {}
+    if link_type in ('static', 'both'):
+        static_libs_base = os.path.join(android_sdk_path, "libs", "static")
+        if os.path.exists(static_libs_base):
+            for arch in os.listdir(static_libs_base):
+                arch_dir = os.path.join(static_libs_base, arch)
+                if os.path.isdir(arch_dir):
+                    for lib_file in glob.glob(os.path.join(arch_dir, "*.a")):
+                        lib_name = os.path.basename(lib_file)
+                        arc_path = get_unified_lib_path("static", arch=arch, lib_name=lib_name)
+                        static_libs[arc_path] = lib_file
+
+    # Prepare shared libs mapping: lib/shared/{arch}/*.so
+    shared_libs = {}
+    if link_type in ('shared', 'both'):
+        shared_libs_base = os.path.join(android_sdk_path, "libs", "shared")
+        if os.path.exists(shared_libs_base):
+            for arch in os.listdir(shared_libs_base):
+                arch_dir = os.path.join(shared_libs_base, arch)
+                if os.path.isdir(arch_dir):
+                    for lib_file in glob.glob(os.path.join(arch_dir, "*.so")):
+                        lib_name = os.path.basename(lib_file)
+                        arc_path = get_unified_lib_path("shared", arch=arch, lib_name=lib_name)
+                        shared_libs[arc_path] = lib_file
+
+    # Prepare AAR files mapping: haars/*.aar
+    haars = {}
+    bin_android_dir = os.path.join(bin_dir, "android")
+    # Check for AAR in target/android/ (from Gradle)
+    if os.path.exists(bin_android_dir):
+        for aar_file in glob.glob(os.path.join(bin_android_dir, "*.aar")):
+            aar_name = os.path.basename(aar_file)
+            arc_path = get_unified_haar_path(aar_name)
+            haars[arc_path] = aar_file
+
+    # Prepare include directories mapping
+    include_dirs = {}
+    headers_src = os.path.join(SCRIPT_PATH, "include")
+    if os.path.exists(headers_src):
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        include_dirs[arc_path] = headers_src
+
+    # Prepare symbols (unstripped shared libs from obj/local/)
+    obj_files = {}
+    if link_type in ('shared', 'both'):
+        obj_base = os.path.join(android_sdk_path, "obj", "local")
+        if os.path.exists(obj_base):
+            for arch in os.listdir(obj_base):
+                arch_dir = os.path.join(obj_base, arch)
+                if os.path.isdir(arch_dir):
+                    for so_file in glob.glob(os.path.join(arch_dir, "*.so")):
+                        lib_name = os.path.basename(so_file)
+                        arc_path = get_unified_obj_path(arch, lib_name)
+                        obj_files[arc_path] = so_file
+
+    # Create unified archive packages
+    main_zip_path, symbols_zip_path = create_unified_archive(
+        output_dir=bin_dir,
+        project_name=PROJECT_NAME,
+        platform_name="ANDROID",
+        version=full_version,
+        link_type=link_type,
+        static_libs=static_libs if static_libs else None,
+        shared_libs=shared_libs if shared_libs else None,
+        include_dirs=include_dirs,
+        haars=haars if haars else None,
+        obj_files=obj_files if obj_files else None,
+        architectures=archs or ["armeabi-v7a", "arm64-v8a", "x86_64"],
+    )
+
+    print("\n==================Archive Complete========================")
+    print(f"Main package: {main_zip_path}")
+    if symbols_zip_path:
+        print(f"Symbols package: {symbols_zip_path}")
+
+    return main_zip_path, symbols_zip_path
+
+
+def print_build_results(link_type='both'):
+    """
+    Print Android build results from target/android directory.
+
+    This function displays the build artifacts:
+    - Main SDK ZIP packages
+    - Symbols ZIP packages (-SYMBOLS.zip)
+    - AAR files
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
 
     Note:
-        Android's Gradle archiveProject task already handles the complete
-        archiving process, so this function only needs to display the results.
-        The archiveProject task creates the ARCHIVE zip with AAR, symbol libraries, etc.
+        Android's unified archive structure uses:
+        - Main package: lib/static/, lib/shared/, haars/, include/
+        - Symbols package: obj/{arch}/
     """
     print("==================Android Build Results========================")
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
-
-    # Check if target directory exists
-    if not os.path.exists(bin_dir):
-        print(
-            f"ERROR: target directory not found. Please run './gradlew :archiveProject' first."
-        )
-        sys.exit(1)
-
-    # Check for build artifacts
-    aar_files = glob.glob(f"{bin_dir}/*.aar")
-    archive_zips = glob.glob(f"{bin_dir}/(ARCHIVE)*.zip")
-
-    if not aar_files and not archive_zips:
-        print(f"ERROR: No build artifacts found in {bin_dir}")
-        print("Please ensure './gradlew :archiveProject' was executed successfully.")
-        sys.exit(1)
-
-    # Create target/android directory for platform-specific artifacts
     bin_android_dir = os.path.join(bin_dir, "android")
+
+    # Check for SDK ZIP packages
+    all_zips = glob.glob(f"{bin_dir}/*.zip")
+    sdk_zips = [
+        f for f in all_zips
+        if "ANDROID_SDK" in os.path.basename(f) and not os.path.basename(f).startswith("_temp_")
+    ]
+
+    # Also check for AAR files in target/android (from Gradle)
+    aar_files = []
+    if os.path.exists(bin_android_dir):
+        aar_files = glob.glob(f"{bin_android_dir}/*.aar")
+
+    if not sdk_zips and not aar_files:
+        print(f"ERROR: No build artifacts found in {bin_dir}")
+        print("Please ensure build completed successfully.")
+        # Try to create archive from native build output
+        android_sdk_path = os.path.join(SCRIPT_PATH, ANDROID_PROJECT_PATH)
+        if os.path.exists(os.path.join(android_sdk_path, "libs")):
+            print("Found native libs, creating archive...")
+            archive_android_project(link_type)
+            # Re-check for zips
+            sdk_zips = [
+                f for f in glob.glob(f"{bin_dir}/*.zip")
+                if "ANDROID_SDK" in os.path.basename(f)
+            ]
+        else:
+            sys.exit(1)
+
+    # Ensure target/android directory exists
     os.makedirs(bin_android_dir, exist_ok=True)
 
-    # Move all .aar and (ARCHIVE)*.zip files to target/android/
+    # Move SDK ZIP files to target/android/
     artifacts_moved = []
-    for aar_file in aar_files:
-        dest = os.path.join(bin_android_dir, os.path.basename(aar_file))
-        shutil.move(aar_file, dest)
-        artifacts_moved.append(os.path.basename(aar_file))
-
-    for archive_zip in archive_zips:
-        dest = os.path.join(bin_android_dir, os.path.basename(archive_zip))
-        shutil.move(archive_zip, dest)
-        artifacts_moved.append(os.path.basename(archive_zip))
+    for sdk_zip in sdk_zips:
+        dest = os.path.join(bin_android_dir, os.path.basename(sdk_zip))
+        if os.path.exists(dest):
+            os.remove(dest)
+        shutil.move(sdk_zip, dest)
+        artifacts_moved.append(os.path.basename(sdk_zip))
 
     if artifacts_moved:
         print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/android/")
@@ -419,26 +542,27 @@ def print_build_results():
     print("-" * 60)
 
     # List all files in target/android directory with sizes
-    for item in sorted(os.listdir(bin_android_dir)):
-        item_path = os.path.join(bin_android_dir, item)
-        if os.path.isfile(item_path):
-            size = os.path.getsize(item_path) / (1024 * 1024)  # MB
-            print(f"  {item} ({size:.2f} MB)")
-        elif os.path.isdir(item_path):
-            # Calculate directory size
-            total_size = 0
-            for dirpath, dirnames, filenames in os.walk(item_path):
-                for filename in filenames:
-                    filepath = os.path.join(dirpath, filename)
-                    total_size += os.path.getsize(filepath)
-            size = total_size / (1024 * 1024)  # MB
-            print(f"  {item}/ ({size:.2f} MB)")
+    if os.path.exists(bin_android_dir):
+        for item in sorted(os.listdir(bin_android_dir)):
+            item_path = os.path.join(bin_android_dir, item)
+            if os.path.isfile(item_path):
+                size = os.path.getsize(item_path) / (1024 * 1024)  # MB
+                print(f"  {item} ({size:.2f} MB)")
+            elif os.path.isdir(item_path):
+                # Calculate directory size
+                total_size = 0
+                for dirpath, dirnames, filenames in os.walk(item_path):
+                    for filename in filenames:
+                        filepath = os.path.join(dirpath, filename)
+                        total_size += os.path.getsize(filepath)
+                size = total_size / (1024 * 1024)  # MB
+                print(f"  {item}/ ({size:.2f} MB)")
 
     print("-" * 60)
     print("==================Build Complete========================")
 
 
-def main(incremental, build_archs, target_option="", tag="", link_type='both', jobs=None):
+def main(incremental, build_archs, target_option="", link_type='both', jobs=None):
     """
     Main entry point for building Android native libraries across multiple ABIs.
 
@@ -479,14 +603,14 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both', j
     if jobs is None or jobs <= 0:
         jobs = multiprocessing.cpu_count()
 
-    print(f"main tag {tag}, archs:{build_archs}, link_type:{link_type}, jobs:{jobs}")
+    print(f"main archs:{build_archs}, link_type:{link_type}, jobs:{jobs}")
 
     # generate verinfo.h
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
+
         incremental=incremental,
         platform="android",
     )
@@ -494,7 +618,7 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both', j
     has_error = False
     success_archs = []
     for arch in build_archs:
-        if not build_android(incremental, arch, target_option, tag, link_type, jobs):
+        if not build_android(incremental, arch, target_option, link_type, jobs):
             has_error = True
             break
         success_archs.append(arch)
@@ -526,14 +650,18 @@ def main(incremental, build_archs, target_option="", tag="", link_type='both', j
 
 
 # Command-line interface for Android builds
-# New argument-based interface:
-# Default (no args): Print build results from target directory (Gradle archiveProject already created archive)
-# --native-only: Build native libraries only
+# Argument-based interface:
+# Default (no args): Print build results from target directory
+# --native-only: Build native libraries only (for Gradle flow Step 1)
+# --native-only --archive: Build native libraries AND create archive (for Docker builds)
+# --archive-only: Create unified archive only (for Gradle flow Step 3, after Gradle buildAAR)
 # --arch: Specify architectures (comma-separated)
 #
 # Usage examples:
 # python3 build_android.py                              # Print build results (default)
-# python3 build_android.py --native-only                # Build native libs (all archs)
+# python3 build_android.py --native-only                # Build native libs only (Gradle flow Step 1)
+# python3 build_android.py --native-only --archive      # Build native libs + archive (Docker)
+# python3 build_android.py --archive-only               # Create archive only (Gradle flow Step 3)
 # python3 build_android.py --native-only --arch arm64-v8a,armeabi-v7a
 if __name__ == "__main__":
     import argparse
@@ -545,7 +673,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--native-only",
         action="store_true",
-        help="Only build native libraries (skip archive)",
+        help="Only build native libraries (skip Gradle packaging)",
+    )
+    parser.add_argument(
+        "--archive",
+        action="store_true",
+        help="Create archive after native build (use with --native-only for Docker builds)",
+    )
+    parser.add_argument(
+        "--archive-only",
+        action="store_true",
+        help="Create unified archive only (for Gradle flow Step 3, after Gradle buildAAR)",
     )
     parser.add_argument(
         "--arch",
@@ -574,14 +712,26 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.native_only:
-        # Build native libraries only
+    if args.archive_only:
+        # Create unified archive only (for Gradle flow Step 3)
+        # Native libs were built in Step 1, AAR was built by Gradle in Step 2
+        print("==================Android Archive Only Mode==================")
+        archs = [arch.strip() for arch in args.arch.split(",")]
+        archive_android_project(link_type=args.link_type, archs=archs)
+        print_build_results(link_type=args.link_type)
+    elif args.native_only:
+        # Build native libraries
         archs = [arch.strip() for arch in args.arch.split(",")]
         print(
             f"==================Android Native Build, archs: {archs}, link_type: {args.link_type}, jobs: {args.jobs or 'auto'}=================="
         )
-        main(args.incremental, archs, tag="native", link_type=args.link_type, jobs=args.jobs)
+        main(args.incremental, archs, link_type=args.link_type, jobs=args.jobs)
+
+        # Create archive if requested (for Docker builds)
+        if args.archive:
+            archive_android_project(link_type=args.link_type, archs=archs)
+            print_build_results(link_type=args.link_type)
     else:
-        # Default: Print build results (Gradle archiveProject already handles archiving)
+        # Default: Print build results
         print("==================Android Build Results Mode==================")
-        print_build_results()
+        print_build_results(link_type=args.link_type)

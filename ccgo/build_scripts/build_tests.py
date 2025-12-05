@@ -29,12 +29,8 @@ except ImportError:
     from build_utils import *
 
 SCRIPT_PATH = os.getcwd()
-# dir name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-
-# Ensure cmake directory exists in project
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
 
 BUILD_OUT_PATH = os.path.join("cmake_build", "Tests")
@@ -71,10 +67,10 @@ else:
     GEN_PROJECT_CMD = f'cmake ../.. -G "CodeLite - Unix Makefiles" {TESTS_EXTRA_FLAGS}'
 
 
-def build_googletest(incremental, tag=""):
+def build_googletest(incremental):
     before_time = time.time()
     print(
-        f"==================build_googletest with tag: {tag}, install path: {INSTALL_PATH} ========================"
+        f"==================build_googletest install path: {INSTALL_PATH} ========================"
     )
 
     # generate verinfo.h
@@ -82,7 +78,6 @@ def build_googletest(incremental, tag=""):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         incremental=incremental,
         platform="tests",
     )
@@ -134,14 +129,13 @@ def run_googletest(filter_rules=""):
     return True
 
 
-def gen_googletest_project(tag=""):
-    print("==================gen_macos_project========================")
+def gen_googletest_project():
+    print("==================gen_googletest_project========================")
     # generate verinfo.h
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         platform="tests",
     )
     clean(BUILD_OUT_PATH)
@@ -166,60 +160,85 @@ def gen_googletest_project(tag=""):
     return True
 
 
-def main(choose, filter_rules=""):
-    print(f"==========Choose num: [{choose}], filter: [{filter_rules}]===========")
+def main(filter_rules=""):
+    """
+    Main entry point for building and running tests.
+
+    Args:
+        filter_rules: Optional gtest filter rules (e.g., --gtest_filter=TestSuite.*)
+    """
     if system_is_windows() and (not check_vs_env()):
-        return
+        sys.exit(1)
 
-    result = True
-    if choose == "1":
-        result = build_googletest(incremental=False, tag=choose)
-    elif choose == "2":
-        result = gen_googletest_project(tag=choose)
-    elif choose == "3":
-        # build and run
-        if not build_googletest(incremental=True, tag=choose):
-            return False
-        result = run_googletest(filter_rules=filter_rules)
-    elif choose == "4":
-        # run
-        result = run_googletest(filter_rules=filter_rules)
-    else:
-        result = build_googletest(incremental=False, tag=choose)
+    if not build_googletest(incremental=False):
+        raise RuntimeError("Exception occurs when build googletest")
 
-    if not result:
-        raise RuntimeError("Exception occurs when build or run googletest")
+    if filter_rules:
+        if not run_googletest(filter_rules=filter_rules):
+            raise RuntimeError("Exception occurs when run googletest")
 
 
+# Command-line interface for test builds
+#
+# Usage:
+#   python build_tests.py                    # Build tests (default)
+#   python build_tests.py --ide-project      # Generate IDE project
+#   python build_tests.py --run              # Build and run tests
+#   python build_tests.py --run TestSuite    # Build and run specific tests
+#   python build_tests.py --run-only         # Run tests without building
 if __name__ == "__main__":
-    while True:
-        if len(sys.argv) >= 2:
-            filter = ""
-            if len(sys.argv) >= 3:
-                gtest_filter_list = []
-                for i in range(2, len(sys.argv)):
-                    cur_filter = sys.argv[i]
-                    if not cur_filter.startswith("-"):
-                        if ("." not in cur_filter) and (not cur_filter.endswith("*")):
-                            # add '*' at the end if not begins with '-'
-                            cur_filter = cur_filter + "*"
-                        gtest_filter_list.append(cur_filter)
-                    else:
-                        filter = f"{filter} {cur_filter}"
-                if len(gtest_filter_list) > 0:
-                    # add '--gtest_filter=' if gtest_filter_list is not empty, ":" as separator
-                    filter = f'{filter} --gtest_filter={":".join(gtest_filter_list)}'
-            main(sys.argv[1], filter)
-            break
-        else:
-            num = str(
-                input(
-                    f"Enter menu:(or usage: python3 {os.path.basename(__file__)} <tag> <gtest_filters separated by space>)"
-                    f"\n1. Clean && Build {PROJECT_NAME_LOWER} googletest"
-                    f"\n2. Gen {PROJECT_NAME_LOWER} googletest Project"
-                    f"\n3. Build && Run {PROJECT_NAME_LOWER} googletest"
-                    f"\n4. Exit\n"
-                )
-            )
-            main(num)
-            break
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Build and run googletest",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--ide-project",
+        action="store_true",
+        help="Generate IDE project instead of building",
+    )
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        help="Build and run tests after building",
+    )
+    parser.add_argument(
+        "--run-only",
+        action="store_true",
+        help="Run tests without building (assumes already built)",
+    )
+    parser.add_argument(
+        "filters",
+        nargs="*",
+        help="Test filters (e.g., TestSuite TestCase.Test)",
+    )
+
+    args = parser.parse_args()
+
+    # Build filter string from filter arguments
+    filter_rules = ""
+    if args.filters:
+        gtest_filter_list = []
+        for cur_filter in args.filters:
+            if not cur_filter.startswith("-"):
+                if ("." not in cur_filter) and (not cur_filter.endswith("*")):
+                    cur_filter = cur_filter + "*"
+                gtest_filter_list.append(cur_filter)
+            else:
+                filter_rules = f"{filter_rules} {cur_filter}"
+        if gtest_filter_list:
+            filter_rules = f'{filter_rules} --gtest_filter={":".join(gtest_filter_list)}'
+
+    if args.ide_project:
+        gen_googletest_project()
+    elif args.run_only:
+        if not run_googletest(filter_rules=filter_rules):
+            raise RuntimeError("Exception occurs when run googletest")
+    elif args.run:
+        if not build_googletest(incremental=True):
+            raise RuntimeError("Exception occurs when build googletest")
+        if not run_googletest(filter_rules=filter_rules):
+            raise RuntimeError("Exception occurs when run googletest")
+    else:
+        main(filter_rules=filter_rules)

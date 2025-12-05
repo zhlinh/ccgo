@@ -29,12 +29,8 @@ except ImportError:
     from build_utils import *
 
 SCRIPT_PATH = os.getcwd()
-# dir name as project name
-PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-
-# Ensure cmake directory exists in project
-PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-PROJECT_RELATIVE_PATH = PROJECT_NAME.lower()
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
+PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
 if system_is_windows():
     CMAKE_GENERATOR = '-G "Unix Makefiles"'
@@ -50,10 +46,10 @@ DOCS_BUILD_CMD = (
 )
 
 
-def build_docs(incremental, tag=""):
+def build_docs(incremental):
     before_time = time.time()
     print(
-        f"==================build docs with tag: {tag}, install path: {INSTALL_PATH} ========================"
+        f"==================build docs install path: {INSTALL_PATH} ========================"
     )
 
     # generate verinfo.h
@@ -61,7 +57,6 @@ def build_docs(incremental, tag=""):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         incremental=incremental,
         platform="docs",
     )
@@ -90,8 +85,8 @@ def build_docs(incremental, tag=""):
     return True
 
 
-def run_docs(incremental, tag=""):
-    if not build_docs(incremental, tag):
+def run_docs(incremental):
+    if not build_docs(incremental):
         return False
     dst_target_path = INSTALL_PATH + f"/_html/index.html"
     print("---------")
@@ -100,38 +95,38 @@ def run_docs(incremental, tag=""):
     return True
 
 
-def main(choose, filter_rules=""):
-    print(f"==========Choose num: [{choose}], filter: [{filter_rules}]===========")
+def main(open_browser=False):
+    """
+    Main entry point for building documentation.
 
-    result = True
-    if choose == "1":
-        result = build_docs(False, choose)
-    elif choose == "2":
-        result = run_docs(False, choose)
+    Args:
+        open_browser: If True, open the documentation in browser after building
+    """
+    if open_browser:
+        if not run_docs(False):
+            raise RuntimeError("Exception occurs when build or run docs")
     else:
-        return
-
-    if not result:
-        raise RuntimeError("Exception occurs when build or run docs")
+        if not build_docs(False):
+            raise RuntimeError("Exception occurs when build docs")
 
 
+# Command-line interface for docs builds
+#
+# Usage:
+#   python build_docs.py              # Build documentation (default)
+#   python build_docs.py --open       # Build and open in browser
 if __name__ == "__main__":
-    while True:
-        if len(sys.argv) >= 2:
-            tag = ""
-            if len(sys.argv) >= 3:
-                tag = sys.argv[2]
-            main(sys.argv[1], tag)
+    import argparse
 
-            break
-        else:
-            num = str(
-                input(
-                    "Enter menu:"
-                    + f"\n1. Clean && build {PROJECT_NAME_LOWER} docs"
-                    + f"\n2. Run docs"
-                    + f"\n3. Exit"
-                )
-            )
-            main(num)
-            break
+    parser = argparse.ArgumentParser(
+        description="Build documentation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open documentation in browser after building",
+    )
+
+    args = parser.parse_args()
+    main(open_browser=args.open)

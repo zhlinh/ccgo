@@ -132,7 +132,7 @@ class Test(CliCommand):
                 config_path = os.path.join(project_dir, "CCGO.toml")
                 project_subdir = project_dir
             else:
-                print("ERROR: CCGO.toml not found in project directory")
+                print("\n❌ ERROR: CCGO.toml not found in project directory")
                 print("Please ensure you are in a CCGO project directory")
                 sys.exit(1)
 
@@ -151,29 +151,30 @@ class Test(CliCommand):
         print(f"Build script: {build_script_path}")
 
         # Determine the mode and build filter arguments
+        cmd_args = []
+        gtest_filter = ""
+
         if args.ide_project:
-            # Mode 2: Generate IDE project
-            mode = 2
             print("Mode: Generate IDE project\n")
-            gtest_filter = ""
+            cmd_args.append("--ide-project")
         elif args.build_only:
-            # Mode 1: Build only
-            mode = 1
             print("Mode: Build tests only\n")
-            gtest_filter = ""
+            # Default mode, no flag needed
         elif args.run_only:
-            # Mode 4: Run only
-            mode = 4
             print("Mode: Run tests only\n")
+            cmd_args.append("--run-only")
             gtest_filter = self._build_filter_args(args)
         else:
-            # Mode 3: Build and run (default)
-            mode = 3
             print("Mode: Build and run tests\n")
+            cmd_args.append("--run")
             gtest_filter = self._build_filter_args(args)
 
         # Build the command
-        cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' {mode}"
+        cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'"
+
+        # Add argparse flags
+        if cmd_args:
+            cmd = f"{cmd} {' '.join(cmd_args)}"
 
         # Add filter arguments if any
         if gtest_filter:

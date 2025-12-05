@@ -56,35 +56,131 @@ except ImportError:
 
 # Script configuration
 SCRIPT_PATH = os.getcwd()
-
-# Load project configuration from CCGO.toml
-# If CCGO.toml doesn't exist or returns default "SDK", fallback to directory name
-config = load_ccgo_config()
-if config["PROJECT_NAME"] == "SDK" and not os.path.exists(os.path.join(SCRIPT_PATH, "CCGO.toml")):
-    # Fallback to directory name if CCGO.toml doesn't exist
-    PROJECT_NAME = os.path.basename(SCRIPT_PATH).upper()
-    PROJECT_NAME_LOWER = PROJECT_NAME.lower()
-else:
-    # Use project name from CCGO.toml
-    PROJECT_NAME = config["PROJECT_NAME"]
-    PROJECT_NAME_LOWER = config["PROJECT_NAME_LOWER"]
+# PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
 PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
-# Build output paths
-BUILD_OUT_PATH = "cmake_build/Linux"
-INSTALL_PATH = BUILD_OUT_PATH + "/Linux.out"
+# Build output paths (base path, actual paths include link_type subdirectory)
+BUILD_OUT_PATH_BASE = "cmake_build/Linux"
+
+
+def get_build_out_path(link_type):
+    """Get build output path for specified link type."""
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}"
+
+
+def get_install_path(link_type):
+    """Get install path for specified link type."""
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}/Linux.out"
+
 
 # CMake build command for Linux Release configuration
 # Uses Unix Makefiles generator with parallel build
 # Parameters: ccgo_cmake_dir, link_type_flags, jobs
-BUILD_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
+# Note: Uses ../../.. because build directory is now cmake_build/Linux/{link_type}/
+BUILD_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # CodeLite IDE project generation command
 # CodeLite is a lightweight, cross-platform C/C++ IDE
-GEN_PROJECT_CMD = 'cmake ../.. -G "CodeLite - Unix Makefiles" -DCCGO_CMAKE_DIR="%s"'
+# Note: IDE project uses static directory by default
+GEN_PROJECT_CMD = 'cmake ../../.. -G "CodeLite - Unix Makefiles" -DCCGO_CMAKE_DIR="%s"'
 
 
-def build_linux(target_option="", tag="", link_type='static', jobs=None):
+def _build_linux_single(target_option, single_link_type, jobs):
+    """
+    Build Linux library for a single link type (static or shared).
+
+    This internal function handles the actual build for one link type.
+
+    Args:
+        target_option: Additional CMake target options
+        single_link_type: Either 'static' or 'shared'
+        jobs: Number of parallel build jobs
+    """
+    build_out_path = get_build_out_path(single_link_type)
+    install_path = get_install_path(single_link_type)
+
+    print(f"\n==================build_linux ({single_link_type}, jobs: {jobs})========================")
+
+    # Set link type CMake flags
+    if single_link_type == 'static':
+        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=OFF"
+    else:  # shared
+        link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
+
+    # Build command with link_type_flags and jobs
+    build_cmd = BUILD_CMD % (CCGO_CMAKE_DIR, link_type_flags, jobs)
+
+    clean(build_out_path)
+    os.chdir(build_out_path)
+
+    ret = os.system(build_cmd)
+    os.chdir(SCRIPT_PATH)
+    if ret != 0:
+        print("!!!!!!!!!!!build fail!!!!!!!!!!!!!!!")
+        print("ERROR: Native build failed. Stopping immediately.")
+        sys.exit(1)  # Exit immediately on build failure
+
+    # Dynamically find the actual install directory (could be Darwin.out, Linux.out, etc.)
+    # This is needed because CMAKE_SYSTEM_NAME varies by host OS
+    actual_install_path = None
+    for out_dir in glob.glob(build_out_path + "/*.out"):
+        if single_link_type == 'static':
+            if glob.glob(out_dir + "/*.a"):
+                actual_install_path = out_dir
+                print(f"Found install directory: {actual_install_path}")
+                break
+        else:  # shared
+            if glob.glob(out_dir + "/shared/*.so") or glob.glob(out_dir + "/*.so"):
+                actual_install_path = out_dir
+                print(f"Found install directory: {actual_install_path}")
+                break
+
+    if not actual_install_path:
+        # Fallback to default install_path
+        actual_install_path = install_path
+        print(f"Warning: No library files found, using default: {actual_install_path}")
+
+    if single_link_type == 'static':
+        # Merge static libs
+        libtool_src_libs = glob.glob(actual_install_path + "/*.a")
+
+        libtool_dst_lib = actual_install_path + f"/{PROJECT_NAME_LOWER}.a"
+        if not libtool_libs(libtool_src_libs, libtool_dst_lib):
+            print("ERROR: Failed to merge static libraries. Stopping immediately.")
+            sys.exit(1)  # Exit immediately on merge failure
+
+        dst_framework_path = actual_install_path + f"/{PROJECT_NAME_LOWER}.dir"
+        make_static_framework(
+            libtool_dst_lib, dst_framework_path, LINUX_BUILD_COPY_HEADER_FILES, "./"
+        )
+
+        # Check the built library architecture
+        print("\n==================Verifying Built Library========================")
+        final_lib = os.path.join(dst_framework_path, f"{PROJECT_NAME_LOWER}.a")
+        if not check_build_libraries(final_lib, platform_hint="linux"):
+            print("ERROR: Library verification failed!")
+            sys.exit(1)
+
+        print("==================Output========================")
+        print(dst_framework_path)
+    else:  # shared
+        # Check for shared library
+        shared_lib_path = os.path.join(actual_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.so")
+        if not os.path.exists(shared_lib_path):
+            shared_lib_path = os.path.join(actual_install_path, f"lib{PROJECT_NAME_LOWER}.so")
+
+        if os.path.exists(shared_lib_path):
+            print("\n==================Verifying Built Shared Library========================")
+            if not check_build_libraries(shared_lib_path, platform_hint="linux"):
+                print("ERROR: Shared library verification failed!")
+                sys.exit(1)
+            print("==================Output========================")
+            print(shared_lib_path)
+        else:
+            print(f"Warning: Shared library not found at expected location")
+
+
+def build_linux(target_option="", link_type='both', jobs=None):
     """
     Build Linux static library with GCC/Clang toolchain.
 
@@ -97,8 +193,7 @@ def build_linux(target_option="", tag="", link_type='static', jobs=None):
 
     Args:
         target_option: Additional CMake target options (default: '')
-        tag: Version tag string for metadata (default: '')
-        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
         jobs: Number of parallel build jobs (default: CPU count)
 
     Returns:
@@ -106,10 +201,12 @@ def build_linux(target_option="", tag="", link_type='static', jobs=None):
 
     Output:
         - Static library: Linux.out/{project}.dir/{project}.a
+        - Shared library: Linux.out/{project}.dir/{project}.so
         - Headers: Linux.out/{project}.dir/include/
 
     Note:
         The .a file is an archive containing merged static libraries.
+        The .so file is a shared library.
         On Linux, the ar tool is used for merging (similar to libtool on macOS).
         The resulting library can be linked into applications using -l flag.
     """
@@ -119,76 +216,24 @@ def build_linux(target_option="", tag="", link_type='static', jobs=None):
 
     before_time = time.time()
     print(f"==================build_linux (link_type: {link_type}, jobs: {jobs})========================")
+
     # Generate version info header file
     gen_project_revision_file(
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         platform="linux",
     )
 
-    # Add link type CMake flags
-    link_type_flags = ""
-    if link_type == 'static':
-        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=OFF"
-    elif link_type == 'shared':
-        link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
-    else:  # both
-        link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
-
-    # Build command with link_type_flags and jobs
-    build_cmd = BUILD_CMD % (CCGO_CMAKE_DIR, link_type_flags, jobs)
-
-    clean(BUILD_OUT_PATH)
-    os.chdir(BUILD_OUT_PATH)
-
-    ret = os.system(build_cmd)
-    os.chdir(SCRIPT_PATH)
-    if ret != 0:
-        print("!!!!!!!!!!!build fail!!!!!!!!!!!!!!!")
-        print("ERROR: Native build failed. Stopping immediately.")
-        sys.exit(1)  # Exit immediately on build failure
-
-    # Dynamically find the actual install directory (could be Darwin.out, Linux.out, etc.)
-    # This is needed because CMAKE_SYSTEM_NAME varies by host OS
-    actual_install_path = None
-    for out_dir in glob.glob(BUILD_OUT_PATH + "/*.out"):
-        if glob.glob(out_dir + "/*.a"):
-            actual_install_path = out_dir
-            print(f"Found install directory: {actual_install_path}")
-            break
-
-    if not actual_install_path:
-        # Fallback to default INSTALL_PATH
-        actual_install_path = INSTALL_PATH
-        print(f"Warning: No .a files found, using default: {actual_install_path}")
-
-    # add static libs
-    libtool_src_libs = glob.glob(actual_install_path + "/*.a")
-
-    libtool_dst_lib = actual_install_path + f"/{PROJECT_NAME_LOWER}.a"
-    if not libtool_libs(libtool_src_libs, libtool_dst_lib):
-        print("ERROR: Failed to merge static libraries. Stopping immediately.")
-        sys.exit(1)  # Exit immediately on merge failure
-
-    dst_framework_path = actual_install_path + f"/{PROJECT_NAME_LOWER}.dir"
-    make_static_framework(
-        libtool_dst_lib, dst_framework_path, LINUX_BUILD_COPY_HEADER_FILES, "./"
-    )
-
-    # Check the built library architecture
-    print("\n==================Verifying Built Library========================")
-    final_lib = os.path.join(dst_framework_path, f"{PROJECT_NAME_LOWER}.a")
-    if not check_build_libraries(final_lib, platform_hint="linux"):
-        print("ERROR: Library verification failed!")
-        sys.exit(1)
-
-    print("==================Output========================")
-    print(dst_framework_path)
+    # Build for each link type separately to avoid overwriting
+    if link_type == 'both':
+        _build_linux_single(target_option, 'static', jobs)
+        _build_linux_single(target_option, 'shared', jobs)
+    else:
+        _build_linux_single(target_option, link_type, jobs)
 
 
-def gen_linux_project(target_option="", tag=""):
+def gen_linux_project(target_option=""):
     """
     Generate CodeLite project for Linux development and debugging.
 
@@ -198,13 +243,12 @@ def gen_linux_project(target_option="", tag=""):
 
     Args:
         target_option: Additional CMake target options (default: '')
-        tag: Version tag string for metadata (default: '')
 
     Returns:
         bool: True if project generation succeeded, False otherwise
 
     Output:
-        - CodeLite workspace: cmake_build/Linux/{project}.workspace (auto-opened)
+        - CodeLite workspace: cmake_build/Linux/static/{project}.workspace (auto-opened)
 
     Note:
         CodeLite is a lightweight, cross-platform C/C++ IDE with good
@@ -219,11 +263,12 @@ def gen_linux_project(target_option="", tag=""):
         PROJECT_NAME,
         OUTPUT_VERINFO_PATH,
         get_version_name(SCRIPT_PATH),
-        tag,
         platform="linux",
     )
-    clean(BUILD_OUT_PATH)
-    os.chdir(BUILD_OUT_PATH)
+    # Use static directory for IDE project
+    build_out_path = get_build_out_path("static")
+    clean(build_out_path)
+    os.chdir(build_out_path)
 
     cmd = GEN_PROJECT_CMD % CCGO_CMAKE_DIR
     ret = os.system(cmd)
@@ -232,7 +277,7 @@ def gen_linux_project(target_option="", tag=""):
         print("!!!!!!!!!!!gen fail!!!!!!!!!!!!!!!")
         return False
 
-    project_file_prefix = os.path.join(SCRIPT_PATH, BUILD_OUT_PATH, PROJECT_NAME_LOWER)
+    project_file_prefix = os.path.join(SCRIPT_PATH, build_out_path, PROJECT_NAME_LOWER)
     project_file = get_project_file_name(project_file_prefix)
 
     print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
@@ -244,151 +289,138 @@ def gen_linux_project(target_option="", tag=""):
     return True
 
 
-def archive_linux_project():
+def archive_linux_project(link_type='both'):
     """
-    Archive Linux static library and related build artifacts.
+    Archive Linux library and related build artifacts with unified structure.
 
     This function creates two archive packages:
-    1. Main package: {PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
-       - Contains stripped library with simplified structure: {project}.libdir/{project}.a
-    2. Archive package: (ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
-       - Contains unstripped library for debugging (includes version info)
+    1. Main package: {PROJECT_NAME}_LINUX_SDK-{version}.zip
+       - lib/static/lib{project}.a  (if link_type is static or both)
+       - lib/shared/lib{project}.so (if link_type is shared or both)
+       - include/{project}/
+       - build_info.json
+    2. Symbols package: {PROJECT_NAME}_LINUX_SDK-{version}-SYMBOLS.zip
+       - obj/linux/lib{project}.so (unstripped shared library)
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
 
     Output:
-        - target/{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
-        - target/(ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip
+        - target/{PROJECT_NAME}_LINUX_SDK-{version}.zip
+        - target/{PROJECT_NAME}_LINUX_SDK-{version}-SYMBOLS.zip (if shared libs exist)
     """
-    import zipfile
-    from pathlib import Path
-
     print("==================Archive Linux Project========================")
 
-    # Get project version info
-    version_name = get_version_name(SCRIPT_PATH)
-    project_name_upper = PROJECT_NAME.upper()
-
-    # Try to get publish suffix from git tags or use beta.0 as default
-    try:
-        git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
-        if git_tags and "-" in git_tags:
-            suffix = git_tags.split("-", 1)[1]
-        else:
-            git_branch = (
-                os.popen("git rev-parse --abbrev-ref HEAD 2>/dev/null").read().strip()
-            )
-            if git_branch == "master" or git_branch == "main":
-                suffix = "release"
-            else:
-                suffix = "beta.0"
-    except:
-        suffix = "beta.0"
-
-    # Build full version name with suffix
-    full_version = f"{version_name}-{suffix}" if suffix else version_name
+    # Get version info using unified function
+    _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
     # Define paths
     bin_dir = os.path.join(SCRIPT_PATH, "target")
 
-    # Dynamically find the actual install directory (could be Darwin.out, Linux.out, etc.)
-    # Look for the directory containing the actual .a file in the .dir subdirectory
-    actual_install_path = None
-    build_out_full_path = os.path.join(SCRIPT_PATH, BUILD_OUT_PATH)
-    for out_dir in glob.glob(build_out_full_path + "/*.out"):
+    # Get install paths for both link types
+    static_install_path = os.path.join(SCRIPT_PATH, get_install_path("static"))
+    shared_install_path = os.path.join(SCRIPT_PATH, get_install_path("shared"))
+
+    # Find actual static install directory
+    static_actual_install_path = None
+    static_build_out_path = os.path.join(SCRIPT_PATH, get_build_out_path("static"))
+    for out_dir in glob.glob(static_build_out_path + "/*.out"):
         lib_dir_name = f"{PROJECT_NAME_LOWER}.dir"
         test_lib_dir = os.path.join(out_dir, lib_dir_name)
         test_lib_file = os.path.join(test_lib_dir, f"{PROJECT_NAME_LOWER}.a")
         if os.path.exists(test_lib_file):
-            actual_install_path = out_dir
-            print(f"Found install directory for archive: {actual_install_path}")
+            static_actual_install_path = out_dir
+            print(f"Found static install directory: {static_actual_install_path}")
             break
+    if not static_actual_install_path:
+        static_actual_install_path = static_install_path
 
-    if not actual_install_path:
-        # Fallback to default INSTALL_PATH
-        actual_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
-        print(f"Warning: Using default install path: {actual_install_path}")
+    # Find actual shared install directory
+    shared_actual_install_path = None
+    shared_build_out_path = os.path.join(SCRIPT_PATH, get_build_out_path("shared"))
+    for out_dir in glob.glob(shared_build_out_path + "/*.out"):
+        # Check for shared library in shared/ subdirectory or root
+        if glob.glob(out_dir + "/shared/*.so") or glob.glob(out_dir + "/*.so"):
+            shared_actual_install_path = out_dir
+            print(f"Found shared install directory: {shared_actual_install_path}")
+            break
+    if not shared_actual_install_path:
+        shared_actual_install_path = shared_install_path
 
-    linux_install_path = actual_install_path
+    # Prepare static libraries mapping
+    static_libs = {}
+    if link_type in ('static', 'both'):
+        lib_dir_name = f"{PROJECT_NAME_LOWER}.dir"
+        lib_dir_src = os.path.join(static_actual_install_path, lib_dir_name)
+        static_lib_path = os.path.join(lib_dir_src, f"{PROJECT_NAME_LOWER}.a")
+        if os.path.exists(static_lib_path):
+            arc_path = get_unified_lib_path("static", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
+            static_libs[arc_path] = static_lib_path
+        else:
+            print(f"WARNING: Static library not found at {static_lib_path}")
 
-    # Create target directory
-    os.makedirs(bin_dir, exist_ok=True)
+    # Prepare shared libraries mapping
+    shared_libs = {}
+    if link_type in ('shared', 'both'):
+        # Check in shared/ subdirectory first (new CMake output location)
+        shared_lib_path = os.path.join(shared_actual_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.so")
+        if not os.path.exists(shared_lib_path):
+            # Fallback to root install path
+            shared_lib_path = os.path.join(shared_actual_install_path, f"lib{PROJECT_NAME_LOWER}.so")
+        if os.path.exists(shared_lib_path):
+            arc_path = get_unified_lib_path("shared", lib_name=f"lib{PROJECT_NAME_LOWER}.so")
+            shared_libs[arc_path] = shared_lib_path
+        else:
+            print(f"WARNING: Shared library not found")
 
-    # Find source library directory
-    lib_dir_name = f"{PROJECT_NAME_LOWER}.dir"
-    lib_dir_src = os.path.join(linux_install_path, lib_dir_name)
+    # Prepare include directories mapping (use project's include/ directory)
+    include_dirs = {}
+    headers_src = os.path.join(SCRIPT_PATH, "include")
+    if os.path.exists(headers_src):
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        include_dirs[arc_path] = headers_src
 
-    if not os.path.exists(lib_dir_src):
-        print(f"WARNING: Library directory not found at {lib_dir_src}")
-        return
+    # Prepare symbols (unstripped shared library)
+    obj_files = {}
+    if link_type in ('shared', 'both'):
+        # Look for unstripped shared library
+        unstripped_so = os.path.join(shared_actual_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.so")
+        if not os.path.exists(unstripped_so):
+            unstripped_so = os.path.join(shared_actual_install_path, f"lib{PROJECT_NAME_LOWER}.so")
+        if os.path.exists(unstripped_so):
+            arc_path = get_unified_obj_path("linux", f"lib{PROJECT_NAME_LOWER}.so")
+            obj_files[arc_path] = unstripped_so
 
-    # Create temporary .libdir directory for packaging
-    temp_lib_dir = os.path.join(bin_dir, f"{PROJECT_NAME_LOWER}.libdir")
-    if os.path.exists(temp_lib_dir):
-        shutil.rmtree(temp_lib_dir)
-    shutil.copytree(lib_dir_src, temp_lib_dir)
-    print(f"Prepared library directory: {temp_lib_dir}")
-
-    # Create main ZIP archive with simplified structure
-    main_zip_name = f"{project_name_upper}_LINUX_SDK-{full_version}.zip"
-    main_zip_path = os.path.join(bin_dir, main_zip_name)
-
-    print(f"Creating main ZIP archive: {main_zip_name}")
-    with zipfile.ZipFile(main_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(temp_lib_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                # Use .libdir suffix to distinguish directory from library file
-                arcname = os.path.join(
-                    f"{PROJECT_NAME_LOWER}.libdir",
-                    os.path.relpath(file_path, temp_lib_dir)
-                )
-                zipf.write(file_path, arcname)
-
-    print(f"Created main archive: {main_zip_path}")
-
-    # Create archive package with unstripped library (includes version info)
-    archive_zip_name = f"(ARCHIVE)_{project_name_upper}_LINUX_SDK-{full_version}.zip"
-    archive_zip_path = os.path.join(bin_dir, archive_zip_name)
-
-    print(f"Creating archive package: {archive_zip_name}")
-    with zipfile.ZipFile(archive_zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        # Find the .a file (unstripped)
-        static_lib = os.path.join(temp_lib_dir, f"{PROJECT_NAME_LOWER}.a")
-        if os.path.exists(static_lib):
-            arcname = f"{PROJECT_NAME_LOWER}.libdir/{PROJECT_NAME_LOWER}.a"
-            zipf.write(static_lib, arcname)
-            print(f"Added unstripped library: {arcname}")
-
-        # Also include headers
-        headers_dir = os.path.join(temp_lib_dir, "include")
-        if os.path.exists(headers_dir):
-            for root, dirs, files in os.walk(headers_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.join(
-                        f"{PROJECT_NAME_LOWER}.libdir",
-                        os.path.relpath(file_path, temp_lib_dir)
-                    )
-                    zipf.write(file_path, arcname)
-
-    print(f"Created archive package: {archive_zip_path}")
-
-    # Remove temporary .libdir directory after zipping
-    shutil.rmtree(temp_lib_dir)
-    print(f"Removed temporary directory: {temp_lib_dir}")
+    # Create unified archive packages
+    main_zip_path, symbols_zip_path = create_unified_archive(
+        output_dir=bin_dir,
+        project_name=PROJECT_NAME,
+        platform_name="LINUX",
+        version=full_version,
+        link_type=link_type,
+        static_libs=static_libs,
+        shared_libs=shared_libs,
+        include_dirs=include_dirs,
+        obj_files=obj_files if obj_files else None,
+    )
 
     print("==================Archive Complete========================")
     print(f"Main package: {main_zip_path}")
-    print(f"Archive package: {archive_zip_path}")
+    if symbols_zip_path:
+        print(f"Symbols package: {symbols_zip_path}")
 
 
-def print_build_results():
+def print_build_results(link_type='both'):
     """
     Print Linux build results from target directory.
 
     This function displays the build artifacts and moves them to target/linux/:
-    1. Main ZIP archive ({PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip)
-    2. Archive package ((ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-{version}-{suffix}.zip)
+    1. Main ZIP archive ({PROJECT_NAME}_LINUX_SDK-{version}.zip)
+    2. Symbols package ({PROJECT_NAME}_LINUX_SDK-{version}-SYMBOLS.zip)
     3. build_info.json
+
+    Args:
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
     """
     print("==================Linux Build Results========================")
 
@@ -400,19 +432,19 @@ def print_build_results():
         print(f"ERROR: target directory not found. Please run build first.")
         sys.exit(1)
 
-    # Check for build artifacts (main ZIP and archive ZIP)
-    # Main package: {PROJECT_NAME}_LINUX_SDK-*.zip (not starting with (ARCHIVE)_)
+    # Check for build artifacts
+    # Main package: {PROJECT_NAME}_LINUX_SDK-*.zip (not ending with -SYMBOLS.zip)
     main_zips = [
         f for f in glob.glob(f"{bin_dir}/*_LINUX_SDK-*.zip")
-        if not os.path.basename(f).startswith("(ARCHIVE)_")
+        if not f.endswith("-SYMBOLS.zip")
     ]
 
-    # Archive package: (ARCHIVE)_{PROJECT_NAME}_LINUX_SDK-*.zip
-    archive_zips = [
-        f for f in glob.glob(f"{bin_dir}/(ARCHIVE)_*_LINUX_SDK-*.zip")
+    # Symbols package: {PROJECT_NAME}_LINUX_SDK-*-SYMBOLS.zip
+    symbols_zips = [
+        f for f in glob.glob(f"{bin_dir}/*_LINUX_SDK-*-SYMBOLS.zip")
     ]
 
-    if not main_zips and not archive_zips:
+    if not main_zips:
         print(f"ERROR: No build artifacts found in {bin_dir}")
         print("Please ensure build completed successfully.")
         sys.exit(1)
@@ -430,12 +462,12 @@ def print_build_results():
         shutil.move(main_zip, dest)
         artifacts_moved.append(os.path.basename(main_zip))
 
-    for archive_zip in archive_zips:
-        dest = os.path.join(bin_linux_dir, os.path.basename(archive_zip))
+    for symbols_zip in symbols_zips:
+        dest = os.path.join(bin_linux_dir, os.path.basename(symbols_zip))
         if os.path.exists(dest):
             os.remove(dest)
-        shutil.move(archive_zip, dest)
-        artifacts_moved.append(os.path.basename(archive_zip))
+        shutil.move(symbols_zip, dest)
+        artifacts_moved.append(os.path.basename(symbols_zip))
 
     if artifacts_moved:
         print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/linux/")
@@ -466,17 +498,16 @@ def print_build_results():
     print("==================Build Complete========================")
 
 
-def main(target_option="", tag="", link_type='static', jobs=None):
+def main(target_option="", link_type='both', jobs=None):
     """
-    Main entry point for Linux static library build.
+    Main entry point for Linux library build.
 
     This function serves as the primary entry point when building
-    distributable Linux static libraries.
+    distributable Linux libraries.
 
     Args:
         target_option: Additional CMake target options (default: '')
-        tag: Version tag string for metadata (default: '')
-        link_type: Library link type ('static', 'shared', or 'both', default: 'static')
+        link_type: Library link type ('static', 'shared', or 'both', default: 'both')
         jobs: Number of parallel build jobs (default: CPU count)
 
     Note:
@@ -488,7 +519,7 @@ def main(target_option="", tag="", link_type='static', jobs=None):
     if jobs is None or jobs <= 0:
         jobs = multiprocessing.cpu_count()
 
-    print(f"main tag {tag}, link_type: {link_type}, jobs: {jobs}")
+    print(f"main link_type: {link_type}, jobs: {jobs}")
 
     # Clean target/linux directory at the start of build
     # Note: build_info.json will be regenerated at the end of the build process
@@ -497,80 +528,50 @@ def main(target_option="", tag="", link_type='static', jobs=None):
         shutil.rmtree(target_linux_dir)
         print(f"[CLEAN] Removed target/linux directory")
 
-    # Build static library
-    build_linux(target_option=target_option, tag=tag, link_type=link_type, jobs=jobs)
+    # Build library
+    build_linux(target_option=target_option, link_type=link_type, jobs=jobs)
 
     # Archive and organize artifacts
-    archive_linux_project()
-    print_build_results()
+    archive_linux_project(link_type=link_type)
+    print_build_results(link_type=link_type)
 
 
 # Command-line interface for Linux builds
-# Supports two invocation modes:
-# 1. Interactive mode (no args): Prompts user for build mode
-# 2. Mode only (1 arg): Uses specified mode directly
-# 3. Argparse mode: Uses --jobs and other options
 #
-# Build modes:
-# 1 - Build static library: Creates .a archive with merged libraries
-# 2 - Generate CodeLite project: Creates workspace and opens in CodeLite IDE
-# 3 - Exit: Quit without building
+# Usage:
+#   python build_linux.py                    # Build static library (default)
+#   python build_linux.py --ide-project      # Generate CodeLite project
+#   python build_linux.py -j 8               # Build with 8 parallel jobs
+#   python build_linux.py --link-type shared # Build shared library
 if __name__ == "__main__":
     import argparse
 
-    # Check if using new argparse-style arguments
-    if len(sys.argv) > 1 and sys.argv[1].startswith('-'):
-        parser = argparse.ArgumentParser(
-            description="Build Linux static library",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
-        parser.add_argument(
-            "-j", "--jobs",
-            type=int,
-            default=None,
-            help="Number of parallel build jobs (default: CPU count)",
-        )
-        parser.add_argument(
-            "--link-type",
-            type=str,
-            choices=['static', 'shared', 'both'],
-            default='static',
-            help="Library link type (default: static)",
-        )
-        parser.add_argument(
-            "--ide-project",
-            action="store_true",
-            help="Generate CodeLite project instead of building",
-        )
+    parser = argparse.ArgumentParser(
+        description="Build Linux static library",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "-j", "--jobs",
+        type=int,
+        default=None,
+        help="Number of parallel build jobs (default: CPU count)",
+    )
+    parser.add_argument(
+        "--link-type",
+        type=str,
+        choices=['static', 'shared', 'both'],
+        default='both',
+        help="Library link type (default: both)",
+    )
+    parser.add_argument(
+        "--ide-project",
+        action="store_true",
+        help="Generate CodeLite project instead of building",
+    )
 
-        args = parser.parse_args()
+    args = parser.parse_args()
 
-        if args.ide_project:
-            gen_linux_project()
-        else:
-            main(tag="1", link_type=args.link_type, jobs=args.jobs)
+    if args.ide_project:
+        gen_linux_project()
     else:
-        # Legacy positional argument mode
-        while True:
-            if len(sys.argv) >= 2:
-                num = sys.argv[1]
-            else:
-                num = str(
-                    input(
-                        "Enter menu:"
-                        + "\n1. Clean && Build Linux."
-                        + "\n2. Gen Linux CodeLite Project."
-                        + "\n3. Exit\n"
-                    )
-                )
-            if num == "1":
-                main(tag=num)
-                break
-            elif num == "2":
-                gen_linux_project(tag=num)
-                break
-            elif num == "3":
-                break
-            else:
-                main()
-                break
+        main(link_type=args.link_type, jobs=args.jobs)
