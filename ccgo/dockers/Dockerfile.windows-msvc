@@ -6,7 +6,9 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Wine and LLVM/Clang for MSVC-compatible builds
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Note: wine32 requires i386 architecture to be enabled first
+RUN dpkg --add-architecture i386 && \
+    apt-get update && apt-get install -y --no-install-recommends \
     # Wine for running Windows tools
     wine64 wine32 \
     # LLVM/Clang with MSVC compatibility
