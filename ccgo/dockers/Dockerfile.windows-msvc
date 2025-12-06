@@ -69,29 +69,31 @@ ENV LANG=C.UTF-8 \
 
 # Create wrapper scripts for MSVC-compatible compilation
 # Note: On Linux, clang doesn't come with clang-cl frontend, so we create wrappers
-RUN echo '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"' > /usr/local/bin/clang-cl && \
+RUN printf '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/clang-cl && \
     chmod +x /usr/local/bin/clang-cl && \
-    echo '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"' > /usr/local/bin/cl && \
+    printf '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/cl && \
     chmod +x /usr/local/bin/cl && \
-    echo '#!/bin/bash\nlld-link "$@"' > /usr/local/bin/link && \
+    printf '#!/bin/bash\nlld-link "$@"\n' > /usr/local/bin/link && \
     chmod +x /usr/local/bin/link && \
-    echo '#!/bin/bash\nllvm-lib "$@"' > /usr/local/bin/lib && \
+    printf '#!/bin/bash\nllvm-lib "$@"\n' > /usr/local/bin/lib && \
     chmod +x /usr/local/bin/lib && \
-    echo '#!/bin/bash\nllvm-lib "$@"' > /usr/local/bin/llvm-lib && \
-    chmod +x /usr/local/bin/llvm-lib && \
-    echo '#!/bin/bash\nllvm-mt "$@"' > /usr/local/bin/llvm-mt && \
-    chmod +x /usr/local/bin/llvm-mt && \
-    echo '#!/bin/bash\nllvm-rc "$@"' > /usr/local/bin/llvm-rc && \
-    chmod +x /usr/local/bin/llvm-rc
+    printf '#!/bin/bash\nllvm-lib "$@"\n' > /usr/local/bin/llvm-lib-wrapper && \
+    chmod +x /usr/local/bin/llvm-lib-wrapper && \
+    printf '#!/bin/bash\nllvm-mt "$@"\n' > /usr/local/bin/llvm-mt-wrapper && \
+    chmod +x /usr/local/bin/llvm-mt-wrapper && \
+    printf '#!/bin/bash\nllvm-rc "$@"\n' > /usr/local/bin/llvm-rc-wrapper && \
+    chmod +x /usr/local/bin/llvm-rc-wrapper
 
 # Verify toolchain installation
 RUN echo "=== MSVC-compatible Toolchain Verification ===" && \
     clang --version && \
-    clang-cl --version && \
     lld --version && \
     cmake --version && \
     python3 --version && \
-    echo "Windows SDK installed at /opt/xwin/sdk"
+    echo "Wrapper scripts created:" && \
+    ls -la /usr/local/bin/clang-cl /usr/local/bin/cl /usr/local/bin/link /usr/local/bin/lib && \
+    echo "Windows SDK installed at /opt/xwin/sdk" && \
+    ls -la /opt/xwin/sdk/
 
 # Set working directory
 WORKDIR /workspace
