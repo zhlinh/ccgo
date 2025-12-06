@@ -75,8 +75,8 @@ RUN printf '#!/bin/bash\nexec clang --target=x86_64-pc-windows-msvc -fms-extensi
 # Verify: clang
 RUN echo "=== Verify clang ===" && clang --version
 
-# Verify: lld
-RUN echo "=== Verify lld ===" && lld --version
+# Verify: lld (use ld.lld for version check, lld-link for Windows)
+RUN echo "=== Verify lld ===" && ld.lld --version && lld-link --version
 
 # Verify: cmake
 RUN echo "=== Verify cmake ===" && cmake --version
