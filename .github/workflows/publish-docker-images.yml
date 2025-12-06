@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: 'Platforms to build (comma-separated: linux,windows,apple,android or "all")'
+        description: 'Platforms to build (comma-separated: linux,windows-mingw,windows-msvc,apple,android or "all")'
         required: true
         default: 'all'
       registry:
@@ -49,9 +49,12 @@ jobs:
           - platform: linux
             dockerfile: Dockerfile.linux
             image: ccgo-builder-linux
-          - platform: windows
+          - platform: windows-mingw
             dockerfile: Dockerfile.windows-mingw
             image: ccgo-builder-windows
+          - platform: windows-msvc
+            dockerfile: Dockerfile.windows-msvc
+            image: ccgo-builder-windows-msvc
           - platform: apple
             dockerfile: Dockerfile.apple
             image: ccgo-builder-apple
@@ -150,7 +153,8 @@ jobs:
           echo "| Platform | Image | Pull Command |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|--------------|" >> $GITHUB_STEP_SUMMARY
           echo "| Linux | \`${IMAGE_PREFIX}/ccgo-builder-linux:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-linux:latest\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Windows | \`${IMAGE_PREFIX}/ccgo-builder-windows:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-windows:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows (MinGW) | \`${IMAGE_PREFIX}/ccgo-builder-windows:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-windows:latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Windows (MSVC) | \`${IMAGE_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Apple | \`${IMAGE_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Android | \`${IMAGE_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${IMAGE_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
