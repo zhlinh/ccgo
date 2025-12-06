@@ -6,10 +6,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Wine and LLVM/Clang for MSVC-compatible builds
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    dpkg --add-architecture i386 && \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     # Wine for running Windows tools
     wine64 wine32 \
     # LLVM/Clang with MSVC compatibility
@@ -56,44 +53,47 @@ RUN pip3 install --no-cache-dir \
 #   /opt/xwin/sdk/sdk/lib/um/x86_64/  - Windows SDK libraries
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    # Use clang-cl for MSVC ABI compatibility
     CC="clang-cl" \
     CXX="clang-cl" \
-    # Set Windows SDK paths (xwin uses x86_64 instead of x64)
     INCLUDE="/opt/xwin/sdk/crt/include:/opt/xwin/sdk/sdk/include/um:/opt/xwin/sdk/sdk/include/shared:/opt/xwin/sdk/sdk/include/ucrt" \
     LIB="/opt/xwin/sdk/crt/lib/x86_64:/opt/xwin/sdk/sdk/lib/um/x86_64:/opt/xwin/sdk/sdk/lib/ucrt/x86_64" \
-    # Target Windows x64
     CLANG_TARGET="x86_64-pc-windows-msvc" \
-    # Add cargo to PATH
     PATH="/root/.cargo/bin:${PATH}"
 
 # Create wrapper scripts for MSVC-compatible compilation
-# Note: On Linux, clang doesn't come with clang-cl frontend, so we create wrappers
-RUN printf '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/clang-cl && \
+RUN printf '#!/bin/bash\nexec clang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/clang-cl && \
     chmod +x /usr/local/bin/clang-cl && \
-    printf '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/cl && \
+    printf '#!/bin/bash\nexec clang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/cl && \
     chmod +x /usr/local/bin/cl && \
-    printf '#!/bin/bash\nlld-link "$@"\n' > /usr/local/bin/link && \
+    printf '#!/bin/bash\nexec lld-link "$@"\n' > /usr/local/bin/link && \
     chmod +x /usr/local/bin/link && \
-    printf '#!/bin/bash\nllvm-lib "$@"\n' > /usr/local/bin/lib && \
-    chmod +x /usr/local/bin/lib && \
-    printf '#!/bin/bash\nllvm-lib "$@"\n' > /usr/local/bin/llvm-lib-wrapper && \
-    chmod +x /usr/local/bin/llvm-lib-wrapper && \
-    printf '#!/bin/bash\nllvm-mt "$@"\n' > /usr/local/bin/llvm-mt-wrapper && \
-    chmod +x /usr/local/bin/llvm-mt-wrapper && \
-    printf '#!/bin/bash\nllvm-rc "$@"\n' > /usr/local/bin/llvm-rc-wrapper && \
-    chmod +x /usr/local/bin/llvm-rc-wrapper
+    printf '#!/bin/bash\nexec llvm-lib "$@"\n' > /usr/local/bin/lib && \
+    chmod +x /usr/local/bin/lib
 
-# Verify toolchain installation
-RUN echo "=== MSVC-compatible Toolchain Verification ===" && \
-    clang --version && \
-    lld --version && \
-    cmake --version && \
-    python3 --version && \
-    echo "Wrapper scripts created:" && \
-    ls -la /usr/local/bin/clang-cl /usr/local/bin/cl /usr/local/bin/link /usr/local/bin/lib && \
-    echo "Windows SDK installed at /opt/xwin/sdk" && \
-    ls -la /opt/xwin/sdk/
+# Verify: clang
+RUN echo "=== Verify clang ===" && clang --version
+
+# Verify: lld
+RUN echo "=== Verify lld ===" && lld --version
+
+# Verify: cmake
+RUN echo "=== Verify cmake ===" && cmake --version
+
+# Verify: python3
+RUN echo "=== Verify python3 ===" && python3 --version
+
+# Verify: wrapper scripts
+RUN echo "=== Verify wrapper scripts ===" && \
+    ls -la /usr/local/bin/clang-cl && \
+    ls -la /usr/local/bin/cl && \
+    ls -la /usr/local/bin/link && \
+    ls -la /usr/local/bin/lib
+
+# Verify: Windows SDK directory
+RUN echo "=== Verify Windows SDK ===" && \
+    ls -la /opt/xwin/sdk/ && \
+    echo "CRT include:" && ls /opt/xwin/sdk/crt/include/ | head -5 && \
+    echo "SDK include:" && ls /opt/xwin/sdk/sdk/include/ | head -5
 
 # Set working directory
 WORKDIR /workspace
