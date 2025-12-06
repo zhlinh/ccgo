@@ -125,7 +125,9 @@ def _build_linux_single(target_option, single_link_type, jobs):
     actual_install_path = None
     for out_dir in glob.glob(build_out_path + "/*.out"):
         if single_link_type == 'static':
-            if glob.glob(out_dir + "/*.a"):
+            # Check for static library in static/ subdirectory (new CMake output location)
+            # or root directory (fallback)
+            if glob.glob(out_dir + "/static/*.a") or glob.glob(out_dir + "/*.a"):
                 actual_install_path = out_dir
                 print(f"Found install directory: {actual_install_path}")
                 break
@@ -141,8 +143,11 @@ def _build_linux_single(target_option, single_link_type, jobs):
         print(f"Warning: No library files found, using default: {actual_install_path}")
 
     if single_link_type == 'static':
-        # Merge static libs
-        libtool_src_libs = glob.glob(actual_install_path + "/*.a")
+        # Merge static libs - check static/ subdirectory first (new CMake output location)
+        libtool_src_libs = glob.glob(actual_install_path + "/static/*.a")
+        if not libtool_src_libs:
+            # Fallback to root directory
+            libtool_src_libs = glob.glob(actual_install_path + "/*.a")
 
         libtool_dst_lib = actual_install_path + f"/{PROJECT_NAME_LOWER}.a"
         if not libtool_libs(libtool_src_libs, libtool_dst_lib):
@@ -377,7 +382,7 @@ def archive_linux_project(link_type='both'):
     include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER, headers_src)
         include_dirs[arc_path] = headers_src
 
     # Prepare symbols (unstripped shared library)
@@ -484,6 +489,10 @@ def print_build_results(link_type='both'):
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
+
+            # Print ZIP file tree structure
+            if item.endswith(".zip"):
+                print_zip_tree(item_path)
         elif os.path.isdir(item_path):
             # Calculate directory size
             total_size = 0

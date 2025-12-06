@@ -18,11 +18,29 @@ cmake_minimum_required(VERSION 3.14)
 set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH "Installation directory" FORCE)
 message(STATUS "CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}")
 
-# Extract project name from the source directory path
-# For example: /path/to/myproject -> myproject
+# Extract project name from CCGO.toml or fallback to directory name
+# Priority: CCGO.toml [project].name > directory name
 set(MAIN_PROJECT_ROOT_DIR ${CMAKE_SOURCE_DIR})
-string(REPLACE "/" ";" TEMP_SPLIT_ITEMS "${CMAKE_SOURCE_DIR}")  # Split path by '/'
-list(GET TEMP_SPLIT_ITEMS -1 MAIN_PROJECT_NAME)  # Get last element as project name
+
+# Try to read project name from CCGO.toml
+set(CCGO_TOML_PATH "${CMAKE_SOURCE_DIR}/CCGO.toml")
+if(EXISTS "${CCGO_TOML_PATH}")
+    file(READ "${CCGO_TOML_PATH}" CCGO_TOML_CONTENT)
+    # Parse name = "xxx" from [project] section using regex
+    # Match: name = "value" or name = 'value' (with optional spaces)
+    string(REGEX MATCH "name[ \t]*=[ \t]*[\"']([^\"']+)[\"']" CCGO_NAME_MATCH "${CCGO_TOML_CONTENT}")
+    if(CCGO_NAME_MATCH)
+        string(REGEX REPLACE "name[ \t]*=[ \t]*[\"']([^\"']+)[\"']" "\\1" MAIN_PROJECT_NAME "${CCGO_NAME_MATCH}")
+        message(STATUS "Project name from CCGO.toml: ${MAIN_PROJECT_NAME}")
+    endif()
+endif()
+
+# Fallback: Extract project name from directory path if not found in CCGO.toml
+if(NOT MAIN_PROJECT_NAME)
+    string(REPLACE "/" ";" TEMP_SPLIT_ITEMS "${CMAKE_SOURCE_DIR}")  # Split path by '/'
+    list(GET TEMP_SPLIT_ITEMS -1 MAIN_PROJECT_NAME)  # Get last element as project name
+    message(STATUS "Project name from directory: ${MAIN_PROJECT_NAME}")
+endif()
 
 # Define project with C++ and C language support
 project(${MAIN_PROJECT_NAME} CXX C)
@@ -737,6 +755,44 @@ else()
         file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} include/${PROJECT_NAME}/api/native/*.h)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(api FILES ${SELF_TEMP_SRC_FILES})
+
+        # ========== Build Static Library ==========
+        if(CCGO_BUILD_STATIC)
+            set(STATIC_TARGET ${PROJECT_NAME}_static)
+            add_library(${STATIC_TARGET} STATIC ${SELF_SRC_FILES})
+
+            target_link_libraries(${STATIC_TARGET} PUBLIC ${TARGET_SRC_LINKS})
+
+            # Link CCGO dependencies (static libraries)
+            file(GLOB CCGO_DEP_DIRS "${CMAKE_SOURCE_DIR}/third_party/*")
+            foreach(CCGO_DEP_DIR ${CCGO_DEP_DIRS})
+                if(IS_DIRECTORY "${CCGO_DEP_DIR}")
+                    get_filename_component(CCGO_DEP_NAME ${CCGO_DEP_DIR} NAME)
+                    string(TOUPPER ${CCGO_DEP_NAME} CCGO_DEP_NAME_UPPER)
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS)
+                        target_include_directories(${STATIC_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_INCLUDE_DIRS})
+                    endif()
+
+                    if(CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES)
+                        target_link_libraries(${STATIC_TARGET} PRIVATE ${CCGO_DEPENDENCY_${CCGO_DEP_NAME_UPPER}_STATIC_LIBRARIES})
+                    endif()
+                endif()
+            endforeach()
+
+            set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
+
+            # Set output name and directory
+            set_target_properties(${STATIC_TARGET} PROPERTIES
+                OUTPUT_NAME ${PROJECT_NAME}
+                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static
+            )
+
+            install(TARGETS ${STATIC_TARGET}
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static)
+
+            message(STATUS "Building Linux static library: lib${PROJECT_NAME}.a")
+        endif()
 
         # ========== Build Shared Library ==========
         if(CCGO_BUILD_SHARED)

@@ -2177,6 +2177,89 @@ def zip_files_ends_with(src_dir, suffix, out_file):
             zipf.write(filename, os.path.basename(filename))
 
 
+def print_zip_tree(zip_path, indent="    "):
+    """
+    Print the tree structure of a ZIP file.
+
+    Args:
+        zip_path: Path to the ZIP file
+        indent: Base indentation string (default: 4 spaces)
+
+    Example output:
+        ZIP contents:
+        ├── lib/
+        │   ├── static/
+        │   │   └── libfoo.a (1.23 MB)
+        │   └── shared/
+        │       └── libfoo.so (0.89 MB)
+        ├── include/
+        │   └── foo/
+        │       └── foo.h (0.01 MB)
+        └── build_info.json (0.00 MB)
+    """
+    if not os.path.exists(zip_path):
+        print(f"{indent}[ZIP file not found]")
+        return
+
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            # Build directory tree structure
+            tree = {}
+            for info in zf.infolist():
+                parts = info.filename.split('/')
+                current = tree
+                for i, part in enumerate(parts):
+                    if not part:  # Skip empty parts (trailing slashes)
+                        continue
+                    if part not in current:
+                        # Check if this is a file (last part and not ending with /)
+                        is_file = (i == len(parts) - 1) and not info.filename.endswith('/')
+                        if is_file:
+                            current[part] = {'__size__': info.file_size}
+                        else:
+                            current[part] = {}
+                    current = current[part]
+
+            # Print tree structure
+            print(f"{indent}ZIP contents:")
+            _print_tree_level(tree, indent, "")
+
+    except zipfile.BadZipFile:
+        print(f"{indent}[Invalid ZIP file]")
+    except Exception as e:
+        print(f"{indent}[Error reading ZIP: {e}]")
+
+
+def _print_tree_level(tree, base_indent, prefix):
+    """
+    Recursively print a level of the tree structure.
+
+    Args:
+        tree: Dictionary representing the tree structure
+        base_indent: Base indentation string
+        prefix: Current line prefix for tree drawing
+    """
+    items = sorted(tree.items())
+    for i, (name, subtree) in enumerate(items):
+        is_last = (i == len(items) - 1)
+        connector = "└── " if is_last else "├── "
+
+        if '__size__' in subtree:
+            # This is a file
+            size_mb = subtree['__size__'] / (1024 * 1024)
+            if size_mb >= 0.01:
+                print(f"{base_indent}{prefix}{connector}{name} ({size_mb:.2f} MB)")
+            else:
+                size_kb = subtree['__size__'] / 1024
+                print(f"{base_indent}{prefix}{connector}{name} ({size_kb:.1f} KB)")
+        else:
+            # This is a directory
+            print(f"{base_indent}{prefix}{connector}{name}/")
+            # Recurse into subdirectory
+            new_prefix = prefix + ("    " if is_last else "│   ")
+            _print_tree_level(subtree, base_indent, new_prefix)
+
+
 def get_project_file_name(project_file_prefix):
     """
     Get platform-specific IDE project file name.
@@ -2752,7 +2835,9 @@ ARCHIVE_DIR_LIB = "lib"
 ARCHIVE_DIR_STATIC = "static"
 ARCHIVE_DIR_SHARED = "shared"
 ARCHIVE_DIR_INCLUDE = "include"
-ARCHIVE_DIR_FRAMEWORKS = "frameworks"
+# Note: Apple frameworks (xcframework/framework) are now stored under lib/ directory
+# to maintain consistency with other platforms (was "frameworks")
+ARCHIVE_DIR_FRAMEWORKS = "lib"
 ARCHIVE_DIR_HAARS = "haars"
 ARCHIVE_DIR_SYMBOLS = "symbols"
 ARCHIVE_DIR_OBJ = "obj"
@@ -3084,16 +3169,31 @@ def get_unified_haar_path(haar_name):
     return f"{ARCHIVE_DIR_HAARS}/{haar_name}"
 
 
-def get_unified_include_path(project_name):
+def get_unified_include_path(project_name, src_include_dir=None):
     """
     Get the standard archive path for include directory.
 
+    Intelligently handles include path to avoid duplication:
+    - If src_include_dir contains a project_name subdirectory, returns "include"
+      (source structure: include/ccgonow/ -> archive: include/ccgonow/)
+    - If src_include_dir does NOT contain a project_name subdirectory, returns "include/project_name"
+      (source structure: include/*.h -> archive: include/ccgonow/*.h)
+
     Args:
         project_name: Project name (lowercase)
+        src_include_dir: Source include directory path to check for existing project subdirectory
 
     Returns:
-        str: Archive path like "include/foo"
+        str: Archive path - either "include" or "include/{project_name}"
     """
+    if src_include_dir and os.path.isdir(src_include_dir):
+        # Check if source directory already has a project-named subdirectory
+        project_subdir = os.path.join(src_include_dir, project_name)
+        if os.path.isdir(project_subdir):
+            # Source already has project subdirectory, don't add it again
+            return ARCHIVE_DIR_INCLUDE
+
+    # Source doesn't have project subdirectory, add it to archive path
     return f"{ARCHIVE_DIR_INCLUDE}/{project_name}"
 
 

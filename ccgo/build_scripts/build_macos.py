@@ -233,6 +233,7 @@ def _build_macos_single(target_option, single_link_type, jobs):
         print(f"[DEBUG] x86 dylib found: {x86_dylib_src}")
         print(f"[DEBUG] arm_lib_saved: {arm_lib_saved}")
 
+        universal_dylib = None
         if x86_dylib_src and arm_lib_saved and os.path.exists(arm_lib_saved):
             # We have both x86 and ARM dylibs, merge them
             x86_dylib = install_path + f"/lib{PROJECT_NAME_LOWER}_x86.dylib"
@@ -251,6 +252,7 @@ def _build_macos_single(target_option, single_link_type, jobs):
             ret = os.system(lipo_cmd)
             if ret != 0:
                 print("WARNING: Failed to create universal dylib")
+                universal_dylib = None
             else:
                 print(f"Created universal dylib: {universal_dylib}")
                 check_library_architecture(universal_dylib, platform_hint="macos")
@@ -271,6 +273,24 @@ def _build_macos_single(target_option, single_link_type, jobs):
             print(f"Using ARM-only dylib: {universal_dylib}")
         else:
             print("WARNING: No shared library found to create universal dylib")
+
+        # Create shared framework (similar to static framework but with dylib)
+        if universal_dylib and os.path.exists(universal_dylib):
+            dst_framework_path = install_path + f"/{PROJECT_NAME_LOWER}.framework"
+            dst_framework_headers = MACOS_BUILD_COPY_HEADER_FILES
+            apple_headers_src = f"include/{PROJECT_NAME_LOWER}/api/apple/"
+            make_static_framework(
+                universal_dylib, dst_framework_path, dst_framework_headers, "./",
+                apple_headers_src=apple_headers_src
+            )
+            print(f"Created shared framework: {dst_framework_path}")
+
+            # Verify the built framework
+            print(f"\n==================Verifying macOS {single_link_type} Universal Binary========================")
+            framework_lib = os.path.join(dst_framework_path, PROJECT_NAME_LOWER)
+            if os.path.exists(framework_lib):
+                check_library_architecture(framework_lib, platform_hint="macos")
+            print("========================================================================")
 
     return True
 
@@ -336,18 +356,21 @@ def build_macos(target_option="",  link_type='both', jobs=None):
 
 def archive_macos_project(link_type='both'):
     """
-    Archive macOS framework and libraries with unified structure.
+    Archive macOS framework with unified structure.
 
     This function creates two archive packages:
     1. Main package: {PROJECT_NAME}_MACOS_SDK-{version}.zip
-       - frameworks/static/{Project}.framework (if link_type is static or both)
-       - lib/static/lib{project}.a (universal static library)
-       - lib/shared/lib{project}.dylib (universal dynamic library)
+       - lib/static/{Project}.framework (if link_type is static or both)
+       - lib/shared/{Project}.framework (if link_type is shared or both)
        - include/{project}/
        - build_info.json
     2. Symbols package: {PROJECT_NAME}_MACOS_SDK-{version}-SYMBOLS.zip
        - symbols/static/*.dSYM
        - symbols/shared/*.dSYM
+
+    Note: macOS uses .framework bundles which already contain the binary and headers.
+    No need for separate static_libs or shared_libs - frameworks are the recommended
+    distribution format for Apple platforms.
 
     Build directories used:
     - Static: cmake_build/macOS/static/Darwin.out/
@@ -373,6 +396,10 @@ def archive_macos_project(link_type='both'):
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
+    # Note: macOS uses .framework bundles which already contain the binary and headers.
+    # No need for separate static_libs or shared_libs - frameworks are the recommended
+    # distribution format for Apple platforms.
+
     # Prepare frameworks mapping
     frameworks = {}
     framework_name = f"{PROJECT_NAME_LOWER}.framework"
@@ -384,50 +411,18 @@ def archive_macos_project(link_type='both'):
             arc_path = get_unified_framework_path("static", framework_name)
             frameworks[arc_path] = static_framework_src
 
-    # Prepare static libraries mapping (universal .a from static build directory)
-    static_libs = {}
-    if link_type in ('static', 'both'):
-        # Check for universal binary in static install path
-        static_lib_path = os.path.join(static_install_path, PROJECT_NAME_LOWER)
-        if not os.path.exists(static_lib_path):
-            # Also check in framework directory
-            static_lib_path = os.path.join(static_install_path, framework_name, PROJECT_NAME_LOWER)
-        if os.path.exists(static_lib_path):
-            arc_path = get_unified_lib_path("static", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
-            static_libs[arc_path] = static_lib_path
-
-    # Prepare shared libraries mapping (universal .dylib from shared build directory)
-    shared_libs = {}
+    # Shared framework (from shared build directory)
     if link_type in ('shared', 'both'):
-        # Debug: print search paths
-        print(f"[DEBUG] Looking for shared library in: {shared_install_path}")
-
-        # Check for universal dylib in shared install path (root level)
-        dylib_path = os.path.join(shared_install_path, f"lib{PROJECT_NAME_LOWER}.dylib")
-        print(f"[DEBUG] Checking path 1: {dylib_path} -> exists: {os.path.exists(dylib_path)}")
-
-        if not os.path.exists(dylib_path):
-            # Also check in shared/ subdirectory (CMake output location)
-            dylib_path = os.path.join(shared_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.dylib")
-            print(f"[DEBUG] Checking path 2: {dylib_path} -> exists: {os.path.exists(dylib_path)}")
-
-        if os.path.exists(dylib_path):
-            arc_path = get_unified_lib_path("shared", lib_name=f"lib{PROJECT_NAME_LOWER}.dylib")
-            shared_libs[arc_path] = dylib_path
-            print(f"[DEBUG] Added shared lib: {arc_path} -> {dylib_path}")
-        else:
-            print(f"WARNING: Shared library not found at {shared_install_path}")
-            # List what's actually in the directory
-            if os.path.exists(shared_install_path):
-                print(f"[DEBUG] Contents of {shared_install_path}:")
-                for item in os.listdir(shared_install_path):
-                    print(f"  - {item}")
+        shared_framework_src = os.path.join(shared_install_path, framework_name)
+        if os.path.exists(shared_framework_src):
+            arc_path = get_unified_framework_path("shared", framework_name)
+            frameworks[arc_path] = shared_framework_src
 
     # Prepare include directories mapping
     include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER, headers_src)
         include_dirs[arc_path] = headers_src
 
     # Prepare symbols (dSYM files from both directories)
@@ -459,8 +454,6 @@ def archive_macos_project(link_type='both'):
         platform_name="MACOS",
         version=full_version,
         link_type=link_type,
-        static_libs=static_libs,
-        shared_libs=shared_libs,
         include_dirs=include_dirs,
         frameworks=frameworks,
         symbols_static=symbols_static if symbols_static else None,
@@ -551,6 +544,10 @@ def print_build_results(link_type='both'):
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
+
+            # Print ZIP file tree structure
+            if item.endswith(".zip"):
+                print_zip_tree(item_path)
         elif os.path.isdir(item_path):
             # Calculate directory size
             total_size = 0

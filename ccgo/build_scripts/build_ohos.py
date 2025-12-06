@@ -403,6 +403,10 @@ def print_build_results(link_type='both'):
             if os.path.isfile(item_path):
                 size = os.path.getsize(item_path) / (1024 * 1024)  # MB
                 print(f"  {item} ({size:.2f} MB)")
+
+                # Print ZIP/HAR file tree structure (HAR is ZIP format)
+                if item.endswith(".zip") or item.endswith(".har"):
+                    print_zip_tree(item_path)
             elif os.path.isdir(item_path):
                 # Calculate directory size
                 total_size = 0
@@ -491,7 +495,7 @@ def archive_ohos_project(link_type='both', archs=None):
     include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER, headers_src)
         include_dirs[arc_path] = headers_src
 
     # Prepare symbols (unstripped shared libs from obj/local/)

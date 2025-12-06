@@ -31,13 +31,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Windows SDK headers and libraries via xwin
-# xwin downloads Windows SDK files directly from Microsoft
-RUN pip3 install --no-cache-dir xwin
+# xwin is a Rust tool that downloads Windows SDK files directly from Microsoft
+# Install cargo first, then xwin
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    . ~/.cargo/env && \
+    cargo install xwin
 
 # Download Windows SDK headers and libraries
-RUN mkdir -p /opt/xwin && \
-    cd /opt/xwin && \
-    python3 -m xwin splat --accept-license --output /opt/xwin/sdk
+RUN . ~/.cargo/env && \
+    mkdir -p /opt/xwin && \
+    xwin --accept-license splat --output /opt/xwin/sdk
 
 # Install Python dependencies for CCGO
 RUN pip3 install --no-cache-dir \
@@ -46,28 +49,45 @@ RUN pip3 install --no-cache-dir \
     copier-templates-extensions>=0.3.0
 
 # Set environment variables for MSVC-compatible cross-compilation
+# xwin splat output structure:
+#   /opt/xwin/sdk/crt/include/  - CRT headers
+#   /opt/xwin/sdk/crt/lib/x86_64/  - CRT libraries
+#   /opt/xwin/sdk/sdk/include/um/  - Windows SDK headers
+#   /opt/xwin/sdk/sdk/lib/um/x86_64/  - Windows SDK libraries
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     # Use clang-cl for MSVC ABI compatibility
     CC="clang-cl" \
     CXX="clang-cl" \
-    # Set Windows SDK paths
-    INCLUDE="/opt/xwin/sdk/crt/include:/opt/xwin/sdk/sdk/include/um:/opt/xwin/sdk/sdk/include/shared" \
-    LIB="/opt/xwin/sdk/crt/lib/x64:/opt/xwin/sdk/sdk/lib/um/x64" \
+    # Set Windows SDK paths (xwin uses x86_64 instead of x64)
+    INCLUDE="/opt/xwin/sdk/crt/include:/opt/xwin/sdk/sdk/include/um:/opt/xwin/sdk/sdk/include/shared:/opt/xwin/sdk/sdk/include/ucrt" \
+    LIB="/opt/xwin/sdk/crt/lib/x86_64:/opt/xwin/sdk/sdk/lib/um/x86_64:/opt/xwin/sdk/sdk/lib/ucrt/x86_64" \
     # Target Windows x64
-    CLANG_TARGET="x86_64-pc-windows-msvc"
+    CLANG_TARGET="x86_64-pc-windows-msvc" \
+    # Add cargo to PATH
+    PATH="/root/.cargo/bin:${PATH}"
 
 # Create wrapper scripts for MSVC-compatible compilation
-RUN echo '#!/bin/bash\nclang-cl --target=x86_64-pc-windows-msvc "$@"' > /usr/local/bin/cl && \
+# Note: On Linux, clang doesn't come with clang-cl frontend, so we create wrappers
+RUN echo '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"' > /usr/local/bin/clang-cl && \
+    chmod +x /usr/local/bin/clang-cl && \
+    echo '#!/bin/bash\nclang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"' > /usr/local/bin/cl && \
     chmod +x /usr/local/bin/cl && \
     echo '#!/bin/bash\nlld-link "$@"' > /usr/local/bin/link && \
     chmod +x /usr/local/bin/link && \
     echo '#!/bin/bash\nllvm-lib "$@"' > /usr/local/bin/lib && \
-    chmod +x /usr/local/bin/lib
+    chmod +x /usr/local/bin/lib && \
+    echo '#!/bin/bash\nllvm-lib "$@"' > /usr/local/bin/llvm-lib && \
+    chmod +x /usr/local/bin/llvm-lib && \
+    echo '#!/bin/bash\nllvm-mt "$@"' > /usr/local/bin/llvm-mt && \
+    chmod +x /usr/local/bin/llvm-mt && \
+    echo '#!/bin/bash\nllvm-rc "$@"' > /usr/local/bin/llvm-rc && \
+    chmod +x /usr/local/bin/llvm-rc
 
 # Verify toolchain installation
 RUN echo "=== MSVC-compatible Toolchain Verification ===" && \
     clang --version && \
+    clang-cl --version && \
     lld --version && \
     cmake --version && \
     python3 --version && \

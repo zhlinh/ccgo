@@ -259,15 +259,16 @@ def archive_ios_project(link_type='both'):
 
     This function creates two archive packages:
     1. Main package: {PROJECT_NAME}_IOS_SDK-{version}.zip
-       - lib/static/os/lib{project}.a (device universal static library)
-       - lib/static/simulator/lib{project}.a (simulator universal static library)
-       - frameworks/static/{Project}.xcframework (if link_type is static or both)
-       - frameworks/shared/{Project}.xcframework (if link_type is shared or both)
+       - lib/static/{Project}.xcframework (static XCFramework containing all architectures)
        - include/{project}/
        - build_info.json
     2. Symbols package: {PROJECT_NAME}_IOS_SDK-{version}-SYMBOLS.zip
        - symbols/static/*.dSYM
-       - symbols/shared/*.dSYM
+
+    Note:
+        iOS currently only supports static libraries. The XCFramework already contains
+        binaries for both device (arm64, arm64e) and simulator (x86_64, arm64).
+        Separate .a files are not needed as XCFramework is the recommended distribution format.
 
     Args:
         link_type: Library link type ('static', 'shared', or 'both', default: 'both')
@@ -288,40 +289,21 @@ def archive_ios_project(link_type='both'):
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Prepare static libraries mapping (device and simulator universal libs)
-    static_libs = {}
-    if link_type in ('static', 'both'):
-        # Device universal static library (merged from arm64, arm64e, armv7, armv7s)
-        device_lib_path = os.path.join(ios_install_path, "os", PROJECT_NAME_LOWER)
-        if os.path.exists(device_lib_path):
-            arc_path = get_unified_lib_path("static", arch="os", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
-            static_libs[arc_path] = device_lib_path
-        else:
-            print(f"WARNING: Device static library not found at {device_lib_path}")
+    # Note: iOS uses XCFramework which already contains all architectures (device + simulator)
+    # No need for separate static_libs - XCFramework is the recommended distribution format
 
-        # Simulator universal static library (merged from x86_64, arm64, arm64e)
-        simulator_lib_path = os.path.join(ios_install_path, "simulator", PROJECT_NAME_LOWER)
-        if os.path.exists(simulator_lib_path):
-            arc_path = get_unified_lib_path("static", arch="simulator", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
-            static_libs[arc_path] = simulator_lib_path
-        else:
-            print(f"WARNING: Simulator static library not found at {simulator_lib_path}")
-
-    # Prepare frameworks mapping
+    # Prepare frameworks mapping (XCFramework goes to lib/static/)
+    # Note: iOS currently only builds static XCFramework
     frameworks = {}
     xcframework_name = f"{PROJECT_NAME_LOWER}.xcframework"
     xcframework_src = os.path.join(ios_install_path, xcframework_name)
 
     if os.path.exists(xcframework_src):
-        # For iOS, the same XCFramework may contain both static and dynamic libs
-        # depending on how it was built. We'll add it to the appropriate directory
-        # based on link_type
+        # Only add to static - iOS build currently only produces static libs
         if link_type in ('static', 'both'):
             arc_path = get_unified_framework_path("static", xcframework_name)
             frameworks[arc_path] = xcframework_src
-        if link_type in ('shared', 'both'):
-            arc_path = get_unified_framework_path("shared", xcframework_name)
-            frameworks[arc_path] = xcframework_src
+        # Note: shared/dynamic framework is not available for iOS yet
     else:
         print(f"WARNING: XCFramework not found at {xcframework_src}")
         return
@@ -330,23 +312,18 @@ def archive_ios_project(link_type='both'):
     include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER, headers_src)
         include_dirs[arc_path] = headers_src
 
     # Prepare symbols (dSYM files)
     symbols_static = {}
-    symbols_shared = {}
     dsym_pattern = f"{ios_install_path}/*.dSYM"
     dsym_files = glob.glob(dsym_pattern)
     for dsym_file in dsym_files:
         dsym_name = os.path.basename(dsym_file)
-        # For iOS, dSYM files correspond to the framework type
         if link_type in ('static', 'both'):
             arc_path = get_unified_symbol_path("static", dsym_name)
             symbols_static[arc_path] = dsym_file
-        if link_type in ('shared', 'both'):
-            arc_path = get_unified_symbol_path("shared", dsym_name)
-            symbols_shared[arc_path] = dsym_file
 
     # Create unified archive packages
     main_zip_path, symbols_zip_path = create_unified_archive(
@@ -355,11 +332,9 @@ def archive_ios_project(link_type='both'):
         platform_name="IOS",
         version=full_version,
         link_type=link_type,
-        static_libs=static_libs if static_libs else None,
         include_dirs=include_dirs,
         frameworks=frameworks,
         symbols_static=symbols_static if symbols_static else None,
-        symbols_shared=symbols_shared if symbols_shared else None,
         architectures=["arm64", "x86_64"],  # Device + Simulator
     )
 
@@ -446,6 +421,10 @@ def print_build_results(link_type='both'):
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
+
+            # Print ZIP file tree structure
+            if item.endswith(".zip"):
+                print_zip_tree(item_path)
         elif os.path.isdir(item_path):
             # Calculate directory size
             total_size = 0

@@ -526,21 +526,47 @@ def archive_windows_project(link_type='both', toolchain='auto'):
     # Prepare shared libraries mapping
     shared_libs = {}
     if link_type in ('shared', 'both'):
+        # Get the build directory (parent of Windows.out)
+        shared_build_path = os.path.dirname(shared_install_path.rstrip('/'))
+
         if is_mingw:
-            # MinGW shared library - check shared/ subdirectory first
-            dll_path = os.path.join(shared_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.dll")
-            if not os.path.exists(dll_path):
-                dll_path = os.path.join(shared_install_path, f"lib{PROJECT_NAME_LOWER}.dll")
-            if os.path.exists(dll_path):
+            # MinGW shared library - check multiple possible locations:
+            # 1. Windows.out/shared/ (install target)
+            # 2. Windows.out/ (direct install)
+            # 3. bin/ (CMake runtime output)
+            # 4. Build root (CMake default)
+            dll_search_paths = [
+                os.path.join(shared_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.dll"),
+                os.path.join(shared_install_path, f"lib{PROJECT_NAME_LOWER}.dll"),
+                os.path.join(shared_build_path, "bin", f"lib{PROJECT_NAME_LOWER}.dll"),
+                os.path.join(shared_build_path, f"lib{PROJECT_NAME_LOWER}.dll"),
+            ]
+            dll_path = None
+            for path in dll_search_paths:
+                if os.path.exists(path):
+                    dll_path = path
+                    break
+
+            if dll_path:
                 arc_path = get_unified_lib_path("shared", toolchain="mingw", lib_name=f"lib{PROJECT_NAME_LOWER}.dll")
                 shared_libs[arc_path] = dll_path
             else:
-                print(f"WARNING: MinGW shared library not found")
-            # MinGW import library
-            import_lib_path = os.path.join(shared_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.dll.a")
-            if not os.path.exists(import_lib_path):
-                import_lib_path = os.path.join(shared_install_path, f"lib{PROJECT_NAME_LOWER}.dll.a")
-            if os.path.exists(import_lib_path):
+                print(f"WARNING: MinGW shared library not found in any of: {dll_search_paths}")
+
+            # MinGW import library - check multiple possible locations
+            import_lib_search_paths = [
+                os.path.join(shared_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.dll.a"),
+                os.path.join(shared_install_path, f"lib{PROJECT_NAME_LOWER}.dll.a"),
+                os.path.join(shared_build_path, "lib", f"lib{PROJECT_NAME_LOWER}.dll.a"),
+                os.path.join(shared_build_path, f"lib{PROJECT_NAME_LOWER}.dll.a"),
+            ]
+            import_lib_path = None
+            for path in import_lib_search_paths:
+                if os.path.exists(path):
+                    import_lib_path = path
+                    break
+
+            if import_lib_path:
                 arc_path = get_unified_lib_path("shared", toolchain="mingw", lib_name=f"lib{PROJECT_NAME_LOWER}.dll.a")
                 shared_libs[arc_path] = import_lib_path
         else:
@@ -565,7 +591,7 @@ def archive_windows_project(link_type='both', toolchain='auto'):
     include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER, headers_src)
         include_dirs[arc_path] = headers_src
 
     # Prepare symbols (PDB files for MSVC)
@@ -663,6 +689,10 @@ def print_build_results(link_type='both'):
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
+
+            # Print ZIP file tree structure
+            if item.endswith(".zip"):
+                print_zip_tree(item_path)
         elif os.path.isdir(item_path):
             # Calculate directory size
             total_size = 0

@@ -232,6 +232,10 @@ def print_build_results():
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
+
+            # Print ZIP file tree structure
+            if item.endswith(".zip"):
+                print_zip_tree(item_path)
         elif os.path.isdir(item_path):
             # Calculate directory size
             total_size = 0

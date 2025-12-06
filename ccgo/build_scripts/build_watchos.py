@@ -240,15 +240,15 @@ def archive_watchos_project(link_type='both'):
 
     This function creates two archive packages:
     1. Main package: {PROJECT_NAME}_WATCHOS_SDK-{version}.zip
-       - lib/static/os/lib{project}.a (device universal static library)
-       - lib/static/simulator/lib{project}.a (simulator universal static library)
-       - frameworks/static/{Project}.xcframework (if link_type is static or both)
-       - frameworks/shared/{Project}.xcframework (if link_type is shared or both)
+       - lib/static/{Project}.xcframework (if link_type is static or both)
        - include/{project}/
        - build_info.json
     2. Symbols package: {PROJECT_NAME}_WATCHOS_SDK-{version}-SYMBOLS.zip
        - symbols/static/*.dSYM
-       - symbols/shared/*.dSYM
+
+    Note: watchOS uses XCFramework which already contains all architectures
+    (device + simulator). No need for separate static_libs - XCFramework is the
+    recommended distribution format for Apple platforms.
 
     Args:
         link_type: Library link type ('static', 'shared', or 'both', default: 'both')
@@ -269,37 +269,22 @@ def archive_watchos_project(link_type='both'):
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
-    # Prepare static libraries mapping (device and simulator universal libs)
-    static_libs = {}
-    if link_type in ('static', 'both'):
-        # Device universal static library
-        device_lib_path = os.path.join(watchos_install_path, "os", PROJECT_NAME_LOWER)
-        if os.path.exists(device_lib_path):
-            arc_path = get_unified_lib_path("static", arch="os", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
-            static_libs[arc_path] = device_lib_path
-        else:
-            print(f"WARNING: Device static library not found at {device_lib_path}")
-
-        # Simulator universal static library
-        simulator_lib_path = os.path.join(watchos_install_path, "simulator", PROJECT_NAME_LOWER)
-        if os.path.exists(simulator_lib_path):
-            arc_path = get_unified_lib_path("static", arch="simulator", lib_name=f"lib{PROJECT_NAME_LOWER}.a")
-            static_libs[arc_path] = simulator_lib_path
-        else:
-            print(f"WARNING: Simulator static library not found at {simulator_lib_path}")
+    # Note: watchOS uses XCFramework which already contains all architectures (device + simulator)
+    # No need for separate static_libs - XCFramework is the recommended distribution format
 
     # Prepare frameworks mapping
+    # Note: watchOS currently only builds static XCFramework
     frameworks = {}
     xcframework_name = f"{PROJECT_NAME_LOWER}.xcframework"
     xcframework_src = os.path.join(watchos_install_path, xcframework_name)
 
     if os.path.exists(xcframework_src):
+        # Only add to static frameworks - watchOS build currently only produces static libs
         if link_type in ('static', 'both'):
             arc_path = get_unified_framework_path("static", xcframework_name)
             frameworks[arc_path] = xcframework_src
-        if link_type in ('shared', 'both'):
-            arc_path = get_unified_framework_path("shared", xcframework_name)
-            frameworks[arc_path] = xcframework_src
+        # Note: shared framework is not available for watchOS
+        # Dynamic frameworks on watchOS are not supported for user-level distribution
     else:
         print(f"WARNING: XCFramework not found at {xcframework_src}")
         return
@@ -308,12 +293,12 @@ def archive_watchos_project(link_type='both'):
     include_dirs = {}
     headers_src = os.path.join(SCRIPT_PATH, "include")
     if os.path.exists(headers_src):
-        arc_path = get_unified_include_path(PROJECT_NAME_LOWER)
+        arc_path = get_unified_include_path(PROJECT_NAME_LOWER, headers_src)
         include_dirs[arc_path] = headers_src
 
     # Prepare symbols (dSYM files)
+    # Note: watchOS only supports static libraries
     symbols_static = {}
-    symbols_shared = {}
     dsym_pattern = f"{watchos_install_path}/*.dSYM"
     dsym_files = glob.glob(dsym_pattern)
     for dsym_file in dsym_files:
@@ -321,9 +306,6 @@ def archive_watchos_project(link_type='both'):
         if link_type in ('static', 'both'):
             arc_path = get_unified_symbol_path("static", dsym_name)
             symbols_static[arc_path] = dsym_file
-        if link_type in ('shared', 'both'):
-            arc_path = get_unified_symbol_path("shared", dsym_name)
-            symbols_shared[arc_path] = dsym_file
 
     # Create unified archive packages
     main_zip_path, symbols_zip_path = create_unified_archive(
@@ -332,11 +314,9 @@ def archive_watchos_project(link_type='both'):
         platform_name="WATCHOS",
         version=full_version,
         link_type=link_type,
-        static_libs=static_libs if static_libs else None,
         include_dirs=include_dirs,
         frameworks=frameworks,
         symbols_static=symbols_static if symbols_static else None,
-        symbols_shared=symbols_shared if symbols_shared else None,
         architectures=["arm64_32", "x86_64"],  # Device + Simulator
     )
 
@@ -407,6 +387,10 @@ def print_build_results():
         if os.path.isfile(item_path):
             size = os.path.getsize(item_path) / (1024 * 1024)  # MB
             print(f"  {item} ({size:.2f} MB)")
+
+            # Print ZIP file tree structure
+            if item.endswith(".zip"):
+                print_zip_tree(item_path)
         elif os.path.isdir(item_path):
             # Calculate directory size
             total_size = 0
