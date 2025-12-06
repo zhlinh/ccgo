@@ -80,8 +80,8 @@ PLATFORM_CONFIG = {
     },
     "windows": {
         "dockerfile": "Dockerfile.windows-mingw",
-        "image_name": "ccgo-builder-windows",
-        "remote_image": f"{GHCR_REPO}/ccgo-builder-windows:latest",
+        "image_name": "ccgo-builder-windows-mingw",
+        "remote_image": f"{GHCR_REPO}/ccgo-builder-windows-mingw:latest",
         "build_script": "build_windows.py",
         "build_mode": "1",
         "size_estimate": "~1.2GB"
