@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ccgo"
+version = "2.2.6"
+description = "A C++ cross-platform build system"
+readme = "README.md"
+authors = [
+    {name = "zhlinh", email = "zhlinhng@gmail.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "copier>=9.2.0",
+    "copier-templates-extensions>=0.3.0",
+    'tomli>=2.0.0; python_version < "3.11"',
+]
+
+[project.urls]
+Homepage = "https://github.com/zhlinh/ccgo"
+Repository = "https://github.com/zhlinh/ccgo"
+Issues = "https://github.com/zhlinh/ccgo/issues"
+
+[project.scripts]
+ccgo = "ccgo.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ccgo*"]
+
+[tool.setuptools.package-data]
+ccgo = [
+    "build_scripts/**/*",
+    "docker/**/*",
+]

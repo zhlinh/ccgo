@@ -1,0 +1,51 @@
+# Dockerfile for building Windows static libraries using MinGW on any platform
+# Base image: Ubuntu 22.04 with MinGW-w64 cross-compiler
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Use apt caching and combine RUN commands to reduce layers
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    mingw-w64 \
+    cmake \
+    make \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    zip \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for CCGO
+# tomli: TOML parsing for Python < 3.11
+# copier: Template engine (required by ccgo)
+RUN pip3 install --no-cache-dir \
+    tomli \
+    copier>=9.2.0 \
+    copier-templates-extensions>=0.3.0
+
+# Set environment variables for MinGW cross-compilation
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CC=x86_64-w64-mingw32-gcc \
+    CXX=x86_64-w64-mingw32-g++ \
+    AR=x86_64-w64-mingw32-ar \
+    RANLIB=x86_64-w64-mingw32-ranlib
+
+# Verify MinGW toolchain installation
+RUN echo "=== MinGW Toolchain Verification ===" && \
+    x86_64-w64-mingw32-gcc --version && \
+    x86_64-w64-mingw32-g++ --version && \
+    cmake --version && \
+    python3 --version
+
+# Set working directory
+WORKDIR /workspace
+
+# Entry point - execute build script
+ENTRYPOINT ["/bin/bash", "-c"]

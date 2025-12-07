@@ -1,0 +1,91 @@
+# Dockerfile for building Apple platform libraries (macOS/iOS/watchOS/tvOS) on any platform
+# Uses OSXCross for cross-compilation from Linux to Apple platforms
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install basic build dependencies with caching
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    clang \
+    cmake \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    zip \
+    unzip \
+    libxml2-dev \
+    libssl-dev \
+    libbz2-dev \
+    libpng-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    patch \
+    xz-utils \
+    cpio \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for CCGO
+# tomli: TOML parsing for Python < 3.11
+# copier: Template engine (required by ccgo)
+RUN pip3 install --no-cache-dir \
+    tomli \
+    copier>=9.2.0 \
+    copier-templates-extensions>=0.3.0
+
+# Set up OSXCross
+# OSXCross allows cross-compilation from Linux to macOS/iOS/watchOS/tvOS
+WORKDIR /opt
+
+# Clone OSXCross repository
+RUN git clone https://github.com/tpoechtrager/osxcross.git
+
+WORKDIR /opt/osxcross
+
+# Download Xcode SDK
+# Note: You need to provide the Xcode SDK tarball
+# Download from: https://github.com/joseluisq/macosx-sdks/releases
+# For this Dockerfile, we'll download a publicly available SDK
+RUN wget -q https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz -O tarballs/MacOSX13.3.sdk.tar.xz
+
+# Build OSXCross toolchain
+# This compiles the cross-compilation toolchain for Apple platforms
+ENV UNATTENDED=1
+RUN ./build.sh
+
+# Add OSXCross to PATH
+ENV PATH="/opt/osxcross/target/bin:${PATH}"
+ENV OSXCROSS_ROOT="/opt/osxcross"
+ENV OSXCROSS_TARGET_DIR="/opt/osxcross/target"
+ENV OSXCROSS_SDK="MacOSX13.3.sdk"
+
+# Set up iOS SDK support
+# OSXCross can also target iOS, watchOS, tvOS
+RUN ./build_compiler_rt.sh || true
+
+# Set working directory
+WORKDIR /workspace
+
+# Set environment variables for Apple cross-compilation
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CC=o64-clang \
+    CXX=o64-clang++ \
+    AR=x86_64-apple-darwin22-ar \
+    RANLIB=x86_64-apple-darwin22-ranlib
+
+# Verify OSXCross toolchain installation
+RUN echo "=== OSXCross Toolchain Verification ===" && \
+    o64-clang --version && \
+    o64-clang++ --version && \
+    cmake --version && \
+    python3 --version && \
+    echo "OSXCross SDK: ${OSXCROSS_SDK}"
+
+# Entry point - execute build script
+ENTRYPOINT ["/bin/bash", "-c"]

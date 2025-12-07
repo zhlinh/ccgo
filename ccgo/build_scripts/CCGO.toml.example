@@ -1,0 +1,89 @@
+# CCGO.toml - Project Configuration Example
+#
+# This file defines project metadata and dependencies for CCGO build system
+
+[project]
+name = "myproject"
+version = "1.0.0"
+description = "My C++ cross-platform project"
+authors = ["Your Name <your.email@example.com>"]
+
+# General dependencies (all platforms)
+[dependencies]
+
+# Example 1: Remote URL dependency
+libfoo = { version = "1.0.0", source = "https://example.com/releases/LIBFOO_SDK-1.0.0.zip" }
+
+# Example 2: Local path dependency (relative to project root)
+libbar = { path = "../libbar/target/package/LIBBAR_SDK-1.0.0" }
+
+# Example 3: Local archive dependency (absolute path)
+libbaz = { source = "/absolute/path/to/LIBBAZ_SDK-2.1.0.tar.gz" }
+
+# Example 4: Simple version string (requires manual source configuration)
+# libqux = "2.0.0"
+
+# Platform-specific dependencies
+# These are only installed when building for the specific platform
+# Use: ccgo install --platform android
+
+[dependencies.android]
+# Android-specific dependency
+libandroid = { version = "1.0.0", source = "https://example.com/libandroid-1.0.0.zip" }
+
+[dependencies.ios]
+# iOS-specific dependency
+libios = { version = "1.0.0", source = "https://example.com/libios-1.0.0.tar.gz" }
+
+[dependencies.macos]
+# macOS-specific dependency
+libmacos = { path = "../libs/macos/LIBMACOS_SDK-1.0.0" }
+
+[dependencies.tvos]
+# tvOS-specific dependency
+libtvos = { version = "1.0.0", source = "https://example.com/libtvos-1.0.0.zip" }
+
+[dependencies.watchos]
+# watchOS-specific dependency
+libwatchos = { version = "1.0.0", source = "https://example.com/libwatchos-1.0.0.zip" }
+
+[dependencies.windows]
+# Windows-specific dependency
+libwindows = { version = "1.0.0", source = "https://example.com/libwindows-1.0.0.zip" }
+
+[dependencies.linux]
+# Linux-specific dependency
+liblinux = { version = "1.0.0", source = "https://example.com/liblinux-1.0.0.tar.gz" }
+
+[dependencies.ohos]
+# OpenHarmony-specific dependency
+libohos = { version = "1.0.0", source = "https://example.com/libohos-1.0.0.zip" }
+
+# Build configuration
+[build]
+# CMake options
+cmake_options = [
+    "-DENABLE_TESTS=ON",
+    "-DENABLE_BENCHMARKS=ON"
+]
+
+# Platforms to build
+platforms = [
+    "android",
+    "ios",
+    "macos",
+    "windows",
+    "linux",
+    "ohos"
+]
+
+# Package configuration
+[package]
+# Include documentation in SDK package
+include_docs = true
+
+# Include samples in SDK package
+include_samples = false
+
+# Archive format (zip, tar.gz, both, none)
+format = "zip"

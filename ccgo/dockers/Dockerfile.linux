@@ -1,0 +1,46 @@
+# Dockerfile for building Linux static libraries on any platform
+# Base image: Ubuntu 22.04 LTS with build essentials
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Use apt caching and combine RUN commands to reduce layers
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    zip \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for CCGO
+# tomli: TOML parsing for Python < 3.11
+# copier: Template engine (required by ccgo)
+RUN pip3 install --no-cache-dir \
+    tomli \
+    copier>=9.2.0 \
+    copier-templates-extensions>=0.3.0
+
+# Set environment variables
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Verify installations
+RUN echo "=== Build Tools Verification ===" && \
+    gcc --version && \
+    g++ --version && \
+    cmake --version && \
+    python3 --version
+
+# Set working directory
+WORKDIR /workspace
+
+# Entry point - execute build script
+ENTRYPOINT ["/bin/bash", "-c"]

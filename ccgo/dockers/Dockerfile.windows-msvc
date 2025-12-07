@@ -1,0 +1,125 @@
+# Dockerfile for building Windows libraries using MSVC toolchain via Wine/LLVM
+# This provides an alternative to MinGW for better Windows ecosystem compatibility
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base tools first (needed for adding LLVM repository)
+# Note: wine32 requires i386 architecture to be enabled first
+RUN dpkg --add-architecture i386 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    # Wine for running Windows tools
+    wine64 wine32 \
+    # Build tools
+    cmake \
+    make \
+    ninja-build \
+    git \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    zip \
+    unzip \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install LLVM/Clang 19 from official LLVM repository
+# The Windows SDK (from xwin) requires Clang 19.0.0 or newer
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 19 all && \
+    rm llvm.sh && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create symlinks for LLVM 19 tools to default names
+RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100 && \
+    update-alternatives --install /usr/bin/lld lld /usr/bin/lld-19 100 && \
+    update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-19 100 && \
+    update-alternatives --install /usr/bin/lld-link lld-link /usr/bin/lld-link-19 100 && \
+    update-alternatives --install /usr/bin/llvm-lib llvm-lib /usr/bin/llvm-lib-19 100 && \
+    update-alternatives --install /usr/bin/llvm-mt llvm-mt /usr/bin/llvm-mt-19 100 && \
+    update-alternatives --install /usr/bin/llvm-rc llvm-rc /usr/bin/llvm-rc-19 100 && \
+    update-alternatives --install /usr/bin/llvm-ranlib llvm-ranlib /usr/bin/llvm-ranlib-19 100
+
+# Install build-essential for C/C++ compilation (needed by Rust crate builds)
+# and install Rust/xwin in the same layer to ensure gcc is available
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    && rm -rf /var/lib/apt/lists/* && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    . ~/.cargo/env && \
+    cargo install xwin
+
+# Download Windows SDK headers and libraries
+RUN . ~/.cargo/env && \
+    mkdir -p /opt/xwin && \
+    xwin --accept-license splat --output /opt/xwin/sdk
+
+# Install Python dependencies for CCGO
+RUN pip3 install --no-cache-dir \
+    tomli \
+    copier>=9.2.0 \
+    copier-templates-extensions>=0.3.0
+
+# Set environment variables for MSVC-compatible cross-compilation
+# xwin splat output structure:
+#   /opt/xwin/sdk/crt/include/  - CRT headers
+#   /opt/xwin/sdk/crt/lib/x86_64/  - CRT libraries
+#   /opt/xwin/sdk/sdk/include/um/  - Windows SDK headers
+#   /opt/xwin/sdk/sdk/lib/um/x86_64/  - Windows SDK libraries
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CC="clang-cl" \
+    CXX="clang-cl" \
+    INCLUDE="/opt/xwin/sdk/crt/include:/opt/xwin/sdk/sdk/include/um:/opt/xwin/sdk/sdk/include/shared:/opt/xwin/sdk/sdk/include/ucrt" \
+    LIB="/opt/xwin/sdk/crt/lib/x86_64:/opt/xwin/sdk/sdk/lib/um/x86_64:/opt/xwin/sdk/sdk/lib/ucrt/x86_64" \
+    CLANG_TARGET="x86_64-pc-windows-msvc" \
+    PATH="/root/.cargo/bin:${PATH}"
+
+# Create wrapper scripts for MSVC-compatible compilation
+RUN printf '#!/bin/bash\nexec clang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/clang-cl && \
+    chmod +x /usr/local/bin/clang-cl && \
+    printf '#!/bin/bash\nexec clang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/cl && \
+    chmod +x /usr/local/bin/cl && \
+    printf '#!/bin/bash\nexec lld-link "$@"\n' > /usr/local/bin/link && \
+    chmod +x /usr/local/bin/link && \
+    printf '#!/bin/bash\nexec llvm-lib "$@"\n' > /usr/local/bin/lib && \
+    chmod +x /usr/local/bin/lib
+
+# Verify: clang
+RUN echo "=== Verify clang ===" && clang --version
+
+# Verify: lld (use ld.lld for version check, lld-link for Windows)
+RUN echo "=== Verify lld ===" && ld.lld --version && lld-link --version
+
+# Verify: cmake
+RUN echo "=== Verify cmake ===" && cmake --version
+
+# Verify: python3
+RUN echo "=== Verify python3 ===" && python3 --version
+
+# Verify: wrapper scripts
+RUN echo "=== Verify wrapper scripts ===" && \
+    ls -la /usr/local/bin/clang-cl && \
+    ls -la /usr/local/bin/cl && \
+    ls -la /usr/local/bin/link && \
+    ls -la /usr/local/bin/lib
+
+# Verify: Windows SDK directory
+RUN echo "=== Verify Windows SDK ===" && \
+    ls -la /opt/xwin/sdk/ && \
+    echo "CRT include:" && ls /opt/xwin/sdk/crt/include/ | head -5 && \
+    echo "SDK include:" && ls /opt/xwin/sdk/sdk/include/ | head -5
+
+# Set working directory
+WORKDIR /workspace
+
+# Entry point
+ENTRYPOINT ["/bin/bash", "-c"]

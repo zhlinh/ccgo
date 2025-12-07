@@ -1,0 +1,17 @@
+# Include all CMake configuration files
+recursive-include ccgo/build_scripts/cmake *.cmake
+recursive-include ccgo/build_scripts/cmake/template *.txt.in
+include ccgo/build_scripts/cmake/CMakeLists.txt.dependencies.example
+
+# Include Docker build files
+include ccgo/dockers/Dockerfile.*
+include ccgo/dockers/*.py
+include ccgo/dockers/*.md
+
+# Include README and LICENSE
+include README.md
+include LICENSE
+
+# Exclude compiled Python files
+global-exclude *.pyc
+global-exclude __pycache__
