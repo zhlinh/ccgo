@@ -13,11 +13,7 @@ import os
 import sys
 import argparse
 import shutil
-import zipfile
-import tarfile
-import glob
 import subprocess
-from pathlib import Path
 from datetime import datetime
 
 # Try to import tomli for Python < 3.11, tomllib for Python >= 3.11
@@ -221,7 +217,6 @@ OUTPUT STRUCTURE:
 
         # Try git tag
         try:
-            import subprocess
             result = subprocess.run(
                 ["git", "describe", "--tags", "--always"],
                 cwd=project_dir,
@@ -305,10 +300,10 @@ OUTPUT STRUCTURE:
         return "SDK"
 
     def collect_platform_artifacts(self, project_dir: str, platform: str, output_dir: str, project_name: str):
-        """Collect artifacts for a specific platform from target/<platform> directory
+        """Collect ZIP artifacts for a specific platform from target/<platform> directory
 
-        Build scripts output compressed archives (ZIP/AAR/HAR) in target/<platform>/.
-        This function extracts libraries from these archives and organizes them properly.
+        Build scripts output ZIP archives in target/<platform>/.
+        This function copies ZIP files directly to the package output.
         """
         print(f"\n📦 Collecting {platform} artifacts...")
 
@@ -318,283 +313,48 @@ OUTPUT STRUCTURE:
         if not os.path.exists(target_platform_dir):
             print(f"   ⚠️  No artifacts found (target/{platform} does not exist)")
             print(f"   💡 Build {platform} first with: ccgo build {platform}")
-            return False
+            return False, []
 
         collected = False
-        platform_output = os.path.join(output_dir, "lib", platform)
+        collected_files = []
 
         try:
-            # Remove existing output directory if it exists
-            if os.path.exists(platform_output):
-                shutil.rmtree(platform_output)
-
-            # Find compressed archives in target/<platform>/
-            import zipfile
-            import tarfile
+            # Find ZIP archives in target/<platform>/ (recursively)
             archive_files = []
-
-            for f in os.listdir(target_platform_dir):
-                if f.startswith('ARCHIVE'):
-                    continue  # Skip archive markers
-                full_path = os.path.join(target_platform_dir, f)
-                if f.endswith(('.zip', '.aar', '.har')) and os.path.isfile(full_path):
-                    archive_files.append(full_path)
+            for root, dirs, files in os.walk(target_platform_dir):
+                for f in files:
+                    if f.endswith(('.zip', '.aar', '.har')) and not f.startswith('ARCHIVE'):
+                        full_path = os.path.join(root, f)
+                        archive_files.append(full_path)
 
             if not archive_files:
                 print(f"   ⚠️  No build archives found in target/{platform}")
                 print(f"   💡 Expected .zip, .aar, or .har files")
-                return False
+                return False, []
 
-            # Use the first (and typically only) archive file
-            archive_file = archive_files[0]
-            print(f"   📂 Extracting from {os.path.basename(archive_file)}...")
-
-            # Create temporary extraction directory
-            temp_extract_dir = os.path.join(project_dir, ".ccgo", "temp", f"extract_{platform}")
-            if os.path.exists(temp_extract_dir):
-                shutil.rmtree(temp_extract_dir)
-            os.makedirs(temp_extract_dir, exist_ok=True)
-
-            # Extract archive (support both ZIP and tar.gz formats)
-            if archive_file.endswith('.har'):
-                # HAR files are tar.gz format
-                with tarfile.open(archive_file, 'r:gz') as tar_ref:
-                    tar_ref.extractall(temp_extract_dir)
-            else:
-                # ZIP format (AAR, regular ZIP)
-                with zipfile.ZipFile(archive_file, 'r') as zip_ref:
-                    zip_ref.extractall(temp_extract_dir)
-
-            # Platform-specific extraction logic
-            if platform.lower() == "android":
-                collected = self._extract_android_libraries(temp_extract_dir, platform_output, project_name)
-            elif platform.lower() in ["ios", "macos", "tvos", "watchos"]:
-                collected = self._extract_darwin_libraries(temp_extract_dir, platform_output, project_name)
-            elif platform.lower() == "linux":
-                collected = self._extract_linux_libraries(temp_extract_dir, platform_output, project_name)
-            elif platform.lower() == "windows":
-                collected = self._extract_windows_libraries(temp_extract_dir, platform_output, project_name)
-            elif platform.lower() == "ohos":
-                collected = self._extract_ohos_libraries(temp_extract_dir, platform_output, project_name)
-
-            # Clean up temp directory
-            if os.path.exists(temp_extract_dir):
-                shutil.rmtree(temp_extract_dir)
+            # Copy all archive files to output directory
+            for archive_file in archive_files:
+                filename = os.path.basename(archive_file)
+                dest_path = os.path.join(output_dir, filename)
+                shutil.copy2(archive_file, dest_path)
+                size_mb = os.path.getsize(dest_path) / (1024 * 1024)
+                print(f"   ✓ {filename} ({size_mb:.2f} MB)")
+                collected = True
+                collected_files.append(filename)
 
         except Exception as e:
             print(f"   ⚠️  Error collecting {platform} artifacts: {e}")
             import traceback
             traceback.print_exc()
 
-        return collected
-
-    def _extract_android_libraries(self, extract_dir: str, output_dir: str, project_name: str):
-        """Extract .so files from Android AAR jni/ directory"""
-        jni_dir = os.path.join(extract_dir, "jni")
-        if not os.path.exists(jni_dir):
-            print(f"   ⚠️  No jni/ directory found in Android archive")
-            return False
-
-        collected = False
-        # Organize by architecture: shared/<arch>/lib*.so
-        for arch in os.listdir(jni_dir):
-            arch_dir = os.path.join(jni_dir, arch)
-            if not os.path.isdir(arch_dir):
-                continue
-
-            # Create output directory
-            output_arch_dir = os.path.join(output_dir, "shared", arch)
-            os.makedirs(output_arch_dir, exist_ok=True)
-
-            # Copy .so files (filter out libc++_shared.so which is system library)
-            for f in os.listdir(arch_dir):
-                if f.endswith('.so') and f.startswith('lib') and 'c++_shared' not in f:
-                    src = os.path.join(arch_dir, f)
-                    dest = os.path.join(output_arch_dir, f)
-                    shutil.copy2(src, dest)
-                    print(f"   ✓ shared/{arch}/{f}")
-                    collected = True
-
-        return collected
-
-    def _extract_darwin_libraries(self, extract_dir: str, output_dir: str, project_name: str):
-        """Extract .xcframework or .framework from Darwin platforms (iOS/macOS/tvOS/watchOS)"""
-        # Look for xcframework or framework in extracted directory
-        collected = False
-
-        for root, dirs, files in os.walk(extract_dir):
-            for d in dirs:
-                if d.endswith('.xcframework') or d.endswith('.framework'):
-                    src = os.path.join(root, d)
-                    # Organize into static/ directory
-                    static_dir = os.path.join(output_dir, "static")
-                    os.makedirs(static_dir, exist_ok=True)
-                    dest = os.path.join(static_dir, d)
-
-                    if os.path.exists(dest):
-                        shutil.rmtree(dest)
-                    shutil.copytree(src, dest, symlinks=True)
-                    print(f"   ✓ static/{d}/")
-                    collected = True
-                    break  # Only take the first framework found
-            if collected:
-                break
-
-        return collected
-
-    def _extract_linux_libraries(self, extract_dir: str, output_dir: str, project_name: str):
-        """Extract .so and .a files from Linux archive"""
-        collected = False
-
-        # Look for .so and .a files in extracted directory
-        for root, dirs, files in os.walk(extract_dir):
-            for f in files:
-                if f.endswith('.so') or f.endswith('.a'):
-                    src = os.path.join(root, f)
-
-                    # Determine if it's static or shared
-                    if f.endswith('.a'):
-                        lib_type = "static"
-                    else:
-                        lib_type = "shared"
-
-                    output_type_dir = os.path.join(output_dir, lib_type)
-                    os.makedirs(output_type_dir, exist_ok=True)
-
-                    dest = os.path.join(output_type_dir, f)
-                    shutil.copy2(src, dest)
-                    print(f"   ✓ {lib_type}/{f}")
-                    collected = True
-
-        return collected
-
-    def _extract_windows_libraries(self, extract_dir: str, output_dir: str, project_name: str):
-        """Extract .lib and .dll files from Windows archive"""
-        collected = False
-
-        # Look for .lib and .dll files in extracted directory
-        for root, dirs, files in os.walk(extract_dir):
-            for f in files:
-                if f.endswith('.lib') or f.endswith('.dll'):
-                    src = os.path.join(root, f)
-
-                    # Determine if it's static or shared
-                    if f.endswith('.lib'):
-                        lib_type = "static"
-                    elif f.endswith('.dll'):
-                        lib_type = "shared"
-
-                    # Windows uses x64 subdirectory
-                    output_arch_dir = os.path.join(output_dir, lib_type, "x64")
-                    os.makedirs(output_arch_dir, exist_ok=True)
-
-                    dest = os.path.join(output_arch_dir, f)
-                    shutil.copy2(src, dest)
-                    print(f"   ✓ {lib_type}/x64/{f}")
-                    collected = True
-
-        return collected
-
-    def _extract_ohos_libraries(self, extract_dir: str, output_dir: str, project_name: str):
-        """Extract .so files from OHOS HAR package/libs/ directory"""
-        libs_dir = os.path.join(extract_dir, "package", "libs")
-        if not os.path.exists(libs_dir):
-            # Try alternate location
-            libs_dir = os.path.join(extract_dir, "libs")
-            if not os.path.exists(libs_dir):
-                print(f"   ⚠️  No libs/ directory found in OHOS archive")
-                return False
-
-        collected = False
-        # Organize by architecture: shared/<arch>/lib*.so
-        for arch in os.listdir(libs_dir):
-            arch_dir = os.path.join(libs_dir, arch)
-            if not os.path.isdir(arch_dir):
-                continue
-
-            # Create output directory
-            output_arch_dir = os.path.join(output_dir, "shared", arch)
-            os.makedirs(output_arch_dir, exist_ok=True)
-
-            # Copy .so files
-            for f in os.listdir(arch_dir):
-                if f.endswith('.so') and f.startswith('lib'):
-                    src = os.path.join(arch_dir, f)
-                    dest = os.path.join(output_arch_dir, f)
-                    shutil.copy2(src, dest)
-                    print(f"   ✓ shared/{arch}/{f}")
-                    collected = True
-
-        return collected
-
-    def collect_include_headers(self, project_dir: str, output_dir: str, project_name: str):
-        """Collect include headers"""
-        print(f"\n📦 Collecting include headers...")
-
-        # Define ignore patterns for files that should not be included
-        def ignore_patterns(directory, files):
-            """Ignore non-header files and build artifacts"""
-            ignored = []
-            for name in files:
-                # Ignore CPPLINT.cfg and other non-header files
-                if name in ['CPPLINT.cfg', '.DS_Store', 'Thumbs.db']:
-                    ignored.append(name)
-                # Ignore files without extension or with non-header extensions
-                elif '.' in name and not name.endswith(('.h', '.hpp', '.hxx', '.h++', '.hh')):
-                    # Allow directories to be traversed
-                    full_path = os.path.join(directory, name)
-                    if not os.path.isdir(full_path):
-                        ignored.append(name)
-            return ignored
-
-        # First check if include directory exists directly in project_dir
-        include_dir = os.path.join(project_dir, "include")
-        if os.path.exists(include_dir) and os.path.isdir(include_dir):
-            try:
-                output_include = os.path.join(output_dir, "include")
-                if os.path.exists(output_include):
-                    shutil.rmtree(output_include)
-                shutil.copytree(include_dir, output_include, symlinks=True, ignore=ignore_patterns)
-                print(f"   ✓ Copied include headers")
-                file_count = sum(1 for _ in Path(output_include).rglob('*') if _.is_file())
-                print(f"   ✓ {file_count} header files collected")
-                return True
-            except (OSError, PermissionError) as e:
-                print(f"   ⚠️  Error collecting headers: {e}")
-
-        # Look for include directory in project subdirectories
-        try:
-            for subdir in os.listdir(project_dir):
-                subdir_path = os.path.join(project_dir, subdir)
-                if not os.path.isdir(subdir_path):
-                    continue
-                include_dir = os.path.join(subdir_path, "include")
-                if os.path.exists(include_dir) and os.path.isdir(include_dir):
-                    # Copy the contents of include directory
-                    # The structure should be: output_dir/include/<project_name>/...
-                    output_include = os.path.join(output_dir, "include")
-
-                    # Copy the entire include directory tree
-                    if os.path.exists(output_include):
-                        shutil.rmtree(output_include)
-                    shutil.copytree(include_dir, output_include, symlinks=True, ignore=ignore_patterns)
-                    print(f"   ✓ Copied include headers")
-
-                    # Count files
-                    file_count = sum(1 for _ in Path(output_include).rglob('*') if _.is_file())
-                    print(f"   ✓ {file_count} header files collected")
-                    return True
-        except (OSError, PermissionError) as e:
-            print(f"   ⚠️  Error collecting headers: {e}")
-
-        print(f"   ⚠️  No include headers found")
-        return False
+        return collected, collected_files
 
     def collect_kmp_artifacts(self, project_dir: str, output_dir: str, project_name: str):
-        """Collect KMP artifacts from target/kmp directory"""
+        """Collect KMP ZIP artifacts from target/kmp directory"""
         print(f"\n📦 Collecting KMP artifacts...")
 
         collected = False
+        collected_files = []
 
         # Look for KMP artifacts in target/kmp directory
         target_kmp_dir = os.path.join(project_dir, "target", "kmp")
@@ -602,218 +362,33 @@ OUTPUT STRUCTURE:
         if not os.path.exists(target_kmp_dir):
             print(f"   ⚠️  No KMP artifacts found (target/kmp does not exist)")
             print(f"   💡 Build KMP first with: ccgo build kmp")
-            return False
-
-        kmp_output_base = os.path.join(output_dir, "lib", "kmp")
+            return False, []
 
         try:
-            # Copy Android AAR files
-            android_src = os.path.join(target_kmp_dir, "android")
-            if os.path.exists(android_src):
-                aar_files = list(Path(android_src).glob("*.aar"))
-                if aar_files:
-                    android_dest = os.path.join(kmp_output_base, "android")
-                    os.makedirs(android_dest, exist_ok=True)
-                    for aar_file in aar_files:
-                        shutil.copy2(aar_file, os.path.join(android_dest, aar_file.name))
-                        print(f"   ✓ android/{aar_file.name}")
-                        collected = True
-
-            # Copy Desktop JAR files
-            desktop_src = os.path.join(target_kmp_dir, "desktop")
-            if os.path.exists(desktop_src):
-                jar_files = list(Path(desktop_src).glob("*.jar"))
-                if jar_files:
-                    desktop_dest = os.path.join(kmp_output_base, "desktop")
-                    os.makedirs(desktop_dest, exist_ok=True)
-                    for jar_file in jar_files:
-                        shutil.copy2(jar_file, os.path.join(desktop_dest, jar_file.name))
-                        print(f"   ✓ desktop/{jar_file.name}")
-                        collected = True
-
-            # Copy Native klib files (iOS, macOS, Linux)
-            native_src = os.path.join(target_kmp_dir, "native")
-            if os.path.exists(native_src):
-                for platform_dir in Path(native_src).iterdir():
-                    if platform_dir.is_dir():
-                        platform_name = platform_dir.name
-                        platform_dest = os.path.join(kmp_output_base, "native", platform_name)
-
-                        # Only copy if there are actual files
-                        has_files = any(platform_dir.rglob('*'))
-                        if has_files:
-                            if os.path.exists(platform_dest):
-                                shutil.rmtree(platform_dest)
-                            shutil.copytree(platform_dir, platform_dest, symlinks=True)
-                            print(f"   ✓ native/{platform_name}/")
-                            collected = True
+            # Find ZIP archives in target/kmp/
+            for f in os.listdir(target_kmp_dir):
+                if f.endswith('.zip'):
+                    src_path = os.path.join(target_kmp_dir, f)
+                    dest_path = os.path.join(output_dir, f)
+                    shutil.copy2(src_path, dest_path)
+                    size_mb = os.path.getsize(dest_path) / (1024 * 1024)
+                    print(f"   ✓ {f} ({size_mb:.2f} MB)")
+                    collected = True
+                    collected_files.append(f)
 
         except (OSError, PermissionError) as e:
             print(f"   ⚠️  Error collecting KMP artifacts: {e}")
-            return False
+            return False, []
 
         if not collected:
-            print(f"   ⚠️  No KMP artifacts found in target/kmp")
+            print(f"   ⚠️  No KMP ZIP archives found in target/kmp")
             print(f"   💡 Build KMP first with: ccgo build kmp")
 
-        return collected
-
-    def collect_documentation(self, project_dir: str, output_dir: str, project_name: str):
-        """Collect documentation"""
-        print(f"\n📦 Collecting documentation...")
-
-        # Look for docs build outputs
-        docs_build_dir = os.path.join(project_dir, "cmake_build", "Docs")
-
-        if os.path.exists(docs_build_dir):
-            # Find HTML output
-            for root, dirs, files in os.walk(docs_build_dir):
-                if "_html" in dirs or "html" in dirs:
-                    html_dir = os.path.join(root, "_html" if "_html" in dirs else "html")
-                    docs_output = os.path.join(output_dir, "docs")
-                    if os.path.exists(docs_output):
-                        shutil.rmtree(docs_output)
-                    shutil.copytree(html_dir, docs_output)
-                    print(f"   ✓ Copied from {html_dir}")
-                    return True
-
-        print(f"   ⚠️  No documentation found")
-        return False
-
-    def generate_package_json(self, package_dir: str, project_name: str, version: str, collected_platforms: list):
-        """Generate ccgo-package.json with SDK metadata
-
-        This file contains:
-        - Package name, version, and generation time
-        - List of platforms with their link types
-        - Library files for each platform/link_type/arch
-        - Dependencies (third-party libraries) information
-        """
-        print(f"\n📦 Generating ccgo-package.json...")
-
-        package_metadata = {
-            "name": project_name,
-            "version": version,
-            "generated": datetime.now().isoformat(),
-            "platforms": {}
-        }
-
-        lib_dir = os.path.join(package_dir, "lib")
-        if not os.path.exists(lib_dir):
-            print("   ⚠️  No lib directory found, skipping metadata generation")
-            return
-
-        # Scan each platform directory
-        for platform in collected_platforms:
-            platform_dir = os.path.join(lib_dir, platform)
-            if not os.path.exists(platform_dir):
-                continue
-
-            platform_metadata = {
-                "link_types": {}
-            }
-
-            # Check for static and shared subdirectories
-            for link_type in ["static", "shared"]:
-                link_type_dir = os.path.join(platform_dir, link_type)
-                if os.path.exists(link_type_dir):
-                    link_type_metadata = self._scan_link_type_dir(link_type_dir, platform, link_type, project_name)
-                    if link_type_metadata:
-                        platform_metadata["link_types"][link_type] = link_type_metadata
-
-            if platform_metadata["link_types"]:
-                package_metadata["platforms"][platform] = platform_metadata
-
-        # Write JSON file
-        json_path = os.path.join(package_dir, "ccgo-package.json")
-        with open(json_path, 'w') as f:
-            import json
-            json.dump(package_metadata, f, indent=2)
-
-        print(f"   ✓ Generated ccgo-package.json")
-        return json_path
-
-    def _scan_link_type_dir(self, link_type_dir: str, platform: str, link_type: str, project_name: str):
-        """Scan a link type directory and return metadata about libraries"""
-        metadata = {}
-
-        # For platforms with architectures (Android, OHOS, Windows)
-        if platform.lower() in ["android", "ohos"]:
-            metadata["architectures"] = {}
-            for arch in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
-                arch_dir = os.path.join(link_type_dir, arch)
-                if os.path.exists(arch_dir):
-                    libs = []
-                    for lib_file in Path(arch_dir).iterdir():
-                        if lib_file.is_file():
-                            libs.append({
-                                "name": lib_file.name,
-                                "size": lib_file.stat().st_size,
-                                "path": f"lib/{platform}/{link_type}/{arch}/{lib_file.name}"
-                            })
-                    if libs:
-                        metadata["architectures"][arch] = {"libraries": libs}
-
-        elif platform.lower() == "windows":
-            metadata["architectures"] = {}
-            x64_dir = os.path.join(link_type_dir, "x64")
-            if os.path.exists(x64_dir):
-                libs = []
-                for lib_file in Path(x64_dir).iterdir():
-                    if lib_file.is_file():
-                        libs.append({
-                            "name": lib_file.name,
-                            "size": lib_file.stat().st_size,
-                            "path": f"lib/{platform}/{link_type}/x64/{lib_file.name}"
-                        })
-                if libs:
-                    metadata["architectures"]["x64"] = {"libraries": libs}
-
-        # For Apple platforms (iOS, macOS, tvOS, watchOS) and Linux
-        else:
-            libs = []
-            for item in Path(link_type_dir).iterdir():
-                if item.is_file():
-                    libs.append({
-                        "name": item.name,
-                        "size": item.stat().st_size,
-                        "path": f"lib/{platform}/{link_type}/{item.name}"
-                    })
-                elif item.is_dir() and (item.suffix in [".framework", ".xcframework"]):
-                    # For frameworks, calculate total size
-                    total_size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
-                    libs.append({
-                        "name": item.name,
-                        "size": total_size,
-                        "path": f"lib/{platform}/{link_type}/{item.name}",
-                        "type": "framework" if item.suffix == ".framework" else "xcframework"
-                    })
-            if libs:
-                metadata["libraries"] = libs
-
-        return metadata if metadata else None
-
-    def create_archive(self, source_dir: str, output_path: str, format: str):
-        """Create archive from source directory"""
-        print(f"\n📦 Creating {format} archive...")
-
-        if format == "zip":
-            with zipfile.ZipFile(output_path + ".zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for root, dirs, files in os.walk(source_dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, source_dir)
-                        zipf.write(file_path, arcname)
-            print(f"   ✓ Created {output_path}.zip")
-
-        elif format == "tar.gz":
-            with tarfile.open(output_path + ".tar.gz", "w:gz") as tar:
-                tar.add(source_dir, arcname=os.path.basename(output_path))
-            print(f"   ✓ Created {output_path}.tar.gz")
+        return collected, collected_files
 
     def exec(self, context: CliContext, args: CliNameSpace):
         print("="*80)
-        print("CCGO Package - Create SDK Distribution")
+        print("CCGO Package - Collect Build Artifacts")
         print("="*80)
 
         # Get current working directory
@@ -839,48 +414,42 @@ OUTPUT STRUCTURE:
         print(f"Version: {version}")
         print(f"Output: {output_path}")
 
-        # Create package name
-        package_name = f"{project_name.upper()}_SDK-{version}"
-        package_dir = os.path.join(output_path, package_name)
-
         # Clean if requested
         if args.clean and os.path.exists(output_path):
             print(f"\n🧹 Cleaning output directory...")
             shutil.rmtree(output_path)
 
         # Create output directory
-        os.makedirs(package_dir, exist_ok=True)
+        os.makedirs(output_path, exist_ok=True)
 
         print(f"\n{'='*80}")
-        print("Collecting Artifacts")
+        print("Collecting Build Artifacts (ZIP files)")
         print(f"{'='*80}")
 
-        # Collect include headers (always)
-        self.collect_include_headers(project_dir, package_dir, project_name)
-
-        # Collect platform artifacts
-        platforms = ["android", "ios", "macos", "tvos", "watchos", "windows", "linux", "ohos"]
+        # Collect platform artifacts - now includes conan
+        platforms = ["android", "ios", "macos", "tvos", "watchos", "windows", "linux", "ohos", "conan", "include"]
         if args.platforms:
             platforms = [p.strip() for p in args.platforms.split(",")]
 
         collected_platforms = []
         failed_platforms = []
+        all_collected_files = []
+
         for platform in platforms:
-            if self.collect_platform_artifacts(project_dir, platform, package_dir, project_name):
+            success, files = self.collect_platform_artifacts(project_dir, platform, output_path, project_name)
+            if success:
                 collected_platforms.append(platform)
+                all_collected_files.extend(files)
             else:
                 failed_platforms.append(platform)
 
-        # Collect KMP artifacts (always try to collect if they exist)
-        kmp_collected = self.collect_kmp_artifacts(project_dir, package_dir, project_name)
-        if kmp_collected:
+        # Collect KMP artifacts
+        kmp_success, kmp_files = self.collect_kmp_artifacts(project_dir, output_path, project_name)
+        if kmp_success:
             collected_platforms.append("kmp")
+            all_collected_files.extend(kmp_files)
         else:
             failed_platforms.append("kmp")
-
-        # Collect documentation
-        if args.include_docs:
-            self.collect_documentation(project_dir, package_dir, project_name)
 
         # Check if any artifacts were collected
         if not collected_platforms:
@@ -891,115 +460,36 @@ OUTPUT STRUCTURE:
             print("\nTo build platforms, use:")
             print("  ccgo build android")
             print("  ccgo build ios")
-            print("  ccgo build macos")
-            print("  ccgo build windows")
-            print("  ccgo build linux")
-            print("  ccgo build ohos")
-            print("\nOr build all platforms with:")
             print("  ccgo build all")
-            print("\nPackaging will continue with available artifacts only.\n")
+            print("\nThen run 'ccgo package' again.\n")
+            sys.exit(1)
 
-        # Create README
-        readme_path = os.path.join(package_dir, "README.md")
-        with open(readme_path, 'w') as f:
-            f.write(f"# {project_name} SDK v{version}\n\n")
-            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            f.write(f"## Platforms\n\n")
-            if collected_platforms:
-                for platform in collected_platforms:
-                    if platform == "kmp":
-                        f.write(f"- KMP (Kotlin Multiplatform)\n")
-                    else:
-                        f.write(f"- {platform.capitalize()}\n")
-            else:
-                f.write(f"*No platform artifacts found. Build platforms first.*\n")
-            f.write(f"\n## Structure\n\n")
-            f.write(f"- `include/` - Header files\n")
-            if collected_platforms:
-                f.write(f"- `lib/` - Platform-specific libraries\n")
-                for platform in collected_platforms:
-                    if platform == "kmp":
-                        f.write(f"  - `lib/kmp/` - Kotlin Multiplatform artifacts\n")
-                        f.write(f"    - `lib/kmp/android/` - KMP Android libraries (.aar)\n")
-                        f.write(f"    - `lib/kmp/desktop/` - KMP Desktop libraries (.jar)\n")
-                        f.write(f"    - `lib/kmp/native/` - KMP Native libraries (iOS, macOS, Linux)\n")
-                    else:
-                        f.write(f"  - `lib/{platform}/` - {platform.capitalize()} libraries\n")
-            if args.include_docs:
-                f.write(f"- `docs/` - Documentation\n")
-
-        # Generate ccgo-package.json with metadata
-        if collected_platforms:
-            self.generate_package_json(package_dir, project_name, version, collected_platforms)
-
+        # Print summary
         print(f"\n{'='*80}")
         print("Package Summary")
         print(f"{'='*80}\n")
-        print(f"Package Name: {package_name}")
-        print(f"Location: {package_dir}")
-        if collected_platforms:
-            print(f"Platforms: {', '.join(collected_platforms)}")
-        else:
-            print(f"Platforms: None (no build artifacts found)")
 
-        # Create archive
-        if args.format != "none":
-            print(f"\n{'='*80}")
-            print("Creating Archive")
-            print(f"{'='*80}")
+        print(f"Output Directory: {output_path}")
+        print(f"\nCollected {len(all_collected_files)} artifact(s):")
+        print("-" * 60)
+        for f in sorted(all_collected_files):
+            file_path = os.path.join(output_path, f)
+            if os.path.exists(file_path):
+                size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                print(f"  {f} ({size_mb:.2f} MB)")
+        print("-" * 60)
 
-            archive_path = os.path.join(output_path, package_name)
-
-            if args.format == "both":
-                self.create_archive(package_dir, archive_path, "zip")
-                self.create_archive(package_dir, archive_path, "tar.gz")
-            else:
-                self.create_archive(package_dir, archive_path, args.format)
-
+        # Platform status
         print(f"\n{'='*80}")
-        if collected_platforms:
-            print("✅ Packaging Complete!")
-        else:
-            print("⚠️  Package structure created (no platform artifacts)")
+        print("Platform Status")
         print(f"{'='*80}\n")
 
-        # Detailed platform summary (similar to ccgo build all)
+        for platform in collected_platforms:
+            print(f"  ✅ {platform.upper()}")
+        for platform in failed_platforms:
+            print(f"  ❌ {platform.upper()} (not built)")
+
+        print(f"\nTotal: {len(collected_platforms)}/{len(collected_platforms) + len(failed_platforms)} platform(s)")
         print(f"{'='*80}")
-        print("Platform Summary")
-        print(f"{'='*80}\n")
-
-        # Separate native platforms from KMP
-        native_success = [p for p in collected_platforms if p != "kmp"]
-        native_failed = [p for p in failed_platforms if p != "kmp"]
-
-        if native_success or native_failed:
-            print("Native Platforms:")
-            # Show successful platforms first
-            for platform in native_success:
-                print(f"  ✅ {platform.upper()}")
-            # Show failed platforms
-            for platform in native_failed:
-                print(f"  ❌ {platform.upper()}")
-
-        # Show KMP status
-        kmp_success = "kmp" in collected_platforms
-        kmp_failed = "kmp" in failed_platforms
-
-        if kmp_success or kmp_failed:
-            if native_success or native_failed:
-                print()
-            print("Kotlin Multiplatform:")
-            if kmp_success:
-                print(f"  ✅ KMP")
-            elif kmp_failed:
-                print(f"  ❌ KMP")
-
-        # Summary
-        total_platforms = len(collected_platforms) + len(failed_platforms)
-        print(f"\nTotal: {len(collected_platforms)}/{total_platforms} platform(s) packaged")
-        print(f"{'='*80}")
-
-        if not collected_platforms:
-            print("\nPackage directory structure has been created.")
-            print("Build platforms first, then run 'ccgo package' again to include artifacts.")
-        print()
+        print("\n✅ Package collection complete!")
+        print(f"   All artifacts are in: {output_path}\n")
