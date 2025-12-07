@@ -52,8 +52,7 @@ COMMANDS:
     test        Run tests (GoogleTest)
     bench       Run benchmarks (Google Benchmark)
     doc         Build documentation (Doxygen)
-    ci          Build all platforms for CI/CD pipeline
-    build       Build library for specific platform
+    build       Build library for specific platform (use 'build all' for CI/CD)
     package     Package SDK for distribution
     publish     Publish library to repository
     help        Show detailed help information
@@ -62,7 +61,7 @@ EXAMPLES:
     ccgo new my-project              # Create new project
     ccgo build android               # Build for Android
     ccgo test                        # Run all tests
-    ccgo ci --release                # CI build all platforms
+    ccgo build all --release         # CI build all platforms
     ccgo package --include-docs      # Package SDK with docs
     ccgo help                        # Show detailed help
 

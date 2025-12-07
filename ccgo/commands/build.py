@@ -144,6 +144,12 @@ EXAMPLES:
     ccgo build tvos --docker
     ccgo build android --docker
 
+    # CI/CD builds (formerly `ccgo ci` command)
+    ccgo build all --release --archive
+    ccgo build all --release --archive --platforms android,ios,macos
+    ccgo build all --release --archive --skip-platforms windows,linux
+    ccgo build all --release --archive --use-env
+
 PLATFORM-SPECIFIC OPTIONS:
     Android/OHOS:
         --arch              Comma-separated architectures
@@ -161,6 +167,22 @@ PLATFORM-SPECIFIC OPTIONS:
     Build all:
         -j, --jobs N       Number of parallel build jobs (default: CPU count)
         --no-parallel      Disable parallel builds (equivalent to --jobs=1)
+        --release          Build in release mode (default: debug/beta)
+        --archive          Create build archives after building
+        --archive-dir DIR  Directory for build archives (default: ./target/archives)
+        --platforms LIST   Comma-separated list of platforms to build (e.g., android,ios,macos)
+        --skip-platforms   Comma-separated list of platforms to skip
+        --use-env          Use CI_BUILD_* environment variables to control platforms
+
+ENVIRONMENT VARIABLES (for CI/CD):
+    CI_IS_RELEASE          Set to 1 for release builds (default: beta)
+    CI_BUILD_ANDROID       Set to 1 to build Android
+    CI_BUILD_IOS           Set to 1 to build iOS
+    CI_BUILD_MACOS         Set to 1 to build macOS
+    CI_BUILD_WINDOWS       Set to 1 to build Windows
+    CI_BUILD_LINUX         Set to 1 to build Linux
+    CI_BUILD_OHOS          Set to 1 to build OpenHarmony
+    CI_BUILD_KMP           Set to 1 to build Kotlin Multiplatform
 
 REQUIREMENTS:
     Native builds (without --docker):
@@ -181,6 +203,61 @@ REQUIREMENTS:
     def get_build_platforms(self) -> list:
         """Get list of actual build platforms (excluding meta-targets like 'all')"""
         return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan"]
+
+    def get_platforms_from_env(self) -> list:
+        """Get platforms to build from CI_BUILD_* environment variables"""
+        platforms = []
+        env_map = {
+            "CI_BUILD_ANDROID": "android",
+            "CI_BUILD_IOS": "ios",
+            "CI_BUILD_MACOS": "macos",
+            "CI_BUILD_WINDOWS": "windows",
+            "CI_BUILD_LINUX": "linux",
+            "CI_BUILD_OHOS": "ohos",
+            "CI_BUILD_KMP": "kmp",
+            "CI_BUILD_WATCHOS": "watchos",
+            "CI_BUILD_TVOS": "tvos",
+            "CI_BUILD_CONAN": "conan",
+        }
+
+        for env_var, platform in env_map.items():
+            if os.environ.get(env_var) == "1":
+                platforms.append(platform)
+
+        return platforms
+
+    def get_platforms_to_build(self, args: CliNameSpace) -> list:
+        """Determine which platforms to build based on arguments and environment"""
+        all_platforms = self.get_build_platforms()
+
+        # Check if using environment variables
+        if args.use_env or (not args.platforms and os.environ.get("CI_BUILD_ANDROID")):
+            platforms = self.get_platforms_from_env()
+            if not platforms:
+                print(
+                    "WARNING: --use-env specified but no CI_BUILD_* environment variables set"
+                )
+                print("Building all platforms by default")
+                platforms = all_platforms
+        elif args.platforms:
+            # Parse comma-separated platform list
+            platforms = [p.strip() for p in args.platforms.split(",")]
+            # Validate platforms
+            invalid = [p for p in platforms if p not in all_platforms]
+            if invalid:
+                print(f"ERROR: Invalid platforms: {', '.join(invalid)}")
+                print(f"Valid platforms: {', '.join(all_platforms)}")
+                sys.exit(1)
+        else:
+            # Build all platforms by default
+            platforms = all_platforms
+
+        # Remove skipped platforms
+        if args.skip_platforms:
+            skip = [p.strip() for p in args.skip_platforms.split(",")]
+            platforms = [p for p in platforms if p not in skip]
+
+        return platforms
 
     def cli(self) -> CliNameSpace:
         parser = argparse.ArgumentParser(
@@ -248,6 +325,38 @@ REQUIREMENTS:
             action="store_true",
             help="Disable parallel builds for 'all' target (equivalent to --jobs=1)",
         )
+        # CI-related options (formerly from `ccgo ci` command)
+        parser.add_argument(
+            "--release",
+            action="store_true",
+            help="Build in release mode (default: debug/beta)",
+        )
+        parser.add_argument(
+            "--archive",
+            action="store_true",
+            help="Create build archives after building (for 'all' target)",
+        )
+        parser.add_argument(
+            "--archive-dir",
+            type=str,
+            default="./target/archives",
+            help="Directory for build archives (default: ./target/archives)",
+        )
+        parser.add_argument(
+            "--platforms",
+            type=str,
+            help="Comma-separated list of platforms to build (for 'all' target, e.g., android,ios,macos)",
+        )
+        parser.add_argument(
+            "--skip-platforms",
+            type=str,
+            help="Comma-separated list of platforms to skip (for 'all' target)",
+        )
+        parser.add_argument(
+            "--use-env",
+            action="store_true",
+            help="Use CI_BUILD_* environment variables to determine which platforms to build",
+        )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
         args, unknown = parser.parse_known_args(input_argv)
@@ -281,7 +390,7 @@ REQUIREMENTS:
         # Build command line arguments
         cmd_args = ["ccgo", "build", target_platform]
 
-        # Pass through relevant arguments
+        # Pass through relevant arguments (only those supported by single platform builds)
         if hasattr(args, 'arch') and args.arch:
             cmd_args.extend(["--arch", args.arch])
         if hasattr(args, 'native_only') and args.native_only:
@@ -298,9 +407,8 @@ REQUIREMENTS:
             cmd_args.extend(["--link-type", args.link_type])
         if hasattr(args, 'ide_project') and args.ide_project:
             cmd_args.extend(["--ide-project", args.ide_project])
-        # Always pass -j to ensure build scripts use argparse mode (not legacy interactive mode)
-        effective_jobs = args.jobs if hasattr(args, 'jobs') and args.jobs else multiprocessing.cpu_count()
-        cmd_args.extend(["-j", str(effective_jobs)])
+        # Note: --release, --archive, --platforms, --skip-platforms, --use-env are only for 'all' target
+        # KMP always builds release variant, so no need to pass --release
 
         try:
             result = subprocess.run(
@@ -339,14 +447,53 @@ REQUIREMENTS:
             minutes = int((elapsed % 3600) // 60)
             return f"{hours}h {minutes}m"
 
+    def _print_platform_artifacts(self, platform_name: str, project_subdir: str, indent: str = "   "):
+        """Print artifacts for a successfully built platform with ZIP tree structure."""
+        target_dir = os.path.join(project_subdir, "target", platform_name)
+        if not os.path.exists(target_dir):
+            return
+
+        # Import print_zip_tree from build_utils
+        try:
+            from ccgo.build_scripts.build_utils import print_zip_tree
+            has_print_zip_tree = True
+        except ImportError:
+            has_print_zip_tree = False
+
+        # Find all archive files (.aar, .har, .zip) recursively
+        artifacts = []
+        for root, dirs, files in os.walk(target_dir):
+            for filename in files:
+                if filename.endswith(('.aar', '.har', '.zip')):
+                    filepath = os.path.join(root, filename)
+                    size_mb = os.path.getsize(filepath) / (1024 * 1024)
+                    # Get relative path from target_dir
+                    rel_path = os.path.relpath(filepath, target_dir)
+                    artifacts.append((rel_path, size_mb, filepath))
+
+        if artifacts:
+            print(f"{indent}Build artifacts in target/{platform_name}/:")
+            print(f"{indent}" + "-" * 60)
+            for rel_path, size_mb, filepath in sorted(artifacts):
+                print(f"{indent}  {rel_path} ({size_mb:.2f} MB)")
+                # Print ZIP tree structure if available
+                if has_print_zip_tree:
+                    print_zip_tree(filepath, indent=f"{indent}    ", generate_info_file=False)
+            print(f"{indent}" + "-" * 60)
+
     def exec(self, context: CliContext, args: CliNameSpace):
         # Record start time
         start_time = time.time()
 
         # Handle 'all' target - build all platforms
         if args.target == "all":
+            # Determine build mode (release or debug/beta)
+            is_release = args.release or os.environ.get("CI_IS_RELEASE") == "1"
+            build_mode = "RELEASE" if is_release else "DEBUG/BETA"
+
             print("="*80)
             print("Building library for ALL platforms")
+            print(f"Build Mode: {build_mode}")
             print("="*80)
 
             # Determine number of parallel jobs
@@ -358,7 +505,12 @@ REQUIREMENTS:
                 # Default to CPU count
                 num_jobs = multiprocessing.cpu_count()
 
-            platforms = self.get_build_platforms()
+            # Get platforms to build (using filtering if specified)
+            platforms = self.get_platforms_to_build(args)
+            if not platforms:
+                print("\nERROR: No platforms selected for building")
+                self._print_build_time(start_time)
+                sys.exit(1)
             total_platforms = len(platforms)
             failed_platforms = []
             successful_platforms = []
@@ -446,19 +598,33 @@ REQUIREMENTS:
                 # Parallel build using ThreadPoolExecutor
                 # Note: Apple platforms (ios, macos, watchos, tvos) share Xcode toolchain
                 # and may conflict when built in parallel, so we group them together
+                # Similarly, Gradle-based platforms (android, kmp) share Gradle daemon/cache
+                # and may conflict when built in parallel
                 apple_platforms = {'ios', 'macos', 'watchos', 'tvos'}
+                gradle_platforms = {'android', 'kmp'}
                 apple_to_build = [p for p in platforms if p in apple_platforms]
-                other_platforms = [p for p in platforms if p not in apple_platforms]
+                gradle_to_build = [p for p in platforms if p in gradle_platforms]
+                other_platforms = [p for p in platforms if p not in apple_platforms and p not in gradle_platforms]
 
                 print(f"\n🚀 Starting parallel build with {num_jobs} workers...")
                 if apple_to_build:
                     print(f"   ℹ Apple platforms ({', '.join(apple_to_build)}) will be built sequentially to avoid Xcode conflicts")
+                if gradle_to_build:
+                    print(f"   ℹ Gradle platforms ({', '.join(gradle_to_build)}) will be built sequentially to avoid Gradle lock conflicts")
                 print()
 
                 def build_apple_sequential():
                     """Build all Apple platforms sequentially and return results."""
                     results = []
                     for plat in apple_to_build:
+                        result = self._build_platform_subprocess(plat, args, project_subdir)
+                        results.append(result)
+                    return results
+
+                def build_gradle_sequential():
+                    """Build all Gradle-based platforms sequentially and return results."""
+                    results = []
+                    for plat in gradle_to_build:
                         result = self._build_platform_subprocess(plat, args, project_subdir)
                         results.append(result)
                     return results
@@ -485,6 +651,11 @@ REQUIREMENTS:
                             apple_future = executor.submit(build_apple_sequential)
                             futures[apple_future] = "apple_group"
 
+                        # Submit all Gradle platforms as a single sequential task
+                        if gradle_to_build:
+                            gradle_future = executor.submit(build_gradle_sequential)
+                            futures[gradle_future] = "gradle_group"
+
                         # Process completed builds as they finish
                         for future in as_completed(futures):
                             future_id = futures[future]
@@ -501,6 +672,47 @@ REQUIREMENTS:
                                         if success:
                                             successful_platforms.append(platform_name)
                                             print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                                            # Check if build completed too quickly (< 5 seconds) - might indicate cached/skipped build
+                                            if elapsed < 5.0:
+                                                print(f"   ⚠️  Build completed very quickly ({elapsed:.1f}s) - checking for artifacts...")
+                                                if stdout:
+                                                    stdout_lines = stdout.strip().split('\n')
+                                                    print(f"   Last output lines:")
+                                                    for line in stdout_lines[-5:]:
+                                                        print(f"   | {line}")
+                                            self._print_platform_artifacts(platform_name, project_subdir)
+                                        else:
+                                            failed_platforms.append(platform_name)
+                                            print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
+                                            if error_msg:
+                                                error_lines = error_msg.strip().split('\n')
+                                                for line in error_lines[:5]:
+                                                    print(f"   {line}")
+                                                if len(error_lines) > 5:
+                                                    print(f"   ... ({len(error_lines) - 5} more lines)")
+
+                                        if in_progress:
+                                            print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
+                                elif future_id == "gradle_group":
+                                    # Handle Gradle group results
+                                    gradle_results = future.result()
+                                    for platform_name, success, error_msg, elapsed, stdout, stderr in gradle_results:
+                                        completed_count += 1
+                                        platform_times[platform_name] = elapsed
+                                        in_progress.discard(platform_name)
+
+                                        if success:
+                                            successful_platforms.append(platform_name)
+                                            print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                                            # Check if build completed too quickly (< 5 seconds) - might indicate cached/skipped build
+                                            if elapsed < 5.0:
+                                                print(f"   ⚠️  Build completed very quickly ({elapsed:.1f}s) - checking for artifacts...")
+                                                if stdout:
+                                                    stdout_lines = stdout.strip().split('\n')
+                                                    print(f"   Last output lines:")
+                                                    for line in stdout_lines[-5:]:
+                                                        print(f"   | {line}")
+                                            self._print_platform_artifacts(platform_name, project_subdir)
                                         else:
                                             failed_platforms.append(platform_name)
                                             print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
@@ -523,6 +735,16 @@ REQUIREMENTS:
                                     if success:
                                         successful_platforms.append(platform_name)
                                         print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                                        # Check if build completed too quickly (< 5 seconds) - might indicate cached/skipped build
+                                        if elapsed < 5.0:
+                                            print(f"   ⚠️  Build completed very quickly ({elapsed:.1f}s) - checking for artifacts...")
+                                            if stdout:
+                                                stdout_lines = stdout.strip().split('\n')
+                                                # Print last few lines of output to help debug
+                                                print(f"   Last output lines:")
+                                                for line in stdout_lines[-5:]:
+                                                    print(f"   | {line}")
+                                        self._print_platform_artifacts(platform_name, project_subdir)
                                     else:
                                         failed_platforms.append(platform_name)
                                         print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
@@ -546,6 +768,13 @@ REQUIREMENTS:
                                         failed_platforms.append(plat)
                                         in_progress.discard(plat)
                                     print(f"❌ Apple platforms failed with exception: {e}")
+                                elif future_id == "gradle_group":
+                                    # All Gradle platforms failed
+                                    for plat in gradle_to_build:
+                                        platform_times[plat] = 0
+                                        failed_platforms.append(plat)
+                                        in_progress.discard(plat)
+                                    print(f"❌ Gradle platforms failed with exception: {e}")
                                 else:
                                     platform_times[future_id] = 0
                                     failed_platforms.append(future_id)
@@ -580,6 +809,43 @@ REQUIREMENTS:
                 for p in sorted(failed_platforms):
                     elapsed_str = self._format_elapsed_time(platform_times.get(p, 0))
                     print(f"   - {p} ({elapsed_str})")
+
+            # Archive builds if requested
+            if args.archive and successful_platforms:
+                archive_dir = args.archive_dir if args.archive_dir else os.path.join(project_subdir, "target", "archives")
+                print(f"\n📦 Collecting build archives...")
+                print(f"   Archive directory: {archive_dir}")
+
+                # Create archive directory if it doesn't exist
+                os.makedirs(archive_dir, exist_ok=True)
+
+                # Collect artifacts from each successful platform
+                collected_files = []
+                target_dir = os.path.join(project_subdir, "target")
+
+                for plat in successful_platforms:
+                    platform_target_dir = os.path.join(target_dir, plat)
+                    if not os.path.exists(platform_target_dir):
+                        continue
+
+                    # Find all .aar, .har, .zip files recursively in platform directory
+                    for root, dirs, files in os.walk(platform_target_dir):
+                        for filename in files:
+                            if filename.endswith(('.aar', '.har', '.zip')):
+                                src_path = os.path.join(root, filename)
+                                dst_path = os.path.join(archive_dir, filename)
+                                try:
+                                    shutil.copy2(src_path, dst_path)
+                                    collected_files.append(filename)
+                                except Exception as e:
+                                    print(f"   ⚠️  Failed to copy {filename}: {e}")
+
+                if collected_files:
+                    print(f"\n   ✅ Collected {len(collected_files)} archive(s):")
+                    for f in sorted(collected_files):
+                        print(f"      - {f}")
+                else:
+                    print(f"\n   ℹ No archive files found in target directories.")
 
             self._print_build_time(start_time)
 
@@ -747,7 +1013,7 @@ REQUIREMENTS:
         # If KMP build, use build_scripts/build_kmp.py
         if args.target == "kmp":
             print("\n=== KMP Build (Kotlin Multiplatform Library) ===")
-            print("This will build the KMP library for all supported platforms")
+            print("This will build the KMP library for all supported platforms (release variant)")
 
             # Get the build script from ccgo build_scripts directory
             build_scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_scripts")
@@ -758,7 +1024,7 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(1)
 
-            # Build library (default mode, no flags needed)
+            # Build library (always release variant)
             cmd = f"cd '{project_subdir}' && python3 '{build_kmp_script}'"
             print(f"\nProject directory: {project_subdir}")
             print(f"Build script: {build_kmp_script}")

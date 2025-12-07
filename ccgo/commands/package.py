@@ -896,7 +896,7 @@ OUTPUT STRUCTURE:
             print("  ccgo build linux")
             print("  ccgo build ohos")
             print("\nOr build all platforms with:")
-            print("  ccgo ci")
+            print("  ccgo build all")
             print("\nPackaging will continue with available artifacts only.\n")
 
         # Create README

@@ -183,10 +183,13 @@ Use 'ccgo <command> --help' for command-specific help.
         print("    ccgo doc --serve --port 3000  # Serve on custom port")
 
         print("\n8. CI/CD multi-platform build")
-        print("\n  ccgo ci [options]")
+        print("\n  ccgo build all [options]")
         print("\n  Options:")
         print(
             "    --release                      Build as release (default: beta/debug)"
+        )
+        print(
+            "    --archive                      Create build archives after building"
         )
         print(
             "    --platforms <list>             Comma-separated platforms (e.g., android,ios,macos)"
@@ -194,9 +197,8 @@ Use 'ccgo <command> --help' for command-specific help.
         print("    --skip-platforms <list>        Platforms to skip")
         print("    --arch <list>                  Architectures for Android/OHOS")
         print("    --archive-dir <dir>            Directory for build archives")
-        print("    --no-archive                   Skip creating archives")
         print("    --use-env                      Use CI_BUILD_* environment variables")
-        print("\n  Environment Variables (backward compatibility):")
+        print("\n  Environment Variables (for CI/CD):")
         print("    CI_IS_RELEASE=1                Build as release")
         print("    CI_BUILD_ANDROID=1             Build Android")
         print("    CI_BUILD_IOS=1                 Build iOS")
@@ -206,12 +208,13 @@ Use 'ccgo <command> --help' for command-specific help.
         print("    CI_BUILD_OHOS=1                Build OpenHarmony")
         print("    CI_BUILD_KMP=1                 Build Kotlin Multiplatform")
         print("\n  Examples:")
-        print("    ccgo ci                        # Build all platforms (debug)")
-        print("    ccgo ci --release              # Build all platforms (release)")
-        print("    ccgo ci --platforms android,ios,macos")
-        print("    ccgo ci --skip-platforms windows,linux")
+        print("    ccgo build all                 # Build all platforms (debug)")
+        print("    ccgo build all --release       # Build all platforms (release)")
+        print("    ccgo build all --release --archive")
+        print("    ccgo build all --platforms android,ios,macos")
+        print("    ccgo build all --skip-platforms windows,linux")
         print(
-            "    export CI_IS_RELEASE=1 && export CI_BUILD_ANDROID=1 && ccgo ci --use-env"
+            "    export CI_IS_RELEASE=1 && export CI_BUILD_ANDROID=1 && ccgo build all --use-env"
         )
 
         print("\n9. Build a library")

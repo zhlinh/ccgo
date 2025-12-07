@@ -44,6 +44,7 @@ import subprocess
 import argparse
 import platform
 import shutil
+import zipfile
 from pathlib import Path
 
 # Get the script directory (where this build script is located)
@@ -57,6 +58,59 @@ except (OSError, FileNotFoundError) as e:
 
 # KMP directory is in project/kmp
 KMP_DIR = PROJECT_DIR / "kmp"
+
+# Import build_utils for project configuration
+# build_utils reads PROJECT_NAME from CCGO.toml in the current working directory
+try:
+    from build_utils import (
+        PROJECT_NAME,
+        PROJECT_NAME_LOWER,
+        get_version_info,
+        print_zip_tree,
+    )
+    _HAS_BUILD_UTILS = True
+except ImportError:
+    # Fallback if build_utils not available
+    _HAS_BUILD_UTILS = False
+    PROJECT_NAME = None
+    PROJECT_NAME_LOWER = None
+    get_version_info = None
+    print_zip_tree = None
+
+
+def get_project_name_from_toml():
+    """Read project name from CCGO.toml file."""
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            return None, None
+
+    ccgo_toml = PROJECT_DIR / "CCGO.toml"
+    if not ccgo_toml.exists():
+        return None, None
+
+    try:
+        with open(ccgo_toml, "rb") as f:
+            data = tomllib.load(f)
+        project_name_lower = data.get("project", {}).get("name", "sdk")
+        project_name = project_name_lower.upper()
+        return project_name, project_name_lower
+    except Exception:
+        return None, None
+
+
+# Get project name - prefer build_utils, fallback to direct TOML reading
+if not _HAS_BUILD_UTILS or PROJECT_NAME is None:
+    _name, _name_lower = get_project_name_from_toml()
+    if _name:
+        PROJECT_NAME = _name
+        PROJECT_NAME_LOWER = _name_lower
+    else:
+        PROJECT_NAME = "SDK"
+        PROJECT_NAME_LOWER = "sdk"
 
 
 def run_command(cmd, cwd=None, env=None):
@@ -147,9 +201,10 @@ def build_native_libraries():
 
 
 def build_kmp_library():
-    """Build the KMP library for all platforms"""
+    """Build the KMP library for all platforms (release variant only)"""
     print("\n" + "=" * 80)
     print("Building Kotlin Multiplatform Library")
+    print("Build variant: RELEASE")
     print("=" * 80 + "\n")
 
     # Check if kmp directory exists
@@ -169,8 +224,8 @@ def build_kmp_library():
     # Build all targets
     print("\n--- Building all KMP targets ---\n")
 
+    # Build release variant only
     tasks = [
-        "assembleDebug",  # Android debug
         "assembleRelease",  # Android release
         "desktopJar",  # Desktop JVM target
     ]
@@ -260,9 +315,9 @@ def build_kmp_library():
     print(f"  ccgo publish kmp  # Publish to Maven")
     print()
 
-    # Copy artifacts to target/kmp directory
+    # Create unified ZIP archive in target/kmp directory
     print("\n" + "=" * 80)
-    print("Organizing Build Artifacts")
+    print("Creating Unified ZIP Archive")
     print("=" * 80 + "\n")
 
     target_kmp_dir = PROJECT_DIR / "target" / "kmp"
@@ -274,76 +329,87 @@ def build_kmp_library():
 
     target_kmp_dir.mkdir(parents=True, exist_ok=True)
 
-    artifacts_copied = []
+    # Get version info for ZIP naming
+    version_str = "1.0.0"
+    if get_version_info:
+        try:
+            version_info = get_version_info(str(PROJECT_DIR))
+            version_str = version_info.get("full_version", "1.0.0")
+        except Exception:
+            pass
 
-    # Copy Android AAR files
-    if aar_dir.exists():
-        aar_files = list(aar_dir.glob("*.aar"))
-        if aar_files:
-            android_target = target_kmp_dir / "android"
-            android_target.mkdir(exist_ok=True)
+    project_upper = PROJECT_NAME.upper()
+
+    # Create single unified ZIP containing all platforms
+    # Naming convention: {PROJECT}_KMP_SDK-{version}-release.zip
+    zip_name = f"{project_upper}_KMP_SDK-{version_str}-release.zip"
+    zip_path = target_kmp_dir / zip_name
+    files_added = 0
+
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # Add Android AAR files
+        if aar_dir.exists():
+            aar_files = list(aar_dir.glob("*.aar"))
             for aar_file in aar_files:
-                dest = android_target / aar_file.name
-                shutil.copy2(aar_file, dest)
-                artifacts_copied.append(f"android/{aar_file.name}")
+                zf.write(aar_file, f"android/{aar_file.name}")
+                files_added += 1
+                print(f"  + android/{aar_file.name}")
 
-    # Copy Desktop JAR files
-    if jar_dir.exists():
-        jar_files = list(jar_dir.glob("*.jar"))
-        if jar_files:
-            desktop_target = target_kmp_dir / "desktop"
-            desktop_target.mkdir(exist_ok=True)
+        # Add Desktop JAR files
+        if jar_dir.exists():
+            jar_files = list(jar_dir.glob("*.jar"))
             for jar_file in jar_files:
-                dest = desktop_target / jar_file.name
-                shutil.copy2(jar_file, dest)
-                artifacts_copied.append(f"desktop/{jar_file.name}")
+                zf.write(jar_file, f"desktop/{jar_file.name}")
+                files_added += 1
+                print(f"  + desktop/{jar_file.name}")
 
-    # Copy native klib files (iOS/macOS/Linux)
-    classes_dir = KMP_DIR / "build" / "classes" / "kotlin"
-    if classes_dir.exists():
-        # Copy all klib directories
-        for klib_dir in classes_dir.glob("*/main"):
-            if klib_dir.is_dir():
-                platform_name = klib_dir.parent.name  # e.g., iosArm64, macosX64, etc.
-                native_target = target_kmp_dir / "native" / platform_name
-                native_target.mkdir(parents=True, exist_ok=True)
+        # Add Native klib files (iOS/macOS/Linux)
+        classes_dir = KMP_DIR / "build" / "classes" / "kotlin"
+        if classes_dir.exists():
+            for klib_dir in classes_dir.glob("*/main"):
+                if klib_dir.is_dir():
+                    platform_name = klib_dir.parent.name  # e.g., iosArm64, macosX64, etc.
 
-                # Copy the entire main directory content
-                if (klib_dir / "klib").exists():
-                    dest = native_target / "klib"
-                    if dest.exists():
-                        shutil.rmtree(dest)
-                    shutil.copytree(klib_dir / "klib", dest)
-                    artifacts_copied.append(f"native/{platform_name}/klib")
+                    # Add klib directory
+                    if (klib_dir / "klib").exists():
+                        klib_path = klib_dir / "klib"
+                        for root, dirs, files in os.walk(klib_path):
+                            for file in files:
+                                file_path = Path(root) / file
+                                arcname = f"native/{platform_name}/klib/{file_path.relative_to(klib_path)}"
+                                zf.write(file_path, arcname)
+                                files_added += 1
+                        print(f"  + native/{platform_name}/klib/")
 
-                # Copy cinterop if exists
-                if (klib_dir / "cinterop").exists():
-                    dest = native_target / "cinterop"
-                    if dest.exists():
-                        shutil.rmtree(dest)
-                    shutil.copytree(klib_dir / "cinterop", dest)
-                    artifacts_copied.append(f"native/{platform_name}/cinterop")
+                    # Add cinterop directory
+                    if (klib_dir / "cinterop").exists():
+                        cinterop_path = klib_dir / "cinterop"
+                        for root, dirs, files in os.walk(cinterop_path):
+                            for file in files:
+                                file_path = Path(root) / file
+                                arcname = f"native/{platform_name}/cinterop/{file_path.relative_to(cinterop_path)}"
+                                zf.write(file_path, arcname)
+                                files_added += 1
+                        print(f"  + native/{platform_name}/cinterop/")
 
-    if artifacts_copied:
-        print(f"✅ Copied {len(artifacts_copied)} artifact(s) to target/kmp/\n")
-        print("Build artifacts in target/kmp/:")
+    if files_added > 0:
+        size_mb = zip_path.stat().st_size / (1024 * 1024)
+        print(f"\n" + "=" * 60)
+        print(f"Build artifacts in target/kmp/:")
         print("-" * 60)
+        print(f"  {zip_name} ({size_mb:.2f} MB)")
 
-        # List all files in target/kmp directory with sizes
-        for root, dirs, files in os.walk(target_kmp_dir):
-            rel_root = Path(root).relative_to(target_kmp_dir)
-            for file in sorted(files):
-                file_path = Path(root) / file
-                size = file_path.stat().st_size / (1024 * 1024)  # MB
-                if rel_root == Path("."):
-                    print(f"  {file} ({size:.2f} MB)")
-                else:
-                    print(f"  {rel_root}/{file} ({size:.2f} MB)")
+        # Print ZIP tree structure if available
+        if print_zip_tree:
+            print_zip_tree(str(zip_path), indent="    ", generate_info_file=False)
 
-        print()
-        print(f"All KMP artifacts organized in: {target_kmp_dir}")
+        print("-" * 60)
+        print(f"\nKMP artifacts archived in: {zip_path}")
     else:
-        print("⚠️  No artifacts were copied to target/kmp/")
+        print("⚠️  No files were added to the ZIP archive")
+        # Remove empty ZIP
+        if zip_path.exists():
+            zip_path.unlink()
 
     print()
 
@@ -426,12 +492,12 @@ def main(publish_local=False, publish_remote=False):
 # Command-line interface for KMP builds
 #
 # Usage:
-#   python build_kmp.py                  # Build KMP library (default)
+#   python build_kmp.py                  # Build KMP library (release)
 #   python build_kmp.py --publish-local  # Publish to Maven local
 #   python build_kmp.py --publish-remote # Publish to Maven remote
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Build Kotlin Multiplatform Library",
+        description="Build Kotlin Multiplatform Library (release variant only)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
