@@ -1,3 +1,14 @@
+#
+# Copyright 2024 zhlinh and ccgo Project Authors. All rights reserved.
+# Use of this source code is governed by a MIT-style
+# license that can be found at
+#
+# https://opensource.org/license/MIT
+#
+# The above copyright notice and this permission
+# notice shall be included in all copies or
+# substantial portions of the Software.
+
 name: Publish to PyPI
 
 # Trigger on tag push (e.g., v2.1.0)
@@ -17,6 +28,9 @@ jobs:
   publish:
     name: Build and Publish to PyPI
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # Required for creating GitHub releases
 
     steps:
       - name: Checkout code
@@ -43,6 +57,19 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Publishing version: ${VERSION}"
 
+      - name: Validate version
+        if: github.event_name == 'push'
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          PYPI_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' pyproject.toml || grep -oP "version\s*=\s*'\K[^']+" setup.py || echo "")
+          echo "Tag version: $TAG_VERSION"
+          echo "Package version: $PYPI_VERSION"
+          if [ -n "$PYPI_VERSION" ] && [ "$TAG_VERSION" != "$PYPI_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match package version ($PYPI_VERSION)"
+            exit 1
+          fi
+          echo "Version validation passed: $TAG_VERSION"
+
       - name: Build package
         run: python -m build
 
@@ -60,7 +87,6 @@ jobs:
         run: |
           python -m twine upload --repository testpypi dist/*
           echo "Published to TestPyPI!"
-          echo "Install with: pip install --index-url https://test.pypi.org/simple/ ccgo==${{ steps.version.outputs.version }}"
 
       - name: Publish to PyPI
         if: ${{ github.event.inputs.test_pypi != 'true' }}
@@ -70,6 +96,45 @@ jobs:
         run: |
           python -m twine upload dist/*
           echo "Published to PyPI!"
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.event.inputs.test_pypi != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*
+          body: |
+            ## Installation
+
+            ```bash
+            pip install ccgo==${{ steps.version.outputs.version }}
+            # or
+            pip install --upgrade ccgo
+            ```
+
+            ## Quick Start
+
+            ```bash
+            # Create a new C++ cross-platform project
+            ccgo new my-project
+
+            # Build for different platforms
+            cd my-project/<project_name>
+            ccgo build android
+            ccgo build ios
+            ccgo build macos
+            ccgo build linux
+            ccgo build windows
+
+            # Cross-platform builds using Docker
+            ccgo build linux --docker
+            ccgo build windows --docker
+            ```
+
+            See [CHANGELOG.md](CHANGELOG.md) for details.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create summary
         run: |
@@ -93,4 +158,8 @@ jobs:
             echo "# or" >> $GITHUB_STEP_SUMMARY
             echo "pip install --upgrade ccgo" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ github.event_name }}" = "push" ]; then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**GitHub Release:** Created with built packages" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
