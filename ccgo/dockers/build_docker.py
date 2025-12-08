@@ -217,22 +217,45 @@ class DockerBuilder:
                 check=True
             )
             print(f"✓ {result.stdout.strip()}")
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            print("ERROR: Docker is not installed or not running")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print("=" * 60)
+            print("ERROR: Docker is not installed or not in PATH")
+            print("=" * 60)
             print("Please install Docker Desktop from: https://www.docker.com/products/docker-desktop")
+            print(f"Details: {e}")
             sys.exit(1)
 
-        # Check if Docker daemon is running
+        # Check if Docker daemon is running by trying to connect
         try:
-            subprocess.run(
-                ["docker", "ps"],
+            result = subprocess.run(
+                ["docker", "info"],
                 capture_output=True,
-                check=True
+                text=True,
+                timeout=30  # 30 second timeout for daemon connection
             )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(result.returncode, "docker info", result.stderr)
             print("✓ Docker daemon is running")
-        except subprocess.CalledProcessError:
+        except subprocess.TimeoutExpired:
+            print("=" * 60)
+            print("ERROR: Docker daemon connection timed out")
+            print("=" * 60)
+            print("Docker appears to be starting up or unresponsive.")
+            print("Please wait for Docker Desktop to fully start and try again.")
+            sys.exit(1)
+        except subprocess.CalledProcessError as e:
+            print("=" * 60)
             print("ERROR: Docker daemon is not running")
-            print("Please start Docker Desktop and try again")
+            print("=" * 60)
+            print("Docker CLI is installed, but the Docker service/daemon is not running.")
+            print("")
+            print("To fix this:")
+            print("  1. Start Docker Desktop application")
+            print("  2. Wait for Docker to fully initialize (check the whale icon in system tray)")
+            print("  3. Run this command again")
+            print("")
+            if e.stderr:
+                print(f"Details: {e.stderr.strip()}")
             sys.exit(1)
 
     def pull_prebuilt_image(self):
@@ -531,13 +554,47 @@ class DockerBuilder:
 
         # Run build in container
         try:
-            subprocess.run(docker_cmd, check=True)
+            result = subprocess.run(docker_cmd, capture_output=True, text=True)
+
+            # Print output
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+
             print("-" * 60)
+
+            if result.returncode != 0:
+                print(f"ERROR: Build failed with exit code {result.returncode}")
+                # Check if Docker daemon issue
+                if "Cannot connect to the Docker daemon" in (result.stderr or ""):
+                    print("")
+                    print("=" * 60)
+                    print("Docker daemon is not running!")
+                    print("=" * 60)
+                    print("Please start Docker Desktop and try again.")
+                elif "docker: Error response from daemon" in (result.stderr or ""):
+                    print("")
+                    print("Docker container failed to start. Check the error above.")
+                sys.exit(result.returncode)
+
+            # Verify build artifacts exist
+            target_output = self.project_dir / "target" / self.platform
+            if not target_output.exists() or not any(target_output.iterdir()):
+                print(f"⚠️  WARNING: Build reported success but no artifacts found in {target_output}")
+                print("   This may indicate the build was skipped or failed silently.")
+                # Don't exit with error here, just warn - artifacts might be in different location
+
             print(f"✓ {self.platform.capitalize()} build completed successfully")
+
         except subprocess.CalledProcessError as e:
             print("-" * 60)
             print(f"ERROR: Build failed with exit code {e.returncode}")
             sys.exit(e.returncode)
+        except Exception as e:
+            print("-" * 60)
+            print(f"ERROR: Unexpected error during build: {e}")
+            sys.exit(1)
 
     def print_results(self):
         """Print build results location."""

@@ -141,7 +141,11 @@ def _build_macos_single(target_option, single_link_type, jobs):
     arm_lib_saved = None  # For static: merged .a, for shared: .dylib
 
     if single_link_type == 'static':
-        total_src_lib = glob.glob(install_path + "/*.a")
+        # Static libraries are now in static/ subdirectory
+        static_lib_path = install_path + "/static"
+        total_src_lib = glob.glob(static_lib_path + "/*.a")
+        # Also check root for backward compatibility
+        total_src_lib.extend(glob.glob(install_path + "/*.a"))
         rm_src_lib = []
         libtool_src_lib = [x for x in total_src_lib if x not in rm_src_lib]
         print(f"libtool src lib (ARM): {len(libtool_src_lib)}/{len(total_src_lib)}")
@@ -180,9 +184,12 @@ def _build_macos_single(target_option, single_link_type, jobs):
         sys.exit(1)
 
     if single_link_type == 'static':
-        # Merge x86 libraries
+        # Merge x86 libraries (check static/ subdirectory first, then root for backward compatibility)
+        static_lib_path = install_path + "/static"
+        x86_static_libs = glob.glob(static_lib_path + "/*.a")
+        x86_static_libs.extend(glob.glob(install_path + "/*.a"))
         libtool_x86_dst_lib = install_path + f"/{PROJECT_NAME_LOWER}_x86"
-        if not libtool_libs(glob.glob(install_path + "/*.a"), libtool_x86_dst_lib):
+        if not libtool_libs(x86_static_libs, libtool_x86_dst_lib):
             print("ERROR: Failed to merge x86 libraries. Stopping immediately.")
             sys.exit(1)
 

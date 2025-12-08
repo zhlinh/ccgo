@@ -447,6 +447,79 @@ REQUIREMENTS:
             minutes = int((elapsed % 3600) // 60)
             return f"{hours}h {minutes}m"
 
+    def _extract_key_error_lines(self, stdout: str, stderr: str, max_lines: int = 10) -> list:
+        """
+        Extract key error lines from build output, prioritizing important messages.
+
+        Args:
+            stdout: Standard output from the build
+            stderr: Standard error from the build
+            max_lines: Maximum number of lines to return
+
+        Returns:
+            List of important error lines to display
+        """
+        # Keywords that indicate important error messages
+        error_keywords = [
+            "ERROR:", "error:", "FAILED", "failed", "Exception",
+            "Docker daemon is not running", "Cannot connect to the Docker daemon",
+            "not found", "No such file", "Permission denied",
+            "Build failed", "build fail", "compilation error",
+            "fatal:", "FATAL:", "undefined reference", "linker error",
+        ]
+
+        # Combine stdout and stderr
+        all_output = (stdout or "") + "\n" + (stderr or "")
+        all_lines = all_output.strip().split('\n')
+
+        # Find lines containing error keywords
+        important_lines = []
+        for i, line in enumerate(all_lines):
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+
+            # Check if line contains any error keyword
+            is_important = any(kw.lower() in line_stripped.lower() for kw in error_keywords)
+
+            # Also include lines that are part of error blocks (lines starting with === or ---)
+            is_separator = line_stripped.startswith('===') or line_stripped.startswith('---')
+
+            if is_important or is_separator:
+                # Include context: previous line if it's a separator
+                if i > 0 and important_lines and all_lines[i-1].strip().startswith('==='):
+                    pass  # Already included
+                important_lines.append(line_stripped)
+
+                # Include next few lines after an error line (for context)
+                if is_important and not is_separator:
+                    for j in range(1, 4):  # Include up to 3 following lines
+                        if i + j < len(all_lines):
+                            next_line = all_lines[i + j].strip()
+                            if next_line and next_line not in important_lines:
+                                important_lines.append(next_line)
+
+        # Deduplicate while preserving order
+        seen = set()
+        unique_lines = []
+        for line in important_lines:
+            if line not in seen:
+                seen.add(line)
+                unique_lines.append(line)
+
+        # If no important lines found, fall back to last few lines
+        if not unique_lines:
+            unique_lines = [l.strip() for l in all_lines[-max_lines:] if l.strip()]
+
+        return unique_lines[:max_lines]
+
+    def _print_build_error(self, stdout: str, stderr: str, indent: str = "   "):
+        """Print formatted build error output with key information highlighted."""
+        key_lines = self._extract_key_error_lines(stdout, stderr)
+        if key_lines:
+            for line in key_lines:
+                print(f"{indent}{line}")
+
     def _print_platform_artifacts(self, platform_name: str, project_subdir: str, indent: str = "   "):
         """Print artifacts for a successfully built platform with ZIP tree structure."""
         target_dir = os.path.join(project_subdir, "target", platform_name)
@@ -684,12 +757,8 @@ REQUIREMENTS:
                                         else:
                                             failed_platforms.append(platform_name)
                                             print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
-                                            if error_msg:
-                                                error_lines = error_msg.strip().split('\n')
-                                                for line in error_lines[:5]:
-                                                    print(f"   {line}")
-                                                if len(error_lines) > 5:
-                                                    print(f"   ... ({len(error_lines) - 5} more lines)")
+                                            # Print key error lines from stdout/stderr
+                                            self._print_build_error(stdout, stderr)
 
                                         if in_progress:
                                             print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
@@ -716,12 +785,8 @@ REQUIREMENTS:
                                         else:
                                             failed_platforms.append(platform_name)
                                             print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
-                                            if error_msg:
-                                                error_lines = error_msg.strip().split('\n')
-                                                for line in error_lines[:5]:
-                                                    print(f"   {line}")
-                                                if len(error_lines) > 5:
-                                                    print(f"   ... ({len(error_lines) - 5} more lines)")
+                                            # Print key error lines from stdout/stderr
+                                            self._print_build_error(stdout, stderr)
 
                                         if in_progress:
                                             print(f"   ⏳ Still building: {', '.join(sorted(in_progress))}")
@@ -748,13 +813,8 @@ REQUIREMENTS:
                                     else:
                                         failed_platforms.append(platform_name)
                                         print(f"❌ [{completed_count}/{total_platforms}] {platform_name.upper()} failed ({self._format_elapsed_time(elapsed)})")
-                                        if error_msg:
-                                            # Print first few lines of error
-                                            error_lines = error_msg.strip().split('\n')
-                                            for line in error_lines[:5]:
-                                                print(f"   {line}")
-                                            if len(error_lines) > 5:
-                                                print(f"   ... ({len(error_lines) - 5} more lines)")
+                                        # Print key error lines from stdout/stderr
+                                        self._print_build_error(stdout, stderr)
 
                                     # Show remaining in-progress builds
                                     if in_progress:
@@ -925,21 +985,39 @@ REQUIREMENTS:
                     sys.exit(1)
 
                 # Run Docker build
-                dev_flag = " --dev" if args.docker_dev else ""
+                dev_flag = ["--dev"] if args.docker_dev else []
                 # Add toolchain option for Windows builds
-                toolchain_flag = ""
+                toolchain_flag = []
                 if args.target == "windows" and hasattr(args, 'toolchain') and args.toolchain != "auto":
-                    toolchain_flag = f" --toolchain={args.toolchain}"
+                    toolchain_flag = [f"--toolchain={args.toolchain}"]
                 # Add link-type option
-                link_type_flag = ""
+                link_type_flag = []
                 if hasattr(args, 'link_type') and args.link_type:
-                    link_type_flag = f" --link-type={args.link_type}"
-                cmd = f"python3 '{docker_script}' {args.target} '{project_subdir}'{dev_flag}{toolchain_flag}{link_type_flag}"
-                print(f"Executing: {cmd}")
+                    link_type_flag = [f"--link-type={args.link_type}"]
 
-                err_code = os.system(cmd)
+                cmd_args = ["python3", docker_script, args.target, project_subdir] + dev_flag + toolchain_flag + link_type_flag
+                print(f"Executing: {' '.join(cmd_args)}")
+
+                # Use subprocess.run to properly capture exit code
+                result = subprocess.run(cmd_args)
                 self._print_build_time(start_time)
-                sys.exit(err_code)
+
+                # Check if build artifacts exist when returncode is 0 but build was very fast
+                if result.returncode == 0:
+                    elapsed = time.time() - start_time
+                    target_dir = os.path.join(project_subdir, "target", args.target)
+                    has_artifacts = os.path.exists(target_dir) and any(
+                        f.endswith(('.zip', '.a', '.so', '.dylib', '.dll', '.lib', '.framework'))
+                        for root, dirs, files in os.walk(target_dir)
+                        for f in files
+                    )
+                    if elapsed < 5.0 and not has_artifacts:
+                        print(f"\n⚠️  WARNING: Build completed very quickly ({elapsed:.1f}s) but no artifacts found!")
+                        print(f"   This usually means Docker daemon is not running.")
+                        print(f"   Please start Docker Desktop and try again.")
+                        sys.exit(1)
+
+                sys.exit(result.returncode)
             else:
                 print(f"WARNING: --docker option is not supported for {args.target} builds")
                 print(f"Supported Docker platforms: {', '.join(supported_docker_platforms)}")
