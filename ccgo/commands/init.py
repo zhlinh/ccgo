@@ -14,14 +14,13 @@ import sys
 import argparse
 from copier import run_copy
 
-# setup path
-# >>>>>>>>>>>>>>
+# region setup path
 SCRIPT_PATH = os.path.split(os.path.realpath(__file__))[0]
 PROJECT_ROOT_PATH = os.path.dirname(SCRIPT_PATH)
 sys.path.append(SCRIPT_PATH)
 sys.path.append(PROJECT_ROOT_PATH)
 PACKAGE_NAME = os.path.basename(SCRIPT_PATH)
-# <<<<<<<<<<<<<
+# endregion
 # import this project modules
 try:
     from ccgo.utils.context.namespace import CliNameSpace
