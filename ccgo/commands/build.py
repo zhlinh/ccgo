@@ -63,7 +63,7 @@ class Build(CliCommand):
         host = host_map.get(host_platform, host_platform.lower())
 
         # Platforms that don't require specific toolchains (can build anywhere)
-        universal_targets = ['kmp', 'include']
+        universal_targets = ['kmp', 'include', 'conan']
         if target_platform in universal_targets:
             return False
 
@@ -88,7 +88,7 @@ class Build(CliCommand):
 This command builds native libraries and packages them for the target platform.
 
 SUPPORTED PLATFORMS:
-    all         Build for all platforms (android, ios, macos, watchos, tvos, windows, linux, ohos, kmp, conan)
+    all         Build for all platforms (android, ios, macos, watchos, tvos, windows, linux, ohos, kmp, conan, include)
     android     Build for Android (AAR package with native .so libraries)
     ios         Build for iOS (static libraries and frameworks)
     watchos     Build for watchOS (static libraries and frameworks)
@@ -98,7 +98,7 @@ SUPPORTED PLATFORMS:
     linux       Build for Linux (static and shared libraries)
     ohos        Build for OpenHarmony (HAR package with native .so libraries)
     kmp         Build Kotlin Multiplatform library (all supported targets)
-    conan       Build Conan package for C/C++ dependency management
+    conan       Build locally with Conan, output to target/conan/
     include     Build and package header files only
 
 EXAMPLES:
@@ -202,7 +202,7 @@ REQUIREMENTS:
 
     def get_build_platforms(self) -> list:
         """Get list of actual build platforms (excluding meta-targets like 'all')"""
-        return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan"]
+        return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan", "include"]
 
     def get_platforms_from_env(self) -> list:
         """Get platforms to build from CI_BUILD_* environment variables"""
@@ -218,6 +218,7 @@ REQUIREMENTS:
             "CI_BUILD_WATCHOS": "watchos",
             "CI_BUILD_TVOS": "tvos",
             "CI_BUILD_CONAN": "conan",
+            "CI_BUILD_INCLUDE": "include",
         }
 
         for env_var, platform in env_map.items():
@@ -361,6 +362,22 @@ REQUIREMENTS:
         input_argv = [x for x in sys.argv[1:] if x != module_name]
         args, unknown = parser.parse_known_args(input_argv)
         return args
+
+    def _get_exit_code(self, wait_status: int) -> int:
+        """Convert os.system() wait status to actual exit code.
+
+        On Unix, os.system() returns a wait status (exit code << 8).
+        This method extracts the actual exit code.
+        """
+        if os.name == 'posix':
+            # Use os.waitstatus_to_exitcode if available (Python 3.9+)
+            if hasattr(os, 'waitstatus_to_exitcode'):
+                return os.waitstatus_to_exitcode(wait_status)
+            # Fallback: extract exit code from wait status
+            if os.WIFEXITED(wait_status):
+                return os.WEXITSTATUS(wait_status)
+            return 1  # Non-zero if terminated abnormally
+        return wait_status
 
     def _print_build_time(self, start_time: float):
         """Print the build time in a human-readable format."""
@@ -1056,7 +1073,7 @@ REQUIREMENTS:
             native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}{link_type_arg}"
             print(f"Executing: {native_cmd}")
 
-            err_code = os.system(native_cmd)
+            err_code = self._get_exit_code(os.system(native_cmd))
             if err_code != 0:
                 print("ERROR: Native library build failed")
                 self._print_build_time(start_time)
@@ -1073,7 +1090,7 @@ REQUIREMENTS:
             gradle_cmd = f"cd '{project_subdir}/android' && chmod +x gradlew && ./gradlew --no-daemon :buildAAR"
             print(f"Executing: {gradle_cmd}")
 
-            err_code = os.system(gradle_cmd)
+            err_code = self._get_exit_code(os.system(gradle_cmd))
             if err_code != 0:
                 print("ERROR: AAR build failed")
                 self._print_build_time(start_time)
@@ -1084,7 +1101,7 @@ REQUIREMENTS:
             archive_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --archive-only{link_type_arg}"
             print(f"Executing: {archive_cmd}")
 
-            err_code = os.system(archive_cmd)
+            err_code = self._get_exit_code(os.system(archive_cmd))
             self._print_build_time(start_time)
             sys.exit(err_code)
 
@@ -1109,14 +1126,15 @@ REQUIREMENTS:
             print(f"Execute command:")
             print(cmd)
 
-            err_code = os.system(cmd)
+            err_code = self._get_exit_code(os.system(cmd))
             self._print_build_time(start_time)
             sys.exit(err_code)
 
-        # If Conan build, create Conan package
+        # If Conan build, build locally and output to target/conan/
         if args.target == "conan":
-            print("\n=== Conan Build (C/C++ Package Manager) ===")
-            print("This will create a Conan package for the C/C++ library")
+            print("\n=== Conan Build (Local) ===")
+            print("This will build the C/C++ library locally using Conan")
+            print("Output will be placed in target/conan/")
 
             # Get the build script from ccgo build_scripts directory
             build_scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_scripts")
@@ -1127,14 +1145,18 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(1)
 
+            # Build command with link-type argument
+            link_type = args.link_type if args.link_type else "both"
+            link_type_arg = f" --link-type {link_type}"
+
             # Execute conan build
-            cmd = f"cd '{project_subdir}' && python3 '{build_conan_script}'"
+            cmd = f"cd '{project_subdir}' && python3 '{build_conan_script}'{link_type_arg}"
             print(f"\nProject directory: {project_subdir}")
             print(f"Build script: {build_conan_script}")
             print(f"Execute command:")
             print(cmd)
 
-            err_code = os.system(cmd)
+            err_code = self._get_exit_code(os.system(cmd))
             self._print_build_time(start_time)
             sys.exit(err_code)
 
@@ -1165,7 +1187,7 @@ REQUIREMENTS:
             native_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --arch {arch}{jobs_arg}{link_type_arg}"
             print(f"Executing: {native_cmd}")
 
-            err_code = os.system(native_cmd)
+            err_code = self._get_exit_code(os.system(native_cmd))
             if err_code != 0:
                 print("ERROR: Native library build failed")
                 self._print_build_time(start_time)
@@ -1176,7 +1198,7 @@ REQUIREMENTS:
             hvigor_cmd = f"cd '{project_subdir}/ohos' && hvigorw buildHAR --mode module -p product=default --no-daemon --info"
             print(f"Executing: {hvigor_cmd}")
 
-            err_code = os.system(hvigor_cmd)
+            err_code = self._get_exit_code(os.system(hvigor_cmd))
             if err_code != 0:
                 print("ERROR: HAR build failed")
                 self._print_build_time(start_time)
@@ -1187,7 +1209,7 @@ REQUIREMENTS:
             archive_cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --archive-only{link_type_arg}"
             print(f"Executing: {archive_cmd}")
 
-            err_code = os.system(archive_cmd)
+            err_code = self._get_exit_code(os.system(archive_cmd))
             self._print_build_time(start_time)
             sys.exit(err_code)
 
@@ -1235,6 +1257,6 @@ REQUIREMENTS:
         print(f"Execute command:")
         print(cmd)
 
-        err_code = os.system(cmd)
+        err_code = self._get_exit_code(os.system(cmd))
         self._print_build_time(start_time)
         sys.exit(err_code)

@@ -43,6 +43,8 @@ class Publish(CliCommand):
             ccgo publish android              # Publish to Maven repository
             ccgo publish ohos                 # Publish to OHPM repository
             ccgo publish kmp                  # Publish KMP library
+            ccgo publish conan                # Publish to Conan local cache
+            ccgo publish conan --remote myremote  # Upload to remote Conan repository
             ccgo publish doc                  # Publish documentation to GitHub Pages
             ccgo publish doc --branch main    # Publish to specific branch
         """
@@ -52,6 +54,7 @@ class Publish(CliCommand):
             "android",
             "ohos",
             "kmp",
+            "conan",
             "doc",
             "ios",
             "windows",
@@ -89,6 +92,29 @@ class Publish(CliCommand):
             "--open",
             action="store_true",
             help="Open documentation in browser after publishing (used with 'doc' target)",
+        )
+        # Arguments for Conan publishing
+        parser.add_argument(
+            "--remote",
+            type=str,
+            default=None,
+            help="Conan remote repository name for upload (used with 'conan' target)",
+        )
+        parser.add_argument(
+            "--profile",
+            type=str,
+            default="default",
+            help="Conan profile to use (used with 'conan' target, default: default)",
+        )
+        parser.add_argument(
+            "--export-only",
+            action="store_true",
+            help="Only export Conan recipe without building (used with 'conan' target)",
+        )
+        parser.add_argument(
+            "-y", "--yes",
+            action="store_true",
+            help="Skip confirmation prompts (used with 'conan' target)",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
@@ -242,13 +268,89 @@ class Publish(CliCommand):
                 sys.exit(err_code)
 
             print("\nSuccessfully published KMP library!")
+        elif args.target == "conan":
+            # Conan: publish to local cache or remote repository
+            self.publish_conan(context, args)
         elif args.target == "doc":
             # Doc: publish documentation to GitHub Pages
             self.publish_doc(context, args)
         else:
             print(f"\nPublishing not yet supported for {args.target}")
-            print("Currently supported: android, ohos, kmp, doc")
+            print("Currently supported: android, ohos, kmp, conan, doc")
             sys.exit(1)
+
+    def publish_conan(self, context: CliContext, args: CliNameSpace):
+        """Publish to Conan local cache or remote repository"""
+        print("\n=== Publishing to Conan ===")
+
+        # Get current working directory (project directory)
+        try:
+            project_dir = os.getcwd()
+        except (OSError, FileNotFoundError) as e:
+            project_dir = os.environ.get('PWD')
+            if not project_dir or not os.path.exists(project_dir):
+                print(f"ERROR: Current working directory no longer exists: {e}")
+                print("Please navigate to your project directory and try again.")
+                sys.exit(1)
+            try:
+                os.chdir(project_dir)
+            except (OSError, FileNotFoundError):
+                print(f"ERROR: Cannot access project directory: {project_dir}")
+                sys.exit(1)
+
+        # Find project subdirectory with CCGO.toml
+        config_path = None
+        project_subdir = project_dir
+        for subdir in os.listdir(project_dir):
+            potential_config = os.path.join(project_dir, subdir, "CCGO.toml")
+            if os.path.isfile(potential_config):
+                config_path = potential_config
+                project_subdir = os.path.join(project_dir, subdir)
+                break
+
+        if not config_path:
+            if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+                config_path = os.path.join(project_dir, "CCGO.toml")
+                project_subdir = project_dir
+            else:
+                print("ERROR: CCGO.toml not found in project directory")
+                sys.exit(1)
+
+        # Get publish_conan.py script path
+        build_scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_scripts")
+        publish_conan_script = os.path.join(build_scripts_dir, "publish_conan.py")
+
+        if not os.path.isfile(publish_conan_script):
+            print(f"ERROR: publish_conan.py not found at {publish_conan_script}")
+            sys.exit(1)
+
+        # Build command arguments
+        cmd_args = ["python3", f"'{publish_conan_script}'"]
+
+        # Determine mode based on --remote flag
+        if args.remote:
+            cmd_args.extend(["--mode", "remote", "--remote", args.remote])
+        else:
+            cmd_args.extend(["--mode", "local"])
+
+        # Add profile
+        if args.profile and args.profile != "default":
+            cmd_args.extend(["--profile", args.profile])
+
+        # Add export-only flag
+        if args.export_only:
+            cmd_args.append("--export-only")
+
+        # Add confirmation skip
+        if args.yes:
+            cmd_args.append("-y")
+
+        cmd = f"cd '{project_subdir}' && {' '.join(cmd_args)}"
+        print(f"Executing: {cmd}")
+
+        err_code = os.system(cmd)
+        if err_code != 0:
+            sys.exit(err_code)
 
     def publish_doc(self, context: CliContext, args: CliNameSpace):
         """Publish documentation to GitHub Pages"""

@@ -274,5 +274,24 @@ if __name__ == "__main__":
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
+    # Accept common arguments for consistency with other build scripts (ignored for include builds)
+    parser.add_argument(
+        "-j", "--jobs",
+        type=int,
+        default=1,
+        help="Number of parallel build jobs (ignored for include builds)",
+    )
+    parser.add_argument(
+        "--link-type",
+        choices=["static", "shared", "both"],
+        default="both",
+        help="Library link type (ignored for include builds)",
+    )
+    parser.add_argument(
+        "--ide-project",
+        action="store_true",
+        help="Generate IDE project (ignored for include builds)",
+    )
+
     args = parser.parse_args()
     main()

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Build script for Conan C/C++ package manager.
+Build script for Conan C/C++ package manager - Local Build Mode.
 
-This script creates a Conan package for the C/C++ library, allowing it to be
-consumed by other projects using Conan for dependency management.
+This script builds the C/C++ library locally using Conan and outputs
+artifacts to target/conan/ directory, following the unified output structure.
+
+For publishing to Conan cache or remote repository, use `ccgo publish conan`.
 """
 
 import os
@@ -11,6 +13,7 @@ import sys
 import json
 import subprocess
 import shutil
+import glob
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -23,9 +26,15 @@ from build_utils import (
 )
 
 
-def run_cmd(cmd_args: list, cwd: str = None) -> int:
+def run_cmd(cmd_args: list, cwd: str = None, env: dict = None) -> int:
     """Run a command and return exit code."""
     cmd = " ".join(cmd_args)
+
+    # Prepend environment variable exports if provided
+    if env:
+        env_exports = " ".join([f'{k}="{v}"' for k, v in env.items()])
+        cmd = f"{env_exports} {cmd}"
+
     if cwd:
         cmd = f"cd '{cwd}' && {cmd}"
     err_code, output = exec_command(cmd)
@@ -100,10 +109,87 @@ def ensure_conan_profile() -> None:
                 timeout=30
             )
             print("Conan default profile created")
+
+        # Update settings.yml to support newer compiler versions
+        update_conan_settings()
     except subprocess.TimeoutExpired:
         print("Warning: Conan profile check timed out")
     except Exception as e:
         print(f"Warning: Could not check/create Conan profile: {e}")
+
+
+def update_conan_settings() -> None:
+    """
+    Update Conan settings.yml to support newer compiler versions.
+
+    Conan's default settings.yml may not include the latest compiler versions.
+    This function adds missing versions for Apple Clang and Clang compilers.
+    """
+    import re
+
+    try:
+        # Find Conan home directory
+        result = subprocess.run(
+            ["conan", "config", "home"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10
+        )
+        if result.returncode != 0:
+            return
+
+        conan_home = result.stdout.strip()
+        settings_path = os.path.join(conan_home, "settings.yml")
+
+        if not os.path.exists(settings_path):
+            return
+
+        # Read current settings
+        with open(settings_path, 'r') as f:
+            content = f.read()
+
+        new_versions_to_add = ['17', '18', '19', '20']
+        updated_compilers = []
+
+        def add_versions_to_compiler(content: str, compiler_name: str, versions: list) -> str:
+            """Add versions to a specific compiler section."""
+            # Pattern to match compiler version list (handles both clang and apple-clang)
+            # Format: compiler_name:\n    version: ["x", "y", ...]
+            # Use DOTALL to match multi-line version lists
+            pattern = rf'({re.escape(compiler_name)}:\s*\n\s*version:\s*\[)([\s\S]*?)(\])'
+
+            def add_versions(match):
+                prefix = match.group(1)
+                existing_versions = match.group(2)
+                suffix = match.group(3)
+
+                modified = False
+                for v in versions:
+                    if f'"{v}"' not in existing_versions:
+                        # Add to the end of the version list, before the closing bracket
+                        existing_versions = existing_versions.rstrip() + f', "{v}"'
+                        modified = True
+
+                if modified:
+                    updated_compilers.append(compiler_name)
+
+                return prefix + existing_versions + suffix
+
+            return re.sub(pattern, add_versions, content)
+
+        # Update both clang and apple-clang versions
+        new_content = add_versions_to_compiler(content, "clang", new_versions_to_add)
+        new_content = add_versions_to_compiler(new_content, "apple-clang", new_versions_to_add)
+
+        if new_content != content:
+            with open(settings_path, 'w') as f:
+                f.write(new_content)
+            if updated_compilers:
+                print(f"Updated Conan settings.yml with newer compiler versions ({', '.join(new_versions_to_add)}) for: {', '.join(updated_compilers)}")
+
+    except Exception as e:
+        print(f"Warning: Could not update Conan settings: {e}")
 
 
 def generate_conanfile(project_dir: str, config: Dict[str, Any]) -> str:
@@ -171,9 +257,9 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
 
     conanfile_content += '    }\n\n'
 
-    # Add exports and sources
+    # Add exports and sources (cmake files are referenced from ccgo package, not copied)
     conanfile_content += '''    # Sources are located in the same place as this recipe, copy them to the recipe
-    exports_sources = "CMakeLists.txt", "src/*", "include/*", "cmake/*"
+    exports_sources = "CMakeLists.txt", "src/*", "include/*"
 
 '''
 
@@ -191,8 +277,8 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
             conanfile_content += f'        self.tool_requires("{req}")\n'
         conanfile_content += '\n'
 
-    # Add config_options - pass CCGO_CMAKE_DIR as a variable
-    conanfile_content += f'''    def config_options(self):
+    # Add config_options - dynamically find ccgo cmake directory at build time
+    conanfile_content += '''    def config_options(self):
         if self.settings.os == "Windows":
             del self.options.fPIC
 
@@ -203,14 +289,117 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
     def layout(self):
         cmake_layout(self)
 
+    def _get_ccgo_cmake_dir(self):
+        """Get CCGO_CMAKE_DIR from ccgo package installation."""
+        # First check environment variable
+        cmake_dir = os.environ.get("CCGO_CMAKE_DIR")
+        if cmake_dir and os.path.isdir(cmake_dir):
+            return cmake_dir
+
+        # Try to find from ccgo package installation
+        try:
+            import ccgo.build_scripts.build_utils as build_utils
+            if hasattr(build_utils, "CCGO_CMAKE_DIR") and os.path.isdir(build_utils.CCGO_CMAKE_DIR):
+                return build_utils.CCGO_CMAKE_DIR
+        except ImportError:
+            pass
+
+        # Try to find ccgo package location
+        try:
+            import ccgo
+            ccgo_path = os.path.dirname(ccgo.__file__)
+            cmake_dir = os.path.join(ccgo_path, "build_scripts", "cmake")
+            if os.path.isdir(cmake_dir):
+                return cmake_dir
+        except ImportError:
+            pass
+
+        raise RuntimeError(
+            "CCGO_CMAKE_DIR not found. Please either:\\n"
+            "1. Install ccgo package: pip install ccgo\\n"
+            "2. Set CCGO_CMAKE_DIR environment variable"
+        )
+
     def generate(self):
         tc = CMakeToolchain(self)
-        # Set CCGO_CMAKE_DIR for ccgo build system
-        tc.variables["CCGO_CMAKE_DIR"] = "{CCGO_CMAKE_DIR}"
+        # Dynamically get CCGO_CMAKE_DIR from ccgo package installation
+        tc.variables["CCGO_CMAKE_DIR"] = self._get_ccgo_cmake_dir()
+        # Pass shared option to CMake - CCGO uses CCGO_BUILD_STATIC and CCGO_BUILD_SHARED
+        if self.options.shared:
+            tc.variables["CCGO_BUILD_STATIC"] = "OFF"
+            tc.variables["CCGO_BUILD_SHARED"] = "ON"
+        else:
+            tc.variables["CCGO_BUILD_STATIC"] = "ON"
+            tc.variables["CCGO_BUILD_SHARED"] = "OFF"
+        # Also set standard CMake variables for compatibility
+        tc.variables["BUILD_SHARED_LIBS"] = "ON" if self.options.shared else "OFF"
+        tc.variables["COMM_BUILD_SHARED_LIBS"] = "ON" if self.options.shared else "OFF"
+        # Set submodule dependencies for shared library linking
+        # Format: "module1,dep1,dep2;module2,dep1" means module1 depends on dep1 and dep2
+        tc.variables["CONFIG_COMM_DEPS_MAP"] = self._detect_submodule_deps()
         tc.generate()
 
         deps = CMakeDeps(self)
         deps.generate()
+
+    def _detect_submodule_deps(self):
+        """
+        Detect submodule dependencies by scanning source files for includes.
+
+        Returns CMake list format: "module1;dep1,dep2;module2;dep3"
+        where even indices are module names and odd indices are comma-separated deps.
+        """
+        import os
+        import re
+
+        src_dir = os.path.join(self.source_folder, "src")
+        if not os.path.isdir(src_dir):
+            return ""
+
+        # Get list of submodules
+        submodules = []
+        for item in os.listdir(src_dir):
+            subdir = os.path.join(src_dir, item)
+            if os.path.isdir(subdir) and not item.startswith('.'):
+                submodules.append(item)
+
+        if not submodules:
+            return ""
+
+        # Scan each submodule for dependencies on other submodules
+        deps_map = []
+        include_pattern = re.compile(r'#include\s*[<"]' + self.name + r'/([^/"<>]+)/')
+
+        for module in submodules:
+            module_dir = os.path.join(src_dir, module)
+            module_deps = set()
+
+            # Scan all source files in this module
+            for root, dirs, files in os.walk(module_dir):
+                for filename in files:
+                    if filename.endswith(('.c', '.cc', '.cpp', '.cxx', '.mm', '.m', '.h', '.hpp')):
+                        filepath = os.path.join(root, filename)
+                        try:
+                            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                matches = include_pattern.findall(content)
+                                for match in matches:
+                                    if match != module and match in submodules:
+                                        module_deps.add(match)
+                        except Exception:
+                            pass
+
+            if module_deps:
+                # CMake list format: "module;dep1,dep2"
+                # Even index = module name, odd index = comma-separated dependencies
+                deps_map.append(module)
+                deps_map.append(",".join(sorted(module_deps)))
+
+        # Format: "module1;dep1,dep2;module2;dep3"
+        result = ";".join(deps_map)
+        if result:
+            self.output.info(f"Detected submodule dependencies: {result}")
+        return result
 
     def build(self):
         cmake = CMake(self)
@@ -246,13 +435,14 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
     return conanfile_path
 
 
-def create_conan_package(project_dir: str, config: Dict[str, Any]) -> bool:
+def build_conan_locally(project_dir: str, config: Dict[str, Any], link_type: str = "both") -> bool:
     """
-    Create a Conan package for the project.
+    Build the Conan package locally and output to target/conan/.
 
     Args:
         project_dir: Root directory of the project
         config: CCGO configuration dictionary
+        link_type: Library type to build: 'static', 'shared', or 'both'
 
     Returns:
         True if successful, False otherwise
@@ -261,126 +451,403 @@ def create_conan_package(project_dir: str, config: Dict[str, Any]) -> bool:
 
     # Get build settings
     profile = conan_config.get('profile', 'default')
-    build_folder = conan_config.get('build_folder', 'cmake_build/conan')
+    build_folder = "cmake_build/conan"
 
-    # Ensure build directory exists
+    # Clean and recreate build directory to ensure fresh build with correct options
     build_dir = os.path.join(project_dir, build_folder)
+    if os.path.exists(build_dir):
+        print(f"Cleaning old build directory: {build_dir}")
+        shutil.rmtree(build_dir)
     ensure_directory_exists(build_dir)
 
-    # Create the package
-    print("\n=== Creating Conan Package ===")
+    # Determine which variants to build
+    build_static = link_type in ('static', 'both')
+    build_shared = link_type in ('shared', 'both')
 
-    # Build command
-    cmd_args = [
-        "conan", "create", ".",
-        "--build", "missing"
-    ]
+    success = True
 
-    # Add profile if specified
-    if profile != 'default':
-        cmd_args.extend(["--profile", profile])
+    # Build static library
+    if build_static:
+        print("\n=== Building Conan Package (Static) ===")
+        static_build_dir = os.path.join(build_dir, "static")
+        ensure_directory_exists(static_build_dir)
 
-    # Execute conan create
-    print(f"Executing: {' '.join(cmd_args)}")
-    err_code = run_cmd(cmd_args, cwd=project_dir)
+        success = success and _build_variant(
+            project_dir, static_build_dir, profile, shared=False
+        )
 
-    if err_code != 0:
-        print(f"ERROR: Conan package creation failed with exit code {err_code}")
-        return False
+    # Build shared library
+    if build_shared:
+        print("\n=== Building Conan Package (Shared) ===")
+        shared_build_dir = os.path.join(build_dir, "shared")
+        ensure_directory_exists(shared_build_dir)
 
-    print("✓ Successfully created Conan package")
-    return True
+        success = success and _build_variant(
+            project_dir, shared_build_dir, profile, shared=True
+        )
 
+    if success:
+        # Copy outputs to target/conan/
+        success = _copy_to_target(project_dir, config, link_type)
 
-def export_conan_package(project_dir: str, config: Dict[str, Any]) -> bool:
-    """
-    Export the Conan package to local cache without building.
-
-    Args:
-        project_dir: Root directory of the project
-        config: CCGO configuration dictionary
-
-    Returns:
-        True if successful, False otherwise
-    """
-    print("\n=== Exporting Conan Package ===")
-
-    # Export command
-    cmd_args = ["conan", "export", "."]
-
-    # Execute conan export
-    print(f"Executing: {' '.join(cmd_args)}")
-    err_code = run_cmd(cmd_args, cwd=project_dir)
-
-    if err_code != 0:
-        print(f"ERROR: Conan package export failed with exit code {err_code}")
-        return False
-
-    print("✓ Successfully exported Conan package to local cache")
-    return True
+    return success
 
 
-def build_conan_package_locally(project_dir: str, config: Dict[str, Any]) -> bool:
-    """
-    Build the Conan package locally for testing.
-
-    Args:
-        project_dir: Root directory of the project
-        config: CCGO configuration dictionary
-
-    Returns:
-        True if successful, False otherwise
-    """
-    conan_config = config.get('build', {}).get('conan', {})
-
-    # Get build settings
-    profile = conan_config.get('profile', 'default')
-    build_folder = conan_config.get('build_folder', 'cmake_build/conan')
-
-    # Ensure build directory exists
-    build_dir = os.path.join(project_dir, build_folder)
-    ensure_directory_exists(build_dir)
-
-    print("\n=== Building Conan Package Locally ===")
+def _build_variant(project_dir: str, build_dir: str, profile: str, shared: bool) -> bool:
+    """Build a specific variant (static or shared)."""
+    variant_name = "shared" if shared else "static"
+    shared_option = "True" if shared else "False"
 
     # Install dependencies
-    print("Installing dependencies...")
+    print(f"\nInstalling dependencies ({variant_name})...")
     install_cmd = [
         "conan", "install", ".",
-        "--output-folder", build_folder,
-        "--build", "missing"
+        "--output-folder", build_dir,
+        "--build", "missing",
+        "-o", f"*:shared={shared_option}",  # Conan 2.x format: *:option=value
     ]
 
     if profile != 'default':
         install_cmd.extend(["--profile", profile])
 
     print(f"Executing: {' '.join(install_cmd)}")
-    err_code = run_cmd(install_cmd, cwd=project_dir)
+    print(f"  with CCGO_CMAKE_DIR={CCGO_CMAKE_DIR}")
+    err_code = run_cmd(install_cmd, cwd=project_dir, env={"CCGO_CMAKE_DIR": CCGO_CMAKE_DIR})
 
     if err_code != 0:
-        print(f"ERROR: Dependency installation failed with exit code {err_code}")
+        print(f"ERROR: Dependency installation failed ({variant_name})")
         return False
 
     # Build the package
-    print("\nBuilding package...")
+    print(f"\nBuilding package ({variant_name})...")
     build_cmd = [
         "conan", "build", ".",
-        "--output-folder", build_folder
+        "--output-folder", build_dir,
+        "-o", f"*:shared={shared_option}",  # Must pass option to build command too
     ]
 
     print(f"Executing: {' '.join(build_cmd)}")
-    err_code = run_cmd(build_cmd, cwd=project_dir)
+    err_code = run_cmd(build_cmd, cwd=project_dir, env={"CCGO_CMAKE_DIR": CCGO_CMAKE_DIR})
 
     if err_code != 0:
-        print(f"ERROR: Package build failed with exit code {err_code}")
+        print(f"ERROR: Package build failed ({variant_name})")
         return False
 
-    print("✓ Successfully built Conan package locally")
+    print(f"Successfully built {variant_name} library")
     return True
+
+
+def _find_libraries_recursive(base_dir: str, extensions: list, project_name: str) -> list:
+    """
+    Recursively find library files in directory.
+
+    Args:
+        base_dir: Base directory to search
+        extensions: List of file extensions to look for
+        project_name: Project name to prioritize matching libraries
+
+    Returns:
+        List of (file_path, priority) tuples where priority indicates:
+        - 2: Exact match (lib{name}.ext)
+        - 1: Contains name but has suffix (lib{name}-xxx.ext)
+        - 0: Does not match project name
+    """
+    results = []
+    if not os.path.exists(base_dir):
+        return results
+
+    # Normalize project name for matching
+    name_normalized = project_name.lower().replace('-', '').replace('_', '')
+
+    for root, dirs, files in os.walk(base_dir):
+        # Skip CMakeFiles and other build system directories
+        dirs[:] = [d for d in dirs if d not in ['CMakeFiles', 'generators', '.cmake']]
+
+        for filename in files:
+            for ext in extensions:
+                # Handle .so with version suffix (e.g., libfoo.so.1.0)
+                if filename.endswith(ext) or (ext == '.so' and '.so' in filename):
+                    filepath = os.path.join(root, filename)
+
+                    # Extract library name from filename
+                    # e.g., "libccgonow.dylib" -> "ccgonow"
+                    # e.g., "libccgonow-api.a" -> "ccgonow-api"
+                    lib_name = filename
+                    if lib_name.startswith('lib'):
+                        lib_name = lib_name[3:]
+                    for e in ['.dylib', '.so', '.dll', '.a', '.lib']:
+                        if lib_name.endswith(e):
+                            lib_name = lib_name[:-len(e)]
+                            break
+                    # Handle version suffix like .so.1.0
+                    if '.so.' in lib_name:
+                        lib_name = lib_name.split('.so.')[0]
+
+                    lib_normalized = lib_name.lower().replace('-', '').replace('_', '')
+
+                    # Determine priority
+                    if lib_normalized == name_normalized:
+                        priority = 2  # Exact match
+                    elif name_normalized in lib_normalized:
+                        priority = 1  # Contains name (e.g., ccgonow-api)
+                    else:
+                        priority = 0  # No match
+
+                    results.append((filepath, priority, filename))
+                    break
+
+    return results
+
+
+def _copy_to_target(project_dir: str, config: Dict[str, Any], link_type: str) -> bool:
+    """Copy build outputs to target/conan/ directory."""
+    import platform as plat
+
+    print("\n=== Copying outputs to target/conan/ ===")
+
+    name = config.get('PROJECT_NAME_LOWER', 'unknown')
+    version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
+
+    # Target directory structure
+    target_dir = os.path.join(project_dir, "target", "conan")
+    lib_dir = os.path.join(target_dir, "lib")
+    include_dir = os.path.join(target_dir, "include", name)
+
+    # Clean and create target directories
+    if os.path.exists(target_dir):
+        shutil.rmtree(target_dir)
+
+    build_static = link_type in ('static', 'both')
+    build_shared = link_type in ('shared', 'both')
+
+    if build_static:
+        ensure_directory_exists(os.path.join(lib_dir, "static"))
+    if build_shared:
+        ensure_directory_exists(os.path.join(lib_dir, "shared"))
+    ensure_directory_exists(include_dir)
+
+    build_dir = os.path.join(project_dir, "cmake_build", "conan")
+
+    # Determine library extensions based on platform
+    system = plat.system()
+    if system == "Windows":
+        static_exts = [".lib"]
+        shared_exts = [".dll"]
+    elif system == "Darwin":
+        static_exts = [".a"]
+        shared_exts = [".dylib"]
+    else:  # Linux and others
+        static_exts = [".a"]
+        shared_exts = [".so"]
+
+    copied_static = 0
+    copied_shared = 0
+
+    # Copy static libraries - search recursively
+    if build_static:
+        static_build = os.path.join(build_dir, "static", "build", "Release")
+        if not os.path.exists(static_build):
+            static_build = os.path.join(build_dir, "static", "build", "Debug")
+        if not os.path.exists(static_build):
+            static_build = os.path.join(build_dir, "static", "build")
+
+        if os.path.exists(static_build):
+            libs = _find_libraries_recursive(static_build, static_exts, name)
+            # Copy libraries matching project name (priority >= 1)
+            # Priority 2 = exact match (libccgonow.a)
+            # Priority 1 = contains name (libccgonow-api.a, libccgonow-base.a)
+            matching_libs = [(f, p, n) for f, p, n in libs if p >= 1]
+
+            if matching_libs:
+                for lib_file, priority, filename in matching_libs:
+                    dest = os.path.join(lib_dir, "static", filename)
+                    shutil.copy2(lib_file, dest)
+                    print(f"  Copied: {filename} -> lib/static/")
+                    copied_static += 1
+            else:
+                print(f"  Warning: No static libraries matching '{name}' found")
+                all_libs = [n for _, _, n in libs]
+                if all_libs:
+                    print(f"  Found libraries: {all_libs}")
+                else:
+                    print(f"  No .a files found in {static_build}")
+        else:
+            print(f"  Warning: Static build directory not found: {static_build}")
+
+    # Copy shared libraries - search recursively
+    if build_shared:
+        shared_build = os.path.join(build_dir, "shared", "build", "Release")
+        if not os.path.exists(shared_build):
+            shared_build = os.path.join(build_dir, "shared", "build", "Debug")
+        if not os.path.exists(shared_build):
+            shared_build = os.path.join(build_dir, "shared", "build")
+
+        if os.path.exists(shared_build):
+            libs = _find_libraries_recursive(shared_build, shared_exts, name)
+            # Copy libraries matching project name (priority >= 1)
+            matching_libs = [(f, p, n) for f, p, n in libs if p >= 1]
+
+            if matching_libs:
+                for lib_file, priority, filename in matching_libs:
+                    dest = os.path.join(lib_dir, "shared", filename)
+                    shutil.copy2(lib_file, dest)
+                    print(f"  Copied: {filename} -> lib/shared/")
+                    copied_shared += 1
+            else:
+                print(f"  Warning: No shared libraries matching '{name}' found")
+                all_libs = [n for _, _, n in libs]
+                if all_libs:
+                    print(f"  Found libraries: {all_libs}")
+                else:
+                    ext_str = '/'.join(shared_exts)
+                    print(f"  No {ext_str} files found in {shared_build}")
+        else:
+            print(f"  Warning: Shared build directory not found: {shared_build}")
+
+    # Copy include files from project's include directory (only header files)
+    project_include = os.path.join(project_dir, "include")
+    header_extensions = ('.h', '.hpp', '.hxx', '.h++', '.hh', '.inl', '.inc')
+
+    def copy_headers_only(src_dir, dst_dir):
+        """Recursively copy only header files."""
+        if not os.path.exists(dst_dir):
+            os.makedirs(dst_dir)
+        for item in os.listdir(src_dir):
+            src = os.path.join(src_dir, item)
+            dst = os.path.join(dst_dir, item)
+            if os.path.isdir(src):
+                copy_headers_only(src, dst)
+            elif item.lower().endswith(header_extensions):
+                shutil.copy2(src, dst)
+
+    if os.path.exists(project_include):
+        copy_headers_only(project_include, include_dir)
+        print(f"  Copied header files to include/{name}/")
+    else:
+        print(f"  Warning: Include directory not found: {project_include}")
+
+    # Generate build_info.json
+    build_info = {
+        "name": name,
+        "version": version,
+        "platform": "conan",
+        "link_type": link_type,
+        "build_system": "conan",
+        "conan_version": _get_conan_version(),
+    }
+
+    build_info_path = os.path.join(target_dir, "build_info.json")
+    with open(build_info_path, 'w') as f:
+        json.dump(build_info, f, indent=2)
+    print(f"  Generated build_info.json")
+
+    print(f"\nBuild artifacts available at: {target_dir}")
+    return True
+
+
+def print_directory_tree(directory: str, prefix: str = "", max_depth: int = 4, current_depth: int = 0) -> None:
+    """
+    Print directory tree structure.
+
+    Args:
+        directory: Root directory to print
+        prefix: Prefix for indentation
+        max_depth: Maximum depth to recurse
+        current_depth: Current recursion depth
+    """
+    if current_depth >= max_depth:
+        return
+
+    if not os.path.exists(directory):
+        return
+
+    items = sorted(os.listdir(directory))
+    dirs = [item for item in items if os.path.isdir(os.path.join(directory, item))]
+    files = [item for item in items if os.path.isfile(os.path.join(directory, item))]
+
+    # Print files first
+    for i, filename in enumerate(files):
+        filepath = os.path.join(directory, filename)
+        size = os.path.getsize(filepath)
+        size_str = _format_size(size)
+        is_last = (i == len(files) - 1) and (len(dirs) == 0)
+        connector = "└── " if is_last else "├── "
+        print(f"{prefix}{connector}{filename} ({size_str})")
+
+    # Print directories
+    for i, dirname in enumerate(dirs):
+        dirpath = os.path.join(directory, dirname)
+        is_last = (i == len(dirs) - 1)
+        connector = "└── " if is_last else "├── "
+        print(f"{prefix}{connector}{dirname}/")
+        new_prefix = prefix + ("    " if is_last else "│   ")
+        print_directory_tree(dirpath, new_prefix, max_depth, current_depth + 1)
+
+
+def _format_size(size: int) -> str:
+    """Format file size in human-readable format."""
+    if size < 1024:
+        return f"{size} B"
+    elif size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    else:
+        return f"{size / (1024 * 1024):.2f} MB"
+
+
+def _get_conan_version() -> str:
+    """Get the installed Conan version."""
+    try:
+        result = subprocess.run(
+            ["conan", "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10
+        )
+        if result.returncode == 0:
+            # Parse "Conan version X.Y.Z"
+            version_str = result.stdout.strip()
+            if "version" in version_str.lower():
+                return version_str.split()[-1]
+            return version_str
+    except Exception:
+        pass
+    return "unknown"
 
 
 def main():
     """Main entry point for Conan build script."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Build C/C++ library locally using Conan",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    python build_conan.py                    # Build both static and shared
+    python build_conan.py --link-type static # Build static only
+    python build_conan.py --link-type shared # Build shared only
+
+Output:
+    Build artifacts are placed in target/conan/:
+    - lib/static/    Static libraries
+    - lib/shared/    Shared libraries
+    - include/       Header files
+    - build_info.json
+
+Note:
+    To publish to Conan cache or remote, use: ccgo publish conan
+        """
+    )
+    parser.add_argument(
+        "--link-type",
+        choices=["static", "shared", "both"],
+        default="both",
+        help="Library type to build (default: both)"
+    )
+
+    args = parser.parse_args()
+
     # Find project root
     project_dir = find_project_root()
     if not project_dir:
@@ -404,42 +871,30 @@ def main():
         print("ERROR: Failed to load CCGO.toml configuration")
         sys.exit(1)
 
-    # Generate conanfile.py if it doesn't exist
-    conanfile_path = os.path.join(project_dir, 'conanfile.py')
-    if not os.path.exists(conanfile_path):
-        print("\nGenerating conanfile.py...")
-        generate_conanfile(project_dir, config)
-    else:
-        print(f"Using existing conanfile.py at {conanfile_path}")
+    # Generate conanfile.py (always regenerate to ensure correct CCGO_CMAKE_DIR path)
+    print(f"\nGenerating conanfile.py with CCGO_CMAKE_DIR={CCGO_CMAKE_DIR}...")
+    generate_conanfile(project_dir, config)
 
-    # Determine build mode (default: create)
-    build_mode = 'create'
-
-    if build_mode == 'create':
-        # Create full package (default)
-        success = create_conan_package(project_dir, config)
-    elif build_mode == 'export':
-        # Export only (no build)
-        success = export_conan_package(project_dir, config)
-    elif build_mode == 'build':
-        # Build locally for testing
-        success = build_conan_package_locally(project_dir, config)
-    else:
-        print(f"ERROR: Unknown build mode '{build_mode}'")
-        print("Valid modes: create, export, build")
-        sys.exit(1)
+    # Build locally
+    success = build_conan_locally(project_dir, config, args.link_type)
 
     if success:
-        print("\n=== Conan Build Complete ===")
-
-        # Print package information
         name = config.get('PROJECT_NAME_LOWER', 'unknown')
         version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
+        target_dir = os.path.join(project_dir, "target", "conan")
 
+        print("\n" + "=" * 60)
+        print("Conan Local Build Complete")
+        print("=" * 60)
         print(f"Package: {name}/{version}")
-        print("\nTo use this package in another project, add to conanfile.txt or conanfile.py:")
-        print(f"  {name}/{version}")
+        print(f"Output: target/conan/")
 
+        # Print directory tree
+        print("\nDirectory structure:")
+        print(f"target/conan/")
+        print_directory_tree(target_dir, prefix="", max_depth=6)
+
+        print("\nTo publish to Conan cache, run: ccgo publish conan")
         sys.exit(0)
     else:
         print("\n=== Conan Build Failed ===")

@@ -262,40 +262,41 @@ OUTPUT STRUCTURE:
         # Default version
         return datetime.now().strftime("%Y%m%d")
 
-    def get_project_name(self, project_dir: str) -> str:
-        """Get project name from CCGO.toml"""
+    def find_ccgo_toml(self, project_dir: str) -> str:
+        """Find CCGO.toml in project directory or subdirectories.
 
-        # Try to find CCGO.toml
-        config_file = None
+        Returns the path to CCGO.toml if found, None otherwise.
+        """
+        # First check current directory
+        if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+            return os.path.join(project_dir, "CCGO.toml")
+
+        # Then check immediate subdirectories
         try:
             for subdir in os.listdir(project_dir):
                 subdir_path = os.path.join(project_dir, subdir)
                 if os.path.isdir(subdir_path):
                     potential_config = os.path.join(subdir_path, "CCGO.toml")
                     if os.path.isfile(potential_config):
-                        config_file = potential_config
-                        break
+                        return potential_config
         except (OSError, PermissionError):
             pass
 
-        if not config_file and os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
-            config_file = os.path.join(project_dir, "CCGO.toml")
+        return None
 
-        if config_file:
-            if not tomllib:
-                print("   ⚠️  Warning: tomllib not available. Install 'tomli' for Python < 3.11")
-                print("   ⚠️  Using default project name 'SDK'")
-            else:
-                try:
-                    with open(config_file, 'rb') as f:
-                        config = tomllib.load(f)
-                        if 'project' in config and 'name' in config['project']:
-                            return config['project']['name']
-                except Exception as e:
-                    print(f"   ⚠️  Error reading CCGO.toml: {e}")
-        else:
-            print("   ⚠️  Warning: CCGO.toml not found in project directory")
-            print("   ⚠️  Using default project name 'SDK'")
+    def get_project_name(self, config_file: str) -> str:
+        """Get project name from CCGO.toml"""
+        if not tomllib:
+            print("   ⚠️  Warning: tomllib not available. Install 'tomli' for Python < 3.11")
+            return "SDK"
+
+        try:
+            with open(config_file, 'rb') as f:
+                config = tomllib.load(f)
+                if 'project' in config and 'name' in config['project']:
+                    return config['project']['name']
+        except Exception as e:
+            print(f"   ⚠️  Error reading CCGO.toml: {e}")
 
         return "SDK"
 
@@ -400,8 +401,21 @@ OUTPUT STRUCTURE:
                 print(f"ERROR: Current working directory no longer exists: {e}")
                 sys.exit(1)
 
+        # Check for CCGO.toml - required for package command
+        config_file = self.find_ccgo_toml(project_dir)
+        if not config_file:
+            print(f"\n❌ ERROR: CCGO.toml not found!")
+            print(f"\n   Current directory: {project_dir}")
+            print(f"\n   The 'ccgo package' command must be run from a CCGO project directory")
+            print(f"   (a directory containing CCGO.toml or with a subdirectory containing it).")
+            print(f"\n   Please navigate to your project directory and try again:")
+            print(f"   $ cd /path/to/your-project")
+            print(f"   $ ccgo package")
+            print()
+            sys.exit(1)
+
         # Get project info
-        project_name = self.get_project_name(project_dir)
+        project_name = self.get_project_name(config_file)
         version = self.get_version(project_dir, args)
 
         # Convert output path to absolute path
