@@ -535,6 +535,12 @@ def print_build_results(link_type='both'):
     if artifacts_moved:
         print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/android/")
 
+    # Remove standalone AAR files (already packaged in ZIP)
+    aar_files = glob.glob(f"{bin_android_dir}/*.aar")
+    for aar_file in aar_files:
+        os.remove(aar_file)
+        print(f"[CLEANUP] Removed {os.path.basename(aar_file)} (already in ZIP)")
+
     # Copy build_info.json from cmake_build to target/android
     copy_build_info_to_target("android", SCRIPT_PATH)
 

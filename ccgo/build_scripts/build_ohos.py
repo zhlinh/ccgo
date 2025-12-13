@@ -390,6 +390,12 @@ def print_build_results(link_type='both'):
     if artifacts_moved:
         print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/ohos/")
 
+    # Remove standalone HAR files (already packaged in ZIP)
+    har_files_in_target = glob.glob(f"{bin_ohos_dir}/*.har")
+    for har_file in har_files_in_target:
+        os.remove(har_file)
+        print(f"[CLEANUP] Removed {os.path.basename(har_file)} (already in ZIP)")
+
     # Copy build_info.json from cmake_build to target/ohos
     copy_build_info_to_target("ohos", SCRIPT_PATH)
 

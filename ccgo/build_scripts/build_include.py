@@ -79,11 +79,11 @@ def archive_include_project():
     1. Header files from include directory
 
     The archive is packaged into a ZIP file named:
-    ARCHIVE_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
+    {PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
 
     Output:
         - target/include/{PROJECT_NAME}_INCLUDE-{version}-{suffix}/
-        - target/include/ARCHIVE_{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
+        - target/include/{PROJECT_NAME}_INCLUDE-{version}-{suffix}.zip
     """
     import zipfile
     from pathlib import Path
@@ -136,7 +136,7 @@ def archive_include_project():
     print(f"Copied include directory: {include_dir_dest}")
 
     # Create archive directory structure
-    archive_name = f"ARCHIVE_{project_name_upper}_INCLUDE-{full_version}"
+    archive_name = f"{project_name_upper}_INCLUDE-{full_version}"
     archive_dir = os.path.join(bin_dir, archive_name)
 
     if os.path.exists(archive_dir):
@@ -171,7 +171,7 @@ def print_build_results():
 
     This function displays the build artifacts and moves them to target/include/:
     1. Include directory
-    2. ARCHIVE zip
+    2. Include ZIP archive
     """
     print("==================Include Build Results========================")
 
@@ -187,9 +187,9 @@ def print_build_results():
     include_dirs = [
         f
         for f in glob.glob(f"{bin_dir}/*_INCLUDE-*")
-        if os.path.isdir(f) and "ARCHIVE" not in f
+        if os.path.isdir(f)
     ]
-    archive_zips = glob.glob(f"{bin_dir}/ARCHIVE*_INCLUDE-*.zip")
+    archive_zips = glob.glob(f"{bin_dir}/*_INCLUDE-*.zip")
 
     if not include_dirs and not archive_zips:
         print(f"ERROR: No build artifacts found in {bin_dir}")
