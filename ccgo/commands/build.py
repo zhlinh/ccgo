@@ -144,10 +144,11 @@ EXAMPLES:
     ccgo build android --docker
 
     # CI/CD builds (formerly `ccgo ci` command)
-    ccgo build all --release --archive
-    ccgo build all --release --archive --platforms android,ios,macos
-    ccgo build all --release --archive --skip-platforms windows,linux
-    ccgo build all --release --archive --use-env
+    ccgo build all --release
+    ccgo build all --release --platforms android,ios,macos
+    ccgo build all --release --skip-platforms windows,linux
+    ccgo build all --release --use-env
+    # After building, collect artifacts with: ccgo package
 
 PLATFORM-SPECIFIC OPTIONS:
     Android/OHOS:
@@ -167,11 +168,14 @@ PLATFORM-SPECIFIC OPTIONS:
         -j, --jobs N       Number of parallel build jobs (default: CPU count)
         --no-parallel      Disable parallel builds (equivalent to --jobs=1)
         --release          Build in release mode (default: debug/beta)
-        --archive          Create build archives after building
-        --archive-dir DIR  Directory for build archives (default: ./target/archives)
         --platforms LIST   Comma-separated list of platforms to build (e.g., android,ios,macos)
         --skip-platforms   Comma-separated list of platforms to skip
         --use-env          Use CI_BUILD_* environment variables to control platforms
+
+PACKAGING:
+    After building, use 'ccgo package' to collect all artifacts:
+        ccgo package               Collect all built artifacts to target/package/
+        ccgo package --clean       Clean and collect artifacts
 
 ENVIRONMENT VARIABLES (for CI/CD):
     CI_IS_RELEASE          Set to 1 for release builds (default: beta)
@@ -288,6 +292,11 @@ REQUIREMENTS:
             help="only build native libraries (e.g., .so, .framework) without additional packaging",
         )
         parser.add_argument(
+            "--no-archive",
+            action="store_true",
+            help="skip ZIP archive creation (used by KMP build to avoid overwriting platform ZIPs)",
+        )
+        parser.add_argument(
             "--docker",
             action="store_true",
             help="build using Docker containers (enables cross-platform builds for Linux/Windows)",
@@ -330,17 +339,6 @@ REQUIREMENTS:
             "--release",
             action="store_true",
             help="Build in release mode (default: debug/beta)",
-        )
-        parser.add_argument(
-            "--archive",
-            action="store_true",
-            help="Create build archives after building (for 'all' target)",
-        )
-        parser.add_argument(
-            "--archive-dir",
-            type=str,
-            default="./target/archives",
-            help="Directory for build archives (default: ./target/archives)",
         )
         parser.add_argument(
             "--platforms",
@@ -549,6 +547,14 @@ REQUIREMENTS:
         except ImportError:
             has_print_zip_tree = False
 
+        # For Android/OHOS, check for AAR/HAR files which should be in haars/ inside the ZIP
+        if platform_name == "android":
+            aar_files = [f for f in os.listdir(target_dir) if f.endswith('.aar')]
+            if aar_files:
+                print(f"{indent}[DEBUG] Standalone AAR files in target/android/: {aar_files}")
+            else:
+                print(f"{indent}[DEBUG] No standalone AAR files in target/android/ (expected: should be in ZIP's haars/android/)")
+
         # Find all archive files (.aar, .har, .zip) recursively
         artifacts = []
         for root, dirs, files in os.walk(target_dir):
@@ -616,17 +622,20 @@ REQUIREMENTS:
                     sys.exit(1)
 
             # Find CCGO.toml to determine project_subdir
+            # First check current directory, then subdirectories
             config_path = None
             project_subdir = project_dir
-            for subdir in os.listdir(project_dir):
-                potential_config = os.path.join(project_dir, subdir, "CCGO.toml")
-                if os.path.isfile(potential_config):
-                    config_path = potential_config
-                    project_subdir = os.path.join(project_dir, subdir)
-                    break
-            if not config_path and os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+
+            if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
                 config_path = os.path.join(project_dir, "CCGO.toml")
                 project_subdir = project_dir
+            else:
+                for subdir in os.listdir(project_dir):
+                    potential_config = os.path.join(project_dir, subdir, "CCGO.toml")
+                    if os.path.isfile(potential_config):
+                        config_path = potential_config
+                        project_subdir = os.path.join(project_dir, subdir)
+                        break
 
             if not config_path:
                 print("❌ ERROR: CCGO.toml not found in project directory")
@@ -789,6 +798,12 @@ REQUIREMENTS:
                                         if success:
                                             successful_platforms.append(platform_name)
                                             print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
+                                            # For Gradle platforms, show key build info from stdout
+                                            if stdout and platform_name == "android":
+                                                # Look for debug/warning messages in the output
+                                                for line in stdout.split('\n'):
+                                                    if '[DEBUG]' in line or '[WARNING]' in line or 'haars:' in line:
+                                                        print(f"   {line.strip()}")
                                             # Check if build completed too quickly (< 5 seconds) - might indicate cached/skipped build
                                             if elapsed < 5.0:
                                                 print(f"   ⚠️  Build completed very quickly ({elapsed:.1f}s) - checking for artifacts...")
@@ -887,49 +902,13 @@ REQUIREMENTS:
                     elapsed_str = self._format_elapsed_time(platform_times.get(p, 0))
                     print(f"   - {p} ({elapsed_str})")
 
-            # Archive builds if requested
-            if args.archive and successful_platforms:
-                archive_dir = args.archive_dir if args.archive_dir else os.path.join(project_subdir, "target", "archives")
-                print(f"\n📦 Collecting build archives...")
-                print(f"   Archive directory: {archive_dir}")
-
-                # Create archive directory if it doesn't exist
-                os.makedirs(archive_dir, exist_ok=True)
-
-                # Collect artifacts from each successful platform
-                collected_files = []
-                target_dir = os.path.join(project_subdir, "target")
-
-                for plat in successful_platforms:
-                    platform_target_dir = os.path.join(target_dir, plat)
-                    if not os.path.exists(platform_target_dir):
-                        continue
-
-                    # Find all .aar, .har, .zip files recursively in platform directory
-                    for root, dirs, files in os.walk(platform_target_dir):
-                        for filename in files:
-                            if filename.endswith(('.aar', '.har', '.zip')):
-                                src_path = os.path.join(root, filename)
-                                dst_path = os.path.join(archive_dir, filename)
-                                try:
-                                    shutil.copy2(src_path, dst_path)
-                                    collected_files.append(filename)
-                                except Exception as e:
-                                    print(f"   ⚠️  Failed to copy {filename}: {e}")
-
-                if collected_files:
-                    print(f"\n   ✅ Collected {len(collected_files)} archive(s):")
-                    for f in sorted(collected_files):
-                        print(f"      - {f}")
-                else:
-                    print(f"\n   ℹ No archive files found in target directories.")
-
             self._print_build_time(start_time)
 
             if failed_platforms:
                 sys.exit(1)
             else:
                 print(f"\n🎉 All platforms built successfully!")
+                print(f"   💡 To collect all artifacts, run: ccgo package")
                 sys.exit(0)
 
         print("Building library, with configuration...")
@@ -954,25 +933,30 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(1)
 
-        # Check if CCGO.toml exists in one of the subdirectories
+        # Check if CCGO.toml exists - first check current directory, then subdirectories
+        # This order is important for subprocess builds where cwd is already project_subdir
         config_path = None
-        for subdir in os.listdir(project_dir):
-            potential_config = os.path.join(project_dir, subdir, "CCGO.toml")
-            if os.path.isfile(potential_config):
-                config_path = potential_config
-                project_subdir = os.path.join(project_dir, subdir)
-                break
+        project_subdir = project_dir
 
-        # If not found in subdirectory, check current directory
+        # First, check current directory (important for subprocess builds)
+        if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+            config_path = os.path.join(project_dir, "CCGO.toml")
+            project_subdir = project_dir
+        else:
+            # If not in current directory, check subdirectories
+            for subdir in os.listdir(project_dir):
+                potential_config = os.path.join(project_dir, subdir, "CCGO.toml")
+                if os.path.isfile(potential_config):
+                    config_path = potential_config
+                    project_subdir = os.path.join(project_dir, subdir)
+                    break
+
         if not config_path:
-            if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
-                config_path = os.path.join(project_dir, "CCGO.toml")
-                project_subdir = project_dir
-            else:
-                print("❌ ERROR: CCGO.toml not found in project directory")
-                print("Please create a CCGO.toml file in your project root directory")
-                self._print_build_time(start_time)
-                sys.exit(1)
+            print("❌ ERROR: CCGO.toml not found in project directory")
+            print("Please create a CCGO.toml file in your project root directory")
+            self._print_build_time(start_time)
+            sys.exit(1)
+
 
         # Auto-enable Docker for cross-platform builds (unless --no-docker is specified)
         if not args.docker and not args.no_docker:
@@ -1095,6 +1079,21 @@ REQUIREMENTS:
                 print("ERROR: AAR build failed")
                 self._print_build_time(start_time)
                 sys.exit(err_code)
+
+            # Verify AAR was copied by Gradle
+            target_android_dir = os.path.join(project_subdir, "target", "android")
+            if os.path.exists(target_android_dir):
+                aar_files = [f for f in os.listdir(target_android_dir) if f.endswith('.aar')]
+                if aar_files:
+                    print(f"\n✓ Gradle copied AAR to target/android/: {aar_files}")
+                else:
+                    print(f"\n⚠️  WARNING: No AAR files in target/android/")
+                    print(f"   Contents: {os.listdir(target_android_dir)}")
+                    print(f"   Gradle buildAAR task should have copied the AAR here.")
+                    print(f"   Check the Gradle task definition and build logs above.")
+            else:
+                print(f"\n⚠️  WARNING: target/android/ directory not created by Gradle")
+                print(f"   Gradle buildAAR task should have created this directory.")
 
             # Step 3: Create unified archive using Python's archive_android_project()
             print("\n--- Step 3: Creating unified archive ---")
@@ -1245,8 +1244,10 @@ REQUIREMENTS:
         elif args.target == "android":
             # Android uses new argument-based interface
             # Add --archive to create ZIP package (since Gradle is not used in native-only mode)
+            # Skip archive if --no-archive flag is set (used by KMP build)
             arch = args.arch if args.arch else "armeabi-v7a,arm64-v8a,x86_64"
-            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only --archive --arch {arch}{jobs_arg}{link_type_arg}"
+            archive_arg = "" if args.no_archive else " --archive"
+            cmd = f"cd '{project_subdir}' && python3 '{build_script_path}' --native-only{archive_arg} --arch {arch}{jobs_arg}{link_type_arg}"
         else:
             # Other platforms (windows, etc.) - try new interface first, fallback to legacy
             ide_arg = " --ide-project" if args.ide_project else ""

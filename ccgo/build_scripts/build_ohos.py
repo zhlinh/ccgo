@@ -514,7 +514,7 @@ def archive_ohos_project(link_type='both', archs=None):
                 if os.path.isdir(arch_dir):
                     for so_file in glob.glob(os.path.join(arch_dir, "*.so")):
                         lib_name = os.path.basename(so_file)
-                        arc_path = get_unified_obj_path(arch, lib_name)
+                        arc_path = get_unified_obj_path(arch, lib_name, platform="ohos")
                         obj_files[arc_path] = so_file
 
     # Create unified archive packages

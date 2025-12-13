@@ -14,6 +14,7 @@ import sys
 import argparse
 import shutil
 import subprocess
+import zipfile
 from datetime import datetime
 
 # Try to import tomli for Python < 3.11, tomllib for Python >= 3.11
@@ -42,103 +43,56 @@ except ImportError:
     from utils.context.context import CliContext
     from utils.context.command import CliCommand
 
+# Try to import print_zip_tree from build_scripts
+try:
+    from ccgo.build_scripts.build_utils import print_zip_tree
+except ImportError:
+    try:
+        from build_scripts.build_utils import print_zip_tree
+    except ImportError:
+        print_zip_tree = None
+
 
 class Package(CliCommand):
     def description(self) -> str:
         return """Package all build artifacts into a distributable SDK.
 
-This command collects build outputs from all platforms and creates
-a unified SDK package containing:
-- Include headers
-- Platform libraries (Android, iOS, macOS, Windows, Linux, OHOS)
-- KMP artifacts (if built)
-- Documentation (optional)
-- Sample code (optional)
-
-The package is organized in a standard structure suitable for
-distribution to SDK users.
+This command collects build outputs from all platforms and merges them
+into a unified SDK ZIP package. By default, all platform ZIPs are merged
+into one unified SDK package.
 
 EXAMPLES:
-    # Package all platforms with default settings
+    # Package all platforms (merge into one unified ZIP)
     ccgo package
+
+    # Keep individual ZIP files instead of merging
+    ccgo package --no-merge
 
     # Package with specific version
     ccgo package --version 1.0.0
 
-    # Package with documentation and samples
-    ccgo package --include-docs --include-samples
-
     # Package specific platforms only
     ccgo package --platforms android,ios,macos
-
-    # Create both zip and tar.gz archives
-    ccgo package --format both
-
-    # Package existing artifacts without rebuilding
-    ccgo package --skip-build
-
-    # Clean output directory before packaging
-    ccgo package --clean --output ./release
 
 OPTIONS:
     --version <version>        SDK version (default: auto-detect from git)
     --output <dir>             Output directory (default: ./target/package)
-    --format <format>          Archive format: zip, tar.gz, both, none
     --platforms <list>         Comma-separated platforms to include
-    --include-docs             Include documentation in package
-    --include-samples          Include sample code in package
-    --skip-build               Only package existing artifacts
-    --clean                    Clean output directory first
+    --no-merge                 Keep individual ZIP files instead of merging
 
-OUTPUT STRUCTURE:
-    <PROJECT>_SDK-<version>/
-    ├── include/                       Header files
-    ├── lib/                           Platform libraries
-    │   ├── android/                   Android libraries
-    │   │   ├── static/               Static libraries (.a)
-    │   │   │   ├── arm64-v8a/
-    │   │   │   ├── armeabi-v7a/
-    │   │   │   └── x86_64/
-    │   │   └── shared/               Shared libraries (.so)
-    │   │       ├── arm64-v8a/
-    │   │       ├── armeabi-v7a/
-    │   │       └── x86_64/
-    │   ├── ios/                       iOS libraries
-    │   │   ├── static/               .xcframework, .framework, .a
-    │   │   └── shared/               .xcframework, .framework, .dylib
-    │   ├── macos/                     macOS libraries
-    │   │   ├── static/               .framework, .xcframework, .a
-    │   │   └── shared/               .framework, .xcframework, .dylib
-    │   ├── tvos/                      tvOS libraries
-    │   │   ├── static/               .xcframework, .framework, .a
-    │   │   └── shared/               .xcframework, .framework, .dylib
-    │   ├── watchos/                   watchOS libraries
-    │   │   ├── static/               .xcframework, .framework, .a
-    │   │   └── shared/               .xcframework, .framework, .dylib
-    │   ├── windows/                   Windows libraries
-    │   │   ├── static/x64/           .lib files
-    │   │   └── shared/x64/           .dll, .lib files
-    │   ├── linux/                     Linux libraries
-    │   │   ├── static/               .a files
-    │   │   └── shared/               .so files
-    │   ├── ohos/                      OpenHarmony libraries
-    │   │   ├── static/               Static libraries (.a)
-    │   │   │   ├── arm64-v8a/
-    │   │   │   ├── armeabi-v7a/
-    │   │   │   └── x86_64/
-    │   │   └── shared/               Shared libraries (.so)
-    │   │       ├── arm64-v8a/
-    │   │       ├── armeabi-v7a/
-    │   │       └── x86_64/
-    │   └── kmp/                       (if built) KMP artifacts
-    │       ├── android/               .aar files
-    │       ├── desktop/               .jar files
-    │       └── native/                Native klib files
-    │           ├── iosArm64/
-    │           ├── macosX64/
-    │           └── linuxX64/
-    ├── docs/                          (optional) Documentation
-    └── README.md                      Package information
+OUTPUT STRUCTURE (merged, default):
+    <PROJECT>_SDK-<version>.zip
+    ├── meta/<platform>/               Build metadata (build_info.json, archive_info.json)
+    ├── lib/<platform>/static|shared/  Platform native libraries
+    ├── haars/<platform>/              AAR (Android) and HAR (OHOS) packages
+    └── include/                       Header files
+
+OUTPUT STRUCTURE (--no-merge):
+    target/package/
+    ├── <PROJECT>_ANDROID_SDK-<version>.zip
+    ├── <PROJECT>_IOS_SDK-<version>.zip
+    ├── <PROJECT>_KMP_SDK-<version>.zip
+    └── ...
         """
 
     def cli(self) -> CliNameSpace:
@@ -148,7 +102,6 @@ OUTPUT STRUCTURE:
             description=self.description(),
         )
 
-        # Version and output
         parser.add_argument(
             "--version",
             type=str,
@@ -162,46 +115,16 @@ OUTPUT STRUCTURE:
             help="Output directory for packaged SDK (default: ./target/package)",
         )
 
-        # Archive format
-        parser.add_argument(
-            "--format",
-            type=str,
-            choices=["zip", "tar.gz", "both", "none"],
-            default="zip",
-            help="Archive format: zip, tar.gz, both, or none (default: zip)",
-        )
-
-        # Platform selection
         parser.add_argument(
             "--platforms",
             type=str,
             help="Comma-separated platforms to include (default: all built platforms)",
         )
 
-        # Optional components
         parser.add_argument(
-            "--include-docs",
+            "--no-merge",
             action="store_true",
-            help="Include documentation in package",
-        )
-
-        parser.add_argument(
-            "--include-samples",
-            action="store_true",
-            help="Include sample code in package",
-        )
-
-        # Build option
-        parser.add_argument(
-            "--skip-build",
-            action="store_true",
-            help="Skip building, only package existing artifacts",
-        )
-
-        parser.add_argument(
-            "--clean",
-            action="store_true",
-            help="Clean output directory before packaging",
+            help="Keep individual ZIP files instead of merging into one unified SDK ZIP",
         )
 
         module_name = os.path.splitext(os.path.basename(__file__))[0]
@@ -386,6 +309,127 @@ OUTPUT STRUCTURE:
 
         return collected, collected_files
 
+    def merge_zips(self, zip_files: list, output_zip_path: str, project_name: str, version: str):
+        """Merge multiple ZIP files into a single unified SDK ZIP.
+
+        Args:
+            zip_files: List of paths to ZIP files to merge
+            output_zip_path: Path for the output merged ZIP
+            project_name: Project name for the SDK
+            version: Version string
+
+        Returns:
+            True if merge was successful, False otherwise
+        """
+        import tempfile
+        import json
+
+        print(f"\n{'='*80}")
+        print("Merging ZIP files into unified SDK")
+        print(f"{'='*80}")
+
+        # Create temporary directory for extraction
+        with tempfile.TemporaryDirectory() as temp_dir:
+            merged_dir = os.path.join(temp_dir, "merged")
+            os.makedirs(merged_dir, exist_ok=True)
+
+            platforms_merged = []
+
+            for zip_path in zip_files:
+                if not os.path.exists(zip_path):
+                    continue
+
+                filename = os.path.basename(zip_path)
+                print(f"   📦 Processing: {filename}")
+
+                try:
+                    with zipfile.ZipFile(zip_path, 'r') as zf:
+                        # Extract all contents to merged directory
+                        for member in zf.namelist():
+                            # Extract file
+                            source = zf.read(member)
+
+                            # Determine destination path
+                            dest_path = os.path.join(merged_dir, member)
+
+                            # Create parent directories
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+                            # Skip directories
+                            if member.endswith('/'):
+                                continue
+
+                            # Write file (overwrite if exists for meta files, skip otherwise)
+                            if not os.path.exists(dest_path):
+                                with open(dest_path, 'wb') as f:
+                                    f.write(source)
+
+                        # Track which platform was merged
+                        # Try to detect platform from filename
+                        fname_lower = filename.lower()
+                        for plat in ['android', 'ios', 'macos', 'watchos', 'tvos', 'windows', 'linux', 'ohos', 'kmp', 'conan', 'include']:
+                            if plat in fname_lower:
+                                if plat not in platforms_merged:
+                                    platforms_merged.append(plat)
+                                break
+
+                except Exception as e:
+                    print(f"   ⚠️  Error processing {filename}: {e}")
+                    continue
+
+            # Create unified archive_info.json
+            archive_info = {
+                "project_name": project_name,
+                "version": version,
+                "platforms": platforms_merged,
+                "merged": True,
+                "created_at": datetime.now().isoformat(),
+            }
+
+            meta_dir = os.path.join(merged_dir, "meta")
+            os.makedirs(meta_dir, exist_ok=True)
+            archive_info_path = os.path.join(meta_dir, "archive_info.json")
+            with open(archive_info_path, 'w') as f:
+                json.dump(archive_info, f, indent=2)
+
+            # Create the merged ZIP
+            print(f"\n   📦 Creating merged SDK ZIP...")
+
+            with zipfile.ZipFile(output_zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for root, dirs, files in os.walk(merged_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, merged_dir)
+                        zf.write(file_path, arcname)
+
+            size_mb = os.path.getsize(output_zip_path) / (1024 * 1024)
+            print(f"   ✅ Created: {os.path.basename(output_zip_path)} ({size_mb:.2f} MB)")
+            print(f"   📍 Location: {output_zip_path}")
+
+            return True
+
+        return False
+
+    def find_platform_zips(self, project_dir: str, platform: str):
+        """Find all ZIP files for a platform in target/<platform>/ directory.
+
+        Returns:
+            Tuple of (list of zip file paths, platform name if found)
+        """
+        target_platform_dir = os.path.join(project_dir, "target", platform)
+
+        if not os.path.exists(target_platform_dir):
+            return [], None
+
+        zip_files = []
+        for root, dirs, files in os.walk(target_platform_dir):
+            for f in files:
+                if f.endswith('.zip') and not f.startswith('ARCHIVE'):
+                    full_path = os.path.join(root, f)
+                    zip_files.append(full_path)
+
+        return zip_files, platform if zip_files else None
+
     def exec(self, context: CliContext, args: CliNameSpace):
         print("="*80)
         print("CCGO Package - Collect Build Artifacts")
@@ -423,12 +467,16 @@ OUTPUT STRUCTURE:
         else:
             output_path = args.output
 
+        merge_mode = not args.no_merge
+        mode_str = "Merge into unified SDK" if merge_mode else "Keep individual ZIPs"
+
         print(f"\nProject: {project_name}")
         print(f"Version: {version}")
         print(f"Output: {output_path}")
+        print(f"Mode: {mode_str}")
 
-        # Clean if requested
-        if args.clean and os.path.exists(output_path):
+        # Always clean output directory to avoid stale artifacts
+        if os.path.exists(output_path):
             print(f"\n🧹 Cleaning output directory...")
             shutil.rmtree(output_path)
 
@@ -436,35 +484,29 @@ OUTPUT STRUCTURE:
         os.makedirs(output_path, exist_ok=True)
 
         print(f"\n{'='*80}")
-        print("Collecting Build Artifacts (ZIP files)")
+        print("Scanning Build Artifacts")
         print(f"{'='*80}")
 
-        # Collect platform artifacts - now includes conan
-        platforms = ["android", "ios", "macos", "tvos", "watchos", "windows", "linux", "ohos", "conan", "include"]
+        # Define platforms to scan (exclude "include" as it's already in each platform's ZIP)
+        platforms = ["android", "ios", "macos", "tvos", "watchos", "windows", "linux", "ohos", "conan", "kmp"]
         if args.platforms:
             platforms = [p.strip() for p in args.platforms.split(",")]
 
         collected_platforms = []
         failed_platforms = []
-        all_collected_files = []
+        all_zip_files = []
 
         for platform in platforms:
-            success, files = self.collect_platform_artifacts(project_dir, platform, output_path, project_name)
-            if success:
+            zip_files, found_platform = self.find_platform_zips(project_dir, platform)
+            if found_platform:
                 collected_platforms.append(platform)
-                all_collected_files.extend(files)
+                all_zip_files.extend(zip_files)
+                for zf in zip_files:
+                    print(f"   ✓ Found: {os.path.basename(zf)}")
             else:
                 failed_platforms.append(platform)
 
-        # Collect KMP artifacts
-        kmp_success, kmp_files = self.collect_kmp_artifacts(project_dir, output_path, project_name)
-        if kmp_success:
-            collected_platforms.append("kmp")
-            all_collected_files.extend(kmp_files)
-        else:
-            failed_platforms.append("kmp")
-
-        # Check if any artifacts were collected
+        # Check if any artifacts were found
         if not collected_platforms:
             print(f"\n{'='*80}")
             print("⚠️  WARNING: No platform artifacts found!")
@@ -477,20 +519,57 @@ OUTPUT STRUCTURE:
             print("\nThen run 'ccgo package' again.\n")
             sys.exit(1)
 
-        # Print summary
-        print(f"\n{'='*80}")
-        print("Package Summary")
-        print(f"{'='*80}\n")
+        if merge_mode:
+            # Merge all ZIPs into one unified SDK ZIP
+            sdk_zip_name = f"{project_name.upper()}_SDK-{version}.zip"
+            sdk_zip_path = os.path.join(output_path, sdk_zip_name)
 
-        print(f"Output Directory: {output_path}")
-        print(f"\nCollected {len(all_collected_files)} artifact(s):")
-        print("-" * 60)
-        for f in sorted(all_collected_files):
-            file_path = os.path.join(output_path, f)
-            if os.path.exists(file_path):
-                size_mb = os.path.getsize(file_path) / (1024 * 1024)
-                print(f"  {f} ({size_mb:.2f} MB)")
-        print("-" * 60)
+            success = self.merge_zips(all_zip_files, sdk_zip_path, project_name, version)
+
+            if not success:
+                print(f"\n❌ Failed to merge ZIP files")
+                sys.exit(1)
+
+            # Print summary
+            print(f"\n{'='*80}")
+            print("Package Summary")
+            print(f"{'='*80}\n")
+
+            print(f"Platforms merged: {', '.join(collected_platforms)}")
+            print(f"Output: {sdk_zip_path}")
+
+            size_mb = os.path.getsize(sdk_zip_path) / (1024 * 1024)
+            print(f"Size: {size_mb:.2f} MB")
+
+        else:
+            # Copy individual ZIPs to output directory
+            print(f"\n{'='*80}")
+            print("Copying Individual ZIP Files")
+            print(f"{'='*80}")
+
+            copied_files = []
+            for zip_file in all_zip_files:
+                filename = os.path.basename(zip_file)
+                dest_path = os.path.join(output_path, filename)
+                shutil.copy2(zip_file, dest_path)
+                size_mb = os.path.getsize(dest_path) / (1024 * 1024)
+                print(f"   ✓ {filename} ({size_mb:.2f} MB)")
+                copied_files.append(filename)
+
+            # Print summary
+            print(f"\n{'='*80}")
+            print("Package Summary")
+            print(f"{'='*80}\n")
+
+            print(f"Output Directory: {output_path}")
+            print(f"\nCopied {len(copied_files)} artifact(s):")
+            print("-" * 60)
+            for f in sorted(copied_files):
+                file_path = os.path.join(output_path, f)
+                if os.path.exists(file_path):
+                    size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                    print(f"  {f} ({size_mb:.2f} MB)")
+            print("-" * 60)
 
         # Platform status
         print(f"\n{'='*80}")
@@ -500,9 +579,30 @@ OUTPUT STRUCTURE:
         for platform in collected_platforms:
             print(f"  ✅ {platform.upper()}")
         for platform in failed_platforms:
-            print(f"  ❌ {platform.upper()} (not built)")
+            print(f"  ⚠️  {platform.upper()} (not built)")
 
         print(f"\nTotal: {len(collected_platforms)}/{len(collected_platforms) + len(failed_platforms)} platform(s)")
         print(f"{'='*80}")
-        print("\n✅ Package collection complete!")
-        print(f"   All artifacts are in: {output_path}\n")
+
+        # Print package contents
+        print(f"\n{'='*80}")
+        print("Package Contents")
+        print(f"{'='*80}\n")
+
+        print(f"📁 {output_path}/")
+
+        # List all files in output directory
+        if os.path.exists(output_path):
+            for item in sorted(os.listdir(output_path)):
+                item_path = os.path.join(output_path, item)
+                if os.path.isfile(item_path):
+                    size_mb = os.path.getsize(item_path) / (1024 * 1024)
+                    print(f"   📦 {item} ({size_mb:.2f} MB)")
+
+                    # If it's a ZIP file, print its contents
+                    if item.endswith('.zip') and print_zip_tree:
+                        print_zip_tree(item_path, indent="      ")
+
+        print(f"\n{'='*80}")
+        print("\n✅ Package complete!")
+        print(f"   Output: {output_path}\n")

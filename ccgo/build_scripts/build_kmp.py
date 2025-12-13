@@ -170,13 +170,15 @@ def build_native_libraries():
         # On Windows, build Windows
         platforms_to_build.append("windows")
 
-    # Build each platform using ccgo build <platform> --native-only
+    # Build each platform using ccgo build <platform> --native-only --no-archive
+    # The --no-archive flag prevents overwriting platform ZIPs when building as part of ccgo build all
     for platform_name in platforms_to_build:
         print(f"\n--- Building {platform_name} native libraries ---\n")
 
         try:
             # Use ccgo command to build native libraries
-            cmd = ["ccgo", "build", platform_name, "--native-only"]
+            # --no-archive skips ZIP creation to avoid overwriting existing platform archives
+            cmd = ["ccgo", "build", platform_name, "--native-only", "--no-archive"]
 
             print(f"Executing: {' '.join(cmd)}\n")
 
@@ -349,23 +351,23 @@ def build_kmp_library():
     files_added = 0
 
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-        # Add Android AAR files
+        # Add Android AAR files to lib/kmp/android/
         if aar_dir.exists():
             aar_files = list(aar_dir.glob("*.aar"))
             for aar_file in aar_files:
-                zf.write(aar_file, f"android/{aar_file.name}")
+                zf.write(aar_file, f"lib/kmp/android/{aar_file.name}")
                 files_added += 1
-                print(f"  + android/{aar_file.name}")
+                print(f"  + lib/kmp/android/{aar_file.name}")
 
-        # Add Desktop JAR files
+        # Add Desktop JAR files to lib/kmp/desktop/
         if jar_dir.exists():
             jar_files = list(jar_dir.glob("*.jar"))
             for jar_file in jar_files:
-                zf.write(jar_file, f"desktop/{jar_file.name}")
+                zf.write(jar_file, f"lib/kmp/desktop/{jar_file.name}")
                 files_added += 1
-                print(f"  + desktop/{jar_file.name}")
+                print(f"  + lib/kmp/desktop/{jar_file.name}")
 
-        # Add Native klib files (iOS/macOS/Linux)
+        # Add Native klib files (iOS/macOS/Linux) to lib/kmp/native/
         classes_dir = KMP_DIR / "build" / "classes" / "kotlin"
         if classes_dir.exists():
             for klib_dir in classes_dir.glob("*/main"):
@@ -378,10 +380,10 @@ def build_kmp_library():
                         for root, dirs, files in os.walk(klib_path):
                             for file in files:
                                 file_path = Path(root) / file
-                                arcname = f"native/{platform_name}/klib/{file_path.relative_to(klib_path)}"
+                                arcname = f"lib/kmp/native/{platform_name}/klib/{file_path.relative_to(klib_path)}"
                                 zf.write(file_path, arcname)
                                 files_added += 1
-                        print(f"  + native/{platform_name}/klib/")
+                        print(f"  + lib/kmp/native/{platform_name}/klib/")
 
                     # Add cinterop directory
                     if (klib_dir / "cinterop").exists():
@@ -389,10 +391,10 @@ def build_kmp_library():
                         for root, dirs, files in os.walk(cinterop_path):
                             for file in files:
                                 file_path = Path(root) / file
-                                arcname = f"native/{platform_name}/cinterop/{file_path.relative_to(cinterop_path)}"
+                                arcname = f"lib/kmp/native/{platform_name}/cinterop/{file_path.relative_to(cinterop_path)}"
                                 zf.write(file_path, arcname)
                                 files_added += 1
-                        print(f"  + native/{platform_name}/cinterop/")
+                        print(f"  + lib/kmp/native/{platform_name}/cinterop/")
 
         # Generate and add build_info.json to meta/kmp/ directory
         if generate_build_info:

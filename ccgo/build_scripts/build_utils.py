@@ -4225,12 +4225,15 @@ def get_unified_symbol_path(link_type, symbol_name, arch=None, platform=None):
         platform: Platform name (e.g., "ios", "macos", "windows") - adds platform directory
 
     Returns:
-        str: Archive path like "symbols/ios/static/foo.dSYM"
+        str: Archive path like "symbols/ios/obj/static/foo.dSYM"
     """
     parts = [ARCHIVE_DIR_SYMBOLS]
 
     if platform:
         parts.append(platform)
+
+    # Add "obj" directory for easier merging with main SDK
+    parts.append("obj")
 
     parts.append(link_type)
 
@@ -4241,18 +4244,21 @@ def get_unified_symbol_path(link_type, symbol_name, arch=None, platform=None):
     return "/".join(parts)
 
 
-def get_unified_obj_path(arch, lib_name):
+def get_unified_obj_path(arch, lib_name, platform=None):
     """
     Get the standard archive path for unstripped object files.
 
     Args:
         arch: Architecture name (e.g., "arm64-v8a")
         lib_name: Library file name (e.g., "libfoo.so")
+        platform: Platform name (e.g., "android", "ohos") - adds platform directory
 
     Returns:
-        str: Archive path like "obj/arm64-v8a/libfoo.so"
+        str: Archive path like "symbols/android/obj/arm64-v8a/libfoo.so"
     """
-    return f"{ARCHIVE_DIR_OBJ}/{arch}/{lib_name}"
+    if platform:
+        return f"{ARCHIVE_DIR_SYMBOLS}/{platform}/{ARCHIVE_DIR_OBJ}/{arch}/{lib_name}"
+    return f"{ARCHIVE_DIR_SYMBOLS}/{ARCHIVE_DIR_OBJ}/{arch}/{lib_name}"
 
 
 def main():

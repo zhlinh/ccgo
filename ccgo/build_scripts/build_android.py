@@ -416,10 +416,10 @@ def archive_android_project(link_type='both', archs=None):
                         arc_path = get_unified_lib_path("shared", arch=arch, lib_name=lib_name, platform="android")
                         shared_libs[arc_path] = lib_file
 
-    # Prepare AAR files mapping: haars/*.aar
+    # Prepare AAR files mapping: haars/android/*.aar
+    # Only use AAR from target/android/ (Gradle buildAAR copies the renamed AAR there)
     haars = {}
     bin_android_dir = os.path.join(bin_dir, "android")
-    # Check for AAR in target/android/ (from Gradle)
     if os.path.exists(bin_android_dir):
         for aar_file in glob.glob(os.path.join(bin_android_dir, "*.aar")):
             aar_name = os.path.basename(aar_file)
@@ -443,10 +443,17 @@ def archive_android_project(link_type='both', archs=None):
                 if os.path.isdir(arch_dir):
                     for so_file in glob.glob(os.path.join(arch_dir, "*.so")):
                         lib_name = os.path.basename(so_file)
-                        arc_path = get_unified_obj_path(arch, lib_name)
+                        arc_path = get_unified_obj_path(arch, lib_name, platform="android")
                         obj_files[arc_path] = so_file
 
     # Create unified archive packages
+    print(f"\n[DEBUG] Creating archive with:")
+    print(f"  static_libs: {len(static_libs)} files")
+    print(f"  shared_libs: {len(shared_libs)} files")
+    print(f"  include_dirs: {len(include_dirs)} directories")
+    print(f"  haars: {len(haars)} files -> {list(haars.keys())}")
+    print(f"  obj_files: {len(obj_files)} files")
+
     main_zip_path, symbols_zip_path = create_unified_archive(
         output_dir=bin_dir,
         project_name=PROJECT_NAME,

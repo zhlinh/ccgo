@@ -393,7 +393,7 @@ def archive_linux_project(link_type='both'):
         if not os.path.exists(unstripped_so):
             unstripped_so = os.path.join(shared_actual_install_path, f"lib{PROJECT_NAME_LOWER}.so")
         if os.path.exists(unstripped_so):
-            arc_path = get_unified_obj_path("linux", f"lib{PROJECT_NAME_LOWER}.so")
+            arc_path = get_unified_obj_path("x86_64", f"lib{PROJECT_NAME_LOWER}.so", platform="linux")
             obj_files[arc_path] = unstripped_so
 
     # Create unified archive packages

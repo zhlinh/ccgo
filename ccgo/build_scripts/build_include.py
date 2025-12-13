@@ -148,13 +148,14 @@ def archive_include_project():
     shutil.copytree(include_dir_src, archive_include_dir, ignore=get_archive_include_ignore_patterns())
     print(f"Copied include directory to archive: include")
 
-    # Create ZIP archive
+    # Create ZIP archive (directly containing include/ without extra directory layer)
     zip_file_path = os.path.join(bin_dir, f"{archive_name}.zip")
     with zipfile.ZipFile(zip_file_path, "w", zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk(archive_dir):
             for file in files:
                 file_path = os.path.join(root, file)
-                arcname = os.path.relpath(file_path, bin_dir)
+                # Use archive_dir as base so zip contains include/ directly
+                arcname = os.path.relpath(file_path, archive_dir)
                 zipf.write(file_path, arcname)
 
     # Remove temporary archive directory
