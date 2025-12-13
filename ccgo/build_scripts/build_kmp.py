@@ -65,8 +65,9 @@ try:
     from build_utils import (
         PROJECT_NAME,
         PROJECT_NAME_LOWER,
-        get_version_info,
+        get_archive_version_info,
         print_zip_tree,
+        generate_build_info,
     )
     _HAS_BUILD_UTILS = True
 except ImportError:
@@ -74,8 +75,9 @@ except ImportError:
     _HAS_BUILD_UTILS = False
     PROJECT_NAME = None
     PROJECT_NAME_LOWER = None
-    get_version_info = None
+    get_archive_version_info = None
     print_zip_tree = None
+    generate_build_info = None
 
 
 def get_project_name_from_toml():
@@ -331,18 +333,18 @@ def build_kmp_library():
 
     # Get version info for ZIP naming
     version_str = "1.0.0"
-    if get_version_info:
+    if get_archive_version_info:
         try:
-            version_info = get_version_info(str(PROJECT_DIR))
-            version_str = version_info.get("full_version", "1.0.0")
+            _, _, full_version = get_archive_version_info(str(PROJECT_DIR))
+            version_str = full_version
         except Exception:
             pass
 
     project_upper = PROJECT_NAME.upper()
 
     # Create single unified ZIP containing all platforms
-    # Naming convention: {PROJECT}_KMP_SDK-{version}-release.zip
-    zip_name = f"{project_upper}_KMP_SDK-{version_str}-release.zip"
+    # Naming convention: {PROJECT}_KMP_SDK-{version}.zip
+    zip_name = f"{project_upper}_KMP_SDK-{version_str}.zip"
     zip_path = target_kmp_dir / zip_name
     files_added = 0
 
@@ -392,16 +394,43 @@ def build_kmp_library():
                                 files_added += 1
                         print(f"  + native/{platform_name}/cinterop/")
 
+        # Generate and add build_info.json to meta/kmp/ directory
+        if generate_build_info:
+            import json
+            build_info = generate_build_info(
+                project_name=PROJECT_NAME_LOWER or PROJECT_NAME.lower(),
+                target_platform="kmp",
+                version=version_str,
+                link_type="both",
+                extra_info={"build_system": "gradle"}
+            )
+            build_info_json = json.dumps(build_info, indent=2)
+            zf.writestr("meta/kmp/build_info.json", build_info_json)
+            files_added += 1
+            print(f"  + meta/kmp/build_info.json")
+
+            # Also write build_info.json to target/kmp/
+            build_info_path = target_kmp_dir / "build_info.json"
+            with open(build_info_path, 'w') as f:
+                f.write(build_info_json)
+
     if files_added > 0:
+        # Add archive_info.json to meta/kmp/ directory inside ZIP
+        try:
+            from build_utils import _add_archive_info_to_zip
+            _add_archive_info_to_zip(str(zip_path), "kmp")
+        except ImportError:
+            pass
+
         size_mb = zip_path.stat().st_size / (1024 * 1024)
         print(f"\n" + "=" * 60)
         print(f"Build artifacts in target/kmp/:")
         print("-" * 60)
         print(f"  {zip_name} ({size_mb:.2f} MB)")
 
-        # Print ZIP tree structure if available
+        # Print ZIP tree structure and generate archive_info.json to target directory
         if print_zip_tree:
-            print_zip_tree(str(zip_path), indent="    ", generate_info_file=False)
+            print_zip_tree(str(zip_path), indent="    ", generate_info_file=True)
 
         print("-" * 60)
         print(f"\nKMP artifacts archived in: {zip_path}")

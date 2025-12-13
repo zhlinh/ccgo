@@ -817,7 +817,8 @@ REQUIREMENTS:
                                         successful_platforms.append(platform_name)
                                         print(f"✅ [{completed_count}/{total_platforms}] {platform_name.upper()} completed ({self._format_elapsed_time(elapsed)})")
                                         # Check if build completed too quickly (< 5 seconds) - might indicate cached/skipped build
-                                        if elapsed < 5.0:
+                                        # Skip this check for "include" since it only archives headers and is expected to be fast
+                                        if elapsed < 5.0 and platform_name.lower() != "include":
                                             print(f"   ⚠️  Build completed very quickly ({elapsed:.1f}s) - checking for artifacts...")
                                             if stdout:
                                                 stdout_lines = stdout.strip().split('\n')

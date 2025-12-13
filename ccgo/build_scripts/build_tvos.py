@@ -291,8 +291,8 @@ def build_tvos_shared(target_option="", jobs=None):
         print("!!!!!!!!!!!build shared os fail!!!!!!!!!!!!!!!")
         return False
 
-    # Find and lipo merge device dylibs
-    os_dylibs = glob.glob(INSTALL_PATH + f"/*.dylib")
+    # Find and lipo merge device dylibs (CMake installs to shared/ subdirectory)
+    os_dylibs = glob.glob(INSTALL_PATH + f"/shared/*.dylib")
     if not os_dylibs:
         print("ERROR: No device dylibs found")
         return False
@@ -324,8 +324,8 @@ def build_tvos_shared(target_option="", jobs=None):
             os.remove(temp_os_dylib)
         return False
 
-    # Find and lipo merge simulator dylibs
-    simulator_dylibs = glob.glob(INSTALL_PATH + f"/*.dylib")
+    # Find and lipo merge simulator dylibs (CMake installs to shared/ subdirectory)
+    simulator_dylibs = glob.glob(INSTALL_PATH + f"/shared/*.dylib")
     if not simulator_dylibs:
         print("ERROR: No simulator dylibs found")
         # Clean up temp file

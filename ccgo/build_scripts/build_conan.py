@@ -23,6 +23,13 @@ from build_utils import (
     exec_command,
     load_ccgo_config,
     CCGO_CMAKE_DIR,
+    create_unified_archive,
+    get_unified_lib_path,
+    get_unified_include_path,
+    get_archive_version_info,
+    print_zip_tree,
+    PROJECT_NAME,
+    PROJECT_NAME_LOWER,
 )
 
 
@@ -794,6 +801,157 @@ def _format_size(size: int) -> str:
         return f"{size / (1024 * 1024):.2f} MB"
 
 
+def archive_conan_project(project_dir: str, config: Dict[str, Any], link_type: str = "both") -> bool:
+    """
+    Create a unified ZIP archive for the Conan build output.
+
+    This function creates an archive package following the same pattern as other platforms:
+    - {PROJECT_NAME}_CONAN_SDK-{version}.zip
+      - lib/conan/static/lib{project}.a  (if link_type is static or both)
+      - lib/conan/shared/lib{project}.so (if link_type is shared or both)
+      - include/{project}/
+      - build_info.json
+
+    Args:
+        project_dir: Root directory of the project
+        config: CCGO configuration dictionary
+        link_type: Library link type ('static', 'shared', or 'both')
+
+    Returns:
+        True if successful, False otherwise
+    """
+    import platform as plat
+
+    print("\n" + "=" * 60)
+    print("Creating Unified ZIP Archive")
+    print("=" * 60 + "\n")
+
+    name = config.get('PROJECT_NAME_LOWER', PROJECT_NAME_LOWER or 'unknown')
+    project_upper = config.get('PROJECT_NAME', PROJECT_NAME or 'UNKNOWN').upper()
+
+    # Get version info using unified function
+    _, _, full_version = get_archive_version_info(project_dir)
+
+    # Define paths
+    target_dir = os.path.join(project_dir, "target")
+    conan_dir = os.path.join(target_dir, "conan")
+    lib_dir = os.path.join(conan_dir, "lib")
+
+    # Determine library extensions based on platform
+    system = plat.system()
+    if system == "Windows":
+        static_ext = ".lib"
+        shared_ext = ".dll"
+    elif system == "Darwin":
+        static_ext = ".a"
+        shared_ext = ".dylib"
+    else:  # Linux and others
+        static_ext = ".a"
+        shared_ext = ".so"
+
+    # Prepare static libraries mapping
+    static_libs = {}
+    if link_type in ('static', 'both'):
+        static_lib_dir = os.path.join(lib_dir, "static")
+        if os.path.exists(static_lib_dir):
+            for filename in os.listdir(static_lib_dir):
+                if filename.endswith(static_ext):
+                    src_path = os.path.join(static_lib_dir, filename)
+                    arc_path = get_unified_lib_path("static", lib_name=filename, platform="conan")
+                    static_libs[arc_path] = src_path
+
+    # Prepare shared libraries mapping
+    shared_libs = {}
+    if link_type in ('shared', 'both'):
+        shared_lib_dir = os.path.join(lib_dir, "shared")
+        if os.path.exists(shared_lib_dir):
+            for filename in os.listdir(shared_lib_dir):
+                if filename.endswith(shared_ext) or (shared_ext == '.so' and '.so' in filename):
+                    src_path = os.path.join(shared_lib_dir, filename)
+                    arc_path = get_unified_lib_path("shared", lib_name=filename, platform="conan")
+                    shared_libs[arc_path] = src_path
+
+    # Prepare include directories mapping
+    include_dirs = {}
+    headers_src = os.path.join(conan_dir, "include", name)
+    if os.path.exists(headers_src):
+        arc_path = get_unified_include_path(name, headers_src)
+        include_dirs[arc_path] = headers_src
+
+    # Check if we have any artifacts to archive
+    if not static_libs and not shared_libs:
+        print("WARNING: No libraries found to archive")
+        return False
+
+    # Create unified archive package
+    main_zip_path, _ = create_unified_archive(
+        output_dir=target_dir,
+        project_name=project_upper,
+        platform_name="CONAN",
+        version=full_version,
+        link_type=link_type,
+        static_libs=static_libs,
+        shared_libs=shared_libs,
+        include_dirs=include_dirs,
+        extra_info={
+            "conan_version": _get_conan_version(),
+            "host_platform": system.lower(),
+        }
+    )
+
+    if main_zip_path and os.path.exists(main_zip_path):
+        # Move ZIP to target/conan/ and clean up intermediate files
+        final_zip_path = os.path.join(conan_dir, os.path.basename(main_zip_path))
+        if main_zip_path != final_zip_path:
+            shutil.move(main_zip_path, final_zip_path)
+
+        # Clean up intermediate files, keep only the ZIP
+        for item in os.listdir(conan_dir):
+            item_path = os.path.join(conan_dir, item)
+            if item_path != final_zip_path:
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                else:
+                    os.remove(item_path)
+
+        # Extract build_info.json from ZIP (now in meta/conan/) to target/conan/
+        import zipfile
+        with zipfile.ZipFile(final_zip_path, 'r') as zf:
+            if 'meta/conan/build_info.json' in zf.namelist():
+                # Extract to temp location and move to target directory
+                zf.extract('meta/conan/build_info.json', conan_dir)
+                # Move from meta/conan/ subdirectory to conan_dir root
+                meta_conan_dir = os.path.join(conan_dir, 'meta', 'conan')
+                meta_dir = os.path.join(conan_dir, 'meta')
+                if os.path.exists(os.path.join(meta_conan_dir, 'build_info.json')):
+                    shutil.move(
+                        os.path.join(meta_conan_dir, 'build_info.json'),
+                        os.path.join(conan_dir, 'build_info.json')
+                    )
+                    # Clean up empty meta directories
+                    if os.path.exists(meta_conan_dir) and not os.listdir(meta_conan_dir):
+                        os.rmdir(meta_conan_dir)
+                    if os.path.exists(meta_dir) and not os.listdir(meta_dir):
+                        os.rmdir(meta_dir)
+                print(f"  Extracted build_info.json to target/conan/")
+
+        size_mb = os.path.getsize(final_zip_path) / (1024 * 1024)
+        zip_name = os.path.basename(final_zip_path)
+        print(f"\n" + "=" * 60)
+        print(f"Build artifacts in target/conan/:")
+        print("-" * 60)
+        print(f"  {zip_name} ({size_mb:.2f} MB)")
+
+        # Print ZIP tree structure and generate archive_info.json to target directory
+        if print_zip_tree:
+            print_zip_tree(final_zip_path, indent="    ", generate_info_file=True)
+
+        print("-" * 60)
+        return True
+
+    return False
+
+
 def _get_conan_version() -> str:
     """Get the installed Conan version."""
     try:
@@ -881,18 +1039,15 @@ Note:
     if success:
         name = config.get('PROJECT_NAME_LOWER', 'unknown')
         version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
-        target_dir = os.path.join(project_dir, "target", "conan")
 
         print("\n" + "=" * 60)
         print("Conan Local Build Complete")
         print("=" * 60)
         print(f"Package: {name}/{version}")
-        print(f"Output: target/conan/")
 
-        # Print directory tree
-        print("\nDirectory structure:")
-        print(f"target/conan/")
-        print_directory_tree(target_dir, prefix="", max_depth=6)
+        # Create unified ZIP archive (like other platforms)
+        # This also cleans up intermediate files, keeping only the ZIP
+        archive_conan_project(project_dir, config, args.link_type)
 
         print("\nTo publish to Conan cache, run: ccgo publish conan")
         sys.exit(0)

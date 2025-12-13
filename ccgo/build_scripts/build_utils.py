@@ -3009,6 +3009,137 @@ def generate_archive_info(zip_path, output_path=None):
         return None
 
 
+def _add_archive_info_to_zip(zip_path, platform=None):
+    """
+    Generate archive_info.json and add it to the ZIP file at meta/{platform}/archive_info.json.
+
+    This function analyzes the ZIP contents and adds a metadata file describing
+    all files and libraries contained within.
+
+    Args:
+        zip_path: Path to the ZIP file to update
+        platform: Platform name (e.g., 'linux', 'android'). If None, extracted from ZIP filename.
+
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    from datetime import datetime
+
+    if not os.path.exists(zip_path):
+        return False
+
+    # Extract platform from ZIP filename if not provided
+    # Expected format: {PROJECT}_{PLATFORM}_SDK-{version}.zip
+    if platform is None:
+        zip_name = os.path.basename(zip_path)
+        parts = zip_name.split('_')
+        if len(parts) >= 2:
+            platform = parts[1].lower()
+        else:
+            platform = "unknown"
+
+    try:
+        # First, analyze the ZIP to generate archive info
+        archive_info = {
+            'archive_metadata': {
+                'version': '1.0',
+                'generated_at': datetime.now().isoformat(),
+                'archive_name': os.path.basename(zip_path),
+                'archive_size': os.path.getsize(zip_path),
+            },
+            'files': [],
+            'libraries': [],
+            'summary': {
+                'total_files': 0,
+                'total_size': 0,
+                'library_count': 0,
+                'platforms': [],
+                'architectures': [],
+            }
+        }
+
+        platforms = set()
+        architectures = set()
+
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            for info in zf.infolist():
+                if info.filename.endswith('/'):
+                    continue  # Skip directories
+
+                file_entry = {
+                    'path': info.filename,
+                    'size': info.file_size,
+                    'compressed_size': info.compress_size,
+                }
+
+                archive_info['files'].append(file_entry)
+                archive_info['summary']['total_files'] += 1
+                archive_info['summary']['total_size'] += info.file_size
+
+                # Check if this is a library file
+                filename = os.path.basename(info.filename)
+                if _is_library_file(filename, info.filename):
+                    try:
+                        data = zf.read(info.filename)
+                        lib_info = _get_library_info_dict(data, filename, info.filename)
+
+                        lib_entry = {
+                            'path': info.filename,
+                            'size': info.file_size,
+                        }
+
+                        if lib_info:
+                            if lib_info.get('format'):
+                                lib_entry['format'] = lib_info['format']
+                            if lib_info.get('arch'):
+                                lib_entry['arch'] = lib_info['arch']
+                                architectures.add(lib_info['arch'])
+                            if lib_info.get('platform'):
+                                lib_entry['platform'] = lib_info['platform']
+                                platforms.add(lib_info['platform'])
+                            if lib_info.get('min_sdk'):
+                                lib_entry['min_sdk'] = lib_info['min_sdk']
+                            if lib_info.get('ndk_version'):
+                                lib_entry['ndk_version'] = lib_info['ndk_version']
+
+                        # Detect platform from path
+                        path_lower = info.filename.lower()
+                        for plat in ['android', 'ios', 'macos', 'linux', 'windows', 'ohos', 'tvos', 'watchos', 'conan']:
+                            if f'/{plat}/' in path_lower or path_lower.startswith(f'{plat}/'):
+                                lib_entry['platform'] = plat
+                                platforms.add(plat)
+                                break
+
+                        # Detect link type from path
+                        if '/static/' in path_lower:
+                            lib_entry['link_type'] = 'static'
+                        elif '/shared/' in path_lower:
+                            lib_entry['link_type'] = 'shared'
+
+                        archive_info['libraries'].append(lib_entry)
+                        archive_info['summary']['library_count'] += 1
+
+                    except Exception:
+                        pass
+
+        archive_info['summary']['platforms'] = sorted(list(platforms))
+        archive_info['summary']['architectures'] = sorted(list(architectures))
+
+        # Now add archive_info.json to the ZIP at meta/{platform}/
+        archive_info_json = json.dumps(archive_info, indent=2, ensure_ascii=False)
+        meta_archive_info_path = f"meta/{platform}/{ARCHIVE_INFO_FILE}"
+
+        with zipfile.ZipFile(zip_path, 'a') as zf:
+            zf.writestr(meta_archive_info_path, archive_info_json)
+
+        print(f"  + {meta_archive_info_path}")
+        return True
+
+    except Exception as e:
+        print(f"Error adding archive info to ZIP: {e}")
+        return False
+
+
 def print_zip_tree(zip_path, indent="    ", generate_info_file=True):
     """
     Print the tree structure of a ZIP file with library file details.
@@ -3704,8 +3835,10 @@ ARCHIVE_DIR_OBJ = "obj"
 ARCHIVE_DIR_MSVC = "msvc"
 ARCHIVE_DIR_MINGW = "mingw"
 
-# Build info file name
+# Metadata directory and file names
+ARCHIVE_DIR_META = "meta"
 BUILD_INFO_FILE = "build_info.json"
+ARCHIVE_INFO_FILE = "archive_info.json"
 
 
 def get_archive_version_info(script_path):
@@ -3811,12 +3944,12 @@ def create_unified_archive(
 
     This function creates two packages:
     1. Main package: {PROJECT}_{PLATFORM}_SDK-{version}.zip
-       - lib/static/  : Static libraries
-       - lib/shared/  : Shared libraries
-       - include/     : Header files
-       - frameworks/  : Apple frameworks (iOS/macOS/watchOS/tvOS)
-       - haars/       : Android AAR / OHOS HAR packages
-       - build_info.json
+       - lib/{platform}/static/  : Static libraries
+       - lib/{platform}/shared/  : Shared libraries
+       - include/                : Header files
+       - haars/{platform}/       : Android AAR / OHOS HAR packages
+       - meta/{platform}/build_info.json
+       - meta/{platform}/archive_info.json
 
     2. Symbols package: {PROJECT}_{PLATFORM}_SDK-{version}-SYMBOLS.zip
        - symbols/static/ : Debug symbols for static libraries
@@ -3838,7 +3971,7 @@ def create_unified_archive(
         frameworks: Dict mapping archive paths to source paths for frameworks
                     e.g., {"frameworks/static/Foo.xcframework": "/path/to/xcframework"}
         haars: Dict mapping archive paths to source file paths for AAR/HAR
-               e.g., {"haars/foo.aar": "/path/to/foo.aar"}
+               e.g., {"haars/android/foo.aar": "/path/to/foo.aar"}
         symbols_static: Dict mapping archive paths to source paths for static lib symbols
         symbols_shared: Dict mapping archive paths to source paths for shared lib symbols
         obj_files: Dict mapping archive paths to source paths for unstripped objects
@@ -3922,7 +4055,7 @@ def create_unified_archive(
             print("Adding AAR/HAR packages...")
             add_to_zip(zipf, haars, "AAR/HAR")
 
-        # Generate and add build_info.json
+        # Generate and add build_info.json to meta/{platform}/ directory
         build_info = generate_build_info(
             project_name=project_name.lower(),
             target_platform=platform_name.lower(),
@@ -3933,10 +4066,14 @@ def create_unified_archive(
             extra_info=extra_info
         )
         build_info_json = json.dumps(build_info, indent=2)
-        zipf.writestr(BUILD_INFO_FILE, build_info_json)
-        print(f"  + {BUILD_INFO_FILE}")
+        meta_build_info_path = f"{ARCHIVE_DIR_META}/{platform_name.lower()}/{BUILD_INFO_FILE}"
+        zipf.writestr(meta_build_info_path, build_info_json)
+        print(f"  + {meta_build_info_path}")
 
     print(f"Created main package: {main_zip_path}")
+
+    # Generate and add archive_info.json to meta/{platform}/ directory inside the ZIP
+    _add_archive_info_to_zip(main_zip_path, platform_name.lower())
 
     # Create symbols package if any symbols are provided
     has_symbols = any([symbols_static, symbols_shared, obj_files])
@@ -4027,17 +4164,26 @@ def get_unified_framework_path(link_type, framework_name, platform=None):
     return "/".join(parts)
 
 
-def get_unified_haar_path(haar_name):
+def get_unified_haar_path(haar_name, platform=None):
     """
     Get the standard archive path for an Android AAR or OHOS HAR package.
 
     Args:
         haar_name: Package file name (e.g., "foo.aar", "foo.har")
+        platform: Platform name (e.g., "android", "ohos"). If None, auto-detect from extension.
 
     Returns:
-        str: Archive path like "haars/foo.aar"
+        str: Archive path like "haars/android/foo.aar" or "haars/ohos/foo.har"
     """
-    return f"{ARCHIVE_DIR_HAARS}/{haar_name}"
+    if platform is None:
+        # Auto-detect platform from extension
+        if haar_name.endswith('.aar'):
+            platform = "android"
+        elif haar_name.endswith('.har'):
+            platform = "ohos"
+        else:
+            platform = "unknown"
+    return f"{ARCHIVE_DIR_HAARS}/{platform}/{haar_name}"
 
 
 def get_unified_include_path(project_name, src_include_dir=None):
