@@ -172,22 +172,27 @@ class Publish(CliCommand):
                     print("Invalid option. Please select 1, 2, or 3.")
                     sys.exit(1)
 
-            # Map target to Gradle task
+            # Map target to Gradle task (ccgo-prefixed tasks to avoid conflicts)
             maven_task_map = {
-                "local": "publishToMavenLocal",
-                "central": "publishToMavenCentral",
-                "custom": "publishToMavenCustom",
+                "local": "ccgoPublishToMavenLocal",
+                "central": "ccgoPublishToMavenCentral",
+                "custom": "ccgoPublishToMavenCustom",
             }
             gradle_task = maven_task_map[maven_target]
 
             # Build gradle command
             skip_build_flag = "-x buildAAR" if args.skip_build else ""
-            cmd = f"cd '{android_dir}' && ./gradlew {gradle_task} {skip_build_flag} --no-daemon --info".strip()
-            err_code, err_msg = exec_command(cmd)
-            if err_code != 0:
-                print("\nEnd with error:")
-                print(err_msg)
-                sys.exit(err_code)
+            cmd = f"cd '{android_dir}' && ./gradlew {gradle_task} {skip_build_flag} --no-daemon"
+            print(f"\nRunning: ./gradlew {gradle_task} {skip_build_flag}".strip())
+            print("-" * 60)
+            sys.stdout.flush()
+            # Use subprocess.run with real-time output (stdout=None passes through to terminal)
+            import subprocess
+            result = subprocess.run(cmd, shell=True)
+            if result.returncode != 0:
+                print(f"\nPublish failed with exit code: {result.returncode}")
+                sys.exit(result.returncode)
+            print("\nPublish completed successfully!")
         elif args.target == "ohos":
             # OHOS: build HAR and publish to OHPM
             # Step 1: Build HAR file
