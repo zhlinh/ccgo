@@ -343,8 +343,9 @@ def print_build_results(link_type='both'):
     """
     print("==================OHOS Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     bin_ohos_dir = os.path.join(bin_dir, "ohos")
 
     # Check for SDK ZIP packages
@@ -454,8 +455,9 @@ def archive_ohos_project(link_type='both', archs=None):
     # Get version info using unified function
     _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     ohos_sdk_path = os.path.join(SCRIPT_PATH, OHOS_PROJECT_PATH)
 
     # Create target directory

@@ -452,8 +452,9 @@ def archive_ios_project(link_type='both'):
     # Get version info using unified function
     _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     ios_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
     # Create target directory
@@ -542,8 +543,9 @@ def print_build_results(link_type='both'):
     """
     print("==================iOS Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
 
     # Check if target directory exists
     if not os.path.exists(bin_dir):

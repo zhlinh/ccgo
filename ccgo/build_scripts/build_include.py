@@ -94,27 +94,27 @@ def archive_include_project():
     version_name = get_version_name(SCRIPT_PATH)
     project_name_upper = PROJECT_NAME.upper()
 
-    # Try to get publish suffix from git tags or use beta.0 as default
-    try:
-        git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
-        if git_tags and "-" in git_tags:
-            suffix = git_tags.split("-", 1)[1]
-        else:
-            git_branch = (
-                os.popen("git rev-parse --abbrev-ref HEAD 2>/dev/null").read().strip()
-            )
-            if git_branch == "master" or git_branch == "main":
-                suffix = "release"
+    # Check CCGO_CI_BUILD_IS_RELEASE environment variable first (set by ccgo build --release)
+    is_release_env = os.environ.get("CCGO_CI_BUILD_IS_RELEASE", "").lower() in ("1", "true")
+    if is_release_env:
+        suffix = "release"
+    else:
+        # Try to get publish suffix from git tags or use beta.0 as default
+        try:
+            git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
+            if git_tags and "-" in git_tags:
+                suffix = git_tags.split("-", 1)[1]
             else:
                 suffix = "beta.0"
-    except:
-        suffix = "beta.0"
+        except:
+            suffix = "beta.0"
 
     # Build full version name with suffix
     full_version = f"{version_name}-{suffix}" if suffix else version_name
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     include_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
     # Create target directory

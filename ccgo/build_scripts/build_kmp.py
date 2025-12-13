@@ -66,6 +66,7 @@ try:
         PROJECT_NAME,
         PROJECT_NAME_LOWER,
         get_archive_version_info,
+        get_target_subdir,
         print_zip_tree,
         generate_build_info,
     )
@@ -76,6 +77,7 @@ except ImportError:
     PROJECT_NAME = None
     PROJECT_NAME_LOWER = None
     get_archive_version_info = None
+    get_target_subdir = None
     print_zip_tree = None
     generate_build_info = None
 
@@ -319,16 +321,18 @@ def build_kmp_library():
     print(f"  ccgo publish kmp  # Publish to Maven")
     print()
 
-    # Create unified ZIP archive in target/kmp directory
+    # Create unified ZIP archive in target/{debug|release}/kmp directory
     print("\n" + "=" * 80)
     print("Creating Unified ZIP Archive")
     print("=" * 80 + "\n")
 
-    target_kmp_dir = PROJECT_DIR / "target" / "kmp"
+    # Determine target subdirectory based on build mode
+    target_subdir = get_target_subdir() if get_target_subdir else "debug"
+    target_kmp_dir = PROJECT_DIR / "target" / target_subdir / "kmp"
 
-    # Clean and create target/kmp directory
+    # Clean and create target/{debug|release}/kmp directory
     if target_kmp_dir.exists():
-        print(f"Cleaning existing target/kmp directory...")
+        print(f"Cleaning existing target/{target_subdir}/kmp directory...")
         shutil.rmtree(target_kmp_dir)
 
     target_kmp_dir.mkdir(parents=True, exist_ok=True)
@@ -426,7 +430,7 @@ def build_kmp_library():
 
         size_mb = zip_path.stat().st_size / (1024 * 1024)
         print(f"\n" + "=" * 60)
-        print(f"Build artifacts in target/kmp/:")
+        print(f"Build artifacts in target/{target_subdir}/kmp/:")
         print("-" * 60)
         print(f"  {zip_name} ({size_mb:.2f} MB)")
 

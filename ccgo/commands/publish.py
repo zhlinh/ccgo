@@ -39,13 +39,17 @@ class Publish(CliCommand):
         This is a subcommand to publish the library or documentation.
 
         Examples:
-            ccgo publish android              # Publish to Maven repository
-            ccgo publish ohos                 # Publish to OHPM repository
-            ccgo publish kmp                  # Publish KMP library
-            ccgo publish conan                # Publish to Conan local cache
-            ccgo publish conan --remote myremote  # Upload to remote Conan repository
-            ccgo publish doc                  # Publish documentation to GitHub Pages
-            ccgo publish doc --branch main    # Publish to specific branch
+            ccgo publish android                    # Publish to Maven (prompts for target, builds AAR first)
+            ccgo publish android --maven local      # Publish to Maven Local (~/.m2/repository/)
+            ccgo publish android --maven central    # Publish to Maven Central
+            ccgo publish android --maven custom     # Publish to custom Maven repository
+            ccgo publish android --skip-build       # Skip AAR build, use existing AAR
+            ccgo publish ohos                       # Publish to OHPM repository
+            ccgo publish kmp                        # Publish KMP library
+            ccgo publish conan                      # Publish to Conan local cache
+            ccgo publish conan --remote myremote    # Upload to remote Conan repository
+            ccgo publish doc                        # Publish documentation to GitHub Pages
+            ccgo publish doc --branch main          # Publish to specific branch
         """
 
     def get_target_list(self) -> list:
@@ -92,6 +96,19 @@ class Publish(CliCommand):
             action="store_true",
             help="Open documentation in browser after publishing (used with 'doc' target)",
         )
+        # Arguments for Android/KMP Maven publishing
+        parser.add_argument(
+            "--maven",
+            type=str,
+            choices=["local", "central", "custom"],
+            default=None,
+            help="Maven repository target: local, central, or custom (used with 'android' and 'kmp' targets)",
+        )
+        parser.add_argument(
+            "--skip-build",
+            action="store_true",
+            help="Skip AAR build step, use existing AAR in target/{debug|release}/android/ (used with 'android' target)",
+        )
         # Arguments for Conan publishing
         parser.add_argument(
             "--remote",
@@ -133,7 +150,39 @@ class Publish(CliCommand):
                 print("Please run this command from the project root directory")
                 sys.exit(1)
 
-            cmd = f"cd '{android_dir}' && ./gradlew publishMainPublicationToMavenRepository --no-daemon --info"
+            # Determine Maven repository target
+            if args.maven:
+                # Use command line argument
+                maven_target = args.maven
+            else:
+                # Ask user which Maven repository to publish to
+                print("\nAndroid Publish Options:")
+                print("  1 - Publish to Maven Local (~/.m2/repository/)")
+                print("  2 - Publish to Maven Central (requires credentials)")
+                print("  3 - Publish to Maven Custom (requires configuration)")
+                choice = input("Select option (1, 2, or 3): ").strip()
+
+                if choice == "1":
+                    maven_target = "local"
+                elif choice == "2":
+                    maven_target = "central"
+                elif choice == "3":
+                    maven_target = "custom"
+                else:
+                    print("Invalid option. Please select 1, 2, or 3.")
+                    sys.exit(1)
+
+            # Map target to Gradle task
+            maven_task_map = {
+                "local": "publishToMavenLocal",
+                "central": "publishToMavenCentral",
+                "custom": "publishToMavenCustom",
+            }
+            gradle_task = maven_task_map[maven_target]
+
+            # Build gradle command
+            skip_build_flag = "-x buildAAR" if args.skip_build else ""
+            cmd = f"cd '{android_dir}' && ./gradlew {gradle_task} {skip_build_flag} --no-daemon --info".strip()
             err_code, err_msg = exec_command(cmd)
             if err_code != 0:
                 print("\nEnd with error:")

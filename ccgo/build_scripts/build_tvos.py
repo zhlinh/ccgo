@@ -429,8 +429,9 @@ def archive_tvos_project(link_type='both'):
     # Get version info using unified function
     _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     tvos_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
 
     # Create target directory

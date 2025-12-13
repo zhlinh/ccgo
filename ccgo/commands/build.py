@@ -170,7 +170,7 @@ PLATFORM-SPECIFIC OPTIONS:
         --release          Build in release mode (default: debug/beta)
         --platforms LIST   Comma-separated list of platforms to build (e.g., android,ios,macos)
         --skip-platforms   Comma-separated list of platforms to skip
-        --use-env          Use CI_BUILD_* environment variables to control platforms
+        --use-env          Use CCGO_CI_BUILD_* environment variables to control platforms
 
 PACKAGING:
     After building, use 'ccgo package' to collect all artifacts:
@@ -178,14 +178,14 @@ PACKAGING:
         ccgo package --clean       Clean and collect artifacts
 
 ENVIRONMENT VARIABLES (for CI/CD):
-    CI_IS_RELEASE          Set to 1 for release builds (default: beta)
-    CI_BUILD_ANDROID       Set to 1 to build Android
-    CI_BUILD_IOS           Set to 1 to build iOS
-    CI_BUILD_MACOS         Set to 1 to build macOS
-    CI_BUILD_WINDOWS       Set to 1 to build Windows
-    CI_BUILD_LINUX         Set to 1 to build Linux
-    CI_BUILD_OHOS          Set to 1 to build OpenHarmony
-    CI_BUILD_KMP           Set to 1 to build Kotlin Multiplatform
+    CCGO_CI_BUILD_IS_RELEASE  Set to 1 for release builds (default: beta)
+    CCGO_CI_BUILD_ANDROID     Set to 1 to build Android
+    CCGO_CI_BUILD_IOS         Set to 1 to build iOS
+    CCGO_CI_BUILD_MACOS       Set to 1 to build macOS
+    CCGO_CI_BUILD_WINDOWS     Set to 1 to build Windows
+    CCGO_CI_BUILD_LINUX       Set to 1 to build Linux
+    CCGO_CI_BUILD_OHOS        Set to 1 to build OpenHarmony
+    CCGO_CI_BUILD_KMP         Set to 1 to build Kotlin Multiplatform
 
 REQUIREMENTS:
     Native builds (without --docker):
@@ -208,20 +208,20 @@ REQUIREMENTS:
         return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan", "include"]
 
     def get_platforms_from_env(self) -> list:
-        """Get platforms to build from CI_BUILD_* environment variables"""
+        """Get platforms to build from CCGO_CI_BUILD_* environment variables"""
         platforms = []
         env_map = {
-            "CI_BUILD_ANDROID": "android",
-            "CI_BUILD_IOS": "ios",
-            "CI_BUILD_MACOS": "macos",
-            "CI_BUILD_WINDOWS": "windows",
-            "CI_BUILD_LINUX": "linux",
-            "CI_BUILD_OHOS": "ohos",
-            "CI_BUILD_KMP": "kmp",
-            "CI_BUILD_WATCHOS": "watchos",
-            "CI_BUILD_TVOS": "tvos",
-            "CI_BUILD_CONAN": "conan",
-            "CI_BUILD_INCLUDE": "include",
+            "CCGO_CI_BUILD_ANDROID": "android",
+            "CCGO_CI_BUILD_IOS": "ios",
+            "CCGO_CI_BUILD_MACOS": "macos",
+            "CCGO_CI_BUILD_WINDOWS": "windows",
+            "CCGO_CI_BUILD_LINUX": "linux",
+            "CCGO_CI_BUILD_OHOS": "ohos",
+            "CCGO_CI_BUILD_KMP": "kmp",
+            "CCGO_CI_BUILD_WATCHOS": "watchos",
+            "CCGO_CI_BUILD_TVOS": "tvos",
+            "CCGO_CI_BUILD_CONAN": "conan",
+            "CCGO_CI_BUILD_INCLUDE": "include",
         }
 
         for env_var, platform in env_map.items():
@@ -235,11 +235,11 @@ REQUIREMENTS:
         all_platforms = self.get_build_platforms()
 
         # Check if using environment variables
-        if args.use_env or (not args.platforms and os.environ.get("CI_BUILD_ANDROID")):
+        if args.use_env or (not args.platforms and os.environ.get("CCGO_CI_BUILD_ANDROID")):
             platforms = self.get_platforms_from_env()
             if not platforms:
                 print(
-                    "WARNING: --use-env specified but no CI_BUILD_* environment variables set"
+                    "WARNING: --use-env specified but no CCGO_CI_BUILD_* environment variables set"
                 )
                 print("Building all platforms by default")
                 platforms = all_platforms
@@ -353,7 +353,7 @@ REQUIREMENTS:
         parser.add_argument(
             "--use-env",
             action="store_true",
-            help="Use CI_BUILD_* environment variables to determine which platforms to build",
+            help="Use CCGO_CI_BUILD_* environment variables to determine which platforms to build",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
@@ -421,8 +421,15 @@ REQUIREMENTS:
             cmd_args.extend(["--link-type", args.link_type])
         if hasattr(args, 'ide_project') and args.ide_project:
             cmd_args.extend(["--ide-project", args.ide_project])
-        # Note: --release, --archive, --platforms, --skip-platforms, --use-env are only for 'all' target
-        # KMP always builds release variant, so no need to pass --release
+        # Pass --release flag to individual platform builds
+        is_release = (hasattr(args, 'release') and args.release) or os.environ.get("CCGO_CI_BUILD_IS_RELEASE") == "1"
+        if is_release:
+            cmd_args.append("--release")
+
+        # Set up environment with CCGO_CI_BUILD_IS_RELEASE for Gradle builds
+        env = os.environ.copy()
+        if is_release:
+            env["CCGO_CI_BUILD_IS_RELEASE"] = "true"
 
         try:
             result = subprocess.run(
@@ -430,7 +437,8 @@ REQUIREMENTS:
                 cwd=project_subdir,
                 capture_output=True,
                 text=True,
-                timeout=3600  # 1 hour timeout per platform
+                timeout=3600,  # 1 hour timeout per platform
+                env=env
             )
 
             elapsed = time.time() - platform_start
@@ -536,7 +544,10 @@ REQUIREMENTS:
 
     def _print_platform_artifacts(self, platform_name: str, project_subdir: str, indent: str = "   "):
         """Print artifacts for a successfully built platform with ZIP tree structure."""
-        target_dir = os.path.join(project_subdir, "target", platform_name)
+        # Determine target subdirectory based on build mode
+        is_release = os.environ.get("CCGO_CI_BUILD_IS_RELEASE", "").lower() in ("1", "true")
+        target_subdir = "release" if is_release else "debug"
+        target_dir = os.path.join(project_subdir, "target", target_subdir, platform_name)
         if not os.path.exists(target_dir):
             return
 
@@ -551,9 +562,9 @@ REQUIREMENTS:
         if platform_name == "android":
             aar_files = [f for f in os.listdir(target_dir) if f.endswith('.aar')]
             if aar_files:
-                print(f"{indent}[DEBUG] Standalone AAR files in target/android/: {aar_files}")
+                print(f"{indent}[DEBUG] Standalone AAR files in target/{target_subdir}/android/: {aar_files}")
             else:
-                print(f"{indent}[DEBUG] No standalone AAR files in target/android/ (expected: should be in ZIP's haars/android/)")
+                print(f"{indent}[DEBUG] No standalone AAR files in target/{target_subdir}/android/ (expected: should be in ZIP's haars/android/)")
 
         # Find all archive files (.aar, .har, .zip) recursively
         artifacts = []
@@ -567,7 +578,7 @@ REQUIREMENTS:
                     artifacts.append((rel_path, size_mb, filepath))
 
         if artifacts:
-            print(f"{indent}Build artifacts in target/{platform_name}/:")
+            print(f"{indent}Build artifacts in target/{target_subdir}/{platform_name}/:")
             print(f"{indent}" + "-" * 60)
             for rel_path, size_mb, filepath in sorted(artifacts):
                 print(f"{indent}  {rel_path} ({size_mb:.2f} MB)")
@@ -580,10 +591,14 @@ REQUIREMENTS:
         # Record start time
         start_time = time.time()
 
+        # Set CCGO_CI_BUILD_IS_RELEASE environment variable for Gradle builds when --release is specified
+        if args.release or os.environ.get("CCGO_CI_BUILD_IS_RELEASE") == "1":
+            os.environ["CCGO_CI_BUILD_IS_RELEASE"] = "true"
+
         # Handle 'all' target - build all platforms
         if args.target == "all":
             # Determine build mode (release or debug/beta)
-            is_release = args.release or os.environ.get("CI_IS_RELEASE") == "1"
+            is_release = args.release or os.environ.get("CCGO_CI_BUILD_IS_RELEASE") == "1"
             build_mode = "RELEASE" if is_release else "DEBUG/BETA"
 
             print("="*80)
@@ -1029,11 +1044,15 @@ REQUIREMENTS:
             print("\n=== Android Full Build (Native + Gradle + Archive) ===")
             print("This will build native libraries, package AAR, and create archive")
 
-            # Clean target/android directory before build
-            target_android_dir = os.path.join(project_subdir, "target", "android")
+            # Determine target subdirectory based on build mode
+            is_release_build = args.release or os.environ.get("CCGO_CI_BUILD_IS_RELEASE") == "1"
+            target_subdir = "release" if is_release_build else "debug"
+
+            # Clean target/{debug|release}/android directory before build
+            target_android_dir = os.path.join(project_subdir, "target", target_subdir, "android")
             if os.path.exists(target_android_dir):
                 shutil.rmtree(target_android_dir)
-                print(f"Cleaned up old target/android/ directory")
+                print(f"Cleaned up old target/{target_subdir}/android/ directory")
 
             # Get build script path
             build_script_name = "build_android"
@@ -1063,7 +1082,7 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(err_code)
 
-            # Step 2: Use Gradle to build and copy AAR to target/android/
+            # Step 2: Use Gradle to build and copy AAR to target/{debug|release}/android/
             print("\n--- Step 2: Building AAR ---")
             gradlew_path = os.path.join(project_subdir, "android", "gradlew")
             if not os.path.isfile(gradlew_path):
@@ -1071,7 +1090,10 @@ REQUIREMENTS:
                 self._print_build_time(start_time)
                 sys.exit(1)
 
-            gradle_cmd = f"cd '{project_subdir}/android' && chmod +x gradlew && ./gradlew --no-daemon :buildAAR"
+            # Use buildAARRelease or buildAARDebug task based on release mode
+            # Note: is_release_build and target_subdir already determined above
+            gradle_task = "buildAARRelease" if is_release_build else "buildAARDebug"
+            gradle_cmd = f"cd '{project_subdir}/android' && chmod +x gradlew && ./gradlew {gradle_task}"
             print(f"Executing: {gradle_cmd}")
 
             err_code = self._get_exit_code(os.system(gradle_cmd))
@@ -1081,18 +1103,18 @@ REQUIREMENTS:
                 sys.exit(err_code)
 
             # Verify AAR was copied by Gradle
-            target_android_dir = os.path.join(project_subdir, "target", "android")
+            # Note: target_android_dir and target_subdir already determined above
             if os.path.exists(target_android_dir):
                 aar_files = [f for f in os.listdir(target_android_dir) if f.endswith('.aar')]
                 if aar_files:
-                    print(f"\n✓ Gradle copied AAR to target/android/: {aar_files}")
+                    print(f"\n✓ Gradle copied AAR to target/{target_subdir}/android/: {aar_files}")
                 else:
-                    print(f"\n⚠️  WARNING: No AAR files in target/android/")
+                    print(f"\n⚠️  WARNING: No AAR files in target/{target_subdir}/android/")
                     print(f"   Contents: {os.listdir(target_android_dir)}")
                     print(f"   Gradle buildAAR task should have copied the AAR here.")
                     print(f"   Check the Gradle task definition and build logs above.")
             else:
-                print(f"\n⚠️  WARNING: target/android/ directory not created by Gradle")
+                print(f"\n⚠️  WARNING: target/{target_subdir}/android/ directory not created by Gradle")
                 print(f"   Gradle buildAAR task should have created this directory.")
 
             # Step 3: Create unified archive using Python's archive_android_project()

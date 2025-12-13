@@ -383,8 +383,9 @@ def archive_android_project(link_type='both', archs=None):
     # Get version info using unified function
     _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     android_sdk_path = os.path.join(SCRIPT_PATH, ANDROID_PROJECT_PATH)
 
     # Create target directory
@@ -417,7 +418,7 @@ def archive_android_project(link_type='both', archs=None):
                         shared_libs[arc_path] = lib_file
 
     # Prepare AAR files mapping: haars/android/*.aar
-    # Only use AAR from target/android/ (Gradle buildAAR copies the renamed AAR there)
+    # Only use AAR from target/{debug|release}/android/ (Gradle buildAAR copies the renamed AAR there)
     haars = {}
     bin_android_dir = os.path.join(bin_dir, "android")
     if os.path.exists(bin_android_dir):
@@ -478,7 +479,7 @@ def archive_android_project(link_type='both', archs=None):
 
 def print_build_results(link_type='both'):
     """
-    Print Android build results from target/android directory.
+    Print Android build results from target/{debug|release}/android directory.
 
     This function displays the build artifacts:
     - Main SDK ZIP packages
@@ -495,8 +496,9 @@ def print_build_results(link_type='both'):
     """
     print("==================Android Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     bin_android_dir = os.path.join(bin_dir, "android")
 
     # Check for SDK ZIP packages
@@ -506,7 +508,7 @@ def print_build_results(link_type='both'):
         if "ANDROID_SDK" in os.path.basename(f) and not os.path.basename(f).startswith("_temp_")
     ]
 
-    # Also check for AAR files in target/android (from Gradle)
+    # Also check for AAR files in target/{debug|release}/android (from Gradle)
     aar_files = []
     if os.path.exists(bin_android_dir):
         aar_files = glob.glob(f"{bin_android_dir}/*.aar")
@@ -527,10 +529,11 @@ def print_build_results(link_type='both'):
         else:
             sys.exit(1)
 
-    # Ensure target/android directory exists
+    # Ensure target/{debug|release}/android directory exists
     os.makedirs(bin_android_dir, exist_ok=True)
 
-    # Move SDK ZIP files to target/android/
+    # Move SDK ZIP files to target/{debug|release}/android/
+    target_subdir = get_target_subdir()
     artifacts_moved = []
     for sdk_zip in sdk_zips:
         dest = os.path.join(bin_android_dir, os.path.basename(sdk_zip))
@@ -540,21 +543,23 @@ def print_build_results(link_type='both'):
         artifacts_moved.append(os.path.basename(sdk_zip))
 
     if artifacts_moved:
-        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/android/")
+        print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/{target_subdir}/android/")
 
-    # Remove standalone AAR files (already packaged in ZIP)
+    # Keep AAR files in target/{debug|release}/android/ for Maven publishing
+    # The AAR is also included in the ZIP, but we need standalone AAR for:
+    # - ccgo publish android (uses Gradle publishToMavenLocal/Central/Custom)
+    # - Direct AAR distribution
     aar_files = glob.glob(f"{bin_android_dir}/*.aar")
-    for aar_file in aar_files:
-        os.remove(aar_file)
-        print(f"[CLEANUP] Removed {os.path.basename(aar_file)} (already in ZIP)")
+    if aar_files:
+        print(f"[INFO] Keeping {len(aar_files)} AAR file(s) for Maven publishing")
 
-    # Copy build_info.json from cmake_build to target/android
+    # Copy build_info.json from cmake_build to target/{debug|release}/android
     copy_build_info_to_target("android", SCRIPT_PATH)
 
-    print(f"\nBuild artifacts in target/android/:")
+    print(f"\nBuild artifacts in target/{target_subdir}/android/:")
     print("-" * 60)
 
-    # List all files in target/android directory with sizes
+    # List all files in target/{debug|release}/android directory with sizes
     if os.path.exists(bin_android_dir):
         for item in sorted(os.listdir(bin_android_dir)):
             item_path = os.path.join(bin_android_dir, item)

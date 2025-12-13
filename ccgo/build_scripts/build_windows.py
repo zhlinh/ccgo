@@ -480,11 +480,12 @@ def archive_windows_project(link_type='both', toolchain='auto'):
     # Get version info using unified function
     _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
-    # Define paths
-    target_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    target_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     bin_dir = os.path.join(target_dir, "windows")
 
-    # Clean and recreate target/windows directory
+    # Clean and recreate target/{debug|release}/windows directory
     if os.path.exists(bin_dir):
         shutil.rmtree(bin_dir)
         print(f"Cleaned up old target/windows/ directory")

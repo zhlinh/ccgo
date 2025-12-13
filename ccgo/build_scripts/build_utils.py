@@ -1310,7 +1310,7 @@ def _gen_build_info_json(
     - Environment details (OS, Python version, ccgo version)
 
     The JSON file is saved to platform-specific directories:
-    - target/{platform}/build_info.json (e.g., target/android/build_info.json)
+    - target/{debug|release}/{platform}/build_info.json (e.g., target/debug/android/build_info.json)
     - Falls back to project root if platform is not specified
 
     Args:
@@ -1563,7 +1563,7 @@ def _gen_build_info_json(
 
     # Determine output directory based on platform
     # Use cmake_build/{Platform}/ for platform-specific builds during build process
-    # The file will be copied to target/{platform}/ by the build script after packaging
+    # The file will be copied to target/{debug|release}/{platform}/ by the build script after packaging
     if target_platform:
         # Map platform names to cmake build directories
         platform_build_dirs = {
@@ -1646,7 +1646,7 @@ def gen_project_revision_file(
         - Retrieves git info from the version file directory
         - Git tag is auto-detected using 'git describe --tags --abbrev=0'
         - Outputs build description to stdout for CI/CD parsing
-        - JSON output is saved to target/{platform}/build_info.json for platform-specific builds
+        - JSON output is saved to target/{debug|release}/{platform}/build_info.json for platform-specific builds
         - Falls back to <project_root>/build_info.json if platform is not specified
         - JSON generation is controlled by [build.generate_json_metadata] in CCGO.toml
     """
@@ -1760,7 +1760,7 @@ def gen_project_revision_file(
 
 def copy_build_info_to_target(platform_name, project_dir=None):
     """
-    Copy build_info.json from cmake_build directory to target/{platform}/ directory.
+    Copy build_info.json from cmake_build directory to target/{debug|release}/{platform}/ directory.
 
     This function is called after the build artifacts are packaged to ensure
     build_info.json is included in the final distribution directory.
@@ -1795,15 +1795,16 @@ def copy_build_info_to_target(platform_name, project_dir=None):
     if not os.path.exists(build_info_src):
         return False
 
-    # Create target/{platform} directory
-    target_platform_dir = os.path.join(project_dir, "target", platform_name.lower())
+    # Create target/{debug|release}/{platform} directory
+    target_subdir = get_target_subdir()
+    target_platform_dir = os.path.join(project_dir, "target", target_subdir, platform_name.lower())
     os.makedirs(target_platform_dir, exist_ok=True)
 
     # Copy build_info.json
     build_info_dst = os.path.join(target_platform_dir, "build_info.json")
     shutil.copy2(build_info_src, build_info_dst)
 
-    print(f"[SUCCESS] Copied build_info.json to target/{platform_name.lower()}/")
+    print(f"[SUCCESS] Copied build_info.json to target/{target_subdir}/{platform_name.lower()}/")
     return True
 
 
@@ -3841,6 +3842,26 @@ BUILD_INFO_FILE = "build_info.json"
 ARCHIVE_INFO_FILE = "archive_info.json"
 
 
+def is_release_build():
+    """
+    Check if this is a release build based on environment variable.
+
+    Returns:
+        bool: True if CCGO_CI_BUILD_IS_RELEASE is set to "1" or "true"
+    """
+    return os.environ.get("CCGO_CI_BUILD_IS_RELEASE", "").lower() in ("1", "true")
+
+
+def get_target_subdir():
+    """
+    Get the target subdirectory based on build mode.
+
+    Returns:
+        str: "release" for release builds, "debug" for debug/beta builds
+    """
+    return "release" if is_release_build() else "debug"
+
+
 def get_archive_version_info(script_path):
     """
     Get version information for archive naming.
@@ -3856,21 +3877,19 @@ def get_archive_version_info(script_path):
     """
     version_name = get_version_name(script_path)
 
-    # Try to get publish suffix from git tags or use beta.0 as default
-    try:
-        git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
-        if git_tags and "-" in git_tags:
-            suffix = git_tags.split("-", 1)[1]
-        else:
-            git_branch = (
-                os.popen("git rev-parse --abbrev-ref HEAD 2>/dev/null").read().strip()
-            )
-            if git_branch == "master" or git_branch == "main":
-                suffix = "release"
+    # Check CCGO_CI_BUILD_IS_RELEASE environment variable first (set by ccgo build --release)
+    if is_release_build():
+        suffix = "release"
+    else:
+        # Try to get publish suffix from git tags or use beta.0 as default
+        try:
+            git_tags = os.popen("git describe --tags --abbrev=0 2>/dev/null").read().strip()
+            if git_tags and "-" in git_tags:
+                suffix = git_tags.split("-", 1)[1]
             else:
                 suffix = "beta.0"
-    except:
-        suffix = "beta.0"
+        except:
+            suffix = "beta.0"
 
     full_version = f"{version_name}-{suffix}" if suffix else version_name
     return version_name, suffix, full_version

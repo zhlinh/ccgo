@@ -319,8 +319,9 @@ def archive_linux_project(link_type='both'):
     # Get version info using unified function
     _, _, full_version = get_archive_version_info(SCRIPT_PATH)
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
 
     # Get install paths for both link types
     static_install_path = os.path.join(SCRIPT_PATH, get_install_path("static"))
@@ -429,8 +430,9 @@ def print_build_results(link_type='both'):
     """
     print("==================Linux Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
 
     # Check if target directory exists
     if not os.path.exists(bin_dir):
