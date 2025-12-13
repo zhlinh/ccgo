@@ -59,31 +59,9 @@ liblinux = { version = "1.0.0", source = "https://example.com/liblinux-1.0.0.tar
 # OpenHarmony-specific dependency
 libohos = { version = "1.0.0", source = "https://example.com/libohos-1.0.0.zip" }
 
-# Build configuration
-[build]
-# CMake options
-cmake_options = [
-    "-DENABLE_TESTS=ON",
-    "-DENABLE_BENCHMARKS=ON"
-]
-
-# Platforms to build
-platforms = [
-    "android",
-    "ios",
-    "macos",
-    "windows",
-    "linux",
-    "ohos"
-]
-
-# Package configuration
-[package]
-# Include documentation in SDK package
-include_docs = true
-
-# Include samples in SDK package
-include_samples = false
-
-# Archive format (zip, tar.gz, both, none)
-format = "zip"
+# Build configuration (optional)
+# [build]
+# # Conan package configuration (if using Conan)
+# [build.conan]
+# # Conan recipe path (relative to project root)
+# recipe = "conanfile.py"
