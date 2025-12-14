@@ -1957,9 +1957,7 @@ def get_version_file_value(project_path, key):
 
 def get_version_name(project_path):
     """
-    Get the project version string from gradle/libs.versions.toml.
-
-    Reads the 'commMainProject' key from the version catalog.
+    Get the project version string from CCGO.toml.
 
     Args:
         project_path: Path to project root directory
@@ -1967,9 +1965,7 @@ def get_version_name(project_path):
     Returns:
         str: Version string (e.g., "1.2.3")
     """
-    # Get from gradle/libs.versions.toml file
-    # commMainProject = "x.x.x"
-    return get_version_file_value(project_path, "commMainProject")
+    return get_ccgo_config_value(project_path, "project.version", "1.0.0")
 
 
 def get_ccgo_config_value(project_path, key, default_value=None):
@@ -1995,7 +1991,7 @@ def get_ccgo_config_value(project_path, key, default_value=None):
 
 def get_android_stl(project_path):
     """
-    Get the Android STL (Standard Template Library) type from version catalog.
+    Get the Android STL (Standard Template Library) type from CCGO.toml.
 
     Args:
         project_path: Path to project root directory
@@ -2003,20 +1999,21 @@ def get_android_stl(project_path):
     Returns:
         str: STL type (e.g., "c++_shared", "c++_static")
     """
-    return get_version_file_value(project_path, "commAndroidStl")
+    return get_ccgo_config_value(project_path, "android.stl", "c++_shared")
 
 
 def get_android_min_sdk_version(project_path):
     """
-    Get the minimum Android SDK version from version catalog.
+    Get the minimum Android SDK version from CCGO.toml.
 
     Args:
         project_path: Path to project root directory
 
     Returns:
-        str: Minimum SDK version (e.g., "21")
+        str: Minimum SDK version (e.g., "19")
     """
-    return get_version_file_value(project_path, "minSdkVersion")
+    min_sdk = get_ccgo_config_value(project_path, "android.min_sdk", 19)
+    return str(min_sdk)
 
 
 def get_ohos_min_sdk_version(project_path):
@@ -2035,7 +2032,7 @@ def get_ohos_min_sdk_version(project_path):
 
 def get_ohos_stl(project_path):
     """
-    Get the OHOS STL type (same as Android STL configuration).
+    Get the OHOS STL type from CCGO.toml.
 
     Args:
         project_path: Path to project root directory
@@ -2043,8 +2040,7 @@ def get_ohos_stl(project_path):
     Returns:
         str: STL type (e.g., "c++_shared", "c++_static")
     """
-    # Same as Android
-    return get_version_file_value(project_path, "commAndroidStl")
+    return get_ccgo_config_value(project_path, "ohos.stl", "c++_shared")
 
 
 def check_vs_env():

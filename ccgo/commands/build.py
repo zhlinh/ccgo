@@ -88,6 +88,7 @@ This command builds native libraries and packages them for the target platform.
 
 SUPPORTED PLATFORMS:
     all         Build for all platforms (android, ios, macos, watchos, tvos, windows, linux, ohos, kmp, conan, include)
+    apple       Build for all Apple platforms (ios, macos, tvos, watchos)
     android     Build for Android (AAR package with native .so libraries)
     ios         Build for iOS (static libraries and frameworks)
     watchos     Build for watchOS (static libraries and frameworks)
@@ -103,6 +104,9 @@ SUPPORTED PLATFORMS:
 EXAMPLES:
     # Build all platforms (parallel by default, using CPU count workers)
     ccgo build all
+
+    # Build all Apple platforms (ios, macos, tvos, watchos)
+    ccgo build apple
 
     # Build all platforms with 4 parallel workers
     ccgo build all -j 4
@@ -201,11 +205,15 @@ REQUIREMENTS:
         """
 
     def get_target_list(self) -> list:
-        return ["all", "android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan", "include"]
+        return ["all", "apple", "android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan", "include"]
 
     def get_build_platforms(self) -> list:
-        """Get list of actual build platforms (excluding meta-targets like 'all')"""
+        """Get list of actual build platforms (excluding meta-targets like 'all', 'apple')"""
         return ["android", "ios", "watchos", "tvos", "windows", "linux", "macos", "ohos", "kmp", "conan", "include"]
+
+    def get_apple_platforms(self) -> list:
+        """Get list of Apple platforms (ios, macos, tvos, watchos)"""
+        return ["ios", "macos", "tvos", "watchos"]
 
     def get_platforms_from_env(self) -> list:
         """Get platforms to build from CCGO_CI_BUILD_* environment variables"""
@@ -924,6 +932,138 @@ REQUIREMENTS:
             else:
                 print(f"\n🎉 All platforms built successfully!")
                 print(f"   💡 To collect all artifacts, run: ccgo package")
+                sys.exit(0)
+
+        # Handle 'apple' target - build all Apple platforms (ios, macos, tvos, watchos)
+        if args.target == "apple":
+            # Determine build mode (release or debug/beta)
+            is_release = args.release or os.environ.get("CCGO_CI_BUILD_IS_RELEASE") == "1"
+            build_mode = "RELEASE" if is_release else "DEBUG/BETA"
+
+            print("="*80)
+            print("Building library for APPLE platforms (iOS, macOS, tvOS, watchOS)")
+            print(f"Build Mode: {build_mode}")
+            print("="*80)
+
+            # Determine number of parallel jobs
+            # Note: Apple platforms share Xcode, so we build sequentially by default
+            if args.no_parallel:
+                num_jobs = 1
+            elif args.jobs is not None:
+                num_jobs = max(1, args.jobs)
+            else:
+                # Default to 1 for Apple builds (sequential) to avoid Xcode conflicts
+                num_jobs = 1
+
+            # Get Apple platforms
+            platforms = self.get_apple_platforms()
+            total_platforms = len(platforms)
+            failed_platforms = []
+            successful_platforms = []
+            platform_times = {}
+
+            # Get project directory for subprocess builds
+            try:
+                project_dir = os.getcwd()
+            except (OSError, FileNotFoundError) as e:
+                project_dir = os.environ.get('PWD')
+                if not project_dir or not os.path.exists(project_dir):
+                    print(f"ERROR: Current working directory no longer exists: {e}")
+                    self._print_build_time(start_time)
+                    sys.exit(1)
+
+            # Find CCGO.toml to determine project_subdir
+            config_path = None
+            project_subdir = project_dir
+
+            if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+                config_path = os.path.join(project_dir, "CCGO.toml")
+                project_subdir = project_dir
+            else:
+                for subdir in os.listdir(project_dir):
+                    potential_config = os.path.join(project_dir, subdir, "CCGO.toml")
+                    if os.path.isfile(potential_config):
+                        config_path = potential_config
+                        project_subdir = os.path.join(project_dir, subdir)
+                        break
+
+            if not config_path:
+                print("❌ ERROR: CCGO.toml not found in project directory")
+                self._print_build_time(start_time)
+                sys.exit(1)
+
+            print(f"\nWill build {total_platforms} Apple platforms: {', '.join(platforms)}")
+            print(f"Build mode: {'sequential (recommended for Apple platforms)' if num_jobs == 1 else f'parallel with {num_jobs} workers'}")
+            print("="*80)
+
+            # Build Apple platforms sequentially (to avoid Xcode conflicts)
+            for index, target_platform in enumerate(platforms, 1):
+                print(f"\n{'='*80}")
+                print(f"Building Apple platform {index}/{total_platforms}: {target_platform.upper()}")
+                print(f"{'='*80}\n")
+
+                # Create a copy of args with the specific platform
+                platform_args = argparse.Namespace(**vars(args))
+                platform_args.target = target_platform
+
+                # Build the platform
+                platform_start = time.time()
+                try:
+                    # Call exec recursively with the specific platform
+                    self.exec(context, platform_args)
+                    successful_platforms.append(target_platform)
+                    elapsed = time.time() - platform_start
+                    platform_times[target_platform] = elapsed
+                    print(f"\n✅ {target_platform.upper()} build completed successfully ({self._format_elapsed_time(elapsed)})")
+                except SystemExit as e:
+                    elapsed = time.time() - platform_start
+                    platform_times[target_platform] = elapsed
+                    if e.code != 0:
+                        failed_platforms.append(target_platform)
+                        print(f"\n❌ {target_platform.upper()} build failed with exit code {e.code} ({self._format_elapsed_time(elapsed)})")
+                    else:
+                        successful_platforms.append(target_platform)
+                        print(f"\n✅ {target_platform.upper()} build completed successfully ({self._format_elapsed_time(elapsed)})")
+                except KeyboardInterrupt:
+                    elapsed = time.time() - platform_start
+                    platform_times[target_platform] = elapsed
+                    print(f"\n⚠️  {target_platform.upper()} build interrupted by user ({self._format_elapsed_time(elapsed)})")
+                    failed_platforms.append(target_platform)
+                    print(f"\nBuild aborted by user")
+                    break
+                except Exception as e:
+                    elapsed = time.time() - platform_start
+                    platform_times[target_platform] = elapsed
+                    failed_platforms.append(target_platform)
+                    print(f"\n❌ {target_platform.upper()} build failed with error: {e} ({self._format_elapsed_time(elapsed)})")
+
+            # Print summary
+            print(f"\n{'='*80}")
+            print("BUILD APPLE SUMMARY")
+            print(f"{'='*80}")
+            print(f"\nTotal platforms: {total_platforms}")
+            print(f"Successful: {len(successful_platforms)}")
+            print(f"Failed: {len(failed_platforms)}")
+
+            if successful_platforms:
+                print(f"\n✅ Successful builds:")
+                for p in sorted(successful_platforms):
+                    elapsed_str = self._format_elapsed_time(platform_times.get(p, 0))
+                    print(f"   - {p} ({elapsed_str})")
+
+            if failed_platforms:
+                print(f"\n❌ Failed builds:")
+                for p in sorted(failed_platforms):
+                    elapsed_str = self._format_elapsed_time(platform_times.get(p, 0))
+                    print(f"   - {p} ({elapsed_str})")
+
+            self._print_build_time(start_time)
+
+            if failed_platforms:
+                sys.exit(1)
+            else:
+                print(f"\n🎉 All Apple platforms built successfully!")
+                print(f"   💡 To publish, run: ccgo publish apple --cocoapods / --spm")
                 sys.exit(0)
 
         print("Building library, with configuration...")

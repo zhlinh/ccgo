@@ -48,6 +48,10 @@ class Publish(CliCommand):
             ccgo publish kmp                        # Publish KMP library
             ccgo publish conan                      # Publish to Conan local cache
             ccgo publish conan --remote myremote    # Upload to remote Conan repository
+            ccgo publish apple --cocoapods          # Publish to CocoaPods trunk
+            ccgo publish apple --cocoapods --repo private  # Publish to private spec repo
+            ccgo publish apple --spm                # Generate Package.swift and git tag
+            ccgo publish apple --all                # Publish to both CocoaPods and SPM
             ccgo publish doc                        # Publish documentation to GitHub Pages
             ccgo publish doc --branch main          # Publish to specific branch
         """
@@ -58,6 +62,7 @@ class Publish(CliCommand):
             "ohos",
             "kmp",
             "conan",
+            "apple",
             "doc",
             "ios",
             "windows",
@@ -137,6 +142,47 @@ class Publish(CliCommand):
             "-y", "--yes",
             action="store_true",
             help="Skip confirmation prompts (used with 'conan' target)",
+        )
+        # Arguments for Apple publishing
+        parser.add_argument(
+            "--cocoapods",
+            action="store_true",
+            help="Publish to CocoaPods (used with 'apple' target)",
+        )
+        parser.add_argument(
+            "--spm",
+            action="store_true",
+            help="Publish to Swift Package Manager (used with 'apple' target)",
+        )
+        parser.add_argument(
+            "--all",
+            action="store_true",
+            dest="publish_all",
+            help="Publish to both CocoaPods and SPM (used with 'apple' target)",
+        )
+        parser.add_argument(
+            "--repo",
+            type=str,
+            default="trunk",
+            help="CocoaPods repo: 'trunk' (default) or 'private' (used with 'apple --cocoapods')",
+        )
+        parser.add_argument(
+            "--platform",
+            type=str,
+            default=None,
+            help="Apple platforms to publish: ios,macos,tvos,watchos (used with 'apple' target)",
+        )
+        parser.add_argument(
+            "--allow-warnings",
+            action="store_true",
+            default=True,
+            help="Allow warnings during CocoaPods lint (default: true)",
+        )
+        parser.add_argument(
+            "--push-tag",
+            action="store_true",
+            default=False,
+            help="Push git tag to remote for SPM (used with 'apple --spm')",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
@@ -334,9 +380,12 @@ class Publish(CliCommand):
         elif args.target == "doc":
             # Doc: publish documentation to GitHub Pages
             self.publish_doc(context, args)
+        elif args.target == "apple":
+            # Apple: publish to CocoaPods and/or SPM
+            self.publish_apple(context, args)
         else:
             print(f"\nPublishing not yet supported for {args.target}")
-            print("Currently supported: android, ohos, kmp, conan, doc")
+            print("Currently supported: android, ohos, kmp, conan, apple, doc")
             sys.exit(1)
 
     def publish_conan(self, context: CliContext, args: CliNameSpace):
@@ -631,3 +680,216 @@ class Publish(CliCommand):
             pass  # Ignore errors in URL extraction
 
         print()
+
+    def publish_apple(self, context: CliContext, args: CliNameSpace):
+        """Publish to Apple platforms (CocoaPods and/or SPM)"""
+        print("\n=== Publishing to Apple Platforms ===")
+
+        # Get current working directory (project directory)
+        try:
+            project_dir = os.getcwd()
+        except (OSError, FileNotFoundError) as e:
+            project_dir = os.environ.get('PWD')
+            if not project_dir or not os.path.exists(project_dir):
+                print(f"ERROR: Current working directory no longer exists: {e}")
+                print("Please navigate to your project directory and try again.")
+                sys.exit(1)
+            try:
+                os.chdir(project_dir)
+            except (OSError, FileNotFoundError):
+                print(f"ERROR: Cannot access project directory: {project_dir}")
+                sys.exit(1)
+
+        # Find CCGO.toml configuration
+        config_path = None
+        project_subdir = project_dir
+        for subdir in os.listdir(project_dir):
+            subdir_path = os.path.join(project_dir, subdir)
+            if not os.path.isdir(subdir_path):
+                continue
+            potential_config = os.path.join(subdir_path, "CCGO.toml")
+            if os.path.isfile(potential_config):
+                config_path = potential_config
+                project_subdir = subdir_path
+                break
+
+        if not config_path:
+            if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+                config_path = os.path.join(project_dir, "CCGO.toml")
+                project_subdir = project_dir
+            else:
+                print("ERROR: CCGO.toml not found in project directory")
+                sys.exit(1)
+
+        # Load CCGO.toml configuration
+        print(f"Loading configuration from: {config_path}")
+        try:
+            try:
+                import tomllib
+            except ImportError:
+                try:
+                    import tomli as tomllib
+                except ImportError:
+                    print("ERROR: tomllib not available. Please install tomli for Python < 3.11")
+                    print("Run: pip install tomli")
+                    sys.exit(1)
+
+            with open(config_path, 'rb') as f:
+                toml_config = tomllib.load(f)
+        except Exception as e:
+            print(f"ERROR: Failed to load CCGO.toml: {e}")
+            sys.exit(1)
+
+        # Import apple publishing utilities
+        try:
+            from ccgo.utils.apple.config import ApplePublishConfig
+            from ccgo.utils.apple.cocoapods import CocoaPodsPublisher
+            from ccgo.utils.apple.spm import SPMPublisher
+        except ImportError:
+            from utils.apple.config import ApplePublishConfig
+            from utils.apple.cocoapods import CocoaPodsPublisher
+            from utils.apple.spm import SPMPublisher
+
+        # Override platform configuration from command line
+        if args.platform:
+            if 'publish' not in toml_config:
+                toml_config['publish'] = {}
+            if 'apple' not in toml_config['publish']:
+                toml_config['publish']['apple'] = {}
+            toml_config['publish']['apple']['platforms'] = args.platform.split(',')
+
+        # Override CocoaPods repo from command line
+        if args.repo and args.repo != 'trunk':
+            if 'publish' not in toml_config:
+                toml_config['publish'] = {}
+            if 'apple' not in toml_config['publish']:
+                toml_config['publish']['apple'] = {}
+            if 'cocoapods' not in toml_config['publish']['apple']:
+                toml_config['publish']['apple']['cocoapods'] = {}
+            toml_config['publish']['apple']['cocoapods']['repo'] = args.repo
+
+        # Create configuration
+        config = ApplePublishConfig(toml_config, project_subdir)
+
+        # Validate configuration
+        is_valid, errors = config.validate()
+        if not is_valid:
+            print("ERROR: Invalid configuration:")
+            for error in errors:
+                print(f"  - {error}")
+            sys.exit(1)
+
+        # Print configuration summary
+        print("\nConfiguration:")
+        print(config.get_config_summary())
+        print()
+
+        # Determine what to publish
+        publish_cocoapods = args.cocoapods or args.publish_all
+        publish_spm = args.spm or args.publish_all
+
+        # If neither specified, ask user
+        if not publish_cocoapods and not publish_spm:
+            print("Apple Publish Options:")
+            print("  1 - Publish to CocoaPods")
+            print("  2 - Publish to Swift Package Manager (SPM)")
+            print("  3 - Publish to both")
+            choice = input("Select option (1, 2, or 3): ").strip()
+
+            if choice == "1":
+                publish_cocoapods = True
+            elif choice == "2":
+                publish_spm = True
+            elif choice == "3":
+                publish_cocoapods = True
+                publish_spm = True
+            else:
+                print("Invalid option. Please select 1, 2, or 3.")
+                sys.exit(1)
+
+        success = True
+
+        # Publish to CocoaPods
+        if publish_cocoapods and config.cocoapods.enabled:
+            print("\n[CocoaPods] Starting publish process...")
+            publisher = CocoaPodsPublisher(config)
+
+            # Validate prerequisites
+            prereq_ok, prereq_msg = publisher.validate_prerequisites()
+            if not prereq_ok:
+                print(f"ERROR: {prereq_msg}")
+                success = False
+            else:
+                # Generate podspec
+                print("[CocoaPods] Generating podspec...")
+                podspec_path = publisher.generate_podspec()
+                print(f"[CocoaPods] Generated: {podspec_path}")
+
+                # Lint podspec
+                print("[CocoaPods] Validating podspec...")
+                lint_ok, lint_msg = publisher.lint_podspec(allow_warnings=args.allow_warnings)
+                if not lint_ok:
+                    print(f"[CocoaPods] Validation failed: {lint_msg}")
+                    success = False
+                else:
+                    print("[CocoaPods] Validation passed")
+
+                    # Publish
+                    print(f"[CocoaPods] Publishing to {config.cocoapods.repo}...")
+                    pub_ok, pub_msg = publisher.publish(allow_warnings=args.allow_warnings)
+                    if pub_ok:
+                        print(f"[CocoaPods] Successfully published!")
+                        print(pub_msg)
+                    else:
+                        print(f"[CocoaPods] Publish failed: {pub_msg}")
+                        success = False
+
+        elif publish_cocoapods and not config.cocoapods.enabled:
+            print("[CocoaPods] Skipped (disabled in configuration)")
+
+        # Publish to SPM
+        if publish_spm and config.spm.enabled:
+            print("\n[SPM] Starting publish process...")
+            publisher = SPMPublisher(config)
+
+            # Validate prerequisites
+            prereq_ok, prereq_msg = publisher.validate_prerequisites()
+            if not prereq_ok:
+                print(f"ERROR: {prereq_msg}")
+                success = False
+            else:
+                # Generate Package.swift
+                print("[SPM] Generating Package.swift...")
+                package_path = publisher.generate_package_swift()
+                print(f"[SPM] Generated: {package_path}")
+
+                # Publish (create git tag)
+                print(f"[SPM] Creating git tag for version {config.version}...")
+                pub_ok, pub_msg = publisher.publish(push_tag=args.push_tag)
+                if pub_ok:
+                    print(f"[SPM] Successfully published!")
+                    print(pub_msg)
+
+                    # Show package URL
+                    package_url = publisher.get_package_url()
+                    if package_url:
+                        print(f"\n[SPM] To add this package to your project:")
+                        print(f"      URL: {package_url}")
+                        print(f"      Version: {config.version}")
+                else:
+                    print(f"[SPM] Publish failed: {pub_msg}")
+                    success = False
+
+        elif publish_spm and not config.spm.enabled:
+            print("[SPM] Skipped (disabled in configuration)")
+
+        # Final status
+        if success:
+            print("\n" + "=" * 60)
+            print("Apple publishing completed successfully!")
+            print("=" * 60)
+        else:
+            print("\n" + "=" * 60)
+            print("Apple publishing completed with errors")
+            print("=" * 60)
+            sys.exit(1)
