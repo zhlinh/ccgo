@@ -90,13 +90,21 @@ class CocoaPodsPublisher:
         Generate podspec file from configuration.
 
         Args:
-            output_path: Optional path to write podspec. Defaults to project directory.
+            output_path: Optional path to write podspec. Defaults to apple/ directory.
 
         Returns:
             Path to generated podspec file
         """
         if output_path is None:
-            output_path = self.config.project_dir / f'{self.config.pod_name}.podspec'
+            # Default to apple/ directory if it exists, otherwise project root
+            apple_dir = self.config.project_dir / 'apple'
+            if apple_dir.exists():
+                output_path = apple_dir / f'{self.config.pod_name}.podspec'
+            else:
+                output_path = self.config.project_dir / f'{self.config.pod_name}.podspec'
+
+        # Ensure parent directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         xcframework_path = self.config.find_xcframework()
 
@@ -115,8 +123,15 @@ class CocoaPodsPublisher:
             lines.append(f"    {self._escape_string(self.config.description)}")
             lines.append("  DESC")
 
-        # Homepage
-        homepage = self.config.cocoapods.homepage or 'https://github.com/user/repo'
+        # Homepage - use git URL if no homepage configured
+        homepage = self.config.cocoapods.homepage
+        if not homepage or homepage == 'https://github.com/user/repo':
+            git_url = self._get_git_url()
+            if git_url:
+                # Remove .git suffix for homepage
+                homepage = git_url[:-4] if git_url.endswith('.git') else git_url
+            else:
+                homepage = 'https://github.com/user/repo'
         lines.append(f"  s.homepage         = '{homepage}'")
 
         # License
@@ -149,7 +164,8 @@ class CocoaPodsPublisher:
             # Use git tag as source (requires XCFramework to be in repo or hosted)
             git_url = self._get_git_url()
             if git_url:
-                lines.append(f"  s.source           = {{ :git => '{git_url}', :tag => s.version.to_s }}")
+                # Use 'v' prefix for tags (common convention: v1.0.0)
+                lines.append(f"  s.source           = {{ :git => '{git_url}', :tag => 'v' + s.version.to_s }}")
             else:
                 lines.append(f"  s.source           = {{ :http => 'https://github.com/user/repo/releases/download/v#{{s.version}}/{self.config.pod_name}.xcframework.zip' }}")
 
@@ -366,8 +382,9 @@ class CocoaPodsPublisher:
                 # Convert SSH to HTTPS if needed
                 if url.startswith('git@github.com:'):
                     url = url.replace('git@github.com:', 'https://github.com/')
-                if url.endswith('.git'):
-                    url = url[:-4]
+                # Ensure URL ends with .git (CocoaPods requirement)
+                if not url.endswith('.git'):
+                    url = url + '.git'
                 return url
         except Exception:
             pass
