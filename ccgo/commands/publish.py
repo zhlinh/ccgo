@@ -49,8 +49,10 @@ class Publish(CliCommand):
             ccgo publish ohos --ohpm official       # Publish to official OHPM registry
             ccgo publish ohos --ohpm private --ohpm-url URL  # Publish to private registry
             ccgo publish kmp                        # Publish KMP library
-            ccgo publish conan                      # Publish to Conan local cache
-            ccgo publish conan --remote myremote    # Upload to remote Conan repository
+            ccgo publish conan                      # Interactive: local, official, or private
+            ccgo publish conan --conan local        # Publish to local cache
+            ccgo publish conan --conan official     # Publish to first configured remote
+            ccgo publish conan --conan private --conan-name myremote --conan-url URL  # Private remote
             ccgo publish apple --cocoapods          # Generate podspec and xcframework.zip
             ccgo publish apple --cocoapods --upload # Upload to GitHub releases and publish
             ccgo publish apple --cocoapods --repo private  # Publish to private spec repo
@@ -68,12 +70,6 @@ class Publish(CliCommand):
             "conan",
             "apple",
             "doc",
-            "ios",
-            "windows",
-            "linux",
-            "macos",
-            "tests",
-            "benches",
         ]
 
     def cli(self) -> CliNameSpace:
@@ -140,10 +136,29 @@ class Publish(CliCommand):
         )
         # Arguments for Conan publishing
         parser.add_argument(
+            "--conan",
+            type=str,
+            choices=["local", "official", "private"],
+            default=None,
+            help="Conan publish target: local (cache), official (first configured remote), private (custom)",
+        )
+        parser.add_argument(
+            "--conan-url",
+            type=str,
+            default=None,
+            help="Custom Conan remote URL (used with 'conan --conan private')",
+        )
+        parser.add_argument(
+            "--conan-name",
+            type=str,
+            default=None,
+            help="Custom Conan remote name (used with 'conan --conan private')",
+        )
+        parser.add_argument(
             "--remote",
             type=str,
             default=None,
-            help="Conan remote repository name for upload (used with 'conan' target)",
+            help="Conan remote repository name for upload (deprecated, use --conan instead)",
         )
         parser.add_argument(
             "--profile",
@@ -409,12 +424,149 @@ class Publish(CliCommand):
             print(f"ERROR: publish_conan.py not found at {publish_conan_script}")
             sys.exit(1)
 
+        # Get list of configured remotes
+        import subprocess
+        remotes = []
+        readonly_remotes = ['conancenter']  # Read-only remotes that can't be uploaded to
+        try:
+            result = subprocess.run(
+                ["conan", "remote", "list"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # Parse remote names from output (format: "name: url")
+                for line in result.stdout.strip().split('\n'):
+                    if ':' in line:
+                        remote_name = line.split(':')[0].strip()
+                        if remote_name and not remote_name.startswith('#'):
+                            # Skip read-only remotes
+                            if remote_name.lower() not in readonly_remotes:
+                                remotes.append(remote_name)
+        except Exception:
+            pass
+
+        # Determine publish target
+        conan_mode = "local"
+        conan_remote = None
+
+        # Handle --conan option (new way)
+        if args.conan:
+            if args.conan == "local":
+                conan_mode = "local"
+            elif args.conan == "official":
+                if remotes:
+                    conan_mode = "remote"
+                    conan_remote = remotes[0]
+                else:
+                    print("ERROR: No writable remotes configured")
+                    print("\nTo add a remote:")
+                    print("  conan remote add <name> <url>")
+                    print("\nExample:")
+                    print("  conan remote add artifactory https://mycompany.jfrog.io/artifactory/api/conan/conan-local")
+                    sys.exit(1)
+            elif args.conan == "private":
+                if not args.conan_name:
+                    print("ERROR: --conan-name is required for private remote")
+                    sys.exit(1)
+                if not args.conan_url:
+                    print("ERROR: --conan-url is required for private remote")
+                    sys.exit(1)
+                # Add or update the private remote
+                print(f"Configuring private remote: {args.conan_name} -> {args.conan_url}")
+                try:
+                    # Try to add, if exists will fail
+                    add_result = subprocess.run(
+                        ["conan", "remote", "add", args.conan_name, args.conan_url],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=10
+                    )
+                    if add_result.returncode != 0:
+                        # Remote might exist, try to update URL
+                        subprocess.run(
+                            ["conan", "remote", "update", args.conan_name, "--url", args.conan_url],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=10
+                        )
+                except Exception as e:
+                    print(f"Warning: Failed to configure remote: {e}")
+                conan_mode = "remote"
+                conan_remote = args.conan_name
+        # Handle --remote option (deprecated, for backward compatibility)
+        elif args.remote:
+            conan_mode = "remote"
+            conan_remote = args.remote
+        else:
+            # Interactive prompt
+            print("\nConan Publish Options:")
+            print("  1 - Publish to Local Cache (for testing)")
+            if remotes:
+                print(f"  2 - Publish to Remote: {remotes[0]}")
+            else:
+                print("  2 - Publish to Remote (no writable remotes configured)")
+            print("  3 - Publish to Private Remote (requires URL)")
+
+            choice = input("\nSelect option [1]: ").strip() or "1"
+
+            if choice == "1":
+                conan_mode = "local"
+            elif choice == "2":
+                if remotes:
+                    conan_mode = "remote"
+                    conan_remote = remotes[0]
+                else:
+                    print("\nNo writable remotes configured. To add a remote:")
+                    print("  conan remote add <name> <url>")
+                    print("\nExample:")
+                    print("  conan remote add artifactory https://mycompany.jfrog.io/artifactory/api/conan/conan-local")
+                    sys.exit(1)
+            elif choice == "3":
+                conan_name = input("Enter remote name: ").strip()
+                if not conan_name:
+                    print("ERROR: Remote name is required")
+                    sys.exit(1)
+                conan_url = input("Enter remote URL: ").strip()
+                if not conan_url:
+                    print("ERROR: Remote URL is required")
+                    sys.exit(1)
+                # Add or update the private remote
+                print(f"Configuring private remote: {conan_name} -> {conan_url}")
+                try:
+                    add_result = subprocess.run(
+                        ["conan", "remote", "add", conan_name, conan_url],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=10
+                    )
+                    if add_result.returncode != 0:
+                        subprocess.run(
+                            ["conan", "remote", "update", conan_name, "--url", conan_url],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                            timeout=10
+                        )
+                except Exception as e:
+                    print(f"Warning: Failed to configure remote: {e}")
+                conan_mode = "remote"
+                conan_remote = conan_name
+            else:
+                print("Invalid option. Please select 1, 2, or 3.")
+                sys.exit(1)
+
         # Build command arguments
         cmd_args = ["python3", f"'{publish_conan_script}'"]
 
-        # Determine mode based on --remote flag
-        if args.remote:
-            cmd_args.extend(["--mode", "remote", "--remote", args.remote])
+        # Set mode and remote
+        if conan_mode == "remote" and conan_remote:
+            cmd_args.extend(["--mode", "remote", "--remote", conan_remote])
         else:
             cmd_args.extend(["--mode", "local"])
 

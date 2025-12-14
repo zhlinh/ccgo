@@ -225,14 +225,17 @@ Examples:
     python publish_conan.py
     python publish_conan.py --mode local
 
-    # Upload to remote repository
-    python publish_conan.py --mode remote --remote conancenter
+    # Upload to remote repository (requires configured remote)
+    python publish_conan.py --mode remote --remote myartifactory
 
     # Export recipe only (no build)
     python publish_conan.py --export-only
 
     # List configured remotes
     python publish_conan.py --list-remotes
+
+    # Add a remote repository first:
+    conan remote add myartifactory https://mycompany.jfrog.io/artifactory/api/conan/conan-local
 
 Note:
     For local builds without publishing, use: ccgo build conan
@@ -247,8 +250,8 @@ Note:
     parser.add_argument(
         "--remote",
         type=str,
-        default="conancenter",
-        help="Remote repository name for upload (default: conancenter)"
+        default=None,
+        help="Remote repository name for upload (required for remote mode)"
     )
     parser.add_argument(
         "--profile",
@@ -336,6 +339,17 @@ Note:
             print(f"  conan install --requires={name}/{version}")
 
     elif args.mode == "remote":
+        # Require --remote for remote mode
+        if not args.remote:
+            print("ERROR: --remote is required for remote mode")
+            print("\nTo add a remote repository:")
+            print("  conan remote add <name> <url>")
+            print("\nExample:")
+            print("  conan remote add myartifactory https://mycompany.jfrog.io/artifactory/api/conan/conan-local")
+            print("  ccgo publish conan --remote myartifactory")
+            list_remotes()
+            sys.exit(1)
+
         # First create package locally if not exists
         print("Creating package locally before upload...")
         if not create_conan_package(project_dir, config, args.profile):
