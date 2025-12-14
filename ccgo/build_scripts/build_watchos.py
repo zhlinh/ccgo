@@ -512,18 +512,19 @@ def print_build_results():
     """
     Print watchOS build results from target directory.
 
-    This function displays the build artifacts and moves them to target/watchos/:
+    This function displays the build artifacts and moves them to target/{debug|release}/watchos/:
     - Release SDK ZIP packages (xcframework only)
     - Archive SDK ZIP packages (with symbols, headers, etc.)
     """
     print("==================watchOS Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
 
     # Check if target directory exists
     if not os.path.exists(bin_dir):
-        print(f"ERROR: target directory not found. Please run build first.")
+        print(f"ERROR: target/{target_subdir} directory not found. Please run build first.")
         sys.exit(1)
 
     # Check for SDK ZIP packages (both release and archive)
@@ -538,7 +539,7 @@ def print_build_results():
         print("Please ensure build completed successfully.")
         sys.exit(1)
 
-    # Clean and recreate target/watchos directory for platform-specific artifacts
+    # Clean and recreate target/{debug|release}/watchos directory for platform-specific artifacts
     bin_watchos_dir = os.path.join(bin_dir, "watchos")
     if os.path.exists(bin_watchos_dir):
         shutil.rmtree(bin_watchos_dir)
