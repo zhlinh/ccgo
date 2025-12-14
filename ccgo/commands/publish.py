@@ -109,6 +109,12 @@ class Publish(CliCommand):
             action="store_true",
             help="Skip AAR build step, use existing AAR in target/{debug|release}/android/ (used with 'android' target)",
         )
+        parser.add_argument(
+            "--artifact-id",
+            type=str,
+            default=None,
+            help="Override Maven artifact ID (used with 'android' and 'kmp' targets, defaults to project name)",
+        )
         # Arguments for Conan publishing
         parser.add_argument(
             "--remote",
@@ -182,8 +188,9 @@ class Publish(CliCommand):
 
             # Build gradle command
             skip_build_flag = "-x buildAAR" if args.skip_build else ""
-            cmd = f"cd '{android_dir}' && ./gradlew {gradle_task} {skip_build_flag} --no-daemon"
-            print(f"\nRunning: ./gradlew {gradle_task} {skip_build_flag}".strip())
+            artifact_id_flag = f"-PartifactId={args.artifact_id}" if args.artifact_id else ""
+            cmd = f"cd '{android_dir}' && ./gradlew {gradle_task} {skip_build_flag} {artifact_id_flag} --no-daemon"
+            print(f"\nRunning: ./gradlew {gradle_task} {skip_build_flag} {artifact_id_flag}".strip())
             print("-" * 60)
             sys.stdout.flush()
             # Use subprocess.run with real-time output (stdout=None passes through to terminal)
