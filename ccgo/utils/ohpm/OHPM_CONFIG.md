@@ -13,7 +13,28 @@ All configuration is done through `CCGO.toml`, with support for environment vari
 
 ## Configuration in CCGO.toml
 
-### Basic OHOS Configuration
+### New Configuration Format (Recommended)
+
+```toml
+[publish.ohos.ohpm]
+registry = "official"  # Options: "official", "private", "local"
+package_name = "my-ohos-lib"
+version = "1.0.0"
+description = "My OpenHarmony library"
+
+# Optional: For scoped packages
+organization = "myorg"  # Results in @myorg/my-ohos-lib
+
+# Dependencies (optional)
+dependencies = [
+    { name = "@ohos/library1", version = "^1.0.0" },
+    { name = "@ohos/test-lib", version = "^1.0.0", dev = true },
+]
+```
+
+### Legacy Configuration Format (Still Supported)
+
+For backward compatibility, the old format is still supported:
 
 ```toml
 [publish.ohos]
@@ -31,7 +52,7 @@ organization = "myorg"  # Results in @myorg/my-ohos-lib
 The simplest option - public packages don't require authentication:
 
 ```toml
-[publish.ohos]
+[publish.ohos.ohpm]
 registry = "official"
 package_name = "my-ohos-lib"
 version = "1.0.0"
@@ -39,8 +60,8 @@ description = "An awesome OHOS library"
 access = "public"  # or "restricted" for scoped packages
 
 # Optional authentication for publishing updates
-[publish.ohos.auth]
-[publish.ohos.auth.credentials]
+[publish.ohos.ohpm.auth]
+[publish.ohos.ohpm.auth.credentials]
 token = "${OHPM_TOKEN}"  # If you have publishing rights
 ```
 
@@ -49,15 +70,15 @@ token = "${OHPM_TOKEN}"  # If you have publishing rights
 For organization's private NPM-compatible registries:
 
 ```toml
-[publish.ohos]
+[publish.ohos.ohpm]
 registry = "private"
 url = "https://npm.company.com"  # Your private registry URL
 package_name = "internal-ohos-lib"
 version = "2.1.0"
 organization = "company"  # Optional, for @company/internal-ohos-lib
 
-[publish.ohos.auth]
-[publish.ohos.auth.credentials]
+[publish.ohos.ohpm.auth]
+[publish.ohos.ohpm.auth.credentials]
 # Token authentication (recommended)
 token = "${COMPANY_NPM_TOKEN}"
 
@@ -71,7 +92,7 @@ token = "${COMPANY_NPM_TOKEN}"
 For testing with local Verdaccio or similar:
 
 ```toml
-[publish.ohos]
+[publish.ohos.ohpm]
 registry = "local"
 url = "http://localhost:4873"  # Default for Verdaccio
 package_name = "test-lib"
@@ -85,7 +106,7 @@ version = "0.1.0"
 Configure the generated oh-package.json5 file:
 
 ```toml
-[publish.ohos.oh_package]
+[publish.ohos.ohpm.oh_package]
 author = "Your Name"
 license = "MIT"
 main = "index.ets"  # Entry point
@@ -93,16 +114,26 @@ type = "shared"  # or "static"
 keywords = ["ohos", "harmony", "library"]
 
 # Repository information
-[publish.ohos.oh_package.repository]
+[publish.ohos.ohpm.oh_package.repository]
 type = "git"
 url = "https://github.com/username/project.git"
 
-# Dependencies (if any)
-[publish.ohos.oh_package.dependencies]
+# Dependencies can be specified in two ways:
+
+# 1. Using the dependencies array (recommended)
+[publish.ohos.ohpm]
+dependencies = [
+    { name = "@ohos/library1", version = "^1.0.0" },
+    { name = "@ohos/library2", version = "^2.0.0" },
+    { name = "@ohos/test-lib", version = "^1.0.0", dev = true },
+]
+
+# 2. Or directly in oh_package (for more complex setups)
+[publish.ohos.ohpm.oh_package.dependencies]
 "@ohos/library1" = "^1.0.0"
 "@ohos/library2" = "^2.0.0"
 
-[publish.ohos.oh_package.devDependencies]
+[publish.ohos.ohpm.oh_package.devDependencies]
 "@ohos/test-lib" = "^1.0.0"
 ```
 
@@ -215,7 +246,7 @@ name = "awesome-ohos-lib"
 version = "3.2.1"
 description = "An awesome OpenHarmony library"
 
-[publish.ohos]
+[publish.ohos.ohpm]
 registry = "official"
 package_name = "${project.name}"  # Reference project name
 version = "${project.version}"    # Reference project version
@@ -224,25 +255,28 @@ organization = "awesomeorg"  # Results in @awesomeorg/awesome-ohos-lib
 access = "public"
 tag = "latest"
 
+# Dependencies
+dependencies = [
+    { name = "@ohos/base", version = "^1.0.0" },
+    { name = "@ohos/test-utils", version = "^1.0.0", dev = true },
+]
+
 # Authentication
-[publish.ohos.auth]
-[publish.ohos.auth.credentials]
+[publish.ohos.ohpm.auth]
+[publish.ohos.ohpm.auth.credentials]
 token = "${OHPM_TOKEN}"
 
 # oh-package.json5 configuration
-[publish.ohos.oh_package]
+[publish.ohos.ohpm.oh_package]
 author = "Awesome Developer <dev@awesome.com>"
 license = "Apache-2.0"
 main = "index.ets"
 type = "shared"
 keywords = ["ohos", "harmony", "awesome", "library"]
 
-[publish.ohos.oh_package.repository]
+[publish.ohos.ohpm.oh_package.repository]
 type = "git"
 url = "https://github.com/awesomeorg/awesome-ohos-lib.git"
-
-[publish.ohos.oh_package.dependencies]
-"@ohos/base" = "^1.0.0"
 ```
 
 ## CI/CD Integration
@@ -290,10 +324,13 @@ ohpm publish path/to/file.har
 ### New Way (with CCGO)
 ```toml
 # Configure once in CCGO.toml
-[publish.ohos]
+[publish.ohos.ohpm]
 registry = "official"
 package_name = "my-lib"
 version = "1.0.0"
+dependencies = [
+    { name = "@ohos/base", version = "^1.0.0" },
+]
 ```
 
 Then simply:

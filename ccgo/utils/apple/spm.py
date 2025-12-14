@@ -179,6 +179,32 @@ class SPMPublisher:
             "    ],",
         ])
 
+        # Dependencies (package-level)
+        if self.config.spm.dependencies:
+            lines.append("    dependencies: [")
+            for dep in self.config.spm.dependencies:
+                if dep.path:
+                    # Local/path dependency
+                    lines.append(f'        .package(path: "{dep.path}"),')
+                elif dep.url:
+                    # Remote dependency with version requirement
+                    if dep.from_version:
+                        lines.append(f'        .package(url: "{dep.url}", from: "{dep.from_version}"),')
+                    elif dep.up_to_next_major:
+                        lines.append(f'        .package(url: "{dep.url}", .upToNextMajor(from: "{dep.up_to_next_major}")),')
+                    elif dep.up_to_next_minor:
+                        lines.append(f'        .package(url: "{dep.url}", .upToNextMinor(from: "{dep.up_to_next_minor}")),')
+                    elif dep.exact:
+                        lines.append(f'        .package(url: "{dep.url}", exact: "{dep.exact}"),')
+                    elif dep.branch:
+                        lines.append(f'        .package(url: "{dep.url}", branch: "{dep.branch}"),')
+                    elif dep.revision:
+                        lines.append(f'        .package(url: "{dep.url}", revision: "{dep.revision}"),')
+                    else:
+                        # Default to from: "1.0.0" if no version specified
+                        lines.append(f'        .package(url: "{dep.url}", from: "1.0.0"),')
+            lines.append("    ],")
+
         # Targets
         lines.append("    targets: [")
 

@@ -2,11 +2,38 @@
 Maven configuration handler for CCGO.
 
 Handles Maven repository configuration from CCGO.toml and environment variables.
+
+Configuration structure:
+    [publish.android.maven]
+    artifact_id = "mylib"
+    group_id = "com.example"
+    version = "1.0.0"
+    dependencies = [
+        { group = "com.example", artifact = "dep", version = "1.0.0" }
+    ]
+
+    [publish.kmp.maven]
+    artifact_id = "mylib-kmp"
+    group_id = "com.example"
+    version = "1.0.0"
 """
 
 import os
 import re
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
+
+
+@dataclass
+class MavenDependency:
+    """Maven dependency specification."""
+    group: str  # groupId (e.g., "com.example")
+    artifact: str  # artifactId (e.g., "mylib")
+    version: str  # version (e.g., "1.0.0")
+    scope: str = "implementation"  # implementation, api, compileOnly, runtimeOnly, testImplementation
+    type: str = ""  # aar, jar, etc. (empty for default)
+    classifier: str = ""  # Optional classifier (e.g., "sources", "javadoc")
+    optional: bool = False  # Optional dependency
 
 
 class MavenConfig:
@@ -21,13 +48,31 @@ class MavenConfig:
         Args:
             config: Configuration dictionary from CCGO.toml
             platform: Platform name (android, kmp, etc.)
+
+        Configuration structure (new format):
+            [publish.android.maven]
+            artifact_id = "mylib"
+            ...
+
+        Legacy format (still supported):
+            [publish.android]
+            artifact_id = "mylib"
+            ...
         """
         self.platform = platform
         self.raw_config = config
 
         # Get platform-specific publish config
         publish_config = config.get('publish', {})
-        self.maven_config = publish_config.get(platform, {})
+        platform_config = publish_config.get(platform, {})
+
+        # New format: publish.{platform}.maven
+        # Legacy format: publish.{platform} (for backward compatibility)
+        if 'maven' in platform_config:
+            self.maven_config = platform_config.get('maven', {})
+        else:
+            # Legacy: direct platform config is maven config
+            self.maven_config = platform_config
 
         # Parse configuration
         self.repo_type = self.maven_config.get('repository', 'local').lower()
@@ -52,6 +97,9 @@ class MavenConfig:
         self.sign_artifacts = self.maven_config.get('sign', False)
         self.publish_sources = self.maven_config.get('sources', True)
         self.publish_javadoc = self.maven_config.get('javadoc', True)
+
+        # Parse dependencies
+        self.dependencies = self._parse_dependencies()
 
     def _expand_env(self, value: str) -> str:
         """
@@ -120,6 +168,60 @@ class MavenConfig:
             )
 
         return credentials
+
+    def _parse_dependencies(self) -> List[MavenDependency]:
+        """Parse Maven dependencies from config."""
+        dependencies = []
+        deps_config = self.maven_config.get('dependencies', [])
+
+        for dep in deps_config:
+            if isinstance(dep, dict):
+                dependencies.append(MavenDependency(
+                    group=self._expand_env(dep.get('group', '')),
+                    artifact=self._expand_env(dep.get('artifact', '')),
+                    version=self._expand_env(dep.get('version', '')),
+                    scope=dep.get('scope', 'implementation'),
+                    type=dep.get('type', ''),
+                    classifier=dep.get('classifier', ''),
+                    optional=dep.get('optional', False),
+                ))
+
+        return dependencies
+
+    def get_dependency_notation(self, dep: MavenDependency) -> str:
+        """
+        Get Gradle dependency notation for a Maven dependency.
+
+        Args:
+            dep: MavenDependency object
+
+        Returns:
+            Gradle dependency notation string (e.g., "com.example:mylib:1.0.0")
+        """
+        notation = f"{dep.group}:{dep.artifact}:{dep.version}"
+        if dep.classifier:
+            notation += f":{dep.classifier}"
+        if dep.type:
+            notation += f"@{dep.type}"
+        return notation
+
+    def generate_dependencies_gradle(self) -> str:
+        """
+        Generate Gradle dependencies block content.
+
+        Returns:
+            String content for dependencies block in build.gradle
+        """
+        if not self.dependencies:
+            return ""
+
+        lines = ["dependencies {"]
+        for dep in self.dependencies:
+            notation = self.get_dependency_notation(dep)
+            lines.append(f'    {dep.scope}("{notation}")')
+        lines.append("}")
+
+        return '\n'.join(lines)
 
     def get_repository_url(self) -> str:
         """Get the repository URL based on configuration."""

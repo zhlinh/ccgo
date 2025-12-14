@@ -23,6 +23,31 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class CocoaPodsDependency:
+    """CocoaPods dependency specification."""
+    name: str
+    version: str = ""  # Version requirement (e.g., "~> 1.0", ">= 1.0.0")
+    git: str = ""  # Git URL for git-based dependencies
+    branch: str = ""  # Git branch
+    tag: str = ""  # Git tag
+    commit: str = ""  # Git commit
+
+
+@dataclass
+class SPMDependency:
+    """SPM dependency specification."""
+    name: str
+    url: str = ""  # Git URL for remote packages
+    path: str = ""  # Local path for local packages
+    from_version: str = ""  # Minimum version (from: "1.0.0")
+    up_to_next_major: str = ""  # Up to next major version
+    up_to_next_minor: str = ""  # Up to next minor version
+    exact: str = ""  # Exact version
+    branch: str = ""  # Git branch
+    revision: str = ""  # Git revision/commit
+
+
+@dataclass
 class CocoaPodsSettings:
     """CocoaPods-specific configuration."""
     enabled: bool = True
@@ -38,6 +63,7 @@ class CocoaPodsSettings:
     changelog: str = ""
     documentation_url: str = ""
     static_framework: bool = True
+    dependencies: List[CocoaPodsDependency] = field(default_factory=list)
 
 
 @dataclass
@@ -49,6 +75,7 @@ class SPMSettings:
     library_name: str = ""  # Override library name
     xcframework_url: str = ""  # URL to hosted XCFramework zip
     use_local_path: bool = False  # Use local path instead of URL
+    dependencies: List[SPMDependency] = field(default_factory=list)
 
 
 class ApplePublishConfig:
@@ -152,6 +179,20 @@ class ApplePublishConfig:
             if author_name:
                 authors = {author_name: author_email}
 
+        # Parse dependencies
+        dependencies = []
+        deps_config = cocoa_config.get('dependencies', [])
+        for dep in deps_config:
+            if isinstance(dep, dict):
+                dependencies.append(CocoaPodsDependency(
+                    name=self._expand_env(dep.get('name', '')),
+                    version=self._expand_env(dep.get('version', '')),
+                    git=self._expand_env(dep.get('git', '')),
+                    branch=self._expand_env(dep.get('branch', '')),
+                    tag=self._expand_env(dep.get('tag', '')),
+                    commit=self._expand_env(dep.get('commit', '')),
+                ))
+
         return CocoaPodsSettings(
             enabled=cocoa_config.get('enabled', True),
             repo=self._expand_env(cocoa_config.get('repo', 'trunk')),
@@ -166,11 +207,29 @@ class ApplePublishConfig:
             changelog=self._expand_env(cocoa_config.get('changelog', '')),
             documentation_url=self._expand_env(cocoa_config.get('documentation_url', '')),
             static_framework=cocoa_config.get('static_framework', True),
+            dependencies=dependencies,
         )
 
     def _parse_spm_settings(self) -> SPMSettings:
         """Parse SPM-specific settings from config."""
         spm_config = self.apple_config.get('spm', {})
+
+        # Parse dependencies
+        dependencies = []
+        deps_config = spm_config.get('dependencies', [])
+        for dep in deps_config:
+            if isinstance(dep, dict):
+                dependencies.append(SPMDependency(
+                    name=self._expand_env(dep.get('name', '')),
+                    url=self._expand_env(dep.get('url', '')),
+                    path=self._expand_env(dep.get('path', '')),
+                    from_version=self._expand_env(dep.get('from', '')),
+                    up_to_next_major=self._expand_env(dep.get('up_to_next_major', '')),
+                    up_to_next_minor=self._expand_env(dep.get('up_to_next_minor', '')),
+                    exact=self._expand_env(dep.get('exact', '')),
+                    branch=self._expand_env(dep.get('branch', '')),
+                    revision=self._expand_env(dep.get('revision', '')),
+                ))
 
         return SPMSettings(
             enabled=spm_config.get('enabled', True),
@@ -179,6 +238,7 @@ class ApplePublishConfig:
             library_name=self._expand_env(spm_config.get('library_name', self.pod_name)),
             xcframework_url=self._expand_env(spm_config.get('xcframework_url', '')),
             use_local_path=spm_config.get('use_local_path', False),
+            dependencies=dependencies,
         )
 
     def get_xcframework_path(self, platform: str = 'ios') -> Optional[Path]:

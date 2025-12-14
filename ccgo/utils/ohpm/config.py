@@ -2,12 +2,36 @@
 OHPM configuration handler for CCGO.
 
 Handles OHPM (OpenHarmony Package Manager) configuration from CCGO.toml and environment variables.
+
+Configuration structure:
+    [publish.ohos.ohpm]
+    registry = "official"
+    package_name = "mylib"
+    version = "1.0.0"
+    dependencies = [
+        { name = "@ohos/library1", version = "^1.0.0" }
+    ]
+
+Legacy format (still supported):
+    [publish.ohos]
+    registry = "official"
+    package_name = "mylib"
+    ...
 """
 
 import os
 import re
 import json
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
+
+
+@dataclass
+class OhpmDependency:
+    """OHPM dependency specification."""
+    name: str  # Package name (e.g., "@ohos/library1" or "my-lib")
+    version: str = ""  # Version requirement (e.g., "^1.0.0", "~1.0.0", ">=1.0.0")
+    dev: bool = False  # If true, this is a devDependency
 
 
 class OhpmConfig:
@@ -21,12 +45,30 @@ class OhpmConfig:
 
         Args:
             config: Configuration dictionary from CCGO.toml
+
+        Configuration structure (new format):
+            [publish.ohos.ohpm]
+            registry = "official"
+            ...
+
+        Legacy format (still supported):
+            [publish.ohos]
+            registry = "official"
+            ...
         """
         self.raw_config = config
 
         # Get OHOS-specific publish config
         publish_config = config.get('publish', {})
-        self.ohpm_config = publish_config.get('ohos', {})
+        ohos_config = publish_config.get('ohos', {})
+
+        # New format: publish.ohos.ohpm
+        # Legacy format: publish.ohos (for backward compatibility)
+        if 'ohpm' in ohos_config:
+            self.ohpm_config = ohos_config.get('ohpm', {})
+        else:
+            # Legacy: direct ohos config is ohpm config
+            self.ohpm_config = ohos_config
 
         # Parse configuration
         self.registry_type = self.ohpm_config.get('registry', 'official').lower()
@@ -57,6 +99,24 @@ class OhpmConfig:
 
         # oh-package.json5 configuration
         self.oh_package_config = self.ohpm_config.get('oh_package', {})
+
+        # Parse dependencies
+        self.dependencies = self._parse_dependencies()
+
+    def _parse_dependencies(self) -> List[OhpmDependency]:
+        """Parse OHPM dependencies from config."""
+        dependencies = []
+        deps_config = self.ohpm_config.get('dependencies', [])
+
+        for dep in deps_config:
+            if isinstance(dep, dict):
+                dependencies.append(OhpmDependency(
+                    name=self._expand_env(dep.get('name', '')),
+                    version=self._expand_env(dep.get('version', '')),
+                    dev=dep.get('dev', False),
+                ))
+
+        return dependencies
 
     def _expand_env(self, value: str) -> str:
         """
@@ -143,6 +203,18 @@ class OhpmConfig:
         Returns:
             String content for oh-package.json5 file
         """
+        # Build base dependencies from oh_package_config
+        dependencies = dict(self.oh_package_config.get('dependencies', {}))
+        dev_dependencies = dict(self.oh_package_config.get('devDependencies', {}))
+
+        # Merge dependencies from the parsed dependencies list
+        for dep in self.dependencies:
+            if dep.name and dep.version:
+                if dep.dev:
+                    dev_dependencies[dep.name] = dep.version
+                else:
+                    dependencies[dep.name] = dep.version
+
         # Build the package configuration
         package_data = {
             "name": self.package_name if not self.organization else f"@{self.organization}/{self.package_name}",
@@ -152,8 +224,8 @@ class OhpmConfig:
             "type": self.oh_package_config.get('type', 'shared'),
             "author": self.oh_package_config.get('author', ''),
             "license": self.oh_package_config.get('license', 'MIT'),
-            "dependencies": self.oh_package_config.get('dependencies', {}),
-            "devDependencies": self.oh_package_config.get('devDependencies', {}),
+            "dependencies": dependencies,
+            "devDependencies": dev_dependencies,
         }
 
         # Add repository information if available
@@ -293,5 +365,12 @@ class OhpmConfig:
 
         if self.dry_run:
             lines.append(f"  Mode: DRY RUN (no actual publishing)")
+
+        # Show dependencies
+        if self.dependencies:
+            lines.append(f"  Dependencies: {len(self.dependencies)}")
+            for dep in self.dependencies:
+                dep_type = " (dev)" if dep.dev else ""
+                lines.append(f"    - {dep.name}: {dep.version}{dep_type}")
 
         return '\n'.join(lines)

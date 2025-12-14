@@ -355,6 +355,28 @@ class CocoaPodsPublisher:
         if self.config.cocoapods.static_framework:
             lines.append("  s.static_framework = true")
 
+        # Dependencies
+        if self.config.cocoapods.dependencies:
+            lines.append("")
+            lines.append("  # Dependencies")
+            for dep in self.config.cocoapods.dependencies:
+                if dep.git:
+                    # Git-based dependency
+                    git_options = [f":git => '{dep.git}'"]
+                    if dep.branch:
+                        git_options.append(f":branch => '{dep.branch}'")
+                    elif dep.tag:
+                        git_options.append(f":tag => '{dep.tag}'")
+                    elif dep.commit:
+                        git_options.append(f":commit => '{dep.commit}'")
+                    lines.append(f"  s.dependency '{dep.name}', {{ {', '.join(git_options)} }}")
+                elif dep.version:
+                    # Version-based dependency
+                    lines.append(f"  s.dependency '{dep.name}', '{dep.version}'")
+                else:
+                    # No version specified
+                    lines.append(f"  s.dependency '{dep.name}'")
+
         # Optional metadata
         if self.config.cocoapods.social_media_url:
             lines.append(f"  s.social_media_url = '{self.config.cocoapods.social_media_url}'")
