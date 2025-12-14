@@ -27,6 +27,16 @@ from .config import ApplePublishConfig
 class CocoaPodsPublisher:
     """Handle CocoaPods publishing workflow."""
 
+    # CocoaPods uses different platform names than our internal names
+    # Our internal: ios, macos, tvos, watchos
+    # CocoaPods: ios, osx, tvos, watchos
+    PLATFORM_TO_COCOAPODS = {
+        'ios': 'ios',
+        'macos': 'osx',
+        'tvos': 'tvos',
+        'watchos': 'watchos',
+    }
+
     def __init__(self, config: ApplePublishConfig):
         """
         Initialize CocoaPods publisher.
@@ -329,8 +339,9 @@ class CocoaPodsPublisher:
 
         # Platform deployment targets
         for platform in self.config.platforms:
+            cocoapods_platform = self.PLATFORM_TO_COCOAPODS.get(platform, platform)
             min_version = self.config.min_versions.get(platform, '13.0')
-            lines.append(f"  s.{platform}.deployment_target = '{min_version}'")
+            lines.append(f"  s.{cocoapods_platform}.deployment_target = '{min_version}'")
 
         # Swift version (for mixed Swift/Obj-C projects)
         lines.append("  s.swift_version    = '5.0'")
@@ -338,9 +349,10 @@ class CocoaPodsPublisher:
         # Vendored frameworks - platform-specific paths
         # Each platform has its own xcframework/framework in the zip
         for platform in self.config.platforms:
+            cocoapods_platform = self.PLATFORM_TO_COCOAPODS.get(platform, platform)
             # Use tracked framework type if available, default to xcframework
             fw_type = self.platform_framework_types.get(platform, 'xcframework')
-            lines.append(f"  s.{platform}.vendored_frameworks = '{platform}/{self.config.pod_name}.{fw_type}'")
+            lines.append(f"  s.{cocoapods_platform}.vendored_frameworks = '{platform}/{self.config.pod_name}.{fw_type}'")
 
         # Libraries required for C++
         lines.append("  s.libraries        = 'c++'")
