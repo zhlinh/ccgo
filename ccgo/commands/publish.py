@@ -41,14 +41,17 @@ class Publish(CliCommand):
         Examples:
             ccgo publish android                    # Publish to Maven (prompts for target, builds AAR first)
             ccgo publish android --maven local      # Publish to Maven Local (~/.m2/repository/)
-            ccgo publish android --maven central    # Publish to Maven Central
-            ccgo publish android --maven custom     # Publish to custom Maven repository
+            ccgo publish android --maven official   # Publish to Maven Central
+            ccgo publish android --maven private    # Publish to custom Maven repository
             ccgo publish android --skip-build       # Skip AAR build, use existing AAR
+            ccgo publish kmp                        # Publish KMP library (prompts for target)
+            ccgo publish kmp --maven local          # Publish KMP to Maven Local
+            ccgo publish kmp --maven official       # Publish KMP to Maven Central
+            ccgo publish kmp --maven private        # Publish KMP to custom repository
             ccgo publish ohos                       # Publish to OHPM (prompts for target)
             ccgo publish ohos --ohpm local          # Publish to local OHPM registry
             ccgo publish ohos --ohpm official       # Publish to official OHPM registry
             ccgo publish ohos --ohpm private --ohpm-url URL  # Publish to private registry
-            ccgo publish kmp                        # Publish KMP library
             ccgo publish conan                      # Interactive: local, official, or private
             ccgo publish conan --conan local        # Publish to local cache
             ccgo publish conan --conan official     # Publish to first configured remote
@@ -105,9 +108,9 @@ class Publish(CliCommand):
         parser.add_argument(
             "--maven",
             type=str,
-            choices=["local", "central", "custom"],
+            choices=["local", "official", "private"],
             default=None,
-            help="Maven repository target: local, central, or custom (used with 'android' and 'kmp' targets)",
+            help="Maven repository target: local, official (Maven Central), or private (used with 'android' and 'kmp' targets)",
         )
         parser.add_argument(
             "--skip-build",
@@ -253,18 +256,18 @@ class Publish(CliCommand):
                 maven_target = args.maven
             else:
                 # Ask user which Maven repository to publish to
-                print("\nAndroid Publish Options:")
-                print("  1 - Publish to Maven Local (~/.m2/repository/)")
-                print("  2 - Publish to Maven Central (requires credentials)")
-                print("  3 - Publish to Maven Custom (requires configuration)")
-                choice = input("Select option (1, 2, or 3): ").strip()
+                print("\nMaven Publish Options:")
+                print("  1 - Publish to Local (~/.m2/repository/)")
+                print("  2 - Publish to Official (Maven Central, requires credentials)")
+                print("  3 - Publish to Private (custom repository, requires configuration)")
+                choice = input("\nSelect option [1]: ").strip() or "1"
 
                 if choice == "1":
                     maven_target = "local"
                 elif choice == "2":
-                    maven_target = "central"
+                    maven_target = "official"
                 elif choice == "3":
-                    maven_target = "custom"
+                    maven_target = "private"
                 else:
                     print("Invalid option. Please select 1, 2, or 3.")
                     sys.exit(1)
@@ -272,8 +275,8 @@ class Publish(CliCommand):
             # Map target to Gradle task (ccgo-prefixed tasks to avoid conflicts)
             maven_task_map = {
                 "local": "ccgoPublishToMavenLocal",
-                "central": "ccgoPublishToMavenCentral",
-                "custom": "ccgoPublishToMavenCustom",
+                "official": "ccgoPublishToMavenCentral",
+                "private": "ccgoPublishToMavenCustom",
             }
             gradle_task = maven_task_map[maven_target]
 
@@ -343,19 +346,34 @@ class Publish(CliCommand):
                 print("Please ensure your project has the KMP module configured")
                 sys.exit(1)
 
-            # Ask user whether to publish to local or remote Maven
-            print("\nKMP Publish Options:")
-            print("  1 - Publish to Maven Local (~/.m2/repository/)")
-            print("  2 - Publish to Maven Remote (requires credentials)")
-            choice = input("Select option (1 or 2): ").strip()
-
-            if choice == "1":
-                publish_flag = "--publish-local"
-            elif choice == "2":
-                publish_flag = "--publish-remote"
+            # Determine Maven repository target
+            if args.maven:
+                maven_target = args.maven
             else:
-                print("Invalid option. Please select 1 or 2.")
-                sys.exit(1)
+                # Ask user which Maven repository to publish to
+                print("\nMaven Publish Options:")
+                print("  1 - Publish to Local (~/.m2/repository/)")
+                print("  2 - Publish to Official (Maven Central, requires credentials)")
+                print("  3 - Publish to Private (custom repository, requires configuration)")
+                choice = input("\nSelect option [1]: ").strip() or "1"
+
+                if choice == "1":
+                    maven_target = "local"
+                elif choice == "2":
+                    maven_target = "official"
+                elif choice == "3":
+                    maven_target = "private"
+                else:
+                    print("Invalid option. Please select 1, 2, or 3.")
+                    sys.exit(1)
+
+            # Map target to publish flag
+            maven_flag_map = {
+                "local": "--publish-local",
+                "official": "--publish-remote",
+                "private": "--publish-remote",  # Same as official, uses configured custom repo
+            }
+            publish_flag = maven_flag_map[maven_target]
 
             cmd = f"cd '{project_subdir}' && python3 '{build_kmp_script}' {publish_flag}"
             print(f"\nExecuting: {cmd}")
