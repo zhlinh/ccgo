@@ -16,6 +16,42 @@ from typing import Optional, Dict, Any
 class OhpmPublisher:
     """Handle publishing artifacts to OHPM registries."""
 
+    @staticmethod
+    def convert_ssh_to_https(url: str) -> str:
+        """
+        Convert SSH git URL to HTTPS format.
+
+        OHPM requires repository URLs to start with https|http|ftp|rtsp|mms.
+
+        Args:
+            url: Git URL (SSH or HTTPS format)
+
+        Returns:
+            HTTPS format URL
+        """
+        import re
+
+        if not url:
+            return url
+
+        # Already HTTPS/HTTP format
+        if url.startswith(('https://', 'http://', 'ftp://', 'rtsp://', 'mms://')):
+            # Remove .git suffix if present for cleaner URL
+            if url.endswith('.git'):
+                return url[:-4]
+            return url
+
+        # Convert SSH format: git@github.com:user/repo.git -> https://github.com/user/repo
+        ssh_pattern = r'^git@([^:]+):(.+?)(?:\.git)?$'
+        match = re.match(ssh_pattern, url)
+        if match:
+            host = match.group(1)
+            path = match.group(2)
+            return f"https://{host}/{path}"
+
+        # Return original if no conversion needed
+        return url
+
     def __init__(self, config: 'OhpmConfig', project_dir: str, verbose: bool = False):
         """
         Initialize OHPM publisher.
@@ -32,16 +68,72 @@ class OhpmPublisher:
         # Determine OHOS directory
         self.ohos_dir = os.path.join(project_dir, "ohos")
 
+    def _copy_project_files_to_sdk(self, sdk_dir: str) -> None:
+        """
+        Copy LICENSE and README.md from project root to SDK directory if not present.
+
+        OHPM requires these files to be in the HAR package.
+        Note: Symlinks don't work because hvigor preserves them in the archive,
+        but OHPM cannot handle symlinks. Must use actual file copies.
+
+        Args:
+            sdk_dir: Path to the SDK directory (ohos/main_ohos_sdk)
+        """
+        # Files to copy from project root
+        # OHPM requires: LICENSE, README.md, CHANGELOG.md
+        files_to_copy = [
+            ('LICENSE', ['LICENSE', 'LICENSE.txt', 'LICENSE.md']),
+            ('README.md', ['README.md', 'readme.md', 'README.MD', 'Readme.md']),
+            ('CHANGELOG.md', ['CHANGELOG.md', 'changelog.md', 'CHANGELOG.MD', 'Changelog.md', 'HISTORY.md', 'CHANGES.md']),
+        ]
+
+        for target_name, source_names in files_to_copy:
+            target_path = os.path.join(sdk_dir, target_name)
+
+            # Remove existing symlink if present (from previous attempts)
+            if os.path.islink(target_path):
+                os.unlink(target_path)
+
+            # Skip if already exists as regular file in SDK directory
+            if os.path.exists(target_path):
+                if self.verbose:
+                    print(f"  {target_name} already exists in SDK directory")
+                continue
+
+            # Try to find source file in project root
+            source_found = False
+            for source_name in source_names:
+                source_path = os.path.join(self.project_dir, source_name)
+                if os.path.exists(source_path):
+                    try:
+                        shutil.copy2(source_path, target_path)
+                        if self.verbose:
+                            print(f"  Copied {source_name} to SDK directory as {target_name}")
+                        source_found = True
+                        break
+                    except Exception as e:
+                        print(f"Warning: Failed to copy {source_name}: {e}")
+
+            if not source_found and self.verbose:
+                print(f"  Warning: {target_name} not found in project root")
+
     def prepare_package_files(self) -> bool:
         """
         Prepare oh-package.json5 file for publishing.
+
+        Also copies LICENSE and README.md from project root if not present in SDK directory.
 
         Returns:
             True if preparation successful
         """
         try:
+            sdk_dir = os.path.join(self.ohos_dir, "main_ohos_sdk")
+
+            # Copy LICENSE and README.md from project root if not present
+            self._copy_project_files_to_sdk(sdk_dir)
+
             # Generate oh-package.json5 if needed
-            oh_package_path = os.path.join(self.ohos_dir, "main_ohos_sdk", "oh-package.json5")
+            oh_package_path = os.path.join(sdk_dir, "oh-package.json5")
             oh_package_backup = None
 
             # Check if oh-package.json5 exists
@@ -63,10 +155,11 @@ class OhpmPublisher:
                         content = f.read()
 
                     # Update version (simple regex replacement)
+                    # Support both JSON5 (unquoted keys) and JSON (quoted keys)
                     import re
                     content = re.sub(
-                        r'"version"\s*:\s*"[^"]*"',
-                        f'"version": "{self.config.version}"',
+                        r'(")?version(")?(\s*:\s*)"[^"]*"',
+                        rf'\g<1>version\g<2>\g<3>"{self.config.version}"',
                         content
                     )
 
@@ -74,10 +167,57 @@ class OhpmPublisher:
                     if self.config.organization:
                         full_name = f"@{self.config.organization}/{self.config.package_name}"
                         content = re.sub(
-                            r'"name"\s*:\s*"[^"]*"',
-                            f'"name": "{full_name}"',
+                            r'(")?name(")?(\s*:\s*)"[^"]*"',
+                            rf'\g<1>name\g<2>\g<3>"{full_name}"',
                             content
                         )
+
+                    # Update description if configured (OHPM requires 6-512 characters)
+                    if self.config.description:
+                        content = re.sub(
+                            r'(")?description(")?(\s*:\s*)"[^"]*"',
+                            rf'\g<1>description\g<2>\g<3>"{self.config.description}"',
+                            content
+                        )
+
+                    # Update repository URL to HTTPS format (OHPM requires https|http|ftp|rtsp|mms)
+                    # Find and convert any SSH URLs to HTTPS format
+                    def replace_repo_url(match):
+                        prefix = match.group(1) or ''
+                        suffix = match.group(2) or ''
+                        separator = match.group(3)
+                        url = match.group(4)
+                        https_url = self.convert_ssh_to_https(url)
+                        return f'{prefix}repository{suffix}{separator}"{https_url}"'
+
+                    content = re.sub(
+                        r'(")?repository(")?(\s*:\s*)"([^"]*)"',
+                        replace_repo_url,
+                        content
+                    )
+
+                    # Update dependencies if configured
+                    if self.config.dependencies:
+                        deps_dict = {}
+                        for dep in self.config.dependencies:
+                            if dep.name and dep.version and not dep.dev:
+                                deps_dict[dep.name] = dep.version
+
+                        if deps_dict:
+                            # Build dependencies JSON string
+                            deps_json = json.dumps(deps_dict, indent=4, ensure_ascii=False)
+                            # Indent for JSON5 format
+                            deps_json_indented = deps_json.replace('\n', '\n  ')
+
+                            # Replace dependencies field
+                            content = re.sub(
+                                r'(")?dependencies(")?(\s*:\s*)\{[^}]*\}',
+                                rf'\g<1>dependencies\g<2>\g<3>{deps_json_indented}',
+                                content
+                            )
+
+                            if self.verbose:
+                                print(f"  Updated dependencies: {list(deps_dict.keys())}")
 
                     # Write updated content
                     with open(oh_package_path, 'w') as f:
@@ -228,6 +368,15 @@ class OhpmPublisher:
         target_har = self.copy_to_bin(har_file)
         if not target_har:
             return False
+
+        # Check if local-only mode (no actual publishing)
+        if self.config.is_local_only():
+            print("\n[Local Mode] HAR file built successfully (skipping publish)")
+            print(f"✓ HAR file available at: {target_har}")
+            print(f"  Package: {self.config.package_name}")
+            print(f"  Version: {self.config.version}")
+            print("\nTo test locally, copy the HAR file to your project's libs directory.")
+            return True
 
         # Set up authentication if needed
         print("\n[Step 3/3] Publishing HAR to OHPM...")

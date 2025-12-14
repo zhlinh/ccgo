@@ -252,23 +252,19 @@ class OhpmConfig:
         """Get command line arguments for ohpm publish command."""
         args = []
 
-        # Add registry if not official
-        if self.registry_type != 'official':
-            args.extend(['--registry', self.get_registry_url()])
-
-        # Add access level
-        if self.access:
-            args.extend(['--access', self.access])
+        # Add registry if not official (ohpm uses --publish_registry)
+        if self.registry_type == 'private' and self.registry_url:
+            args.extend(['--publish_registry', self.get_registry_url()])
 
         # Add tag
         if self.tag and self.tag != 'latest':
             args.extend(['--tag', self.tag])
 
-        # Add dry-run if enabled
-        if self.dry_run:
-            args.append('--dry-run')
-
         return args
+
+    def is_local_only(self) -> bool:
+        """Check if this is local-only mode (no actual publishing)."""
+        return self.registry_type == 'local'
 
     def setup_ohpm_auth(self) -> bool:
         """
@@ -344,6 +340,8 @@ class OhpmConfig:
 
         if self.registry_type == 'official':
             lines.append(f"  Registry: Official OHPM Registry")
+        elif self.registry_type == 'local':
+            lines.append(f"  Mode: Local build only (no publish)")
         else:
             lines.append(f"  Registry URL: {self.get_registry_url()}")
 

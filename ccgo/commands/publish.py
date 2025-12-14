@@ -44,7 +44,10 @@ class Publish(CliCommand):
             ccgo publish android --maven central    # Publish to Maven Central
             ccgo publish android --maven custom     # Publish to custom Maven repository
             ccgo publish android --skip-build       # Skip AAR build, use existing AAR
-            ccgo publish ohos                       # Publish to OHPM repository
+            ccgo publish ohos                       # Publish to OHPM (prompts for target)
+            ccgo publish ohos --ohpm local          # Publish to local OHPM registry
+            ccgo publish ohos --ohpm official       # Publish to official OHPM registry
+            ccgo publish ohos --ohpm private --ohpm-url URL  # Publish to private registry
             ccgo publish kmp                        # Publish KMP library
             ccgo publish conan                      # Publish to Conan local cache
             ccgo publish conan --remote myremote    # Upload to remote Conan repository
@@ -120,6 +123,20 @@ class Publish(CliCommand):
             type=str,
             default=None,
             help="Override Maven artifact ID (used with 'android' and 'kmp' targets, defaults to project name)",
+        )
+        # Arguments for OHOS/OHPM publishing
+        parser.add_argument(
+            "--ohpm",
+            type=str,
+            choices=["local", "official", "private"],
+            default=None,
+            help="OHPM registry target: local, official, or private (used with 'ohos' target)",
+        )
+        parser.add_argument(
+            "--ohpm-url",
+            type=str,
+            default=None,
+            help="Custom OHPM registry URL (used with 'ohos --ohpm private')",
         )
         # Arguments for Conan publishing
         parser.add_argument(
@@ -260,62 +277,8 @@ class Publish(CliCommand):
                 sys.exit(result.returncode)
             print("\nPublish completed successfully!")
         elif args.target == "ohos":
-            # OHOS: build HAR and publish to OHPM
-            # Step 1: Build HAR file
-            print("\n[Step 1/3] Building HAR file...")
-            # Change to ohos directory to run hvigorw
-            ohos_dir = os.path.join(os.getcwd(), "ohos")
-            if not os.path.isdir(ohos_dir):
-                print(f"\nError: ohos directory not found at {ohos_dir}")
-                print("Please run this command from the project root directory")
-                sys.exit(1)
-
-            build_cmd = f"cd '{ohos_dir}' && hvigorw assembleHar --mode module -p product=default --no-daemon --no-parallel --info"
-            err_code, err_msg = exec_command(build_cmd)
-            if err_code != 0:
-                print("\nBuild HAR failed with error:")
-                print(err_msg)
-                sys.exit(err_code)
-
-            # Step 2: Copy HAR file to bin directory
-            print("\n[Step 2/3] Copying HAR file to bin directory...")
-            import glob
-            import shutil
-
-            # Find the HAR file in ohos build output
-            har_search_path = os.path.join(
-                ohos_dir, "main_ohos_sdk", "build", "default", "outputs", "default"
-            )
-            if not os.path.exists(har_search_path):
-                print(f"\nError: HAR output directory not found: {har_search_path}")
-                sys.exit(1)
-
-            har_files_in_build = glob.glob(os.path.join(har_search_path, "*.har"))
-            if not har_files_in_build:
-                print(f"\nError: No HAR file found in {har_search_path}")
-                sys.exit(1)
-
-            # Create bin directory if not exists
-            bin_dir = "bin"
-            os.makedirs(bin_dir, exist_ok=True)
-
-            # Copy HAR file to bin directory
-            source_har = har_files_in_build[0]
-            target_har = os.path.join(bin_dir, os.path.basename(source_har))
-            shutil.copy2(source_har, target_har)
-            print(f"Copied HAR file to {target_har}")
-
-            # Step 3: Publish HAR file to OHPM
-            print("\n[Step 3/3] Publishing HAR to OHPM...")
-            print(f"Publishing {target_har}...")
-            publish_cmd = f'ohpm publish "{target_har}"'
-            err_code, err_msg = exec_command(publish_cmd)
-            if err_code != 0:
-                print("\nPublish to OHPM failed with error:")
-                print(err_msg)
-                sys.exit(err_code)
-
-            print("\nSuccessfully published to OHPM!")
+            # OHOS: build HAR and publish to OHPM using OhpmPublisher
+            self.publish_ohos(context, args)
         elif args.target == "kmp":
             # KMP: publish to Maven repository (local or remote)
             # Get current working directory (project directory)
@@ -693,6 +656,133 @@ class Publish(CliCommand):
             pass  # Ignore errors in URL extraction
 
         print()
+
+    def publish_ohos(self, context: CliContext, args: CliNameSpace):
+        """Publish to OHPM (OpenHarmony Package Manager)"""
+        print("\n=== Publishing to OHPM ===")
+
+        # Get current working directory (project directory)
+        try:
+            project_dir = os.getcwd()
+        except (OSError, FileNotFoundError) as e:
+            project_dir = os.environ.get('PWD')
+            if not project_dir or not os.path.exists(project_dir):
+                print(f"ERROR: Current working directory no longer exists: {e}")
+                print("Please navigate to your project directory and try again.")
+                sys.exit(1)
+            try:
+                os.chdir(project_dir)
+            except (OSError, FileNotFoundError):
+                print(f"ERROR: Cannot access project directory: {project_dir}")
+                sys.exit(1)
+
+        # Find CCGO.toml configuration
+        config_path = None
+        project_subdir = project_dir
+        for subdir in os.listdir(project_dir):
+            subdir_path = os.path.join(project_dir, subdir)
+            if not os.path.isdir(subdir_path):
+                continue
+            potential_config = os.path.join(subdir_path, "CCGO.toml")
+            if os.path.isfile(potential_config):
+                config_path = potential_config
+                project_subdir = subdir_path
+                break
+
+        if not config_path:
+            if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
+                config_path = os.path.join(project_dir, "CCGO.toml")
+                project_subdir = project_dir
+            else:
+                print("ERROR: CCGO.toml not found in project directory")
+                sys.exit(1)
+
+        # Load CCGO.toml configuration
+        print(f"Loading configuration from: {config_path}")
+        try:
+            try:
+                import tomllib
+            except ImportError:
+                try:
+                    import tomli as tomllib
+                except ImportError:
+                    print("ERROR: tomllib not available. Please install tomli for Python < 3.11")
+                    print("Run: pip install tomli")
+                    sys.exit(1)
+
+            with open(config_path, 'rb') as f:
+                toml_config = tomllib.load(f)
+        except Exception as e:
+            print(f"ERROR: Failed to load CCGO.toml: {e}")
+            sys.exit(1)
+
+        # Import OHPM publishing utilities
+        try:
+            from ccgo.utils.ohpm.config import OhpmConfig
+            from ccgo.utils.ohpm.publisher import OhpmPublisher
+        except ImportError:
+            from utils.ohpm.config import OhpmConfig
+            from utils.ohpm.publisher import OhpmPublisher
+
+        # Determine OHPM registry target
+        if args.ohpm:
+            # Use command line argument
+            ohpm_target = args.ohpm
+        else:
+            # Ask user which registry to publish to
+            print("\nOHPM Publish Options:")
+            print("  1 - Publish to Local Registry (for testing)")
+            print("  2 - Publish to Official OHPM Registry (ohpm.openharmony.cn)")
+            print("  3 - Publish to Private Registry (requires URL)")
+            choice = input("Select option (1, 2, or 3): ").strip()
+
+            if choice == "1":
+                ohpm_target = "local"
+            elif choice == "2":
+                ohpm_target = "official"
+            elif choice == "3":
+                ohpm_target = "private"
+            else:
+                print("Invalid option. Please select 1, 2, or 3.")
+                sys.exit(1)
+
+        # Create configuration
+        config = OhpmConfig(toml_config)
+
+        # Override registry type from command line
+        config.registry_type = ohpm_target
+
+        # Override registry URL for private registry
+        if ohpm_target == "private" and args.ohpm_url:
+            config.registry_url = args.ohpm_url
+
+        # Validate configuration
+        is_valid, error_msg = config.validate()
+        if not is_valid:
+            print(f"ERROR: Invalid configuration: {error_msg}")
+            sys.exit(1)
+
+        # Print configuration summary
+        print("\nConfiguration:")
+        print(config.get_config_summary())
+        print()
+
+        # Create publisher and publish
+        publisher = OhpmPublisher(config, project_subdir, verbose=True)
+
+        try:
+            success = publisher.publish()
+            if success:
+                print("\n" + "=" * 60)
+                print("OHPM publishing completed successfully!")
+                print("=" * 60)
+            else:
+                print("\n" + "=" * 60)
+                print("OHPM publishing failed")
+                print("=" * 60)
+                sys.exit(1)
+        finally:
+            publisher.restore_package_files()
 
     def publish_apple(self, context: CliContext, args: CliNameSpace):
         """Publish to Apple platforms (CocoaPods and/or SPM)"""
