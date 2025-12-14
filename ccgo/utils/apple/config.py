@@ -203,10 +203,21 @@ class ApplePublishConfig:
         }
         cmake_platform = cmake_platform_map.get(platform_lower, platform.capitalize())
 
-        # Check various possible locations
+        # Check various possible locations - all platforms now use same structure
         possible_paths = [
-            # cmake_build directory (primary build output)
+            # cmake_build directory - new unified structure: {static|shared}/out/
+            self.project_dir / 'cmake_build' / cmake_platform / 'static' / 'out' / f'{self.pod_name}.xcframework',
+            self.project_dir / 'cmake_build' / cmake_platform / 'static' / 'out' / f'{self.pod_name}.framework',
+            # cmake_build directory - legacy out/static/ structure (for backward compatibility)
+            self.project_dir / 'cmake_build' / cmake_platform / 'out' / 'static' / f'{self.pod_name}.xcframework',
+            self.project_dir / 'cmake_build' / cmake_platform / 'out' / 'static' / f'{self.pod_name}.framework',
+            self.project_dir / 'cmake_build' / cmake_platform / 'out' / f'{self.pod_name}.xcframework',
+            self.project_dir / 'cmake_build' / cmake_platform / 'out' / f'{self.pod_name}.framework',
+            # Legacy Darwin.out structure (for backward compatibility)
+            self.project_dir / 'cmake_build' / cmake_platform / 'Darwin.out' / 'static' / f'{self.pod_name}.xcframework',
+            self.project_dir / 'cmake_build' / cmake_platform / 'Darwin.out' / 'static' / f'{self.pod_name}.framework',
             self.project_dir / 'cmake_build' / cmake_platform / 'Darwin.out' / f'{self.pod_name}.xcframework',
+            self.project_dir / 'cmake_build' / cmake_platform / 'Darwin.out' / f'{self.pod_name}.framework',
             # target directory (CI build output) - debug
             self.project_dir / 'target' / 'debug' / platform_lower / f'{self.pod_name}.xcframework',
             # target directory (CI build output) - release

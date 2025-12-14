@@ -38,8 +38,8 @@ Usage:
     mode: 1 (build), 2 (generate CodeLite project), 3 (exit)
 
 Output:
-    - Static library: cmake_build/Linux/Linux.out/{project}.dir/{project}.a
-    - Headers: cmake_build/Linux/Linux.out/{project}.dir/include/
+    - Static library: cmake_build/Linux/out/{project}.dir/{project}.a
+    - Headers: cmake_build/Linux/out/{project}.dir/include/
 """
 
 import os
@@ -70,7 +70,7 @@ def get_build_out_path(link_type):
 
 def get_install_path(link_type):
     """Get install path for specified link type."""
-    return f"{BUILD_OUT_PATH_BASE}/{link_type}/Linux.out"
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}/out"
 
 
 # CMake build command for Linux Release configuration
@@ -120,41 +120,18 @@ def _build_linux_single(target_option, single_link_type, jobs):
         print("ERROR: Native build failed. Stopping immediately.")
         sys.exit(1)  # Exit immediately on build failure
 
-    # Dynamically find the actual install directory (could be Darwin.out, Linux.out, etc.)
-    # This is needed because CMAKE_SYSTEM_NAME varies by host OS
-    actual_install_path = None
-    for out_dir in glob.glob(build_out_path + "/*.out"):
-        if single_link_type == 'static':
-            # Check for static library in static/ subdirectory (new CMake output location)
-            # or root directory (fallback)
-            if glob.glob(out_dir + "/static/*.a") or glob.glob(out_dir + "/*.a"):
-                actual_install_path = out_dir
-                print(f"Found install directory: {actual_install_path}")
-                break
-        else:  # shared
-            if glob.glob(out_dir + "/shared/*.so") or glob.glob(out_dir + "/*.so"):
-                actual_install_path = out_dir
-                print(f"Found install directory: {actual_install_path}")
-                break
-
-    if not actual_install_path:
-        # Fallback to default install_path
-        actual_install_path = install_path
-        print(f"Warning: No library files found, using default: {actual_install_path}")
-
+    # With unified structure, libraries are installed directly to out/ directory
+    # cmake_build/Linux/{static|shared}/out/
     if single_link_type == 'static':
-        # Merge static libs - check static/ subdirectory first (new CMake output location)
-        libtool_src_libs = glob.glob(actual_install_path + "/static/*.a")
-        if not libtool_src_libs:
-            # Fallback to root directory
-            libtool_src_libs = glob.glob(actual_install_path + "/*.a")
+        # Merge static libs - directly in out/ directory
+        libtool_src_libs = glob.glob(install_path + "/*.a")
 
-        libtool_dst_lib = actual_install_path + f"/{PROJECT_NAME_LOWER}.a"
+        libtool_dst_lib = install_path + f"/{PROJECT_NAME_LOWER}.a"
         if not libtool_libs(libtool_src_libs, libtool_dst_lib):
             print("ERROR: Failed to merge static libraries. Stopping immediately.")
             sys.exit(1)  # Exit immediately on merge failure
 
-        dst_framework_path = actual_install_path + f"/{PROJECT_NAME_LOWER}.dir"
+        dst_framework_path = install_path + f"/{PROJECT_NAME_LOWER}.dir"
         make_static_framework(
             libtool_dst_lib, dst_framework_path, LINUX_BUILD_COPY_HEADER_FILES, "./"
         )
@@ -169,10 +146,8 @@ def _build_linux_single(target_option, single_link_type, jobs):
         print("==================Output========================")
         print(dst_framework_path)
     else:  # shared
-        # Check for shared library
-        shared_lib_path = os.path.join(actual_install_path, "shared", f"lib{PROJECT_NAME_LOWER}.so")
-        if not os.path.exists(shared_lib_path):
-            shared_lib_path = os.path.join(actual_install_path, f"lib{PROJECT_NAME_LOWER}.so")
+        # Check for shared library - directly in out/ directory
+        shared_lib_path = os.path.join(install_path, f"lib{PROJECT_NAME_LOWER}.so")
 
         if os.path.exists(shared_lib_path):
             print("\n==================Verifying Built Shared Library========================")
@@ -205,9 +180,9 @@ def build_linux(target_option="", link_type='both', jobs=None):
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Static library: Linux.out/{project}.dir/{project}.a
-        - Shared library: Linux.out/{project}.dir/{project}.so
-        - Headers: Linux.out/{project}.dir/include/
+        - Static library: out/{project}.dir/{project}.a
+        - Shared library: out/{project}.dir/{project}.so
+        - Headers: out/{project}.dir/include/
 
     Note:
         The .a file is an archive containing merged static libraries.

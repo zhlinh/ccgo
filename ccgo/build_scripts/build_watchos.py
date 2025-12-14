@@ -38,8 +38,8 @@ Usage:
     mode: 1 (build XCFramework), 2 (generate Xcode project), 3 (exit)
 
 Output:
-    - XCFramework: cmake_build/watchOS/Darwin.out/{project}.xcframework
-    - Frameworks: cmake_build/watchOS/Darwin.out/os|simulator/{project}.framework
+    - XCFramework: cmake_build/watchOS/out/static/{project}.xcframework
+    - Frameworks: cmake_build/watchOS/out/static/os|simulator/{project}.framework
 """
 
 import glob
@@ -60,31 +60,45 @@ SCRIPT_PATH = os.getcwd()
 # PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
 PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
-# Build output paths
-BUILD_OUT_PATH = "cmake_build/watchOS"
-# Darwin(Linux,Windows).out = ${CMAKE_SYSTEM_NAME}.out
-INSTALL_PATH = BUILD_OUT_PATH + "/Darwin.out"
+# Build output paths - unified structure: cmake_build/watchOS/{static|shared}/out/
+BUILD_OUT_PATH_BASE = "cmake_build/watchOS"
+
+
+def get_build_out_path(link_type):
+    """Get build output path for specified link type."""
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}"
+
+
+def get_install_path(link_type):
+    """Get install path for specified link type."""
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}/out"
+
+
+# Legacy paths for backward compatibility (used by some functions that don't distinguish link types)
+BUILD_OUT_PATH = BUILD_OUT_PATH_BASE + "/static"
+INSTALL_PATH = BUILD_OUT_PATH + "/out"
 
 # CMake build command for watchOS Simulator (x86_64 for Intel Macs, arm64 for M1+ simulators)
 # Targets watchOS 3.0+, disables ARC and Bitcode, enables symbol visibility
 # Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option, jobs
-WATCHOS_BUILD_SIMULATOR_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_WATCHOS -DIOS_ARCH="x86_64;arm64" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j%d && make install'
+# Note: Uses ../../.. because build directory is cmake_build/watchOS/{link_type}/
+WATCHOS_BUILD_SIMULATOR_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_WATCHOS -DIOS_ARCH="x86_64;arm64" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j%d && make install'
 
 # CMake build command for watchOS physical devices (armv7k for Series 3 and earlier, arm64_32 for Series 4+)
 # arm64_32 is a special 32-bit ABI running on 64-bit ARM processors for better memory efficiency
 # Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option, jobs
-WATCHOS_BUILD_OS_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j%d && make install'
+WATCHOS_BUILD_OS_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s && make -j%d && make install'
 
 # CMake build commands for shared library (dylib) - used for dynamic frameworks
 # Simulator shared library build command
-WATCHOS_BUILD_SIMULATOR_SHARED_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_WATCHOS -DIOS_ARCH="x86_64;arm64" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 -DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON %s && make -j%d && make install'
+WATCHOS_BUILD_SIMULATOR_SHARED_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=SIMULATOR_WATCHOS -DIOS_ARCH="x86_64;arm64" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 -DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON %s && make -j%d && make install'
 
 # Device shared library build command
-WATCHOS_BUILD_OS_SHARED_CMD = 'cmake ../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 -DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON %s && make -j%d && make install'
+WATCHOS_BUILD_OS_SHARED_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 -DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON %s && make -j%d && make install'
 
 # Xcode project generation command (for development/debugging)
 # Parameters: ccgo_cmake_dir, ccgo_cmake_dir, target_option
-GEN_WATCHOS_OS_PROJ = 'cmake ../.. -G Xcode -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s'
+GEN_WATCHOS_OS_PROJ = 'cmake ../../.. -G Xcode -DCMAKE_TOOLCHAIN_FILE="%s/watchos.toolchain.cmake" -DCCGO_CMAKE_DIR="%s" -DIOS_PLATFORM=WATCHOS -DIOS_ARCH="armv7k;arm64_32" -DIOS_DEPLOYMENT_TARGET=3.0 -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DENABLE_VISIBILITY=1 %s'
 
 # All supported watchOS architectures for third-party library integration
 THIRD_PARTY_ARCHS = ["x86_64", "arm64", "armv7k", "arm64_32"]
@@ -114,9 +128,9 @@ def build_watchos(target_option="",  link_type='both', jobs=None):
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Device framework: cmake_build/watchOS/Darwin.out/os/{project}.framework
-        - Simulator framework: cmake_build/watchOS/Darwin.out/simulator/{project}.framework
-        - XCFramework: cmake_build/watchOS/Darwin.out/{project}.xcframework
+        - Device framework: cmake_build/watchOS/out/static/os/{project}.framework
+        - Simulator framework: cmake_build/watchOS/out/static/simulator/{project}.framework
+        - XCFramework: cmake_build/watchOS/out/static/{project}.xcframework
 
     Note:
         The XCFramework is the recommended distribution format for watchOS libraries
@@ -196,7 +210,7 @@ def build_watchos(target_option="",  link_type='both', jobs=None):
     if not libtool_libs(glob.glob(INSTALL_PATH + "/*.a"), libtool_simulator_dst_lib):
         return False
 
-    # os
+    # os - output directly to INSTALL_PATH (which is already cmake_build/watchOS/static/out/)
     lipo_src_libs = []
     lipo_src_libs.append(libtool_os_dst_lib)
     os_lipo_dst_lib = INSTALL_PATH + f"/os/{PROJECT_NAME_LOWER}"
@@ -265,9 +279,9 @@ def build_watchos_shared(target_option="", jobs=None):
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Device framework: cmake_build/watchOS/Darwin.out/shared/os/{project}.framework
-        - Simulator framework: cmake_build/watchOS/Darwin.out/shared/simulator/{project}.framework
-        - XCFramework: cmake_build/watchOS/Darwin.out/shared/{project}.xcframework
+        - Device framework: cmake_build/watchOS/out/shared/os/{project}.framework
+        - Simulator framework: cmake_build/watchOS/out/shared/simulator/{project}.framework
+        - XCFramework: cmake_build/watchOS/out/shared/{project}.xcframework
     """
     if jobs is None or jobs <= 0:
         jobs = multiprocessing.cpu_count()
@@ -275,7 +289,9 @@ def build_watchos_shared(target_option="", jobs=None):
     before_time = time.time()
     print(f"==================build_watchos_shared (jobs: {jobs})========================")
 
-    shared_install_path = INSTALL_PATH + "/shared"
+    # Use shared-specific paths
+    shared_build_path = get_build_out_path("shared")
+    shared_install_path = get_install_path("shared")
 
     # Create shared install directories first
     os_shared_dir = os.path.join(shared_install_path, "os")
@@ -283,9 +299,9 @@ def build_watchos_shared(target_option="", jobs=None):
     os.makedirs(os_shared_dir, exist_ok=True)
     os.makedirs(simulator_shared_dir, exist_ok=True)
 
-    # Build device dylib - reuse BUILD_OUT_PATH like static build
-    clean(BUILD_OUT_PATH)
-    os.chdir(BUILD_OUT_PATH)
+    # Build device dylib
+    clean(shared_build_path)
+    os.chdir(shared_build_path)
 
     build_cmd = WATCHOS_BUILD_OS_SHARED_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option, jobs)
     ret = os.system(build_cmd)
@@ -294,8 +310,8 @@ def build_watchos_shared(target_option="", jobs=None):
         print("!!!!!!!!!!!build shared os fail!!!!!!!!!!!!!!!")
         return False
 
-    # Find and lipo merge device dylibs (CMake installs to shared/ subdirectory)
-    os_dylibs = glob.glob(INSTALL_PATH + f"/shared/*.dylib")
+    # Find and lipo merge device dylibs (CMake installs to out/ subdirectory)
+    os_dylibs = glob.glob(shared_install_path + f"/*.dylib")
     if not os_dylibs:
         print("ERROR: No device dylibs found")
         return False
@@ -314,8 +330,8 @@ def build_watchos_shared(target_option="", jobs=None):
     shutil.copy(os_lipo_dst, temp_os_dylib)
 
     # Build simulator dylib
-    clean(BUILD_OUT_PATH)
-    os.chdir(BUILD_OUT_PATH)
+    clean(shared_build_path)
+    os.chdir(shared_build_path)
 
     build_cmd = WATCHOS_BUILD_SIMULATOR_SHARED_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option, jobs)
     ret = os.system(build_cmd)
@@ -327,8 +343,8 @@ def build_watchos_shared(target_option="", jobs=None):
             os.remove(temp_os_dylib)
         return False
 
-    # Find and lipo merge simulator dylibs (CMake installs to shared/ subdirectory)
-    simulator_dylibs = glob.glob(INSTALL_PATH + f"/shared/*.dylib")
+    # Find and lipo merge simulator dylibs (CMake installs to out/ subdirectory)
+    simulator_dylibs = glob.glob(shared_install_path + f"/*.dylib")
     if not simulator_dylibs:
         print("ERROR: No simulator dylibs found")
         # Clean up temp file
@@ -434,7 +450,9 @@ def archive_watchos_project(link_type='both'):
     # Define paths - use target/debug or target/release based on build mode
     target_subdir = get_target_subdir()
     bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
-    watchos_install_path = os.path.join(SCRIPT_PATH, INSTALL_PATH)
+    # Static and shared have separate install paths
+    static_install_path = os.path.join(SCRIPT_PATH, get_install_path("static"))
+    shared_install_path = os.path.join(SCRIPT_PATH, get_install_path("shared"))
 
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
@@ -443,20 +461,20 @@ def archive_watchos_project(link_type='both'):
     frameworks = {}
     xcframework_name = f"{PROJECT_NAME_LOWER}.xcframework"
 
-    # Static XCFramework (from root install path)
-    static_xcframework_src = os.path.join(watchos_install_path, xcframework_name)
+    # Static XCFramework (from static install path)
+    static_xcframework_src = os.path.join(static_install_path, xcframework_name)
     if os.path.exists(static_xcframework_src) and link_type in ('static', 'both'):
         arc_path = get_unified_framework_path("static", xcframework_name, platform="watchos")
         frameworks[arc_path] = static_xcframework_src
 
-    # Dynamic XCFramework (from shared subdirectory)
-    shared_xcframework_src = os.path.join(watchos_install_path, "shared", xcframework_name)
+    # Dynamic XCFramework (from shared install path)
+    shared_xcframework_src = os.path.join(shared_install_path, xcframework_name)
     if os.path.exists(shared_xcframework_src) and link_type in ('shared', 'both'):
         arc_path = get_unified_framework_path("shared", xcframework_name, platform="watchos")
         frameworks[arc_path] = shared_xcframework_src
 
     if not frameworks:
-        print(f"WARNING: No XCFramework found at {watchos_install_path}")
+        print(f"WARNING: No XCFramework found at {static_install_path} or {shared_install_path}")
         return
 
     # Prepare include directories mapping
@@ -470,8 +488,8 @@ def archive_watchos_project(link_type='both'):
     symbols_static = {}
     symbols_shared = {}
 
-    # Static dSYM files (from root install path)
-    dsym_pattern = f"{watchos_install_path}/*.dSYM"
+    # Static dSYM files (from static install path)
+    dsym_pattern = f"{static_install_path}/*.dSYM"
     dsym_files = glob.glob(dsym_pattern)
     for dsym_file in dsym_files:
         dsym_name = os.path.basename(dsym_file)
@@ -479,8 +497,8 @@ def archive_watchos_project(link_type='both'):
             arc_path = get_unified_symbol_path("static", dsym_name, platform="watchos")
             symbols_static[arc_path] = dsym_file
 
-    # Shared dSYM files (from shared subdirectory)
-    shared_dsym_pattern = f"{watchos_install_path}/shared/*.dSYM"
+    # Shared dSYM files (from shared install path)
+    shared_dsym_pattern = f"{shared_install_path}/*.dSYM"
     shared_dsym_files = glob.glob(shared_dsym_pattern)
     for dsym_file in shared_dsym_files:
         dsym_name = os.path.basename(dsym_file)
@@ -665,7 +683,7 @@ def main(target_option="", link_type='both', jobs=None):
 
     # Temp storage for static XCFramework (to preserve it during shared build)
     temp_static_xcframework = None
-    static_xcframework_path = os.path.join(INSTALL_PATH, f"{PROJECT_NAME_LOWER}.xcframework")
+    static_xcframework_path = os.path.join(INSTALL_PATH, "static", f"{PROJECT_NAME_LOWER}.xcframework")
 
     # Build static XCFramework
     if link_type in ('static', 'both'):

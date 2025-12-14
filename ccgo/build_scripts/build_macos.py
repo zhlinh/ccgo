@@ -37,7 +37,7 @@ Usage:
     mode: 1 (build framework), 2 (generate Xcode project), 3 (exit)
 
 Output:
-    - Universal framework: cmake_build/macOS/Darwin.out/{project}.framework
+    - Universal framework: cmake_build/macOS/static/out/{project}.framework
     - Framework supports both Intel and Apple Silicon Macs
 """
 
@@ -60,27 +60,28 @@ SCRIPT_PATH = os.getcwd()
 # PROJECT_NAME and PROJECT_NAME_LOWER are imported from build_utils.py (reads from CCGO.toml)
 PROJECT_RELATIVE_PATH = PROJECT_NAME_LOWER
 
-# Build output paths - now separated by link type
-# Static: cmake_build/macOS/static/Darwin.out/
-# Shared: cmake_build/macOS/shared/Darwin.out/
+# Build output paths - unified structure: cmake_build/macOS/{static|shared}/out/
 BUILD_OUT_PATH_BASE = "cmake_build/macOS"
+
 
 def get_build_out_path(link_type):
     """Get build output path for specified link type."""
     return f"{BUILD_OUT_PATH_BASE}/{link_type}"
 
+
 def get_install_path(link_type):
     """Get install path for specified link type."""
-    return f"{BUILD_OUT_PATH_BASE}/{link_type}/Darwin.out"
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}/out"
+
 
 # Legacy paths for backward compatibility
 BUILD_OUT_PATH = BUILD_OUT_PATH_BASE + "/static"
-INSTALL_PATH = BUILD_OUT_PATH + "/Darwin.out"
+INSTALL_PATH = BUILD_OUT_PATH + "/out"
 
 # CMake build command for macOS (defaults to x86_64 if no arch specified)
 # Disables ARC and Bitcode for C/C++ native libraries
 # Parameters: ccgo_cmake_dir, target_option, jobs
-# Note: ../../.. because we're now in cmake_build/macOS/<link_type>/
+# Note: Uses ../../.. because build directory is cmake_build/macOS/{link_type}/
 MACOS_BUILD_OS_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s && make -j%d && make install'
 
 # CMake build command for Apple Silicon Macs (M1, M2, M3, etc.)
@@ -95,7 +96,7 @@ MACOS_BUILD_X86_CMD = 'cmake ../../.. -DCMAKE_BUILD_TYPE=Release -DENABLE_ARC=0 
 
 # Xcode project generation command
 # Targets macOS 10.9+ for broad compatibility, disables Bitcode
-# Note: Uses ../../.. because build directory is now cmake_build/macOS/{link_type}/
+# Note: Uses ../../.. because build directory is cmake_build/macOS/{link_type}/
 GEN_MACOS_PROJ = 'cmake ../../.. -G Xcode -DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.9 -DENABLE_BITCODE=0 -DCCGO_CMAKE_DIR="%s" %s'
 
 
@@ -141,11 +142,8 @@ def _build_macos_single(target_option, single_link_type, jobs):
     arm_lib_saved = None  # For static: merged .a, for shared: .dylib
 
     if single_link_type == 'static':
-        # Static libraries are now in static/ subdirectory
-        static_lib_path = install_path + "/static"
-        total_src_lib = glob.glob(static_lib_path + "/*.a")
-        # Also check root for backward compatibility
-        total_src_lib.extend(glob.glob(install_path + "/*.a"))
+        # Static libraries are directly in out/ directory
+        total_src_lib = glob.glob(install_path + "/*.a")
         rm_src_lib = []
         libtool_src_lib = [x for x in total_src_lib if x not in rm_src_lib]
         print(f"libtool src lib (ARM): {len(libtool_src_lib)}/{len(total_src_lib)}")
@@ -162,7 +160,8 @@ def _build_macos_single(target_option, single_link_type, jobs):
         print(f"Saved ARM merged library: {arm_lib_saved}")
     else:
         # For shared, save ARM dylib before clean (since clean will delete it)
-        arm_dylib_src = glob.glob(install_path + "/shared/*.dylib")
+        # Dylibs are directly in out/ directory
+        arm_dylib_src = glob.glob(install_path + "/*.dylib")
         if arm_dylib_src:
             # Save to a temporary location outside the build directory
             arm_lib_saved = os.path.join(SCRIPT_PATH, f"_temp_arm_{PROJECT_NAME_LOWER}.dylib")
@@ -184,10 +183,8 @@ def _build_macos_single(target_option, single_link_type, jobs):
         sys.exit(1)
 
     if single_link_type == 'static':
-        # Merge x86 libraries (check static/ subdirectory first, then root for backward compatibility)
-        static_lib_path = install_path + "/static"
-        x86_static_libs = glob.glob(static_lib_path + "/*.a")
-        x86_static_libs.extend(glob.glob(install_path + "/*.a"))
+        # Merge x86 libraries (directly in out/ directory)
+        x86_static_libs = glob.glob(install_path + "/*.a")
         libtool_x86_dst_lib = install_path + f"/{PROJECT_NAME_LOWER}_x86"
         if not libtool_libs(x86_static_libs, libtool_x86_dst_lib):
             print("ERROR: Failed to merge x86 libraries. Stopping immediately.")
@@ -235,8 +232,9 @@ def _build_macos_single(target_option, single_link_type, jobs):
         print("========================================================================")
     else:
         # For shared library, create universal dylib using lipo
-        x86_dylib_src = glob.glob(install_path + "/shared/*.dylib")
-        print(f"[DEBUG] x86 dylib search path: {install_path}/shared/*.dylib")
+        # Dylibs are directly in out/ directory
+        x86_dylib_src = glob.glob(install_path + "/*.dylib")
+        print(f"[DEBUG] x86 dylib search path: {install_path}/*.dylib")
         print(f"[DEBUG] x86 dylib found: {x86_dylib_src}")
         print(f"[DEBUG] arm_lib_saved: {arm_lib_saved}")
 
@@ -315,8 +313,8 @@ def build_macos(target_option="",  link_type='both', jobs=None):
        - Creates .framework bundle (for static)
 
     Build directories:
-    - Static: cmake_build/macOS/static/Darwin.out/
-    - Shared: cmake_build/macOS/shared/Darwin.out/
+    - Static: cmake_build/macOS/static/out/
+    - Shared: cmake_build/macOS/shared/out/
 
     Args:
         target_option: Additional CMake target options (default: '')
@@ -327,8 +325,8 @@ def build_macos(target_option="",  link_type='both', jobs=None):
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Static framework: cmake_build/macOS/static/Darwin.out/{project}.framework
-        - Shared library: cmake_build/macOS/shared/Darwin.out/lib{project}.dylib
+        - Static framework: cmake_build/macOS/static/out/{project}.framework
+        - Shared library: cmake_build/macOS/shared/out/lib{project}.dylib
     """
     # Determine number of parallel jobs
     if jobs is None or jobs <= 0:
@@ -380,8 +378,8 @@ def archive_macos_project(link_type='both'):
     distribution format for Apple platforms.
 
     Build directories used:
-    - Static: cmake_build/macOS/static/Darwin.out/
-    - Shared: cmake_build/macOS/shared/Darwin.out/
+    - Static: cmake_build/macOS/static/out/
+    - Shared: cmake_build/macOS/shared/out/
 
     Args:
         link_type: Library link type ('static', 'shared', or 'both', default: 'both')

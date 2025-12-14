@@ -124,13 +124,18 @@ class SPMPublisher:
         Generate Package.swift manifest file.
 
         Args:
-            output_path: Optional path to write Package.swift. Defaults to project directory.
+            output_path: Optional path to write Package.swift. Defaults to apple/ directory.
 
         Returns:
             Path to generated Package.swift file
         """
         if output_path is None:
-            output_path = self.config.project_dir / 'Package.swift'
+            # Default to apple/ directory if it exists, otherwise project root
+            apple_dir = self.config.project_dir / 'apple'
+            if apple_dir.exists():
+                output_path = apple_dir / 'Package.swift'
+            else:
+                output_path = self.config.project_dir / 'Package.swift'
 
         package_name = self.config.spm.package_name or self.config.pod_name
         library_name = self.config.spm.library_name or self.config.pod_name
@@ -180,7 +185,13 @@ class SPMPublisher:
         if self.config.spm.use_local_path or not self.config.spm.xcframework_url:
             # Local binary target
             if xcframework_path:
-                relative_path = xcframework_path.relative_to(self.config.project_dir)
+                # Calculate relative path from Package.swift location
+                package_dir = output_path.parent
+                try:
+                    relative_path = xcframework_path.relative_to(package_dir)
+                except ValueError:
+                    # xcframework is not under package_dir, use path relative to project root with ../
+                    relative_path = Path('..') / xcframework_path.relative_to(self.config.project_dir)
                 lines.extend([
                     "        .binaryTarget(",
                     f'            name: "{target_name}",',
@@ -291,11 +302,13 @@ class SPMPublisher:
             return False, "Package.swift not generated yet"
 
         try:
+            # Run from the directory containing Package.swift
+            package_dir = self.package_swift_path.parent
             result = subprocess.run(
                 ['swift', 'package', 'describe'],
                 capture_output=True,
                 text=True,
-                cwd=self.config.project_dir
+                cwd=package_dir
             )
             if result.returncode == 0:
                 return True, result.stdout

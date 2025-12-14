@@ -27,6 +27,10 @@ x86, x86_64) and handles:
 - Third-party library integration
 - Output organization (symbol/release libs)
 
+Build Output Structure (unified with other platforms):
+    cmake_build/Android/{static|shared}/{arch}/out/
+    Example: cmake_build/Android/shared/arm64-v8a/out/libproject.so
+
 Requirements:
 - Android NDK r25c or later (set in NDK_ROOT environment variable)
 - CMake 3.10 or later
@@ -258,9 +262,10 @@ def build_android(incremental, arch, target_option, link_type='both', jobs=None)
         os.mkdir(lib_path)
 
         # Copy built libraries from cmake output directory
-        # Static: cmake_build/Android/static/{arch}/*.a
-        # Shared: cmake_build/Android/shared/{arch}/*.so
-        cmake_output_dir = f"{ANDROID_LIBS_INSTALL_PATH}{current_link_type}/{arch}/"
+        # Unified structure: cmake_build/Android/{static|shared}/{arch}/out/
+        # Static: cmake_build/Android/static/{arch}/out/*.a
+        # Shared: cmake_build/Android/shared/{arch}/out/*.so
+        cmake_output_dir = f"{ANDROID_LIBS_INSTALL_PATH}{current_link_type}/{arch}/out/"
         file_extension = "*.a" if current_link_type == 'static' else "*.so"
 
         # For static libraries, check if symbol version differs from release version

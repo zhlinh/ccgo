@@ -38,9 +38,9 @@ Usage:
     mode: 1 (build Release), 2 (generate VS project), 3 (build Debug), 4 (exit)
 
 Output:
-    - Static library: cmake_build/Windows/Windows.out/{project}.dir/x64/{project}.lib
-    - Debug symbols: cmake_build/Windows/Windows.out/{project}.dir/x64/{project}.pdb.zip
-    - Headers: cmake_build/Windows/Windows.out/{project}.dir/x64/include/
+    - Static library: cmake_build/Windows/out/{project}.dir/x64/{project}.lib
+    - Debug symbols: cmake_build/Windows/out/{project}.dir/x64/{project}.pdb.zip
+    - Headers: cmake_build/Windows/out/{project}.dir/x64/include/
 """
 
 import os
@@ -81,7 +81,7 @@ def get_build_out_path(link_type, toolchain="msvc"):
 
 def get_install_path(link_type, toolchain="msvc"):
     """Get install path for specified link type and toolchain."""
-    return f"{BUILD_OUT_PATH_BASE}/{link_type}/{toolchain}/Windows.out/"
+    return f"{BUILD_OUT_PATH_BASE}/{link_type}/{toolchain}/out/"
 
 
 # Visual Studio 2019 build configuration
@@ -352,9 +352,9 @@ def build_windows(incremental, config="Release", link_type='both', use_mingw=Fal
         bool: True if build succeeded, False otherwise
 
     Output:
-        - Static library: Windows.out/{project}.dir/x64/{project}.lib
-        - Debug symbols: Windows.out/{project}.dir/x64/{project}.pdb.zip
-        - Headers: Windows.out/{project}.dir/x64/include/
+        - Static library: out/{project}.dir/x64/{project}.lib
+        - Debug symbols: out/{project}.dir/x64/{project}.pdb.zip
+        - Headers: out/{project}.dir/x64/include/
 
     Note:
         PDB files are essential for debugging crashes in production.

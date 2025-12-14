@@ -48,7 +48,8 @@ class Publish(CliCommand):
             ccgo publish kmp                        # Publish KMP library
             ccgo publish conan                      # Publish to Conan local cache
             ccgo publish conan --remote myremote    # Upload to remote Conan repository
-            ccgo publish apple --cocoapods          # Publish to CocoaPods trunk
+            ccgo publish apple --cocoapods          # Generate podspec and xcframework.zip
+            ccgo publish apple --cocoapods --upload # Upload to GitHub releases and publish
             ccgo publish apple --cocoapods --repo private  # Publish to private spec repo
             ccgo publish apple --spm                # Generate Package.swift and git tag
             ccgo publish apple --all                # Publish to both CocoaPods and SPM
@@ -183,6 +184,18 @@ class Publish(CliCommand):
             action="store_true",
             default=False,
             help="Push git tag to remote for SPM (used with 'apple --spm')",
+        )
+        parser.add_argument(
+            "--upload",
+            action="store_true",
+            default=False,
+            help="Upload xcframework.zip to GitHub releases using gh CLI (used with 'apple --cocoapods')",
+        )
+        parser.add_argument(
+            "--upload-url",
+            type=str,
+            default=None,
+            help="Custom upload URL (S3, GCS, etc.) for xcframework.zip (used with 'apple --cocoapods')",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
@@ -808,23 +821,47 @@ class Publish(CliCommand):
                 sys.exit(1)
 
         success = True
+        publish_skipped = False  # Track if publishing was skipped (files generated but not published)
 
         # Publish to CocoaPods
         if publish_cocoapods and config.cocoapods.enabled:
             print("\n[CocoaPods] Starting publish process...")
             publisher = CocoaPodsPublisher(config)
 
-            # Validate prerequisites
+            # Create CocoaPods-compatible xcframework zip from SDK build output
+            # Do this first since users may want to generate files without publishing
+            print("[CocoaPods] Creating xcframework.zip from SDK build...")
+            cocoapods_zip = publisher.create_cocoapods_zip()
+            if cocoapods_zip:
+                print(f"[CocoaPods] Created: {cocoapods_zip}")
+
+                # Upload to GitHub releases if requested
+                if args.upload:
+                    print("\n[GitHub] Uploading to GitHub releases...")
+                    upload_ok, upload_msg = publisher.upload_to_github_release(cocoapods_zip)
+                    if upload_ok:
+                        print(f"[GitHub] {upload_msg}")
+                    else:
+                        print(f"[GitHub] Upload failed: {upload_msg}")
+                        print("[CocoaPods] Continuing without upload...")
+                else:
+                    print(f"[CocoaPods] Upload this file to GitHub releases before publishing to trunk")
+                    print(f"[CocoaPods] Or use --upload flag to auto-upload via gh CLI")
+            else:
+                print("[CocoaPods] Warning: Could not create xcframework.zip (SDK zip not found)")
+
+            # Generate podspec
+            print("[CocoaPods] Generating podspec...")
+            podspec_path = publisher.generate_podspec()
+            print(f"[CocoaPods] Generated: {podspec_path}")
+
+            # Validate prerequisites for publishing
             prereq_ok, prereq_msg = publisher.validate_prerequisites()
             if not prereq_ok:
-                print(f"ERROR: {prereq_msg}")
-                success = False
+                print(f"[CocoaPods] Warning: {prereq_msg}")
+                print("[CocoaPods] Podspec and xcframework.zip generated, but cannot publish to trunk")
+                publish_skipped = True  # Files generated but publishing skipped
             else:
-                # Generate podspec
-                print("[CocoaPods] Generating podspec...")
-                podspec_path = publisher.generate_podspec()
-                print(f"[CocoaPods] Generated: {podspec_path}")
-
                 # Lint podspec
                 print("[CocoaPods] Validating podspec...")
                 lint_ok, lint_msg = publisher.lint_podspec(allow_warnings=args.allow_warnings)
@@ -884,9 +921,14 @@ class Publish(CliCommand):
             print("[SPM] Skipped (disabled in configuration)")
 
         # Final status
-        if success:
+        if success and not publish_skipped:
             print("\n" + "=" * 60)
             print("Apple publishing completed successfully!")
+            print("=" * 60)
+        elif success and publish_skipped:
+            print("\n" + "=" * 60)
+            print("Files generated successfully, but publishing was skipped")
+            print("Please fix the warnings above and run again to publish")
             print("=" * 60)
         else:
             print("\n" + "=" * 60)

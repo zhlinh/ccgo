@@ -892,9 +892,9 @@ function(add_cc_library)
 
     if(COMM_ENABLE_INSTALL)
         install(TARGETS ${_NAME} EXPORT ${PROJECT_NAME}Targets
-            RUNTIME DESTINATION ${CMAKE_SYSTEM_NAME}.out
-            LIBRARY DESTINATION ${CMAKE_SYSTEM_NAME}.out
-            ARCHIVE DESTINATION ${CMAKE_SYSTEM_NAME}.out
+            RUNTIME DESTINATION out
+            LIBRARY DESTINATION out
+            ARCHIVE DESTINATION out
         )
     endif()
 

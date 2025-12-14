@@ -214,8 +214,10 @@ if(BENCHMARK_SUPPORT)
     add_subdirectory("benches" "${PROJECT_NAME}-benches")
 endif()
 
-# Output directory for final build artifacts (named after OS: Darwin.out, Linux.out, Windows.out)
-set(SELF_LIBS_OUT ${CMAKE_SYSTEM_NAME}.out)
+# Output directory for final build artifacts
+# Using unified 'out' directory instead of OS-specific names (Darwin.out, Linux.out, Windows.out)
+# This provides consistency across platforms and avoids confusion (e.g., Darwin for iOS/macOS/tvOS/watchOS)
+set(SELF_LIBS_OUT out)
 
 ## Build Mode 1: GoogleTest Executable
 # Creates a test executable when GOOGLETEST_SUPPORT is enabled
@@ -475,13 +477,14 @@ else()
             set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set output name and directory
+            # Unified structure: {static|shared}/{arch}/out/
             set_target_properties(${STATIC_TARGET} PROPERTIES
                 OUTPUT_NAME ${PROJECT_NAME}
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static/${ANDROID_ABI}
+                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static/${ANDROID_ABI}/${SELF_LIBS_OUT}
             )
 
             install(TARGETS ${STATIC_TARGET}
-                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static/${ANDROID_ABI})
+                    ARCHIVE DESTINATION static/${ANDROID_ABI}/${SELF_LIBS_OUT})
 
             message(STATUS "Building Android static library: lib${PROJECT_NAME}.a")
         endif()
@@ -516,13 +519,14 @@ else()
             set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set SO-NAME for proper runtime linking
+            # Unified structure: {static|shared}/{arch}/out/
             set_target_properties(${SHARED_TARGET} PROPERTIES
                 LINK_FLAGS "-Wl,-h,lib${PROJECT_NAME}.so"
-                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared/${ANDROID_ABI}
+                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared/${ANDROID_ABI}/${SELF_LIBS_OUT}
             )
 
             install(TARGETS ${SHARED_TARGET}
-                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared/${ANDROID_ABI})
+                    LIBRARY DESTINATION shared/${ANDROID_ABI}/${SELF_LIBS_OUT})
 
             message(STATUS "Building Android shared library: lib${PROJECT_NAME}.so")
         endif()
@@ -609,13 +613,14 @@ else()
             set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set output name and directory
+            # Unified structure: {static|shared}/{arch}/out/
             set_target_properties(${STATIC_TARGET} PROPERTIES
                 OUTPUT_NAME ${PROJECT_NAME}
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static/${OHOS_ARCH}
+                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static/${OHOS_ARCH}/${SELF_LIBS_OUT}
             )
 
             install(TARGETS ${STATIC_TARGET}
-                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static/${OHOS_ARCH})
+                    ARCHIVE DESTINATION static/${OHOS_ARCH}/${SELF_LIBS_OUT})
 
             message(STATUS "Building OHOS static library: lib${PROJECT_NAME}.a")
         endif()
@@ -650,13 +655,14 @@ else()
             set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set SO-NAME for proper runtime linking
+            # Unified structure: {static|shared}/{arch}/out/
             set_target_properties(${SHARED_TARGET} PROPERTIES
                 LINK_FLAGS "-Wl,-h,lib${PROJECT_NAME}.so"
-                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared/${OHOS_ARCH}
+                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared/${OHOS_ARCH}/${SELF_LIBS_OUT}
             )
 
             install(TARGETS ${SHARED_TARGET}
-                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared/${OHOS_ARCH})
+                    LIBRARY DESTINATION shared/${OHOS_ARCH}/${SELF_LIBS_OUT})
 
             message(STATUS "Building OHOS shared library: lib${PROJECT_NAME}.so")
         endif()
@@ -727,13 +733,13 @@ else()
             set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set output name and directory
+            # Note: Build runs in cmake_build/{Platform}/{static|shared}/, so no need to add /static suffix
             set_target_properties(${STATIC_TARGET} PROPERTIES
                 OUTPUT_NAME ${PROJECT_NAME}
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static
             )
 
             install(TARGETS ${STATIC_TARGET}
-                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static)
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT})
 
             if(IOS)
                 message(STATUS "Building iOS static library: lib${PROJECT_NAME}.a")
@@ -782,14 +788,14 @@ else()
             set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set install name for proper dylib loading
+            # Note: Build runs in cmake_build/{Platform}/{static|shared}/, so no need to add /shared suffix
             set_target_properties(${SHARED_TARGET} PROPERTIES
                 INSTALL_NAME_DIR "@rpath"
                 BUILD_WITH_INSTALL_RPATH TRUE
-                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
             )
 
             install(TARGETS ${SHARED_TARGET}
-                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared)
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT})
 
             if(IOS)
                 message(STATUS "Building iOS shared library: lib${PROJECT_NAME}.dylib")
@@ -863,13 +869,13 @@ else()
             set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set output name and directory
+            # Note: Build runs in cmake_build/{Platform}/{static|shared}/{toolchain}/, so no need to add /static suffix
             set_target_properties(${STATIC_TARGET} PROPERTIES
                 OUTPUT_NAME ${PROJECT_NAME}
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static
             )
 
             install(TARGETS ${STATIC_TARGET}
-                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static)
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT})
 
             message(STATUS "Building Windows static library: ${PROJECT_NAME}.lib")
         endif()
@@ -886,16 +892,11 @@ else()
             # Enable DLL export
             target_compile_definitions(${SHARED_TARGET} PRIVATE COMM_ENABLE_EXPORTS=1)
 
-            set_target_properties(${SHARED_TARGET} PROPERTIES
-                RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
-                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
-            )
-
+            # Note: Build runs in cmake_build/{Platform}/{static|shared}/{toolchain}/, so no need to add /shared suffix
             install(TARGETS ${SHARED_TARGET}
-                    RUNTIME DESTINATION ${SELF_LIBS_OUT}/shared
-                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared
-                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/shared)
+                    RUNTIME DESTINATION ${SELF_LIBS_OUT}
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT}
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT})
 
             message(STATUS "Building Windows shared library: ${PROJECT_NAME}.dll")
         endif()
@@ -941,13 +942,13 @@ else()
             set_property(TARGET ${STATIC_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set output name and directory
+            # Note: Build runs in cmake_build/{Platform}/{static|shared}/, so no need to add /static suffix
             set_target_properties(${STATIC_TARGET} PROPERTIES
                 OUTPUT_NAME ${PROJECT_NAME}
-                ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/static
             )
 
             install(TARGETS ${STATIC_TARGET}
-                    ARCHIVE DESTINATION ${SELF_LIBS_OUT}/static)
+                    ARCHIVE DESTINATION ${SELF_LIBS_OUT})
 
             message(STATUS "Building Linux static library: lib${PROJECT_NAME}.a")
         endif()
@@ -965,13 +966,13 @@ else()
             set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
             # Set SO-NAME for proper runtime linking
+            # Note: Build runs in cmake_build/{Platform}/{static|shared}/, so no need to add /shared suffix
             set_target_properties(${SHARED_TARGET} PROPERTIES
                 SOVERSION 1
-                LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/shared
             )
 
             install(TARGETS ${SHARED_TARGET}
-                    LIBRARY DESTINATION ${SELF_LIBS_OUT}/shared)
+                    LIBRARY DESTINATION ${SELF_LIBS_OUT})
 
             message(STATUS "Building Linux shared library: lib${PROJECT_NAME}.so")
         endif()
