@@ -176,8 +176,9 @@ def print_build_results():
     """
     print("==================Include Build Results========================")
 
-    # Define paths
-    bin_dir = os.path.join(SCRIPT_PATH, "target")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
 
     # Check if target directory exists
     if not os.path.exists(bin_dir):
