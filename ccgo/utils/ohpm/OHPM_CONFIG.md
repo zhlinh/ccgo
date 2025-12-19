@@ -13,17 +13,26 @@ All configuration is done through `CCGO.toml`, with support for environment vari
 
 ## Configuration in CCGO.toml
 
+### Unified Field Names
+
+CCGO uses unified field names across all publish configurations. The following field aliases are supported for backward compatibility:
+
+| Unified Name | Legacy Alias | Description |
+|--------------|--------------|-------------|
+| `name` | `package_name` | Package name |
+| `group_id` | `organization` | Scope/organization (for @scope/name format) |
+
+**Priority:** New unified names take precedence over legacy aliases.
+
 ### New Configuration Format (Recommended)
 
 ```toml
 [publish.ohos.ohpm]
 registry = "official"  # Options: "official", "private", "local"
-package_name = "my-ohos-lib"
+name = "my-ohos-lib"   # Package name (default: project.name)
+group_id = "myorg"     # Scope (preferred, for @myorg/my-ohos-lib format)
 version = "1.0.0"
 description = "My OpenHarmony library"
-
-# Optional: For scoped packages
-organization = "myorg"  # Results in @myorg/my-ohos-lib
 
 # Dependencies (optional)
 dependencies = [

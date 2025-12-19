@@ -612,13 +612,13 @@ function(get_third_party_binary_files output_target_src_links output_target_link
         set(third_party_sub_dir ${PROJECT_SOURCE_DIR}/third_party/${item})
 
         # add the binary files
-        file(GLOB TEMP_COMM_FILES RELATIVE ${PROJECT_SOURCE_DIR} ${third_party_sub_dir}/lib/${TEMP_PLATFORM}/${TEMP_REG_SUFFIX})
+        file(GLOB TEMP_CCGO_FILES RELATIVE ${PROJECT_SOURCE_DIR} ${third_party_sub_dir}/lib/${TEMP_PLATFORM}/${TEMP_REG_SUFFIX})
 
         # exclude the files start with .
-        list(FILTER TEMP_COMM_FILES EXCLUDE REGEX "^\\.")
+        list(FILTER TEMP_CCGO_FILES EXCLUDE REGEX "^\\.")
 
-        if(NOT TEMP_COMM_FILES STREQUAL "")
-            foreach(file_path ${TEMP_COMM_FILES})
+        if(NOT TEMP_CCGO_FILES STREQUAL "")
+            foreach(file_path ${TEMP_CCGO_FILES})
                 get_filename_component(file_ext ${file_path} LAST_EXT)
                 get_filename_component(file_name ${file_path} NAME_WE)
                 get_filename_component(file_dir ${file_path} DIRECTORY)
@@ -730,9 +730,9 @@ function(add_cc_library)
         return()
     endif()
 
-    message(STATUS "COMM_ENABLE_INSTALL: ${COMM_ENABLE_INSTALL}")
+    message(STATUS "CCGO_ENABLE_INSTALL: ${CCGO_ENABLE_INSTALL}")
 
-    if(COMM_ENABLE_INSTALL)
+    if(CCGO_ENABLE_INSTALL)
         set(_NAME "${CC_LIB_NAME}")
     else()
         set(_NAME "${MAIN_PROJECT_NAME}-${CC_LIB_NAME}")
@@ -773,7 +773,7 @@ function(add_cc_library)
     # where DLL doesn't make sense.
     # 2. "static"  -- This target does not depend on the DLL and should be built
     # statically.
-    if(COMM_BUILD_SHARED_LIBS OR CC_LIB_SHARED)
+    if(CCGO_BUILD_SHARED_LIBS OR CC_LIB_SHARED)
         set(_build_type "shared")
     else()
         set(_build_type "static")
@@ -803,7 +803,7 @@ function(add_cc_library)
                     else()
                         # file
                         file(STRINGS "${source}" contents REGEX
-                            "__attribute__\\(\\(visibility\\(\"default\"\\)\\)\\)|\\(dllimport\\)|COMM_PUBLIC|PROJECT_EXPORT_PUBLIC|JNIEXPORT|napi_module_register")
+                            "__attribute__\\(\\(visibility\\(\"default\"\\)\\)\\)|\\(dllimport\\)|CCGO_PUBLIC|PROJECT_EXPORT_PUBLIC|JNIEXPORT|napi_module_register")
 
                         if(contents)
                             set(is_public_sources TRUE)
@@ -835,7 +835,7 @@ function(add_cc_library)
                 ${CC_LIB_DEPS}
                 PRIVATE
                 ${CC_LIB_LINKOPTS}
-                ${COMM_DEFAULT_LINKOPTS}
+                ${CCGO_DEFAULT_LINKOPTS}
             )
         else()
             message(FATAL_ERROR "Invalid build type: ${_build_type}")
@@ -844,9 +844,9 @@ function(add_cc_library)
         # if the language is not set, the linker language will be set to CXX
         set_property(TARGET ${_NAME} PROPERTY LINKER_LANGUAGE "CXX")
 
-        target_include_directories(${_NAME} ${COMM_INTERNAL_INCLUDE_WARNING_GUARD}
+        target_include_directories(${_NAME} ${CCGO_INTERNAL_INCLUDE_WARNING_GUARD}
             PUBLIC
-            "$<BUILD_INTERFACE:${COMM_COMMON_INCLUDE_DIRS}>"
+            "$<BUILD_INTERFACE:${CCGO_COMMON_INCLUDE_DIRS}>"
             $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
         )
         target_compile_options(${_NAME} PRIVATE ${CC_LIB_COPTS})
@@ -854,15 +854,15 @@ function(add_cc_library)
 
         # Add all targets to a a folder in the IDE for organization.
         if(CC_LIB_PUBLIC)
-            set_property(TARGET ${_NAME} PROPERTY FOLDER ${COMM_IDE_FOLDER})
+            set_property(TARGET ${_NAME} PROPERTY FOLDER ${CCGO_IDE_FOLDER})
         elseif(CC_LIB_TESTONLY)
-            set_property(TARGET ${_NAME} PROPERTY FOLDER ${COMM_IDE_FOLDER}/test)
+            set_property(TARGET ${_NAME} PROPERTY FOLDER ${CCGO_IDE_FOLDER}/test)
         else()
-            set_property(TARGET ${_NAME} PROPERTY FOLDER ${COMM_IDE_FOLDER}/internal)
+            set_property(TARGET ${_NAME} PROPERTY FOLDER ${CCGO_IDE_FOLDER}/internal)
         endif()
 
         # install will lose the prefix, add it back here
-        if(COMM_ENABLE_INSTALL)
+        if(CCGO_ENABLE_INSTALL)
             set_target_properties(${_NAME} PROPERTIES
                 OUTPUT_NAME "${_NAME}"
                 SOVERSION 0
@@ -871,9 +871,9 @@ function(add_cc_library)
     else()
         # header-only library
         add_library(${_NAME} INTERFACE)
-        target_include_directories(${_NAME} ${COMM_INTERNAL_INCLUDE_WARNING_GUARD}
+        target_include_directories(${_NAME} ${CCGO_INTERNAL_INCLUDE_WARNING_GUARD}
             INTERFACE
-            "$<BUILD_INTERFACE:${COMM_COMMON_INCLUDE_DIRS}>"
+            "$<BUILD_INTERFACE:${CCGO_COMMON_INCLUDE_DIRS}>"
             $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
         )
 
@@ -881,7 +881,7 @@ function(add_cc_library)
             INTERFACE
             ${CC_LIB_DEPS}
             ${CC_LIB_LINKOPTS}
-            ${COMM_DEFAULT_LINKOPTS}
+            ${CCGO_DEFAULT_LINKOPTS}
         )
         target_compile_definitions(${_NAME} INTERFACE ${CC_LIB_DEFINES})
     endif()
@@ -890,7 +890,7 @@ function(add_cc_library)
     message(STATUS "CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}")
     message(STATUS "CMAKE_SYSTEM_NAME=${CMAKE_SYSTEM_NAME}")
 
-    if(COMM_ENABLE_INSTALL)
+    if(CCGO_ENABLE_INSTALL)
         install(TARGETS ${_NAME} EXPORT ${PROJECT_NAME}Targets
             RUNTIME DESTINATION out
             LIBRARY DESTINATION out
@@ -978,8 +978,8 @@ function(add_cc_tests)
 
     target_sources(${_NAME} PRIVATE ${CC_TEST_SRCS})
     target_include_directories(${_NAME}
-        PUBLIC ${COMM_COMMON_INCLUDE_DIRS}
-        PRIVATE ${COMM_GTEST_SRC_DIR}/googletest/include ${COMM_GTEST_SRC_DIR}/googlemock/include
+        PUBLIC ${CCGO_COMMON_INCLUDE_DIRS}
+        PRIVATE ${CCGO_GTEST_SRC_DIR}/googletest/include ${CCGO_GTEST_SRC_DIR}/googlemock/include
     )
 
     target_compile_definitions(${_NAME}
@@ -996,7 +996,7 @@ function(add_cc_tests)
     )
 
     # Add all targets to a a folder in the IDE for organization.
-    set_property(TARGET ${_NAME} PROPERTY FOLDER ${COMM_IDE_FOLDER}/tests)
+    set_property(TARGET ${_NAME} PROPERTY FOLDER ${CCGO_IDE_FOLDER}/tests)
 
     add_test(NAME ${_NAME} COMMAND ${_NAME})
 endfunction()
@@ -1078,7 +1078,7 @@ function(add_cc_external)
         "DOWNLOAD_URL;SOURCE_DIR;BUILD_DIR;INCLUDES;EXTRA_CONFIGURE_COMMANDS;EXTRA_BUILD_COMMANDS"
         ${ARGN}
     )
-    set(COMM_EXTERNAL_ENTRY_DIR ${CMAKE_BINARY_DIR}/${CC_EXTERNAL_NAME}-entry/)
+    set(CCGO_EXTERNAL_ENTRY_DIR ${CMAKE_BINARY_DIR}/${CC_EXTERNAL_NAME}-entry/)
     message(STATUS "CC_EXTERNAL_NAME: ${CC_EXTERNAL_NAME}, SHARED: ${CC_EXTERNAL_SHARED}")
     message(STATUS "CC_EXTERNAL_DOWNLOAD_URL: ${CC_EXTERNAL_DOWNLOAD_URL}")
     message(STATUS "CC_EXTERNAL_INCLUDES: ${CC_EXTERNAL_INCLUDES}")
@@ -1089,22 +1089,22 @@ function(add_cc_external)
     endif()
 
     # set values
-    set(COMM_EXTERNAL_NAME ${CC_EXTERNAL_NAME})
-    set(COMM_EXTERNAL_DOWNLOAD_URL ${CC_EXTERNAL_DOWNLOAD_URL})
-    set(COMM_EXTERNAL_SOURCE_DIR ${CC_EXTERNAL_SOURCE_DIR})
-    set(COMM_EXTERNAL_BUILD_DIR ${CC_EXTERNAL_BUILD_DIR})
-    set(COMM_EXTERNAL_INCLUDES ${CC_EXTERNAL_INCLUDES})
-    set(COMM_EXTERNAL_EXTRA_CONFIGURE_COMMANDS ${CC_EXTERNAL_EXTRA_CONFIGURE_COMMANDS})
-    set(COMM_EXTERNAL_BUILD_COMMANDS ${CC_EXTERNAL_EXTRA_BUILD_COMMANDS})
+    set(CCGO_EXTERNAL_NAME ${CC_EXTERNAL_NAME})
+    set(CCGO_EXTERNAL_DOWNLOAD_URL ${CC_EXTERNAL_DOWNLOAD_URL})
+    set(CCGO_EXTERNAL_SOURCE_DIR ${CC_EXTERNAL_SOURCE_DIR})
+    set(CCGO_EXTERNAL_BUILD_DIR ${CC_EXTERNAL_BUILD_DIR})
+    set(CCGO_EXTERNAL_INCLUDES ${CC_EXTERNAL_INCLUDES})
+    set(CCGO_EXTERNAL_EXTRA_CONFIGURE_COMMANDS ${CC_EXTERNAL_EXTRA_CONFIGURE_COMMANDS})
+    set(CCGO_EXTERNAL_BUILD_COMMANDS ${CC_EXTERNAL_EXTRA_BUILD_COMMANDS})
     configure_file(
         ${CCGO_CMAKE_DIR}/template/External.CMakeLists.txt.in
-        ${COMM_EXTERNAL_ENTRY_DIR}/CMakeLists.txt
+        ${CCGO_EXTERNAL_ENTRY_DIR}/CMakeLists.txt
         NEWLINE_STYLE LF
         @ONLY
     )
 
     # include entry cmake
-    include(${COMM_EXTERNAL_ENTRY_DIR}/CMakeLists.txt)
+    include(${CCGO_EXTERNAL_ENTRY_DIR}/CMakeLists.txt)
 endfunction()
 
 # ccgo_configure_file()

@@ -160,8 +160,11 @@ def build_tvos(target_option="",  link_type='both', jobs=None):
     else:  # both
         link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
 
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+
     # Combine with existing target options
-    full_target_option = f"{link_type_flags} {target_option}".strip()
+    full_target_option = f"{link_type_flags} {config_cmake_args} {target_option}".strip()
 
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
@@ -641,7 +644,11 @@ def gen_tvos_project(target_option=""):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    cmd = GEN_TVOS_OS_PROJ % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option)
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+    full_target_option = f"{config_cmake_args} {target_option}".strip()
+
+    cmd = GEN_TVOS_OS_PROJ % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option)
     ret = os.system(cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:

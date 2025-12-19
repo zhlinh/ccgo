@@ -21,18 +21,18 @@ cmake_minimum_required(VERSION 3.14)
 # The actual build happens later when add_subdirectory() is called in External.CMakeLists.txt.in.
 
 # Project with NONE language (no compiler needed for download-only step)
-project(${COMM_EXTERNAL_NAME}-external NONE)
+project(${CCGO_EXTERNAL_NAME}-external NONE)
 
 # Use CMake's ExternalProject module for downloading
 include(ExternalProject)
-ExternalProject_Add(${COMM_EXTERNAL_NAME}
-  URL               "${COMM_EXTERNAL_DOWNLOAD_URL}"    # Download URL (ZIP from GitHub)
-  SOURCE_DIR        "${COMM_EXTERNAL_SOURCE_DIR}"     # Where to extract sources
-  BINARY_DIR        "${COMM_EXTERNAL_BUILD_DIR}"       # Build directory (unused at download time)
-  CONFIGURE_COMMAND "${COMM_EXTERNAL_CONFIGURE_COMMAND}"  # Empty: skip configure
-  BUILD_COMMAND     "${COMM_EXTERNAL_BUILD_COMMAND}"      # Empty: skip build
-  INSTALL_COMMAND   "${COMM_EXTERNAL_INSTALL_COMMAND}"    # Empty: skip install
-  TEST_COMMAND      "${COMM_EXTERNAL_TEST_COMMAND}"       # Empty: skip tests
+ExternalProject_Add(${CCGO_EXTERNAL_NAME}
+  URL               "${CCGO_EXTERNAL_DOWNLOAD_URL}"    # Download URL (ZIP from GitHub)
+  SOURCE_DIR        "${CCGO_EXTERNAL_SOURCE_DIR}"     # Where to extract sources
+  BINARY_DIR        "${CCGO_EXTERNAL_BUILD_DIR}"       # Build directory (unused at download time)
+  CONFIGURE_COMMAND "${CCGO_EXTERNAL_CONFIGURE_COMMAND}"  # Empty: skip configure
+  BUILD_COMMAND     "${CCGO_EXTERNAL_BUILD_COMMAND}"      # Empty: skip build
+  INSTALL_COMMAND   "${CCGO_EXTERNAL_INSTALL_COMMAND}"    # Empty: skip install
+  TEST_COMMAND      "${CCGO_EXTERNAL_TEST_COMMAND}"       # Empty: skip tests
 )
 # Note: All commands are empty because we only want to download and extract.
 # The actual configuration and build happen when the external library is

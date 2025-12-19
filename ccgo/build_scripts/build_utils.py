@@ -125,6 +125,8 @@ def load_ccgo_config():
             "INCLUDE_BUILD_COPY_HEADER_FILES": {},
             "DEPENDENCIES": {},
             "PLATFORM_DEPENDENCIES": {},
+            "SUBMODULE_DEPS": {},
+            "SYMBOL_VISIBILITY": False,
         }
 
     if not tomllib:
@@ -150,6 +152,8 @@ def load_ccgo_config():
             "INCLUDE_BUILD_COPY_HEADER_FILES": {},
             "DEPENDENCIES": {},
             "PLATFORM_DEPENDENCIES": {},
+            "SUBMODULE_DEPS": {},
+            "SYMBOL_VISIBILITY": False,
         }
 
     try:
@@ -200,6 +204,17 @@ def load_ccgo_config():
         # Extract dependencies
         dependencies = toml_data.get("dependencies", {})
 
+        # Extract submodule internal dependencies for shared library linking
+        # Format in TOML: [build.submodule_deps]
+        #                 api = ["base"]
+        # Converted to: { "api": ["base"] }
+        submodule_deps = toml_data.get("build", {}).get("submodule_deps", {})
+
+        # Extract symbol visibility setting
+        # false (default): hidden visibility - CCGO_CONFIG_PRESET_VISIBILITY=0
+        # true: default visibility - CCGO_CONFIG_PRESET_VISIBILITY=1
+        symbol_visibility = toml_data.get("build", {}).get("symbol_visibility", False)
+
         # Extract platform-specific dependencies
         platform_dependencies = {}
         for key in toml_data.keys():
@@ -230,6 +245,8 @@ def load_ccgo_config():
             "INCLUDE_BUILD_COPY_HEADER_FILES": include_headers,
             "DEPENDENCIES": dependencies,
             "PLATFORM_DEPENDENCIES": platform_dependencies,
+            "SUBMODULE_DEPS": submodule_deps,
+            "SYMBOL_VISIBILITY": symbol_visibility,
         }
     except Exception as e:
         print(f"   ⚠️  Error reading CCGO.toml: {e}")
@@ -254,6 +271,8 @@ def load_ccgo_config():
             "INCLUDE_BUILD_COPY_HEADER_FILES": {},
             "DEPENDENCIES": {},
             "PLATFORM_DEPENDENCIES": {},
+            "SUBMODULE_DEPS": {},
+            "SYMBOL_VISIBILITY": False,
         }
 
 
@@ -368,6 +387,47 @@ def get_dependency_cmake_args(resolved_deps=None):
     dep_paths = list(resolved_deps.values())
     if dep_paths:
         cmake_args.append(f"-DCCGO_DEP_PATHS={';'.join(dep_paths)}")
+
+    return cmake_args
+
+
+def get_cmake_args_for_config(config: dict = None) -> list:
+    """
+    Generate CMake arguments for CCGO configuration variables.
+
+    This function generates CMake -D arguments for:
+    - CCGO_CONFIG_PRESET_VISIBILITY: Symbol visibility (0=hidden, 1=default)
+    - CCGO_CONFIG_DEPS_MAP: Submodule dependencies for shared library linking
+
+    Args:
+        config: Optional CCGO configuration dictionary. If not provided,
+                the global _CONFIG will be used.
+
+    Returns:
+        List of CMake -D argument strings
+    """
+    if config is None:
+        config = _CONFIG
+
+    cmake_args = []
+
+    # Add symbol visibility setting
+    # SYMBOL_VISIBILITY: False -> 0 (hidden), True -> 1 (default)
+    visibility = config.get('SYMBOL_VISIBILITY', False)
+    visibility_value = 1 if visibility else 0
+    cmake_args.append(f"-DCCGO_CONFIG_PRESET_VISIBILITY={visibility_value}")
+
+    # Add submodule dependencies
+    # Format: "module1;dep1,dep2;module2;dep3"
+    submodule_deps = config.get('SUBMODULE_DEPS', {})
+    if submodule_deps:
+        deps_list = []
+        for module, deps in submodule_deps.items():
+            if deps:
+                deps_list.append(module)
+                deps_list.append(",".join(deps) if isinstance(deps, list) else deps)
+        deps_map = ";".join(deps_list)
+        cmake_args.append(f'-DCCGO_CONFIG_DEPS_MAP="{deps_map}"')
 
     return cmake_args
 

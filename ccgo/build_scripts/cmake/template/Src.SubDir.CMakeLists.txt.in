@@ -26,7 +26,7 @@ project(${TEMPLATE_SUB_LIB_NAME})
 set(TEMPLATE_SUB_DEPS "")
 
 # loop map
-list(LENGTH CONFIG_COMM_DEPS_MAP deps_map_len)
+list(LENGTH CCGO_CONFIG_DEPS_MAP deps_map_len)
 # loop the list and get the index of each element
 foreach(index RANGE 0 ${deps_map_len})
     math(EXPR is_odd "${index} % 2")
@@ -39,8 +39,8 @@ foreach(index RANGE 0 ${deps_map_len})
         continue()
     endif()
     # get the value of current element
-    list(GET CONFIG_COMM_DEPS_MAP ${index} key)
-    list(GET CONFIG_COMM_DEPS_MAP ${next_index} value)
+    list(GET CCGO_CONFIG_DEPS_MAP ${index} key)
+    list(GET CCGO_CONFIG_DEPS_MAP ${next_index} value)
     # split each key-value pair into key and value
     string(REPLACE "," ";" list_value "${value}")
     if ("${MAIN_PROJECT_NAME}-${key}" STREQUAL ${TEMPLATE_SUB_LIB_NAME})
@@ -57,7 +57,7 @@ endforeach()
 
 list(LENGTH TEMPLATE_SUB_DEPS TEMP_SUB_DEPS_LEN)
 if(${TEMP_SUB_DEPS_LEN} GREATER 0)
-    message(STATUS "CONFIG_COMM_DEPS_MAP [${TEMPLATE_SUB_LIB_NAME}] get TEMPLATE_SUB_DEPS: ${TEMPLATE_SUB_DEPS}")
+    message(STATUS "CCGO_CONFIG_DEPS_MAP [${TEMPLATE_SUB_LIB_NAME}] get TEMPLATE_SUB_DEPS: ${TEMPLATE_SUB_DEPS}")
 endif()
 
 add_cc_library(

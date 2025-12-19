@@ -131,6 +131,10 @@ def _build_windows_single(incremental, config, single_link_type, use_mingw, use_
     else:  # shared
         link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
 
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+    link_type_flags = f"{link_type_flags} {config_cmake_args}".strip()
+
     clean(build_out_path, incremental)
     os.chdir(build_out_path)
 
@@ -427,7 +431,11 @@ def gen_win_project( config="Release"):
     build_out_path = get_build_out_path("static", "msvc")
     clean(build_out_path, False)
     os.chdir(build_out_path)
-    ret = os.system(WIN_GEN_PROJECT_CMD % CCGO_CMAKE_DIR)
+
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+    gen_cmd = (WIN_GEN_PROJECT_CMD % CCGO_CMAKE_DIR) + " " + config_cmake_args
+    ret = os.system(gen_cmd)
     os.chdir(SCRIPT_PATH)
 
     after_time = time.time()

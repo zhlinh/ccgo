@@ -160,8 +160,11 @@ def build_ios(target_option="",  link_type='both', jobs=None):
     else:  # both
         link_type_flags = "-DCCGO_BUILD_STATIC=ON -DCCGO_BUILD_SHARED=ON"
 
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+
     # Combine with existing target options
-    full_target_option = f"{link_type_flags} {target_option}".strip()
+    full_target_option = f"{link_type_flags} {config_cmake_args} {target_option}".strip()
 
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
@@ -318,11 +321,15 @@ def build_ios_shared(target_option="", jobs=None):
     os.makedirs(os_shared_dir, exist_ok=True)
     os.makedirs(simulator_shared_dir, exist_ok=True)
 
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+    full_target_option = f"{config_cmake_args} {target_option}".strip()
+
     # Build device dylib
     clean(shared_build_path)
     os.chdir(shared_build_path)
 
-    build_cmd = IOS_BUILD_OS_SHARED_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option, jobs)
+    build_cmd = IOS_BUILD_OS_SHARED_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option, jobs)
     ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
@@ -353,7 +360,7 @@ def build_ios_shared(target_option="", jobs=None):
     clean(shared_build_path)
     os.chdir(shared_build_path)
 
-    build_cmd = IOS_BUILD_SIMULATOR_SHARED_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option, jobs)
+    build_cmd = IOS_BUILD_SIMULATOR_SHARED_CMD % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option, jobs)
     ret = os.system(build_cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:
@@ -680,7 +687,11 @@ def gen_ios_project(target_option=""):
     clean(BUILD_OUT_PATH)
     os.chdir(BUILD_OUT_PATH)
 
-    cmd = GEN_IOS_OS_PROJ % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, target_option)
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+    full_target_option = f"{config_cmake_args} {target_option}".strip()
+
+    cmd = GEN_IOS_OS_PROJ % (CCGO_CMAKE_DIR, CCGO_CMAKE_DIR, full_target_option)
     ret = os.system(cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:

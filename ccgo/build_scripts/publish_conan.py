@@ -29,6 +29,7 @@ from build_conan import (
     find_project_root,
     check_conan_installation,
     generate_conanfile,
+    get_conanfile_path,
 )
 
 
@@ -49,11 +50,11 @@ def run_cmd(cmd_args: list, cwd: str = None, env: dict = None) -> int:
     return err_code
 
 
-def create_conan_package(project_dir: str, config: Dict[str, Any], profile: str = "default") -> bool:
+def create_conan_package(project_dir: str, config: Dict[str, Any], profile: str = "default", conan_config=None, link_type: str = "both", no_remote: bool = False) -> bool:
     """
     Create a Conan package in the local cache.
 
-    This runs `conan create .` which:
+    This runs `conan create <conanfile_path>` which:
     1. Exports the recipe to local cache
     2. Builds the package
     3. Stores binary in local cache
@@ -62,6 +63,9 @@ def create_conan_package(project_dir: str, config: Dict[str, Any], profile: str 
         project_dir: Root directory of the project
         config: CCGO configuration dictionary
         profile: Conan profile to use
+        conan_config: Optional ConanConfig instance for user/channel
+        link_type: Library type to build: 'static', 'shared', or 'both' (default: 'both')
+        no_remote: If True, don't check remote repositories (default: False)
 
     Returns:
         True if successful, False otherwise
@@ -69,43 +73,93 @@ def create_conan_package(project_dir: str, config: Dict[str, Any], profile: str 
     print("\n=== Creating Conan Package (Local Cache) ===")
     print("This will build and install the package to your local Conan cache")
     print(f"Cache location: ~/.conan2/ (or run 'conan config home' to check)")
+    print(f"Link type: {link_type}")
+    if no_remote:
+        print("Remote check: disabled (local-only mode)")
+
+    # Get conanfile.py path
+    conanfile_path = get_conanfile_path(project_dir, config)
+
+    # Determine which variants to build
+    build_static = link_type in ('static', 'both')
+    build_shared = link_type in ('shared', 'both')
+
+    success = True
+
+    # Build static library
+    if build_static:
+        print("\n--- Building Static Library ---")
+        success = success and _create_conan_variant(
+            project_dir, conanfile_path, profile, conan_config, shared=False, no_remote=no_remote
+        )
+
+    # Build shared library
+    if build_shared:
+        print("\n--- Building Shared Library ---")
+        success = success and _create_conan_variant(
+            project_dir, conanfile_path, profile, conan_config, shared=True, no_remote=no_remote
+        )
+
+    if success:
+        print("\nSuccessfully created Conan package(s) in local cache")
+    return success
+
+
+def _create_conan_variant(project_dir: str, conanfile_path: str, profile: str, conan_config, shared: bool, no_remote: bool = False) -> bool:
+    """Create a single Conan package variant (static or shared)."""
+    variant_name = "shared" if shared else "static"
+    shared_option = "True" if shared else "False"
 
     # Build command
     cmd_args = [
-        "conan", "create", ".",
-        "--build", "missing"
+        "conan", "create", conanfile_path,
+        "--build", "missing",
+        "-o", f"*:shared={shared_option}",  # Conan 2.x format
     ]
+
+    # Add --no-remote flag to prevent checking remote repositories (local-only mode)
+    if no_remote:
+        cmd_args.append("--no-remote")
+
+    # Add user and channel if available (required for Conan 2.x)
+    if conan_config and conan_config.user:
+        cmd_args.extend(["--user", conan_config.user])
+        cmd_args.extend(["--channel", conan_config.channel])
 
     # Add profile if specified
     if profile != 'default':
         cmd_args.extend(["--profile", profile])
 
     # Execute conan create with CCGO_CMAKE_DIR environment variable
-    print(f"\nExecuting: {' '.join(cmd_args)}")
+    print(f"\nExecuting ({variant_name}): {' '.join(cmd_args)}")
     print(f"  with CCGO_CMAKE_DIR={CCGO_CMAKE_DIR}")
     err_code = run_cmd(cmd_args, cwd=project_dir, env={"CCGO_CMAKE_DIR": CCGO_CMAKE_DIR})
 
     if err_code != 0:
-        print(f"ERROR: Conan package creation failed with exit code {err_code}")
+        print(f"ERROR: Conan package creation ({variant_name}) failed with exit code {err_code}")
         return False
 
-    print("\nSuccessfully created Conan package in local cache")
+    print(f"Successfully created {variant_name} package")
     return True
 
 
-def export_conan_package(project_dir: str) -> bool:
+def export_conan_package(project_dir: str, config: Dict[str, Any]) -> bool:
     """
     Export the Conan recipe to local cache without building.
 
     Args:
         project_dir: Root directory of the project
+        config: CCGO configuration dictionary
 
     Returns:
         True if successful, False otherwise
     """
     print("\n=== Exporting Conan Recipe ===")
 
-    cmd_args = ["conan", "export", "."]
+    # Get conanfile.py path
+    conanfile_path = get_conanfile_path(project_dir, config)
+
+    cmd_args = ["conan", "export", conanfile_path]
 
     print(f"Executing: {' '.join(cmd_args)}")
     err_code = run_cmd(cmd_args, cwd=project_dir)
@@ -122,7 +176,7 @@ def upload_conan_package(
     project_dir: str,
     config: Dict[str, Any],
     remote: str,
-    confirm: bool = False
+    conan_config=None
 ) -> bool:
     """
     Upload the Conan package to a remote repository.
@@ -131,14 +185,20 @@ def upload_conan_package(
         project_dir: Root directory of the project
         config: CCGO configuration dictionary
         remote: Name of the remote repository
-        confirm: Whether to skip confirmation prompt
+        conan_config: Optional ConanConfig instance for user/channel
 
     Returns:
         True if successful, False otherwise
     """
-    name = config.get('PROJECT_NAME_LOWER', 'unknown')
-    version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
-    package_ref = f"{name}/{version}"
+    # Use ConanConfig for package reference if available
+    if conan_config:
+        package_ref = conan_config.get_package_reference(include_user_channel=True)
+        name = conan_config.package_name
+        version = conan_config.version
+    else:
+        name = config.get('PROJECT_NAME_LOWER', 'unknown')
+        version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
+        package_ref = f"{name}/{version}"
 
     print(f"\n=== Uploading Conan Package to Remote ===")
     print(f"Package: {package_ref}")
@@ -166,19 +226,15 @@ def upload_conan_package(
         print(f"  conan remote add {remote} <URL>")
         return False
 
-    # Confirm upload
-    if not confirm:
-        print(f"\nThis will upload {package_ref} to remote '{remote}'")
-        response = input("Continue? [y/N]: ").strip().lower()
-        if response != 'y':
-            print("Upload cancelled")
-            return False
+    # Show upload info
+    print(f"\nUploading {package_ref} to remote '{remote}'...")
 
     # Upload command
+    # Note: Conan 2.x uses -c instead of --confirm
     cmd_args = [
         "conan", "upload", package_ref,
         "-r", remote,
-        "--confirm"
+        "-c"
     ]
 
     print(f"\nExecuting: {' '.join(cmd_args)}")
@@ -270,9 +326,10 @@ Note:
         help="List configured Conan remotes and exit"
     )
     parser.add_argument(
-        "-y", "--yes",
-        action="store_true",
-        help="Skip confirmation prompts"
+        "--link-type",
+        choices=["static", "shared", "both"],
+        default="both",
+        help="Library type to build: static, shared, or both (default: both)"
     )
 
     args = parser.parse_args()
@@ -305,38 +362,64 @@ Note:
         print("ERROR: Failed to load CCGO.toml configuration")
         sys.exit(1)
 
-    name = config.get('PROJECT_NAME_LOWER', 'unknown')
-    version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
+    # Load ConanConfig for advanced configuration
+    conan_config = None
+    try:
+        from ccgo.utils.conan.config import load_conan_config
+        toml_path = os.path.join(project_dir, "CCGO.toml")
+        if os.path.exists(toml_path):
+            try:
+                import tomllib
+            except ImportError:
+                import tomli as tomllib
+            with open(toml_path, 'rb') as f:
+                toml_data = tomllib.load(f)
+            conan_config = load_conan_config(toml_data)
+            print(f"\nConan Configuration:")
+            print(conan_config.get_config_summary())
+    except Exception as e:
+        print(f"Warning: Could not load ConanConfig: {e}")
+
+    # Get package info from ConanConfig or fallback to basic config
+    if conan_config:
+        name = conan_config.package_name
+        version = conan_config.version
+        package_ref = conan_config.get_package_reference(include_user_channel=True)
+    else:
+        name = config.get('PROJECT_NAME_LOWER', 'unknown')
+        version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
+        package_ref = f"{name}/{version}"
 
     # Generate conanfile.py
     print(f"\nGenerating conanfile.py with CCGO_CMAKE_DIR={CCGO_CMAKE_DIR}...")
-    generate_conanfile(project_dir, config)
+    generate_conanfile(project_dir, config, conan_config)
 
     # Handle export-only mode
     if args.export_only:
-        success = export_conan_package(project_dir)
+        success = export_conan_package(project_dir, config)
         if success:
             print("\n" + "=" * 60)
             print("Conan Export Complete")
             print("=" * 60)
-            print(f"Package: {name}/{version}")
+            print(f"Package: {package_ref}")
             print("\nRecipe exported to local cache. To build, run:")
-            print(f"  conan install --requires={name}/{version} --build=missing")
+            print(f"  conan install --requires={package_ref} --build=missing")
         sys.exit(0 if success else 1)
 
     # Handle publish modes
     if args.mode == "local":
-        success = create_conan_package(project_dir, config, args.profile)
+        # Local mode: don't check remote repositories
+        success = create_conan_package(project_dir, config, args.profile, conan_config, args.link_type, no_remote=True)
         if success:
             print("\n" + "=" * 60)
             print("Conan Publish Complete (Local Cache)")
             print("=" * 60)
-            print(f"Package: {name}/{version}")
+            print(f"Package: {package_ref}")
             print("\nTo use this package in another project, add to conanfile.txt or conanfile.py:")
             print(f"  [requires]")
-            print(f"  {name}/{version}")
+            print(f"  {package_ref}")
             print("\nOr install directly:")
-            print(f"  conan install --requires={name}/{version}")
+            print(f"  conan install --requires={package_ref}")
 
     elif args.mode == "remote":
         # Require --remote for remote mode
@@ -350,19 +433,19 @@ Note:
             list_remotes()
             sys.exit(1)
 
-        # First create package locally if not exists
+        # First create package locally if not exists (remote mode: allow remote checking)
         print("Creating package locally before upload...")
-        if not create_conan_package(project_dir, config, args.profile):
+        if not create_conan_package(project_dir, config, args.profile, conan_config, args.link_type, no_remote=False):
             print("ERROR: Failed to create local package. Cannot upload.")
             sys.exit(1)
 
-        # Then upload
-        success = upload_conan_package(project_dir, config, args.remote, args.yes)
+        # Then upload with ConanConfig for user/channel
+        success = upload_conan_package(project_dir, config, args.remote, conan_config)
         if success:
             print("\n" + "=" * 60)
             print("Conan Publish Complete (Remote)")
             print("=" * 60)
-            print(f"Package: {name}/{version}")
+            print(f"Package: {package_ref}")
             print(f"Remote: {args.remote}")
 
     sys.exit(0 if success else 1)

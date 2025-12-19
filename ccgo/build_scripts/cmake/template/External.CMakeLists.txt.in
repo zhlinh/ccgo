@@ -16,26 +16,26 @@
 # by downloading from GitHub and building them as part of the project.
 #
 # Template variables (replaced by add_cc_external):
-# - @COMM_EXTERNAL_NAME@: Library name (e.g., "googletest", "googlebenchmark")
-# - @COMM_EXTERNAL_DOWNLOAD_URL@: Download URL (ZIP archive)
-# - @COMM_EXTERNAL_SOURCE_DIR@: Where to extract sources
-# - @COMM_EXTERNAL_BUILD_DIR@: Where to build
-# - @COMM_EXTERNAL_INCLUDES@: Additional include directories
-# - @COMM_EXTERNAL_EXTRA_CONFIGURE_COMMANDS@: Extra CMake options
+# - @CCGO_EXTERNAL_NAME@: Library name (e.g., "googletest", "googlebenchmark")
+# - @CCGO_EXTERNAL_DOWNLOAD_URL@: Download URL (ZIP archive)
+# - @CCGO_EXTERNAL_SOURCE_DIR@: Where to extract sources
+# - @CCGO_EXTERNAL_BUILD_DIR@: Where to build
+# - @CCGO_EXTERNAL_INCLUDES@: Additional include directories
+# - @CCGO_EXTERNAL_EXTRA_CONFIGURE_COMMANDS@: Extra CMake options
 
 # Generate download script from template
 # This creates a minimal CMakeLists.txt that downloads and extracts the external library
 configure_file(
         ${CCGO_CMAKE_DIR}/template/External.Download.txt.in
-        ${CMAKE_BINARY_DIR}/@COMM_EXTERNAL_NAME@-external/CMakeLists.txt
+        ${CMAKE_BINARY_DIR}/@CCGO_EXTERNAL_NAME@-external/CMakeLists.txt
         NEWLINE_STYLE LF
 )
-message(STATUS "Configuring @COMM_EXTERNAL_NAME@ from ${CMAKE_BINARY_DIR}/@COMM_EXTERNAL_NAME@-external")
+message(STATUS "Configuring @CCGO_EXTERNAL_NAME@ from ${CMAKE_BINARY_DIR}/@CCGO_EXTERNAL_NAME@-external")
 
 # Save current compiler and output settings to restore later
 # External dependencies may have different build requirements
-set(COMM_SAVE_CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
-set(COMM_SAVE_CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+set(CCGO_SAVE_CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS})
+set(CCGO_SAVE_CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
 # Configure for shared library build if requested
 if (BUILD_SHARED_LIBS)
@@ -48,25 +48,25 @@ endif()
 # Step 1: Run CMake on the download script to fetch the library
 execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" .
         RESULT_VARIABLE result
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/@COMM_EXTERNAL_NAME@-external)
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/@CCGO_EXTERNAL_NAME@-external)
 if(result)
-    message(FATAL_ERROR "cmake [GEN] @COMM_EXTERNAL_NAME@ failed: ${result}")
+    message(FATAL_ERROR "cmake [GEN] @CCGO_EXTERNAL_NAME@ failed: ${result}")
 endif()
 
 # Step 2: Execute the download (runs at configure time, not build time)
-# This downloads and extracts the library to @COMM_EXTERNAL_SOURCE_DIR@
+# This downloads and extracts the library to @CCGO_EXTERNAL_SOURCE_DIR@
 execute_process(COMMAND ${CMAKE_COMMAND} --build .
         RESULT_VARIABLE result
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/@COMM_EXTERNAL_NAME@-external)
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/@CCGO_EXTERNAL_NAME@-external)
 if(result)
-    message(FATAL_ERROR "cmake [BUILD] @COMM_EXTERNAL_NAME@ failed: ${result}")
+    message(FATAL_ERROR "cmake [BUILD] @CCGO_EXTERNAL_NAME@ failed: ${result}")
 endif()
 
 ## Parse and apply extra configuration commands
 # Process CMake options like "-Dgtest_force_shared_crt=ON"
 # These options customize the external library's build settings
 set(OUTPUT "")
-set(EXTRA_CONFIGURE_COMMANDS "@COMM_EXTERNAL_EXTRA_CONFIGURE_COMMANDS@")
+set(EXTRA_CONFIGURE_COMMANDS "@CCGO_EXTERNAL_EXTRA_CONFIGURE_COMMANDS@")
 if (EXTRA_CONFIGURE_COMMANDS)
   # Split space-separated commands into list
   string(REPLACE " " ";" COMMANDS_LIST "${EXTRA_CONFIGURE_COMMANDS}")
@@ -101,8 +101,8 @@ endif()
 message(STATUS "ExternalCFG Parsed configure commands:\n${OUTPUT}")
 
 # Restore original compiler and output settings
-set(CMAKE_CXX_FLAGS ${COMM_SAVE_CMAKE_CXX_FLAGS})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${COMM_SAVE_CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+set(CMAKE_CXX_FLAGS ${CCGO_SAVE_CMAKE_CXX_FLAGS})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CCGO_SAVE_CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
 ## Configure include directories for the external library
 # Add default include directory (common location for headers)
@@ -110,7 +110,7 @@ include_directories(${COMM_EXTERNAL_SOURCE_DIR}/include)
 
 # Add extra include directories if specified
 # Example: "googletest/include googlemock/include"
-set(TEMP_INCLUDES "@COMM_EXTERNAL_INCLUDES@")
+set(TEMP_INCLUDES "@CCGO_EXTERNAL_INCLUDES@")
 if (TEMP_INCLUDES)
   # Split space-separated includes into list
   string(REPLACE " " ";" TEMP_INCLUDES_LIST "${TEMP_INCLUDES}")

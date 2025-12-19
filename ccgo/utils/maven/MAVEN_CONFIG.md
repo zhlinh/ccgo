@@ -13,6 +13,18 @@ All configuration is done through `CCGO.toml`, with support for environment vari
 
 ## Configuration in CCGO.toml
 
+### Unified Field Names
+
+CCGO uses unified field names across all publish configurations. The following field aliases are supported for backward compatibility:
+
+| Unified Name | Legacy Alias | Description |
+|--------------|--------------|-------------|
+| `name` | `artifact_id` | Package/artifact name |
+| `registry` | `repository` | Registry type (local/central/custom) |
+| `description` | `pom_description` | Package description |
+
+**Priority:** New unified names take precedence over legacy aliases.
+
 ### Automatic Environment Variable Detection
 
 CCGO automatically detects appropriate environment variables based on the repository type:

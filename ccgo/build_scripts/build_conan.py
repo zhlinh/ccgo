@@ -199,32 +199,118 @@ def update_conan_settings() -> None:
         print(f"Warning: Could not update Conan settings: {e}")
 
 
-def generate_conanfile(project_dir: str, config: Dict[str, Any]) -> str:
+def get_conanfile_path(project_dir: str, config: Dict[str, Any]) -> str:
+    """
+    Get the path for conanfile.py based on configuration and defaults.
+
+    Resolution order:
+    1. Custom path from [build.conan] recipe in CCGO.toml
+    2. Default: conan/conanfile.py (if conan/ directory exists or will be created)
+    3. Fallback: conanfile.py in project root (for backward compatibility)
+
+    Args:
+        project_dir: Root directory of the project
+        config: CCGO configuration dictionary
+
+    Returns:
+        Absolute path for conanfile.py
+    """
+    # Check for custom recipe path in config
+    build_config = config.get('build', {})
+    conan_build_config = build_config.get('conan', {})
+    custom_recipe = conan_build_config.get('recipe')
+
+    if custom_recipe:
+        # Use custom path from config
+        return os.path.join(project_dir, custom_recipe)
+
+    # Default: prefer conan/ subdirectory
+    conan_dir = os.path.join(project_dir, 'conan')
+    conan_subdir_path = os.path.join(conan_dir, 'conanfile.py')
+    root_path = os.path.join(project_dir, 'conanfile.py')
+
+    # If conan/ directory exists or root conanfile.py doesn't exist, use conan/
+    if os.path.exists(conan_dir) or not os.path.exists(root_path):
+        return conan_subdir_path
+
+    # Fallback: use root for backward compatibility (existing projects)
+    return root_path
+
+
+def generate_conanfile(project_dir: str, config: Dict[str, Any], conan_config=None) -> str:
     """
     Generate conanfile.py for the project.
 
     Args:
         project_dir: Root directory of the project
         config: CCGO configuration dictionary (from load_ccgo_config())
+        conan_config: Optional ConanConfig instance for advanced configuration
 
     Returns:
         Path to the generated conanfile.py
     """
-    # Get project information from load_ccgo_config() format
-    # config contains PROJECT_NAME, PROJECT_NAME_LOWER, CONFIG_PROJECT_VERSION, etc.
-    name = config.get('PROJECT_NAME_LOWER', 'unknown')
-    version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
-    description = f"{name} library"
-    author = ""
-    license = "MIT"
-    url = ""
+    # Try to load ConanConfig if not provided
+    if conan_config is None:
+        try:
+            from ccgo.utils.conan.config import load_conan_config
+            # Need to load raw TOML config for ConanConfig
+            toml_path = os.path.join(project_dir, "CCGO.toml")
+            if os.path.exists(toml_path):
+                try:
+                    import tomllib
+                except ImportError:
+                    import tomli as tomllib
+                with open(toml_path, 'rb') as f:
+                    toml_config = tomllib.load(f)
+                conan_config = load_conan_config(toml_config)
+        except Exception:
+            conan_config = None
 
-    # Get Conan-specific settings (using defaults since CCGO.toml doesn't have conan section)
-    settings = ['os', 'compiler', 'build_type', 'arch']
-    options = {}
-    default_options = {}
-    requires = []
+    # Get project information - prefer ConanConfig if available
+    if conan_config:
+        name = conan_config.package_name
+        version = conan_config.version
+        description = conan_config.description or f"{name} library"
+        author = conan_config.author
+        license = conan_config.license
+        url = conan_config.homepage
+        user = conan_config.user
+        channel = conan_config.channel
+        settings = conan_config.settings
+        options = conan_config.options
+        default_options = conan_config.default_options
+        requires = [dep.to_reference() for dep in conan_config.dependencies]
+    else:
+        # Fallback to basic config
+        name = config.get('PROJECT_NAME_LOWER', 'unknown')
+        version = config.get('CONFIG_PROJECT_VERSION', '1.0.0')
+        description = f"{name} library"
+        author = ""
+        license = "MIT"
+        url = ""
+        user = ""
+        channel = "stable"
+        settings = ['os', 'compiler', 'build_type', 'arch']
+        options = {}
+        default_options = {}
+        requires = []
+
     build_requires = []
+
+    # Get submodule dependencies from config
+    submodule_deps = config.get('SUBMODULE_DEPS', {})
+    # Convert to Python repr for embedding in generated conanfile
+    submodule_deps_repr = repr(submodule_deps)
+
+    # Calculate relative path from conanfile.py to project root
+    conanfile_path = get_conanfile_path(project_dir, config)
+    conanfile_dir = os.path.dirname(conanfile_path)
+    if conanfile_dir and conanfile_dir != project_dir:
+        # conanfile.py is in a subdirectory, calculate relative path to root
+        rel_path = os.path.relpath(project_dir, conanfile_dir)
+        source_folder = rel_path.replace('\\', '/')  # Use forward slashes for cross-platform
+    else:
+        source_folder = "."
 
     # Generate conanfile.py content
     conanfile_content = f'''from conan import ConanFile
@@ -265,8 +351,40 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
     conanfile_content += '    }\n\n'
 
     # Add exports and sources (cmake files are referenced from ccgo package, not copied)
-    conanfile_content += '''    # Sources are located in the same place as this recipe, copy them to the recipe
+    if source_folder == ".":
+        conanfile_content += '''    # Sources are located in the same place as this recipe, copy them to the recipe
     exports_sources = "CMakeLists.txt", "src/*", "include/*"
+
+'''
+    else:
+        # Conan 2.x doesn't allow ".." in exports_sources, use export_sources() method instead
+        conanfile_content += f'''    # Sources are located in parent directory relative to this recipe
+    # Conan 2.x doesn't support ".." in exports_sources, so we use export_sources() method
+    def export_sources(self):
+        # Get the project root directory (parent of conan/ directory)
+        project_root = os.path.normpath(os.path.join(self.recipe_folder, "{source_folder}"))
+
+        # Copy CMakeLists.txt
+        copy(self, "CMakeLists.txt", src=project_root, dst=self.export_sources_folder)
+
+        # Copy include directory recursively
+        include_src = os.path.join(project_root, "include")
+        if os.path.exists(include_src):
+            copy(self, "*.h", src=include_src, dst=os.path.join(self.export_sources_folder, "include"), keep_path=True)
+            copy(self, "*.hpp", src=include_src, dst=os.path.join(self.export_sources_folder, "include"), keep_path=True)
+            copy(self, "*.hxx", src=include_src, dst=os.path.join(self.export_sources_folder, "include"), keep_path=True)
+
+        # Copy src directory recursively
+        src_src = os.path.join(project_root, "src")
+        if os.path.exists(src_src):
+            copy(self, "*.c", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
+            copy(self, "*.cc", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
+            copy(self, "*.cpp", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
+            copy(self, "*.cxx", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
+            copy(self, "*.h", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
+            copy(self, "*.hpp", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
+            copy(self, "*.mm", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
+            copy(self, "*.m", src=src_src, dst=os.path.join(self.export_sources_folder, "src"), keep_path=True)
 
 '''
 
@@ -340,10 +458,10 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
             tc.variables["CCGO_BUILD_SHARED"] = "OFF"
         # Also set standard CMake variables for compatibility
         tc.variables["BUILD_SHARED_LIBS"] = "ON" if self.options.shared else "OFF"
-        tc.variables["COMM_BUILD_SHARED_LIBS"] = "ON" if self.options.shared else "OFF"
+        tc.variables["CCGO_BUILD_SHARED_LIBS"] = "ON" if self.options.shared else "OFF"
         # Set submodule dependencies for shared library linking
         # Format: "module1,dep1,dep2;module2,dep1" means module1 depends on dep1 and dep2
-        tc.variables["CONFIG_COMM_DEPS_MAP"] = self._detect_submodule_deps()
+        tc.variables["CCGO_CONFIG_DEPS_MAP"] = self._detect_submodule_deps()
         tc.generate()
 
         deps = CMakeDeps(self)
@@ -351,7 +469,7 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
 
     def _detect_submodule_deps(self):
         """
-        Detect submodule dependencies by scanning source files for includes.
+        Get submodule dependencies from CCGO.toml config or auto-detect.
 
         Returns CMake list format: "module1;dep1,dep2;module2;dep3"
         where even indices are module names and odd indices are comma-separated deps.
@@ -359,7 +477,30 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
         import os
         import re
 
+        # First check if submodule_deps is configured in CCGO.toml
+        # Format: {{ "api": ["base"], "feature": ["base", "utils"] }}
+        configured_deps = {submodule_deps_repr}
+        if configured_deps:
+            deps_map = []
+            for module, deps in configured_deps.items():
+                # Only process entries where deps is a list (actual dependencies)
+                # Skip non-list values like booleans, strings (other build config)
+                if isinstance(deps, list) and deps:
+                    deps_map.append(module)
+                    deps_map.append(",".join(deps))
+            result = ";".join(deps_map)
+            if result:
+                self.output.info(f"Using configured submodule dependencies: {{result}}")
+            return result
+
+        # Auto-detect by scanning source files
+        # If conanfile.py is in a subdirectory, source_folder points to that subdir
+        # We need to look in the parent directory for src/
         src_dir = os.path.join(self.source_folder, "src")
+        if not os.path.isdir(src_dir):
+            # Try parent directory (conanfile.py might be in conan/ subdirectory)
+            src_dir = os.path.join(self.source_folder, "..", "src")
+            src_dir = os.path.normpath(src_dir)
         if not os.path.isdir(src_dir):
             return ""
 
@@ -375,7 +516,7 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
 
         # Scan each submodule for dependencies on other submodules
         deps_map = []
-        include_pattern = re.compile(r'#include\s*[<"]' + self.name + r'/([^/"<>]+)/')
+        include_pattern = re.compile(r'#include\\s*[<"]' + self.name + r'/([^/"<>]+)/')
 
         for module in submodules:
             module_dir = os.path.join(src_dir, module)
@@ -405,18 +546,34 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
         # Format: "module1;dep1,dep2;module2;dep3"
         result = ";".join(deps_map)
         if result:
-            self.output.info(f"Detected submodule dependencies: {result}")
+            self.output.info(f"Auto-detected submodule dependencies: {{result}}")
         return result
+'''
+    # Replace the placeholder with actual submodule_deps value
+    conanfile_content = conanfile_content.replace('{submodule_deps_repr}', submodule_deps_repr)
 
+    # Add build and package methods with correct source folder
+    # Both scenarios (local build and conan create) use the same code now
+    # We detect CMakeLists.txt location at build time
+    conanfile_content += '''
     def build(self):
         cmake = CMake(self)
-        cmake.configure()
+        # Dynamically detect CMakeLists.txt location for conan build vs conan create
+        import os
+        if not os.path.exists(os.path.join(self.source_folder, "CMakeLists.txt")):
+            # conan build scenario: CMakeLists.txt is in parent directory
+            cmake.configure(build_script_folder="..")
+        else:
+            # conan create scenario: CMakeLists.txt is in source folder
+            cmake.configure()
         cmake.build()
 
     def package(self):
         cmake = CMake(self)
         cmake.install()
+'''
 
+    conanfile_content += '''
     def package_info(self):
         self.cpp_info.libs = [self.name]
 
@@ -434,7 +591,11 @@ class {name.replace('-', '').replace('_', '').capitalize()}Conan(ConanFile):
 '''
 
     # Write conanfile.py
-    conanfile_path = os.path.join(project_dir, 'conanfile.py')
+    conanfile_path = get_conanfile_path(project_dir, config)
+    # Ensure parent directory exists
+    conanfile_dir = os.path.dirname(conanfile_path)
+    if conanfile_dir and not os.path.exists(conanfile_dir):
+        os.makedirs(conanfile_dir)
     with open(conanfile_path, 'w') as f:
         f.write(conanfile_content)
 
@@ -473,6 +634,9 @@ def build_conan_locally(project_dir: str, config: Dict[str, Any], link_type: str
 
     success = True
 
+    # Get conanfile.py path
+    conanfile_path = get_conanfile_path(project_dir, config)
+
     # Build static library
     if build_static:
         print("\n=== Building Conan Package (Static) ===")
@@ -480,7 +644,7 @@ def build_conan_locally(project_dir: str, config: Dict[str, Any], link_type: str
         ensure_directory_exists(static_build_dir)
 
         success = success and _build_variant(
-            project_dir, static_build_dir, profile, shared=False
+            project_dir, static_build_dir, profile, conanfile_path, shared=False
         )
 
     # Build shared library
@@ -490,7 +654,7 @@ def build_conan_locally(project_dir: str, config: Dict[str, Any], link_type: str
         ensure_directory_exists(shared_build_dir)
 
         success = success and _build_variant(
-            project_dir, shared_build_dir, profile, shared=True
+            project_dir, shared_build_dir, profile, conanfile_path, shared=True
         )
 
     if success:
@@ -500,7 +664,7 @@ def build_conan_locally(project_dir: str, config: Dict[str, Any], link_type: str
     return success
 
 
-def _build_variant(project_dir: str, build_dir: str, profile: str, shared: bool) -> bool:
+def _build_variant(project_dir: str, build_dir: str, profile: str, conanfile_path: str, shared: bool) -> bool:
     """Build a specific variant (static or shared)."""
     variant_name = "shared" if shared else "static"
     shared_option = "True" if shared else "False"
@@ -508,9 +672,10 @@ def _build_variant(project_dir: str, build_dir: str, profile: str, shared: bool)
     # Install dependencies
     print(f"\nInstalling dependencies ({variant_name})...")
     install_cmd = [
-        "conan", "install", ".",
+        "conan", "install", conanfile_path,
         "--output-folder", build_dir,
         "--build", "missing",
+        "-nr",  # No remote - build from source if not in local cache
         "-o", f"*:shared={shared_option}",  # Conan 2.x format: *:option=value
     ]
 
@@ -528,7 +693,7 @@ def _build_variant(project_dir: str, build_dir: str, profile: str, shared: bool)
     # Build the package
     print(f"\nBuilding package ({variant_name})...")
     build_cmd = [
-        "conan", "build", ".",
+        "conan", "build", conanfile_path,
         "--output-folder", build_dir,
         "-o", f"*:shared={shared_option}",  # Must pass option to build command too
     ]

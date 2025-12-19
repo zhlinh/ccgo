@@ -3,20 +3,20 @@ OHPM configuration handler for CCGO.
 
 Handles OHPM (OpenHarmony Package Manager) configuration from CCGO.toml and environment variables.
 
-Configuration structure:
+Configuration structure (unified field names):
     [publish.ohos.ohpm]
-    registry = "official"
-    package_name = "mylib"
+    registry = "official"       # Registry type: official/private/local
+    name = "mylib"              # Package name (default: project.name)
+    group_id = "myorg"          # Scope/organization (preferred, for @scope/name format)
     version = "1.0.0"
+    description = "My library"  # Package description
     dependencies = [
         { name = "@ohos/library1", version = "^1.0.0" }
     ]
 
-Legacy format (still supported):
-    [publish.ohos]
-    registry = "official"
-    package_name = "mylib"
-    ...
+Field aliases (for backward compatibility):
+    - name > package_name > project.name
+    - group_id > organization > project.group_id (last segment)
 """
 
 import os
@@ -75,8 +75,10 @@ class OhpmConfig:
         self.registry_url = self._expand_env(self.ohpm_config.get('url', ''))
 
         # Package information
+        # Priority: publish.ohos.ohpm.name > publish.ohos.ohpm.package_name > project.name
         self.package_name = self._expand_env(
-            self.ohpm_config.get('package_name', config.get('project', {}).get('name', 'unknown'))
+            self.ohpm_config.get('name',
+                self.ohpm_config.get('package_name', config.get('project', {}).get('name', 'unknown')))
         )
         self.version = self._expand_env(
             self.ohpm_config.get('version', config.get('project', {}).get('version', '1.0.0'))
@@ -86,7 +88,9 @@ class OhpmConfig:
         )
 
         # Organization/scope (for scoped packages like @org/package)
-        self.organization = self._expand_env(self.ohpm_config.get('organization', ''))
+        # Priority: group_id > organization > project.group_id (last segment)
+        # Note: If group_id is explicitly set to "" (empty string), no scope will be used
+        self.organization = self._resolve_organization(config)
 
         # Authentication
         self.auth_config = self.ohpm_config.get('auth', {})
@@ -102,6 +106,31 @@ class OhpmConfig:
 
         # Parse dependencies
         self.dependencies = self._parse_dependencies()
+
+    def _resolve_organization(self, config: Dict[str, Any]) -> str:
+        """
+        Resolve organization/scope from configuration.
+
+        Priority:
+        1. group_id (if key exists, use value even if empty - allows explicit disable)
+        2. organization (legacy alias)
+        3. project.group_id last segment (fallback)
+
+        To explicitly disable scope (@org/), set group_id = "" in config.
+        """
+        # Check if any explicit key is set (including empty string)
+        if 'group_id' in self.ohpm_config:
+            return self._expand_env(self.ohpm_config['group_id'])
+        if 'organization' in self.ohpm_config:
+            return self._expand_env(self.ohpm_config['organization'])
+
+        # Fallback to project.group_id (extract last segment)
+        project_group_id = config.get('project', {}).get('group_id', '')
+        if project_group_id and '.' in project_group_id:
+            return project_group_id.split('.')[-1]
+        elif project_group_id:
+            return project_group_id
+        return ''
 
     def _parse_dependencies(self) -> List[OhpmDependency]:
         """Parse OHPM dependencies from config."""

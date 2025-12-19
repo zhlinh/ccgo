@@ -37,26 +37,26 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_VISIBILITY_PRESET default)
 set(CMAKE_C_VISIBILITY_PRESET default)
 
-if(COMM_USE_SYSTEM_INCLUDES)
-    set(COMM_INTERNAL_INCLUDE_WARNING_GUARD SYSTEM)
+if(CCGO_USE_SYSTEM_INCLUDES)
+    set(CCGO_INTERNAL_INCLUDE_WARNING_GUARD SYSTEM)
 else()
-    set(COMM_INTERNAL_INCLUDE_WARNING_GUARD "")
+    set(CCGO_INTERNAL_INCLUDE_WARNING_GUARD "")
 endif()
 
 # only the submodules of add_subdirectory are installed
 if(NOT CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
-    option(COMM_ENABLE_INSTALL "Enable install rule" OFF)
+    option(CCGO_ENABLE_INSTALL "Enable install rule" OFF)
 else()
-    option(COMM_ENABLE_INSTALL "Enable install rule" ON)
+    option(CCGO_ENABLE_INSTALL "Enable install rule" ON)
 endif()
 
 # set ide folder
-if(NOT DEFINED COMM_IDE_FOLDER)
-    set(COMM_IDE_FOLDER ${MAIN_PROJECT_NAME})
+if(NOT DEFINED CCGO_IDE_FOLDER)
+    set(CCGO_IDE_FOLDER ${MAIN_PROJECT_NAME})
 endif()
 
 # enable export
-add_definitions(-DCOMM_ENABLE_EXPORTS=1)
+add_definitions(-DCCGO_ENABLE_EXPORTS=1)
 
 macro(add_third_party_option conf_name desc value)
     message(STATUS "add_third_party_option ${conf_name} '${desc}' ${value}")
@@ -68,28 +68,28 @@ macro(add_third_party_option conf_name desc value)
 endmacro()
 
 # The prefix for logging tags, usually the project name.
-if(COMM_TAG_PREFIX)
-    add_definitions(-DCOMM_TAG_PREFIX=\"${COMM_TAG_PREFIX}\")
+if(CCGO_TAG_PREFIX)
+    add_definitions(-DCCGO_TAG_PREFIX=\"${CCGO_TAG_PREFIX}\")
 else()
-    add_definitions(-DCOMM_TAG_PREFIX=\"${MAIN_PROJECT_NAME}\")
+    add_definitions(-DCCGO_TAG_PREFIX=\"${MAIN_PROJECT_NAME}\")
 endif()
 
 # The suffix for logging tags, usually the build time.
-if(COMM_LOG_TAG_SUFFIX)
-    add_definitions(-DCOMM_LOG_TAG_SUFFIX=\"${COMM_LOG_TAG_SUFFIX}\")
+if(CCGO_LOG_TAG_SUFFIX)
+    add_definitions(-DCCGO_LOG_TAG_SUFFIX=\"${CCGO_LOG_TAG_SUFFIX}\")
 endif()
 
-if(NOT COMM_REVISION)
+if(NOT CCGO_REVISION)
     # get revision (suppress errors if not in a git repository)
     execute_process(COMMAND git rev-parse --short HEAD
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        OUTPUT_VARIABLE COMM_REVISION
+        OUTPUT_VARIABLE CCGO_REVISION
         ERROR_QUIET
         OUTPUT_STRIP_TRAILING_WHITESPACE)
 endif()
 
-if(COMM_REVISION)
-    add_definitions(-DCOMM_REVISION=\"${COMM_REVISION}\")
+if(CCGO_REVISION)
+    add_definitions(-DCCGO_REVISION=\"${CCGO_REVISION}\")
 endif()
 
 # logcomm does not have source code, just use option
@@ -129,10 +129,10 @@ include_directories(${CMAKE_SOURCE_DIR}/include/${MAIN_PROJECT_NAME}/api/macos/)
 include_directories(${CMAKE_SOURCE_DIR}/include/${MAIN_PROJECT_NAME}/api/apple/)
 
 # include third party include dir
-set(COMM_THIRD_PARTY_INCLUDE_DIRS "")
-get_third_party_include_directories(COMM_THIRD_PARTY_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/third_party/)
+set(CCGO_THIRD_PARTY_INCLUDE_DIRS "")
+get_third_party_include_directories(CCGO_THIRD_PARTY_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/third_party/)
 
-foreach(dir ${COMM_THIRD_PARTY_INCLUDE_DIRS})
+foreach(dir ${CCGO_THIRD_PARTY_INCLUDE_DIRS})
     set(third_party_sub_dir ${CMAKE_SOURCE_DIR}/third_party/${dir})
     include_directories(${third_party_sub_dir}/include/)
 endforeach()
@@ -146,23 +146,23 @@ endif()
 
 # google test or benchmark, then disable log
 # if (GOOGLETEST_SUPPORT OR BENCHMARK_SUPPORT)
-# add_definitions(-DCOMM_DISABLE_LOG=1)
+# add_definitions(-DCCGO_DISABLE_LOG=1)
 # endif()
 if(GOOGLETEST_SUPPORT)
-    add_definitions(-DCOMM_ENABLE_GOOGLETEST=1)
+    add_definitions(-DCCGO_ENABLE_GOOGLETEST=1)
     set(ENABLE_VISIBILITY 1)
 endif()
 
 if(BENCHMARK_SUPPORT)
-    add_definitions(-DCOMM_ENABLE_BENCHMARK=1)
+    add_definitions(-DCCGO_ENABLE_BENCHMARK=1)
     set(ENABLE_VISIBILITY 1)
 endif()
 
 if(LOGCOMM_SUPPORT)
-    add_definitions(-DCOMM_ENABLE_LOGCOMM=1)
+    add_definitions(-DCCGO_ENABLE_LOGCOMM=1)
 endif()
 
-set(CMAKE_CXX_STANDARD ${CONFIG_COMM_CMAKE_CXX_STANDARD})
+set(CMAKE_CXX_STANDARD ${CCGO_CONFIG_CMAKE_CXX_STANDARD})
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(ANDROID)
@@ -170,7 +170,7 @@ if(ANDROID)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
     endif()
 
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CONFIG_COMM_CMAKE_CXX_STANDARD}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CCGO_CONFIG_CMAKE_CXX_STANDARD}")
 
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -DDEBUG")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
@@ -211,7 +211,7 @@ elseif(OHOS)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
     endif()
 
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CONFIG_COMM_CMAKE_CXX_STANDARD}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CCGO_CONFIG_CMAKE_CXX_STANDARD}")
 
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -DDEBUG")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
@@ -249,11 +249,11 @@ elseif(OHOS)
 
 elseif(APPLE)
     # for gen xcode project file
-    set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "gnu++${CONFIG_COMM_CMAKE_CXX_STANDARD}")
+    set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LANGUAGE_STANDARD "gnu++${CCGO_CONFIG_CMAKE_CXX_STANDARD}")
     set(CMAKE_XCODE_ATTRIBUTE_CLANG_CXX_LIBRARY "libc++")
 
     # for build
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CONFIG_COMM_CMAKE_CXX_STANDARD}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CCGO_CONFIG_CMAKE_CXX_STANDARD}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -g -gline-tables-only -Os")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -g -gline-tables-only -Os")
@@ -287,7 +287,7 @@ elseif(APPLE)
     endif()
 
 elseif(MSVC)
-    add_definitions(-DCMAKE_CXX_STANDARD=${CONFIG_COMM_CMAKE_CXX_STANDARD})
+    add_definitions(-DCMAKE_CXX_STANDARD=${CCGO_CONFIG_CMAKE_CXX_STANDARD})
 
     # pthreadVC2 import by static
     add_definitions(-DPTW32_STATIC_LIB)
@@ -338,7 +338,7 @@ elseif(MSVC)
 
 elseif(UNIX)
     add_definitions(-D__linux__ -Dlinux -D__linux)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CONFIG_COMM_CMAKE_CXX_STANDARD}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++${CCGO_CONFIG_CMAKE_CXX_STANDARD}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fexceptions")
 
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -ffunction-sections -fdata-sections -Os")

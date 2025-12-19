@@ -121,7 +121,10 @@ def _build_macos_single(target_option, single_link_type, jobs):
     else:  # shared
         link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
 
-    full_target_option = f"{link_type_flags} {target_option}".strip()
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+
+    full_target_option = f"{link_type_flags} {config_cmake_args} {target_option}".strip()
 
     print(f"\n--- Building {single_link_type} library ---")
     print(f"Build directory: {build_out_path}")
@@ -605,7 +608,11 @@ def gen_macos_project(target_option=""):
     clean(build_out_path)
     os.chdir(build_out_path)
 
-    cmd = GEN_MACOS_PROJ % (CCGO_CMAKE_DIR, target_option)
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+    full_target_option = f"{config_cmake_args} {target_option}".strip()
+
+    cmd = GEN_MACOS_PROJ % (CCGO_CMAKE_DIR, full_target_option)
     ret = os.system(cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:

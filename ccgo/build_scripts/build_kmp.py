@@ -457,69 +457,123 @@ def publish_to_maven_local():
 
     gradlew = KMP_DIR / "gradlew"
 
-    cmd = [str(gradlew), "publishToMavenLocal"]
+    # Use ccgoPublishToMavenLocal task from ccgo-gradle-plugins
+    # --no-configuration-cache avoids Android SDK cache issues
+    cmd = [str(gradlew), "ccgoPublishToMavenLocal", "--no-configuration-cache"]
     run_command(cmd, cwd=KMP_DIR)
 
+    # Success message is printed by the Gradle plugin
+
+
+def _check_maven_credentials():
+    """
+    Check if Maven credentials are configured.
+
+    Credential sources (priority from high to low):
+    1. Environment variables (MAVEN_CENTRAL_USERNAME, MAVEN_CUSTOM_URLS, etc.)
+    2. CCGO.toml (publish.maven.*)
+    3. Project-level gradle.properties
+    4. User-level ~/.gradle/gradle.properties
+
+    Returns:
+        Tuple of (has_credentials, source_description)
+    """
+    # 1. Check environment variables
+    env_central = os.environ.get('MAVEN_CENTRAL_USERNAME') and os.environ.get('MAVEN_CENTRAL_PASSWORD')
+    env_custom = os.environ.get('MAVEN_CUSTOM_URLS') and os.environ.get('MAVEN_CUSTOM_USERNAMES')
+    if env_central or env_custom:
+        return True, "environment variables"
+
+    # 2. Check CCGO.toml
+    ccgo_toml = PROJECT_DIR / "CCGO.toml"
+    if ccgo_toml.exists():
+        try:
+            import tomllib
+        except ImportError:
+            try:
+                import tomli as tomllib
+            except ImportError:
+                tomllib = None
+
+        if tomllib:
+            with open(ccgo_toml, "rb") as f:
+                config = tomllib.load(f)
+                maven_config = config.get('publish', {}).get('maven', {})
+                if maven_config.get('central_username') and maven_config.get('central_password'):
+                    return True, "CCGO.toml"
+                if maven_config.get('custom_urls') and maven_config.get('custom_usernames'):
+                    return True, "CCGO.toml"
+
+    # 3. Check project-level gradle.properties (KMP dir or project dir)
+    for props_file in [KMP_DIR / "gradle.properties", PROJECT_DIR / "gradle.properties"]:
+        if props_file.exists():
+            with open(props_file, "r") as f:
+                content = f.read()
+                if "mavenCentralUsername" in content and "mavenCentralPassword" in content:
+                    return True, f"project gradle.properties ({props_file})"
+                if "mavenCustomUrls" in content and "mavenCustomUsernames" in content:
+                    return True, f"project gradle.properties ({props_file})"
+
+    # 4. Check user-level ~/.gradle/gradle.properties
+    user_gradle_props = Path.home() / ".gradle" / "gradle.properties"
+    if user_gradle_props.exists():
+        with open(user_gradle_props, "r") as f:
+            content = f.read()
+            if "mavenCentralUsername" in content and "mavenCentralPassword" in content:
+                return True, "~/.gradle/gradle.properties"
+            if "mavenCustomUrls" in content and "mavenCustomUsernames" in content:
+                return True, "~/.gradle/gradle.properties"
+
+    return False, ""
+
+
+def publish_to_maven_central():
+    """Publish the KMP library to Maven Central (Sonatype OSSRH)"""
     print("\n" + "=" * 80)
-    print("Published to Maven Local successfully!")
-    print("=" * 80 + "\n")
-
-    print("\nMaven Local artifacts can be found at:")
-    print(f"  ~/.m2/repository/")
-    print()
-
-
-def publish_to_maven_remote():
-    """Publish the KMP library to remote Maven repository"""
-    print("\n" + "=" * 80)
-    print("Publishing KMP to Maven Remote")
+    print("Publishing KMP to Maven Central")
     print("=" * 80 + "\n")
 
     gradlew = KMP_DIR / "gradlew"
 
-    # Check if Maven credentials are configured
-    gradle_props = KMP_DIR / "gradle.properties"
-    has_credentials = False
-
-    if gradle_props.exists():
-        with open(gradle_props, "r") as f:
-            content = f.read()
-            has_credentials = (
-                "maven.username" in content and "maven.password" in content
-            )
-
-    if not has_credentials:
-        print("⚠️  WARNING: Maven credentials not found in gradle.properties")
-        print("\nPlease add the following to kmp/gradle.properties:")
-        print("  maven.username=your-username")
-        print("  maven.password=your-password")
-        print("\nOr configure them in ~/.gradle/gradle.properties\n")
-
-        response = input("Continue anyway? (y/N): ")
-        if response.lower() != "y":
-            print("Aborted.")
-            sys.exit(0)
-
-    cmd = [str(gradlew), "publish"]
+    # Use ccgoPublishToMavenCentral task from ccgo-gradle-plugins
+    # --no-configuration-cache avoids Android SDK cache issues
+    cmd = [str(gradlew), "ccgoPublishToMavenCentral", "--no-configuration-cache"]
     run_command(cmd, cwd=KMP_DIR)
 
+    # Success message is printed by the Gradle plugin
+
+
+def publish_to_maven_custom():
+    """Publish the KMP library to custom Maven repository"""
     print("\n" + "=" * 80)
-    print("Published to Maven Remote successfully!")
+    print("Publishing KMP to Custom Maven Repository")
     print("=" * 80 + "\n")
 
+    gradlew = KMP_DIR / "gradlew"
 
-def main(publish_local=False, publish_remote=False):
+    # Use ccgoPublishToMavenCustom task from ccgo-gradle-plugins
+    # --no-configuration-cache avoids Android SDK cache issues
+    cmd = [str(gradlew), "ccgoPublishToMavenCustom", "--no-configuration-cache"]
+    run_command(cmd, cwd=KMP_DIR)
+
+    # Success message is printed by the Gradle plugin
+
+
+def main(publish_local=False, publish_central=False, publish_custom=False):
     """
     Main entry point for building and publishing KMP library.
 
     Args:
         publish_local: If True, publish to Maven local repository
-        publish_remote: If True, publish to remote Maven repository
+        publish_central: If True, publish to Maven Central (Sonatype OSSRH)
+        publish_custom: If True, publish to custom Maven repository
     """
     if publish_local:
         publish_to_maven_local()
-    elif publish_remote:
-        publish_to_maven_remote()
+    elif publish_central:
+        publish_to_maven_central()
+    elif publish_custom:
+        publish_to_maven_custom()
     else:
         build_kmp_library()
 
@@ -527,9 +581,10 @@ def main(publish_local=False, publish_remote=False):
 # Command-line interface for KMP builds
 #
 # Usage:
-#   python build_kmp.py                  # Build KMP library (release)
-#   python build_kmp.py --publish-local  # Publish to Maven local
-#   python build_kmp.py --publish-remote # Publish to Maven remote
+#   python build_kmp.py                   # Build KMP library (release)
+#   python build_kmp.py --publish-local   # Publish to Maven local
+#   python build_kmp.py --publish-central # Publish to Maven Central
+#   python build_kmp.py --publish-custom  # Publish to custom Maven repository
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Build Kotlin Multiplatform Library (release variant only)",
@@ -538,13 +593,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--publish-local",
         action="store_true",
-        help="Publish to Maven local repository",
+        help="Publish to Maven local repository (~/.m2/repository/)",
     )
     parser.add_argument(
-        "--publish-remote",
+        "--publish-central",
         action="store_true",
-        help="Publish to remote Maven repository",
+        help="Publish to Maven Central (Sonatype OSSRH)",
+    )
+    parser.add_argument(
+        "--publish-custom",
+        action="store_true",
+        help="Publish to custom Maven repository",
     )
 
     args = parser.parse_args()
-    main(publish_local=args.publish_local, publish_remote=args.publish_remote)
+    main(
+        publish_local=args.publish_local,
+        publish_central=args.publish_central,
+        publish_custom=args.publish_custom
+    )

@@ -107,8 +107,11 @@ def _build_linux_single(target_option, single_link_type, jobs):
     else:  # shared
         link_type_flags = "-DCCGO_BUILD_STATIC=OFF -DCCGO_BUILD_SHARED=ON"
 
-    # Build command with link_type_flags and jobs
-    build_cmd = BUILD_CMD % (CCGO_CMAKE_DIR, link_type_flags, jobs)
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+
+    # Build command with link_type_flags, config args, and jobs
+    build_cmd = BUILD_CMD % (CCGO_CMAKE_DIR, f"{link_type_flags} {config_cmake_args}", jobs)
 
     clean(build_out_path)
     os.chdir(build_out_path)
@@ -250,7 +253,9 @@ def gen_linux_project(target_option=""):
     clean(build_out_path)
     os.chdir(build_out_path)
 
-    cmd = GEN_PROJECT_CMD % CCGO_CMAKE_DIR
+    # Get config-based CMake args (visibility, submodule deps)
+    config_cmake_args = " ".join(get_cmake_args_for_config())
+    cmd = (GEN_PROJECT_CMD % CCGO_CMAKE_DIR) + " " + config_cmake_args
     ret = os.system(cmd)
     os.chdir(SCRIPT_PATH)
     if ret != 0:

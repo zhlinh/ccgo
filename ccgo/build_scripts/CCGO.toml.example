@@ -61,7 +61,24 @@ libohos = { version = "1.0.0", source = "https://example.com/libohos-1.0.0.zip" 
 
 # Build configuration (optional)
 # [build]
+# # Symbol visibility for C/C++ symbols
+# # false (default): hidden visibility - only explicitly exported symbols are visible
+# # true: default visibility - all symbols are visible (useful for debugging)
+# symbol_visibility = false
+#
+# # Submodule internal dependencies for shared library linking
+# # Format: module = ["dep1", "dep2"] means module depends on dep1 and dep2
+# # This is used when building shared libraries to ensure proper linking order
+# # If not specified, dependencies are auto-detected by scanning source includes
+# [build.submodule_deps]
+# api = ["base"]           # api module depends on base module
+# feature = ["base", "utils"]  # feature module depends on base and utils
+#
 # # Conan package configuration (if using Conan)
 # [build.conan]
 # # Conan recipe path (relative to project root)
-# recipe = "conanfile.py"
+# # Default lookup order:
+# #   1. conan/conanfile.py (if conan/ directory exists)
+# #   2. conanfile.py (project root, for backward compatibility)
+# # Uncomment to specify a custom path:
+# recipe = "conan/conanfile.py"

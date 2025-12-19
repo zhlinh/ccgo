@@ -1,12 +1,13 @@
 ######################
-# java
+# Java
 ######################
 *.class
+*.war
+*.ear
 
 ######################
-# maven
+# Maven
 ######################
-target/
 **/target/
 pom.xml.tag
 pom.xml.releaseBackup
@@ -16,109 +17,147 @@ release.properties
 dependency-reduced-pom.xml
 buildNumber.properties
 .mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
 
 ######################
-# ide generated files
+# IDE
 ######################
+# IntelliJ IDEA
 *.iml
 .idea/
-/out/
-/target/
 .idea_modules/
-local.properties
-.vscode/
+/out/
+
+# Visual Studio / VS Code
 **/.vscode/
+**/.vs/
+
+# Eclipse
+.project
+.classpath
+.settings/
+
+# Other
 **/.cache/
 
 ######################
-# gradle
+# Gradle
 ######################
-.gradle
-*gradle""
+local.properties
+.gradle/
+**/build/
+!src/**/build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
 
 ######################
-# cmake
+# CMake
 ######################
-cmake_build/
-CMakeFiles/
-cmake_install.cmake
-Makefile
-CMakeCache.txt
-.cxx/
+**/cmake_build/
+**/CMakeFiles/
+**/CMakeCache.txt
+**/cmake_install.cmake
+**/Makefile
+**/compile_commands.json
+**/.cxx/
 
 ######################
-# python
+# Python
 ######################
-__pycache__
-*.pyc
-dist/
-*egg-info/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+**/dist/
+*.egg-info/
+*.egg
+.eggs/
+.venv/
+venv/
+ENV/
+.python-version
 
 ######################
-# android
+# Android
 ######################
-build
-captures
-!gradle.properties
-.externalNativeBuild
-*.zip
-nohup.out
+captures/
+**/.externalNativeBuild/
 
 ######################
-# ios
+# iOS / macOS
 ######################
-*comm.build
-.xcodeproj
+*.build/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
 *.pbxuser
 *.perspective
 *.perspectivev3
-*comm/*comm.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
 
 ######################
-# mac
+# macOS
 ######################
 .DS_Store
-bin
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
 
 ######################
-# doxygen
+# OHOS (OpenHarmony)
 ######################
-*comm/*/_html/
-*comm/*/_latex/
+**/.hvigor/
+**/oh_modules/
 
 ######################
-# lint
+# ccgo
 ######################
-*lint_detail.txt
-.lint.conf
+**/.ccgo/
+
+######################
+# Doxygen
+######################
+**/_html/
+**/_latex/
+
+######################
+# Logs
+######################
+*.log
 log.log*
 error.log
+nohup.out
+*lint_detail.txt
+.lint.conf
+**/nul
 
 ######################
-# temp
+# Archives
 ######################
-._*
-
+*.zip
+*.tar.gz
+*.rar
 
 ######################
-# for this project
+# Binaries
+######################
+/bin/
+**/bin/
+
+######################
+# Project specific
 ######################
 source_sdk/
-*comm_cov_result
-*comm_kw_result
-*comm/include/*comm/base/verinfo.h
-*comm/src/**/verinfo.h
-*comm/android/*/libs/
-*comm/android/*/obj/
-*comm/libraries/*/libs/
-*comm/libraries/*/obj/
-tool/*log_xlog/log/
-tool/*/**/.*
-tool/*/base/cdntool/*log
-tool/*/**/http_cache.sqlite
-tool/*/**/db.sqlite3
-**/ipa/
-*.log
+*_result/
 *result.log
-
-
+**/include/*/base/verinfo.h
+**/src/**/verinfo.h
+**/android/*/libs/
+**/android/*/obj/

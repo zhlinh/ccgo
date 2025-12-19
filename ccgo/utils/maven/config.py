@@ -3,19 +3,21 @@ Maven configuration handler for CCGO.
 
 Handles Maven repository configuration from CCGO.toml and environment variables.
 
-Configuration structure:
+Configuration structure (unified field names):
     [publish.android.maven]
-    artifact_id = "mylib"
-    group_id = "com.example"
+    name = "mylib"              # Package name (preferred)
+    group_id = "com.example"    # Organization/group
     version = "1.0.0"
+    registry = "local"          # Registry type: local/central/custom (preferred)
+    description = "My library"  # Package description (preferred)
     dependencies = [
         { group = "com.example", artifact = "dep", version = "1.0.0" }
     ]
 
-    [publish.kmp.maven]
-    artifact_id = "mylib-kmp"
-    group_id = "com.example"
-    version = "1.0.0"
+Field aliases (for backward compatibility):
+    - name > artifact_id > project.name
+    - registry > repository
+    - description > pom_description > project.description
 """
 
 import os
@@ -75,18 +77,27 @@ class MavenConfig:
             self.maven_config = platform_config
 
         # Parse configuration
-        self.repo_type = self.maven_config.get('repository', 'local').lower()
+        # Priority: registry > repository (for unified naming)
+        self.repo_type = self.maven_config.get('registry',
+            self.maven_config.get('repository', 'local')).lower()
         self.repo_url = self._expand_env(self.maven_config.get('url', ''))
 
         # Maven coordinates
         self.group_id = self._expand_env(
             self.maven_config.get('group_id', config.get('project', {}).get('group_id', 'com.example'))
         )
+        # Priority: name > artifact_id > project.name (for unified naming)
         self.artifact_id = self._expand_env(
-            self.maven_config.get('artifact_id', config.get('project', {}).get('name', 'unknown'))
+            self.maven_config.get('name',
+                self.maven_config.get('artifact_id', config.get('project', {}).get('name', 'unknown')))
         )
         self.version = self._expand_env(
             self.maven_config.get('version', config.get('project', {}).get('version', '1.0.0'))
+        )
+        # Priority: description > pom_description > project.description (for unified naming)
+        self.description = self._expand_env(
+            self.maven_config.get('description',
+                self.maven_config.get('pom_description', config.get('project', {}).get('description', '')))
         )
 
         # Authentication
@@ -282,7 +293,8 @@ class MavenConfig:
 
         # POM metadata
         pom_name = self.maven_config.get('pom_name', self.artifact_id)
-        pom_description = self.maven_config.get('pom_description', f"{self.artifact_id} library")
+        # Use self.description which already has fallback chain
+        pom_description = self.description if self.description else f"{self.artifact_id} library"
         pom_url = self.maven_config.get('pom_url', '')
 
         lines.append(f"POM_NAME={pom_name}")

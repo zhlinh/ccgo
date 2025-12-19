@@ -1,14 +1,7 @@
 """
-Canon platform integration for CCGO.
-
-This module provides functionality to publish build artifacts to Canon platform.
+Conan package manager utilities for CCGO.
 """
 
-from .client import CanonClient
-from .auth import CanonAuth
-from .uploader import CanonUploader
+from .config import ConanConfig, ConanDependency, load_conan_config
 
-__all__ = ['CanonClient', 'CanonAuth', 'CanonUploader']
-
-# Version of the Canon integration module
-__version__ = '1.0.0'
+__all__ = ['ConanConfig', 'ConanDependency', 'load_conan_config']

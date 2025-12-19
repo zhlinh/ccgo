@@ -1,455 +1,364 @@
-# Conan Package Manager Configuration Guide
+# Conan Publishing Configuration Guide
 
-This guide explains how to configure CCGO to build and manage C/C++ packages using Conan, the popular C/C++ package manager.
+This guide explains how to configure CCGO to publish C/C++ libraries to Conan package manager.
 
 ## Overview
 
-CCGO now supports building Conan packages directly from your C/C++ projects. Conan is a decentralized package manager that allows you to:
-- Create reusable C/C++ packages
-- Manage dependencies effectively
-- Share libraries across projects
-- Support multiple build configurations
-- Integrate with various build systems
+CCGO now supports publishing to three types of Conan repositories:
+1. **Local Cache** - Your local Conan cache (~/.conan2/)
+2. **Official Remote** - First configured remote repository
+3. **Private Remote** - Custom Conan-compatible repository (Artifactory, etc.)
 
-All configuration is done through `CCGO.toml`, with automatic generation of `conanfile.py` when needed.
+All configuration is done through `CCGO.toml`, with support for environment variables for sensitive data.
 
 ## Configuration in CCGO.toml
 
-### Basic Conan Configuration
+### Unified Field Names
+
+CCGO uses unified field names across all publish configurations. The following field aliases are supported for backward compatibility:
+
+| Unified Name | Legacy Alias | Description |
+|--------------|--------------|-------------|
+| `name` | `package_name` | Package name |
+| `group_id` | `user`, `organization` | User/organization for @user/channel |
+| `registry` | `repository` | Registry type (local/official/private) |
+| `description` | - | Package description |
+
+**Priority:** New unified names take precedence over legacy aliases.
+
+### Basic Configuration
 
 ```toml
-[build.conan]
-# Package name (defaults to project.name)
-name = "my-cpp-lib"
+[publish.conan]
+registry = "local"           # Options: local, official, private
+name = "mylib"               # Package name (default: project.name)
+group_id = "myorg"           # User in name/version@user/channel
+channel = "stable"           # Channel: stable, testing, dev
+version = "1.0.0"
+description = "My C/C++ library"
+```
 
-# Package version (defaults to project.version)
+### Conan Package Reference Format
+
+Conan 2.x uses the following package reference format:
+```
+name/version@user/channel
+```
+
+For example:
+- `mylib/1.0.0` - Basic reference (no user/channel)
+- `mylib/1.0.0@myorg/stable` - Full reference with user and channel
+
+### Group ID Behavior
+
+The `group_id` field controls the user/channel in the package reference:
+
+```toml
+# 1. Fallback to project.group_id (default behavior)
+[publish.conan]
+name = "mylib"
+# → mylib/1.0.0@<last_segment_of_project.group_id>/stable
+
+# 2. Explicitly set group_id
+[publish.conan]
+name = "mylib"
+group_id = "myorg"
+# → mylib/1.0.0@myorg/stable
+
+# 3. Explicitly disable group_id (no user/channel)
+[publish.conan]
+name = "mylib"
+group_id = ""
+# → mylib/1.0.0
+```
+
+**Note:** Unlike Maven where `group_id` is required, Conan and OHPM allow packages without user/organization. Use `group_id = ""` to explicitly publish without user/channel.
+
+### Publishing to Local Cache
+
+The simplest option - no authentication required:
+
+```toml
+[publish.conan]
+registry = "local"
+name = "mylib"
+version = "1.0.0"
+```
+
+### Publishing to Remote Repository
+
+For uploading to Artifactory, Nexus, or other Conan servers:
+
+```toml
+[publish.conan]
+registry = "private"
+url = "https://conan.company.com/artifactory/api/conan/conan-local"
+remote_name = "company-conan"  # Name for the remote
+name = "mylib"
+group_id = "myorg"             # Results in mylib/1.0.0@myorg/stable
+channel = "stable"
 version = "1.0.0"
 
-# Package description (defaults to project.description)
-description = "A powerful C++ library"
-
-# Build mode: "create" (full package), "export" (export only), "build" (local build)
-mode = "create"
-
-# Conan profile to use (default: "default")
-profile = "default"
-
-# Build folder for local builds
-build_folder = "cmake_build/conan"
+[publish.conan.auth]
+[publish.conan.auth.credentials]
+username = "${CONAN_USERNAME}"
+password = "${CONAN_PASSWORD}"
 ```
 
-### Advanced Configuration
+### Dependencies
+
+Specify Conan dependencies that will be included in the generated conanfile.py:
 
 ```toml
-[build.conan]
-name = "advanced-lib"
-version = "2.0.0"
-author = "Your Name <you@example.com>"
-license = "MIT"
-url = "https://github.com/username/advanced-lib"
+[publish.conan]
+name = "mylib"
+version = "1.0.0"
 
-# Build settings
-settings = ["os", "compiler", "build_type", "arch"]
+# Dependencies as array
+dependencies = [
+    { name = "zlib", version = "1.2.13" },
+    { name = "openssl", version = "3.0.8", user = "conan", channel = "stable" },
+]
+```
 
-# Package options
-[build.conan.options]
-shared = [true, false]
-fPIC = [true, false]
-with_tests = [true, false]
-with_docs = [true, false]
-
-# Default option values
-[build.conan.default_options]
-shared = false
-fPIC = true
-with_tests = false
-with_docs = false
-
-# Package dependencies
-[build.conan.requires]
+Or use string format:
+```toml
 dependencies = [
     "zlib/1.2.13",
-    "openssl/3.0.7",
-    "boost/1.82.0"
-]
-
-# Build requirements (tools needed during build)
-[build.conan.build_requires]
-tools = [
-    "cmake/3.27.7",
-    "ninja/1.11.1"
+    "openssl/3.0.8@conan/stable",
 ]
 ```
 
-## Build Modes
+## Environment Variables
 
-### 1. Create Mode (Default)
-Creates a complete Conan package and installs it to local cache:
+### Standard Variables
+
+These environment variables are automatically recognized:
 
 ```bash
-ccgo build conan  # Uses mode = "create" by default
+# Conan authentication
+export CONAN_LOGIN_USERNAME="your-username"
+export CONAN_LOGIN_PASSWORD="your-password"
+
+# Alternative names
+export CONAN_USERNAME="your-username"
+export CONAN_PASSWORD="your-password"
 ```
 
-This mode:
-- Builds the project
-- Runs tests (if configured)
-- Creates the package
-- Installs to local Conan cache
+### Remote-Specific Variables
 
-### 2. Export Mode
-Exports the recipe without building:
+For authenticating to specific remotes:
+
+```bash
+# Format: CONAN_LOGIN_USERNAME_{REMOTE_NAME} (uppercase)
+export CONAN_LOGIN_USERNAME_ARTIFACTORY="your-username"
+export CONAN_LOGIN_PASSWORD_ARTIFACTORY="your-password"
+```
+
+### Custom Variables
+
+You can reference any environment variable using `${VAR_NAME}` syntax:
 
 ```toml
-[build.conan]
-mode = "export"
+[publish.conan.auth.credentials]
+username = "${MY_CUSTOM_USER_VAR}"
+password = "${MY_CUSTOM_PASS_VAR}"
 ```
-
-```bash
-ccgo build conan
-```
-
-Useful for:
-- CI/CD pipelines
-- Quick recipe validation
-- Preparing packages for remote upload
-
-### 3. Build Mode
-Builds locally for testing without creating a package:
-
-```toml
-[build.conan]
-mode = "build"
-```
-
-```bash
-ccgo build conan
-```
-
-Perfect for:
-- Local development
-- Testing build configurations
-- Debugging build issues
 
 ## Command Line Usage
 
-### Basic Build
+### Interactive Mode
+
+Simply run the publish command and follow prompts:
+
 ```bash
-# Build Conan package with default settings
-ccgo build conan
-
-# Check Conan installation and environment
-ccgo check conan --verbose
+ccgo publish conan
+# Prompts for registry type selection
 ```
 
-### With Custom Settings
+### Direct Publishing
+
+Specify registry type via command line:
+
 ```bash
-# Use specific Conan profile
-ccgo build conan --profile my-profile
+# Publish to Local Cache
+ccgo publish conan --conan local
 
-# Build with debug configuration
-ccgo build conan --build-type Debug
+# Publish to first configured remote
+ccgo publish conan --conan official
 
-# Build shared library
-ccgo build conan --shared
+# Publish to private remote
+ccgo publish conan --conan private --conan-name myremote --conan-url https://conan.company.com
+
+# Skip confirmation prompts
+ccgo publish conan -y
 ```
 
-## Generated conanfile.py
+## Remote Setup
 
-CCGO automatically generates a `conanfile.py` if it doesn't exist, based on your CCGO.toml configuration:
+### Adding a Remote
 
-```python
-from conan import ConanFile
-from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps
+Before uploading to a remote, you need to configure it:
 
-class MyLibConan(ConanFile):
-    name = "my-cpp-lib"
-    version = "1.0.0"
-    settings = "os", "compiler", "build_type", "arch"
-    options = {"shared": [True, False], "fPIC": [True, False]}
-    default_options = {"shared": False, "fPIC": True}
-
-    # Dependencies from CCGO.toml
-    requires = "zlib/1.2.13", "openssl/3.0.7"
-
-    def build(self):
-        cmake = CMake(self)
-        cmake.configure()
-        cmake.build()
-
-    def package(self):
-        cmake = CMake(self)
-        cmake.install()
-```
-
-## Conan Profiles
-
-### Using Default Profile
 ```bash
-ccgo build conan
+# Add a remote
+conan remote add myremote https://conan.company.com/artifactory/api/conan/conan-local
+
+# Login to remote
+conan remote login myremote username -p password
+
+# List remotes
+conan remote list
 ```
 
-### Using Custom Profile
-```toml
-[build.conan]
-profile = "linux-gcc11-release"
-```
+### Common Remote URLs
 
-### Creating Profiles
-```bash
-# Create a new profile
-conan profile new gcc11 --detect
+- **Artifactory**: `https://company.jfrog.io/artifactory/api/conan/conan-local`
+- **Nexus**: `https://nexus.company.com/repository/conan-hosted/`
+- **Local Verdaccio**: `http://localhost:9300`
 
-# Edit profile
-conan profile update settings.compiler.libcxx=libstdc++11 gcc11
-```
-
-## Integration with CI/CD
+## CI/CD Integration
 
 ### GitHub Actions
+
 ```yaml
-- name: Install Conan
-  run: pip install conan
-
-- name: Build Conan Package
-  run: ccgo build conan
-
-- name: Upload to Artifactory
-  run: conan upload "*" --remote artifactory
+- name: Publish to Conan
+  env:
+    CONAN_LOGIN_USERNAME_MYREMOTE: ${{ secrets.CONAN_USERNAME }}
+    CONAN_LOGIN_PASSWORD_MYREMOTE: ${{ secrets.CONAN_PASSWORD }}
+  run: |
+    conan remote add myremote https://conan.company.com
+    ccgo publish conan --conan private --conan-name myremote -y
 ```
 
 ### GitLab CI
+
 ```yaml
-build-conan:
+publish-conan:
   script:
-    - pip install conan
-    - ccgo build conan
-    - conan upload "*" --remote gitlab
+    - conan remote add myremote https://conan.company.com
+    - conan remote login myremote $CONAN_USERNAME -p $CONAN_PASSWORD
+    - ccgo publish conan --conan official -y
+  variables:
+    CONAN_USERNAME: $CI_CONAN_USERNAME
+    CONAN_PASSWORD: $CI_CONAN_PASSWORD
 ```
 
-### Jenkins
-```groovy
-stage('Build Conan Package') {
-    steps {
-        sh 'pip install conan'
-        sh 'ccgo build conan'
-    }
-}
-```
+## Full Configuration Example
 
-## Consuming the Package
+Here's a complete example for a production C/C++ library:
 
-Once built, use your package in other projects:
-
-### conanfile.txt
-```ini
-[requires]
-my-cpp-lib/1.0.0
-
-[generators]
-CMakeDeps
-CMakeToolchain
-
-[options]
-my-cpp-lib:shared=True
-```
-
-### conanfile.py
-```python
-from conan import ConanFile
-
-class MyApp(ConanFile):
-    requires = "my-cpp-lib/1.0.0"
-    generators = "CMakeDeps", "CMakeToolchain"
-```
-
-## Multi-Configuration Builds
-
-Build multiple configurations:
-
-```bash
-# Debug build
-conan create . --build=missing -s build_type=Debug
-
-# Release build
-conan create . --build=missing -s build_type=Release
-
-# Different compilers
-conan create . --build=missing -s compiler=gcc -s compiler.version=11
-conan create . --build=missing -s compiler=clang -s compiler.version=14
-```
-
-## Cross-Platform Support
-
-### Windows
 ```toml
-[build.conan.options]
-shared = [true, false]  # DLL or static lib
+[project]
+name = "awesome-lib"
+version = "2.3.1"
+description = "An awesome C/C++ library"
+group_id = "com.awesomecompany"
 
-[build.conan.default_options]
-shared = true  # Build DLL by default on Windows
+[publish.conan]
+registry = "private"
+url = "https://conan.awesomecompany.com/artifactory/api/conan/conan-local"
+remote_name = "awesome-conan"
+name = "awesome-lib"
+group_id = "awesomecompany"    # Results in awesome-lib/2.3.1@awesomecompany/stable
+channel = "stable"
+version = "${project.version}"
+description = "${project.description}"
+license = "MIT"
+
+# Build options
+settings = ["os", "compiler", "build_type", "arch"]
+options = { "with_openssl": [true, false] }
+default_options = { "with_openssl": true }
+
+# Dependencies
+dependencies = [
+    { name = "zlib", version = "1.2.13" },
+    { name = "openssl", version = "3.0.8" },
+]
+
+# Authentication
+[publish.conan.auth]
+[publish.conan.auth.credentials]
+username = "${CONAN_USERNAME}"
+password = "${CONAN_PASSWORD}"
 ```
 
-### Linux/macOS
-```toml
-[build.conan.options]
-fPIC = [true, false]  # Position Independent Code
-
-[build.conan.default_options]
-fPIC = true  # Required for shared libraries
-```
-
-## Package Layout
-
-Standard Conan package structure:
-```
-my-cpp-lib/
-├── conanfile.py       # Conan recipe (auto-generated)
-├── CMakeLists.txt     # CMake configuration
-├── CCGO.toml         # CCGO configuration
-├── include/          # Public headers
-│   └── mylib/
-│       └── mylib.h
-├── src/              # Source files
-│   └── mylib.cpp
-└── test/             # Tests
-    └── test_mylib.cpp
-```
-
-## Remote Repositories
-
-### Upload to Conan Center
+Then publish with:
 ```bash
-# Build and test locally
-ccgo build conan
-
-# Upload to Conan Center (after review)
-conan upload my-cpp-lib/1.0.0 --remote conan-center
-```
-
-### Private Repositories
-```bash
-# Add private remote
-conan remote add mycompany https://artifactory.company.com/artifactory/api/conan/conan-local
-
-# Upload to private repository
-conan upload my-cpp-lib/1.0.0 --remote mycompany
+ccgo publish conan --conan private -y
 ```
 
 ## Troubleshooting
 
-### Conan Not Found
+### Remote Not Found
+
 ```
-ERROR: Conan is not installed or not in PATH
+ERROR: Remote 'myremote' not found
 ```
 
-Solution:
+Solution: Add the remote first:
 ```bash
-pip install conan
-# or
-pip3 install conan
+conan remote add myremote https://your-conan-server.com
 ```
 
-### CMake Configuration Failed
-```
-ERROR: CMake configuration failed
-```
+### Authentication Failed
 
-Check:
-1. CMakeLists.txt is valid
-2. Required dependencies are available
-3. Build tools are installed
-
-### Package Not Found
 ```
-ERROR: Unable to find 'dependency/1.0.0'
+ERROR: Permission denied for user
 ```
 
 Solutions:
-1. Add remote repository: `conan remote add <name> <url>`
-2. Build missing dependencies: `--build=missing`
-3. Check package name and version
+1. Check environment variables are set:
+   ```bash
+   echo $CONAN_LOGIN_USERNAME_MYREMOTE
+   ```
+2. Login to remote manually:
+   ```bash
+   conan remote login myremote username -p password
+   ```
 
-### Profile Not Found
+### Package Already Exists
+
 ```
-ERROR: Profile 'custom' not found
+ERROR: Package already exists in remote
 ```
 
-Create the profile:
-```bash
-conan profile new custom --detect
+Solutions:
+1. Increment the version in CCGO.toml
+2. Use `--force` flag if overwriting is allowed
+3. Delete the existing package from remote
+
+### Build Failed
+
 ```
+ERROR: Conan package creation failed
+```
+
+Check:
+1. Conan is installed: `conan --version`
+2. Default profile exists: `conan profile show`
+3. CMake is installed and in PATH
+4. Project builds successfully with `ccgo build conan`
 
 ## Best Practices
 
-1. **Semantic Versioning** - Use major.minor.patch format
-2. **Test Packages** - Build locally before uploading
-3. **Document Dependencies** - List all requirements clearly
-4. **Use Profiles** - Create profiles for different configurations
-5. **Version Lock** - Specify exact versions for reproducibility
-6. **CI Integration** - Automate package building in CI/CD
-7. **Package Signing** - Sign packages for security
+1. **Use Semantic Versioning** - Follow major.minor.patch format
+2. **Use Channels** - `stable` for releases, `testing` for pre-release, `dev` for development
+3. **Test Locally First** - Use `--conan local` before publishing to remote
+4. **Automate in CI/CD** - Set up automated publishing on tags/releases
+5. **Keep Credentials Secure** - Never commit credentials to version control
+6. **Document Dependencies** - List all required dependencies in conanfile
+7. **Use User/Channel** - Namespace your packages to avoid conflicts
 
-## Advanced Features
+## Package Naming Conventions
 
-### Conditional Dependencies
-```toml
-[build.conan]
-# Platform-specific dependencies
-[build.conan.requires.linux]
-dependencies = ["systemd/251"]
+- Use lowercase letters, numbers, underscores, and hyphens
+- Start with a letter
+- Examples: `mylib`, `awesome-utils`, `my_project`
 
-[build.conan.requires.windows]
-dependencies = ["winsdk/10.0.22621"]
-```
+### User/Channel Conventions
 
-### Custom Generators
-```python
-# In conanfile.py
-generators = "CMakeDeps", "CMakeToolchain", "VirtualBuildEnv"
-```
-
-### Package Channels
-```toml
-[build.conan]
-# Use different channels for stability levels
-channel = "stable"  # or "testing", "dev"
-```
-
-## Migration from Manual Conan
-
-### Old Way (Manual)
-```bash
-# Manual steps
-cd project
-conan install . --build=missing
-conan build .
-conan create .
-conan upload ...
-```
-
-### New Way (with CCGO)
-```toml
-# Configure once in CCGO.toml
-[build.conan]
-name = "my-lib"
-version = "1.0.0"
-```
-
-Then simply:
-```bash
-ccgo build conan
-```
-
-Benefits:
-- ✅ Automatic conanfile.py generation
-- ✅ Integrated with CCGO build system
-- ✅ Consistent configuration
-- ✅ Simplified workflow
-- ✅ Cross-platform support
-
-## Additional Resources
-
-- [Conan Documentation](https://docs.conan.io/)
-- [Conan Center](https://conan.io/center)
-- [CMake Integration Guide](https://docs.conan.io/2/examples/tools/cmake.html)
-- [Package Creation Tutorial](https://docs.conan.io/2/tutorial/creating_packages.html)
+- **User**: Your organization or username (e.g., `mycompany`, `username`)
+- **Channel**: Release stage (e.g., `stable`, `testing`, `dev`)
+- Full example: `mylib/1.0.0@mycompany/stable`

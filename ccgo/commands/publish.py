@@ -39,30 +39,36 @@ class Publish(CliCommand):
         This is a subcommand to publish the library or documentation.
 
         Examples:
-            ccgo publish android                    # Publish to Maven (prompts for target, builds AAR first)
-            ccgo publish android --maven local      # Publish to Maven Local (~/.m2/repository/)
-            ccgo publish android --maven official   # Publish to Maven Central
-            ccgo publish android --maven private    # Publish to custom Maven repository
-            ccgo publish android --skip-build       # Skip AAR build, use existing AAR
-            ccgo publish kmp                        # Publish KMP library (prompts for target)
-            ccgo publish kmp --maven local          # Publish KMP to Maven Local
-            ccgo publish kmp --maven official       # Publish KMP to Maven Central
-            ccgo publish kmp --maven private        # Publish KMP to custom repository
-            ccgo publish ohos                       # Publish to OHPM (prompts for target)
-            ccgo publish ohos --ohpm local          # Publish to local OHPM registry
-            ccgo publish ohos --ohpm official       # Publish to official OHPM registry
-            ccgo publish ohos --ohpm private --ohpm-url URL  # Publish to private registry
-            ccgo publish conan                      # Interactive: local, official, or private
-            ccgo publish conan --conan local        # Publish to local cache
-            ccgo publish conan --conan official     # Publish to first configured remote
-            ccgo publish conan --conan private --conan-name myremote --conan-url URL  # Private remote
-            ccgo publish apple --cocoapods          # Generate podspec and xcframework.zip
-            ccgo publish apple --cocoapods --upload # Upload to GitHub releases and publish
-            ccgo publish apple --cocoapods --repo private  # Publish to private spec repo
-            ccgo publish apple --spm                # Generate Package.swift and git tag
-            ccgo publish apple --all                # Publish to both CocoaPods and SPM
-            ccgo publish doc                        # Publish documentation to GitHub Pages
-            ccgo publish doc --branch main          # Publish to specific branch
+            # Common arguments (all targets)
+            ccgo publish <target> [--registry local|official|private] [--skip-build] [-y]
+
+            # Android/KMP: publish to Maven
+            ccgo publish android --registry local           # Publish to Maven Local (~/.m2/repository/)
+            ccgo publish android --registry official        # Publish to Maven Central
+            ccgo publish android --registry local --skip-build  # Use existing AAR
+            ccgo publish kmp --registry local               # Publish KMP to Maven Local
+            ccgo publish kmp --registry official            # Publish KMP to Maven Central
+
+            # OHOS: publish to OHPM
+            ccgo publish ohos --registry local              # Publish to local OHPM registry
+            ccgo publish ohos --registry official           # Publish to official OHPM registry
+            ccgo publish ohos --registry private --url URL  # Publish to private registry
+
+            # Conan: publish to Conan remote
+            ccgo publish conan --registry local             # Publish to local cache
+            ccgo publish conan --registry official          # Publish to first configured remote
+            ccgo publish conan --registry private --remote-name myremote --url URL  # Private
+            ccgo publish conan --registry local --skip-build  # Export recipe only
+
+            # Apple: publish to CocoaPods and/or SPM
+            ccgo publish apple --manager cocoapods          # Generate podspec and xcframework.zip
+            ccgo publish apple --manager cocoapods --push   # Upload to GitHub releases
+            ccgo publish apple --manager cocoapods --registry private --remote-name myspecs
+            ccgo publish apple --manager spm --push         # Generate Package.swift and push tag
+            ccgo publish apple --manager all --push         # Publish to both
+
+            # Documentation: publish to GitHub Pages
+            ccgo publish doc --doc-branch gh-pages --doc-open
         """
 
     def get_target_list(self) -> list:
@@ -87,126 +93,57 @@ class Publish(CliCommand):
             type=str,
             choices=self.get_target_list(),
         )
-        # Arguments for doc publishing
+
+        # ========== Common Options (all targets) ==========
         parser.add_argument(
-            "--branch",
-            type=str,
-            default=None,
-            help="GitHub Pages branch name (default: from publish.pages_branch in CCGO.toml)",
-        )
-        parser.add_argument(
-            "--force",
-            action="store_true",
-            help="Force push to remote repository (used with 'doc' target)",
-        )
-        parser.add_argument(
-            "--open",
-            action="store_true",
-            help="Open documentation in browser after publishing (used with 'doc' target)",
-        )
-        # Arguments for Android/KMP Maven publishing
-        parser.add_argument(
-            "--maven",
+            "--registry",
             type=str,
             choices=["local", "official", "private"],
             default=None,
-            help="Maven repository target: local, official (Maven Central), or private (used with 'android' and 'kmp' targets)",
+            help="Registry type: local, official, or private",
+        )
+        parser.add_argument(
+            "--remote-name",
+            type=str,
+            default=None,
+            help="Remote repository name (Conan remote or CocoaPods spec repo)",
+        )
+        parser.add_argument(
+            "--url",
+            type=str,
+            default=None,
+            help="Custom registry URL (required for private if remote doesn't exist)",
         )
         parser.add_argument(
             "--skip-build",
             action="store_true",
-            help="Skip AAR build step, use existing AAR in target/{debug|release}/android/ (used with 'android' target)",
-        )
-        parser.add_argument(
-            "--artifact-id",
-            type=str,
-            default=None,
-            help="Override Maven artifact ID (used with 'android' and 'kmp' targets, defaults to project name)",
-        )
-        # Arguments for OHOS/OHPM publishing
-        parser.add_argument(
-            "--ohpm",
-            type=str,
-            choices=["local", "official", "private"],
-            default=None,
-            help="OHPM registry target: local, official, or private (used with 'ohos' target)",
-        )
-        parser.add_argument(
-            "--ohpm-url",
-            type=str,
-            default=None,
-            help="Custom OHPM registry URL (used with 'ohos --ohpm private')",
-        )
-        # Arguments for Conan publishing
-        parser.add_argument(
-            "--conan",
-            type=str,
-            choices=["local", "official", "private"],
-            default=None,
-            help="Conan publish target: local (cache), official (first configured remote), private (custom)",
-        )
-        parser.add_argument(
-            "--conan-url",
-            type=str,
-            default=None,
-            help="Custom Conan remote URL (used with 'conan --conan private')",
-        )
-        parser.add_argument(
-            "--conan-name",
-            type=str,
-            default=None,
-            help="Custom Conan remote name (used with 'conan --conan private')",
-        )
-        parser.add_argument(
-            "--remote",
-            type=str,
-            default=None,
-            help="Conan remote repository name for upload (deprecated, use --conan instead)",
-        )
-        parser.add_argument(
-            "--profile",
-            type=str,
-            default="default",
-            help="Conan profile to use (used with 'conan' target, default: default)",
-        )
-        parser.add_argument(
-            "--export-only",
-            action="store_true",
-            help="Only export Conan recipe without building (used with 'conan' target)",
+            help="Skip build step, use existing artifacts (also: Conan export-only mode)",
         )
         parser.add_argument(
             "-y", "--yes",
             action="store_true",
-            help="Skip confirmation prompts (used with 'conan' target)",
+            help="Skip confirmation prompts",
         )
-        # Arguments for Apple publishing
+
+        # ========== Apple-specific Options ==========
         parser.add_argument(
-            "--cocoapods",
-            action="store_true",
-            help="Publish to CocoaPods (used with 'apple' target)",
-        )
-        parser.add_argument(
-            "--spm",
-            action="store_true",
-            help="Publish to Swift Package Manager (used with 'apple' target)",
-        )
-        parser.add_argument(
-            "--all",
-            action="store_true",
-            dest="publish_all",
-            help="Publish to both CocoaPods and SPM (used with 'apple' target)",
-        )
-        parser.add_argument(
-            "--repo",
+            "--manager",
             type=str,
-            default="trunk",
-            help="CocoaPods repo: 'trunk' (default) or 'private' (used with 'apple --cocoapods')",
+            choices=["cocoapods", "spm", "all"],
+            default=None,
+            help="Package manager for apple target: cocoapods, spm, or all",
+        )
+        parser.add_argument(
+            "--push",
+            action="store_true",
+            default=False,
+            help="Push to remote (git tag for SPM, GitHub release for CocoaPods)",
         )
         parser.add_argument(
             "--platform",
             type=str,
             default=None,
-            help="Apple platforms to publish: ios,macos,tvos,watchos (used with 'apple' target)",
+            help="Apple platforms to publish: ios,macos,tvos,watchos",
         )
         parser.add_argument(
             "--allow-warnings",
@@ -214,24 +151,40 @@ class Publish(CliCommand):
             default=True,
             help="Allow warnings during CocoaPods lint (default: true)",
         )
+
+        # ========== Conan-specific Options ==========
         parser.add_argument(
-            "--push-tag",
-            action="store_true",
-            default=False,
-            help="Push git tag to remote for SPM (used with 'apple --spm')",
+            "--profile",
+            type=str,
+            default="default",
+            help="Conan profile to use (default: default)",
         )
         parser.add_argument(
-            "--upload",
-            action="store_true",
-            default=False,
-            help="Upload xcframework.zip to GitHub releases using gh CLI (used with 'apple --cocoapods')",
+            "--link-type",
+            type=str,
+            choices=["static", "shared", "both"],
+            default="both",
+            help="Library type to build for Conan: static, shared, or both (default: both)",
         )
+
+        # ========== Doc-specific Options ==========
         parser.add_argument(
-            "--upload-url",
+            "--doc-branch",
             type=str,
             default=None,
-            help="Custom upload URL (S3, GCS, etc.) for xcframework.zip (used with 'apple --cocoapods')",
+            help="GitHub Pages branch name (default: from publish.pages_branch in CCGO.toml)",
         )
+        parser.add_argument(
+            "--doc-force",
+            action="store_true",
+            help="Force push to remote repository",
+        )
+        parser.add_argument(
+            "--doc-open",
+            action="store_true",
+            help="Open documentation in browser after publishing",
+        )
+
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
         args, unknown = parser.parse_known_args(input_argv)
@@ -251,9 +204,9 @@ class Publish(CliCommand):
                 sys.exit(1)
 
             # Determine Maven repository target
-            if args.maven:
+            if args.registry:
                 # Use command line argument
-                maven_target = args.maven
+                maven_target = args.registry
             else:
                 # Ask user which Maven repository to publish to
                 print("\nMaven Publish Options:")
@@ -282,9 +235,8 @@ class Publish(CliCommand):
 
             # Build gradle command
             skip_build_flag = "-x buildAAR" if args.skip_build else ""
-            artifact_id_flag = f"-PartifactId={args.artifact_id}" if args.artifact_id else ""
-            cmd = f"cd '{android_dir}' && ./gradlew {gradle_task} {skip_build_flag} {artifact_id_flag} --no-daemon"
-            print(f"\nRunning: ./gradlew {gradle_task} {skip_build_flag} {artifact_id_flag}".strip())
+            cmd = f"cd '{android_dir}' && ./gradlew {gradle_task} {skip_build_flag} --no-daemon"
+            print(f"\nRunning: ./gradlew {gradle_task} {skip_build_flag}".strip())
             print("-" * 60)
             sys.stdout.flush()
             # Use subprocess.run with real-time output (stdout=None passes through to terminal)
@@ -338,17 +290,18 @@ class Publish(CliCommand):
                     print("Please ensure you are in a CCGO project directory")
                     sys.exit(1)
 
-            # Use build_kmp.py script from project directory
-            build_kmp_script = os.path.join(project_subdir, "build_kmp.py")
+            # Use build_kmp.py script from ccgo build_scripts directory
+            build_scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_scripts")
+            build_kmp_script = os.path.join(build_scripts_dir, "build_kmp.py")
 
             if not os.path.isfile(build_kmp_script):
                 print(f"ERROR: build_kmp.py not found at {build_kmp_script}")
-                print("Please ensure your project has the KMP module configured")
+                print("Please ensure ccgo is properly installed")
                 sys.exit(1)
 
             # Determine Maven repository target
-            if args.maven:
-                maven_target = args.maven
+            if args.registry:
+                maven_target = args.registry
             else:
                 # Ask user which Maven repository to publish to
                 print("\nMaven Publish Options:")
@@ -370,8 +323,8 @@ class Publish(CliCommand):
             # Map target to publish flag
             maven_flag_map = {
                 "local": "--publish-local",
-                "official": "--publish-remote",
-                "private": "--publish-remote",  # Same as official, uses configured custom repo
+                "official": "--publish-central",  # Maven Central (Sonatype OSSRH)
+                "private": "--publish-custom",    # Custom Maven repository
             }
             publish_flag = maven_flag_map[maven_target]
 
@@ -470,11 +423,11 @@ class Publish(CliCommand):
         conan_mode = "local"
         conan_remote = None
 
-        # Handle --conan option (new way)
-        if args.conan:
-            if args.conan == "local":
+        # Handle --registry option
+        if args.registry:
+            if args.registry == "local":
                 conan_mode = "local"
-            elif args.conan == "official":
+            elif args.registry == "official":
                 if remotes:
                     conan_mode = "remote"
                     conan_remote = remotes[0]
@@ -485,41 +438,40 @@ class Publish(CliCommand):
                     print("\nExample:")
                     print("  conan remote add artifactory https://mycompany.jfrog.io/artifactory/api/conan/conan-local")
                     sys.exit(1)
-            elif args.conan == "private":
-                if not args.conan_name:
-                    print("ERROR: --conan-name is required for private remote")
+            elif args.registry == "private":
+                if not args.remote_name:
+                    print("ERROR: --remote-name is required for private remote")
                     sys.exit(1)
-                if not args.conan_url:
-                    print("ERROR: --conan-url is required for private remote")
+                # Check if remote exists
+                remote_exists = args.remote_name in remotes
+                if not remote_exists and not args.url:
+                    print(f"ERROR: Remote '{args.remote_name}' not found. Provide --url to add it.")
                     sys.exit(1)
-                # Add or update the private remote
-                print(f"Configuring private remote: {args.conan_name} -> {args.conan_url}")
-                try:
-                    # Try to add, if exists will fail
-                    add_result = subprocess.run(
-                        ["conan", "remote", "add", args.conan_name, args.conan_url],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        timeout=10
-                    )
-                    if add_result.returncode != 0:
-                        # Remote might exist, try to update URL
-                        subprocess.run(
-                            ["conan", "remote", "update", args.conan_name, "--url", args.conan_url],
+                # Add or update the private remote if URL provided
+                if args.url:
+                    print(f"Configuring private remote: {args.remote_name} -> {args.url}")
+                    try:
+                        # Try to add, if exists will fail
+                        add_result = subprocess.run(
+                            ["conan", "remote", "add", args.remote_name, args.url],
                             capture_output=True,
                             text=True,
                             check=False,
                             timeout=10
                         )
-                except Exception as e:
-                    print(f"Warning: Failed to configure remote: {e}")
+                        if add_result.returncode != 0:
+                            # Remote might exist, try to update URL
+                            subprocess.run(
+                                ["conan", "remote", "update", args.remote_name, "--url", args.url],
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                                timeout=10
+                            )
+                    except Exception as e:
+                        print(f"Warning: Failed to configure remote: {e}")
                 conan_mode = "remote"
-                conan_remote = args.conan_name
-        # Handle --remote option (deprecated, for backward compatibility)
-        elif args.remote:
-            conan_mode = "remote"
-            conan_remote = args.remote
+                conan_remote = args.remote_name
         else:
             # Interactive prompt
             print("\nConan Publish Options:")
@@ -592,9 +544,13 @@ class Publish(CliCommand):
         if args.profile and args.profile != "default":
             cmd_args.extend(["--profile", args.profile])
 
-        # Add export-only flag
-        if args.export_only:
+        # Add export-only flag (--skip-build means export only for Conan)
+        if args.skip_build:
             cmd_args.append("--export-only")
+
+        # Add link-type
+        if args.link_type:
+            cmd_args.extend(["--link-type", args.link_type])
 
         # Add confirmation skip
         if args.yes:
@@ -658,7 +614,7 @@ class Publish(CliCommand):
 
             # Convert TOML structure to match expected format
             project_relative_path = toml_data.get('project', {}).get('name', '')
-            pages_branch_name = args.branch or toml_data.get('publish', {}).get('pages_branch', 'gh-pages')
+            pages_branch_name = args.doc_branch or toml_data.get('publish', {}).get('pages_branch', 'gh-pages')
         except Exception as e:
             print(f"ERROR: Failed to load CCGO.toml: {e}")
             sys.exit(1)
@@ -763,7 +719,7 @@ class Publish(CliCommand):
         # Step 4: Push to remote
         print("[Step 4/4] Pushing to remote repository...")
         push_cmd = ["git", "push", "--set-upstream", "origin", pages_branch_name]
-        if args.force:
+        if args.doc_force:
             push_cmd.append("-f")
             print("Using force push (-f)")
 
@@ -818,7 +774,7 @@ class Publish(CliCommand):
                     print(f"\nGitHub Pages URL (once enabled):")
                     print(f"  {pages_url}")
 
-                    if args.open:
+                    if args.doc_open:
                         import webbrowser
                         print(f"\nOpening {pages_url} in browser...")
                         webbrowser.open(pages_url)
@@ -895,9 +851,9 @@ class Publish(CliCommand):
             from utils.ohpm.publisher import OhpmPublisher
 
         # Determine OHPM registry target
-        if args.ohpm:
+        if args.registry:
             # Use command line argument
-            ohpm_target = args.ohpm
+            ohpm_target = args.registry
         else:
             # Ask user which registry to publish to
             print("\nOHPM Publish Options:")
@@ -923,8 +879,8 @@ class Publish(CliCommand):
         config.registry_type = ohpm_target
 
         # Override registry URL for private registry
-        if ohpm_target == "private" and args.ohpm_url:
-            config.registry_url = args.ohpm_url
+        if ohpm_target == "private" and args.url:
+            config.registry_url = args.url
 
         # Validate configuration
         is_valid, error_msg = config.validate()
@@ -1031,15 +987,15 @@ class Publish(CliCommand):
                 toml_config['publish']['apple'] = {}
             toml_config['publish']['apple']['platforms'] = args.platform.split(',')
 
-        # Override CocoaPods repo from command line
-        if args.repo and args.repo != 'trunk':
+        # Override CocoaPods repo from command line (--registry private --remote-name)
+        if args.registry == 'private' and args.remote_name:
             if 'publish' not in toml_config:
                 toml_config['publish'] = {}
             if 'apple' not in toml_config['publish']:
                 toml_config['publish']['apple'] = {}
             if 'cocoapods' not in toml_config['publish']['apple']:
                 toml_config['publish']['apple']['cocoapods'] = {}
-            toml_config['publish']['apple']['cocoapods']['repo'] = args.repo
+            toml_config['publish']['apple']['cocoapods']['repo'] = args.remote_name
 
         # Create configuration
         config = ApplePublishConfig(toml_config, project_subdir)
@@ -1057,12 +1013,20 @@ class Publish(CliCommand):
         print(config.get_config_summary())
         print()
 
-        # Determine what to publish
-        publish_cocoapods = args.cocoapods or args.publish_all
-        publish_spm = args.spm or args.publish_all
+        # Determine what to publish based on --manager argument
+        publish_cocoapods = False
+        publish_spm = False
 
-        # If neither specified, ask user
-        if not publish_cocoapods and not publish_spm:
+        if args.manager:
+            if args.manager == "cocoapods":
+                publish_cocoapods = True
+            elif args.manager == "spm":
+                publish_spm = True
+            elif args.manager == "all":
+                publish_cocoapods = True
+                publish_spm = True
+        else:
+            # If not specified, ask user
             print("Apple Publish Options:")
             print("  1 - Publish to CocoaPods")
             print("  2 - Publish to Swift Package Manager (SPM)")
@@ -1095,8 +1059,8 @@ class Publish(CliCommand):
             if cocoapods_zip:
                 print(f"[CocoaPods] Created: {cocoapods_zip}")
 
-                # Upload to GitHub releases if requested
-                if args.upload:
+                # Upload to GitHub releases if requested (--push for CocoaPods means upload)
+                if args.push:
                     print("\n[GitHub] Uploading to GitHub releases...")
                     upload_ok, upload_msg = publisher.upload_to_github_release(cocoapods_zip)
                     if upload_ok:
@@ -1106,7 +1070,7 @@ class Publish(CliCommand):
                         print("[CocoaPods] Continuing without upload...")
                 else:
                     print(f"[CocoaPods] Upload this file to GitHub releases before publishing to trunk")
-                    print(f"[CocoaPods] Or use --upload flag to auto-upload via gh CLI")
+                    print(f"[CocoaPods] Or use --push flag to auto-upload via gh CLI")
             else:
                 print("[CocoaPods] Warning: Could not create xcframework.zip (SDK zip not found)")
 
@@ -1162,7 +1126,7 @@ class Publish(CliCommand):
 
                 # Publish (create git tag)
                 print(f"[SPM] Creating git tag for version {config.version}...")
-                pub_ok, pub_msg = publisher.publish(push_tag=args.push_tag)
+                pub_ok, pub_msg = publisher.publish(push_tag=args.push)
                 if pub_ok:
                     print(f"[SPM] Successfully published!")
                     print(pub_msg)

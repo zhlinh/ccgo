@@ -265,7 +265,7 @@ if(GOOGLETEST_SUPPORT)
 
     # Windows-specific: Disable DLL export/import for static library usage
     if (MSVC)
-      target_compile_definitions(${GOOGLETEST_NAME} PRIVATE -DCOMM_ENABLE_EXPORTS=0)
+      target_compile_definitions(${GOOGLETEST_NAME} PRIVATE -DCCGO_ENABLE_EXPORTS=0)
     endif()
 
     # macOS/iOS-specific: Link required system frameworks
@@ -371,7 +371,7 @@ elseif(BENCHMARK_SUPPORT)
 
     # Windows-specific: Disable DLL export/import
     if (MSVC)
-      target_compile_definitions(${BENCHMARK_NAME} PRIVATE -DCOMM_ENABLE_EXPORTS=0)
+      target_compile_definitions(${BENCHMARK_NAME} PRIVATE -DCCGO_ENABLE_EXPORTS=0)
     endif()
 
     # Install benchmark executable to output directory
@@ -890,7 +890,7 @@ else()
             target_include_directories(${SHARED_TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
 
             # Enable DLL export
-            target_compile_definitions(${SHARED_TARGET} PRIVATE COMM_ENABLE_EXPORTS=1)
+            target_compile_definitions(${SHARED_TARGET} PRIVATE CCGO_ENABLE_EXPORTS=1)
 
             # Note: Build runs in cmake_build/{Platform}/{static|shared}/{toolchain}/, so no need to add /shared suffix
             install(TARGETS ${SHARED_TARGET}
