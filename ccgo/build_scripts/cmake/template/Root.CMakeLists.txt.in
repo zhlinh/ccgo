@@ -817,10 +817,15 @@ else()
             list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-${DIR})
         endforeach()
 
-        # Include Windows-specific implementation
-        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/windows/*.h src/api/windows/*.cpp)
+        # Include Windows-specific implementation (check both windows/ and native/ directories)
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/windows/*.h src/api/windows/*.cpp src/api/windows/*.cc)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
-        source_group(src\\api FILES ${SELF_TEMP_SRC_FILES})
+        source_group(src\\api\\windows FILES ${SELF_TEMP_SRC_FILES})
+
+        # Also include native/ directory for cross-platform native API
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/native/*.h src/api/native/*.cpp src/api/native/*.cc)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+        source_group(src\\api\\native FILES ${SELF_TEMP_SRC_FILES})
 
         # Collect third-party binaries and special linker flags
         set(TEMP_TARGET_SRC_LINKS "")
@@ -914,6 +919,11 @@ else()
         file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} include/${PROJECT_NAME}/api/native/*.h)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(api FILES ${SELF_TEMP_SRC_FILES})
+
+        # Include native/ directory source files for cross-platform native API
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/native/*.h src/api/native/*.cpp src/api/native/*.cc)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+        source_group(src\\api\\native FILES ${SELF_TEMP_SRC_FILES})
 
         # ========== Build Static Library ==========
         if(CCGO_BUILD_STATIC)

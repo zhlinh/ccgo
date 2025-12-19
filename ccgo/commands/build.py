@@ -1355,15 +1355,22 @@ REQUIREMENTS:
                 sys.exit(err_code)
 
             # Step 2: Use Hvigor buildHAR task (packages HAR and copies to target/ohos/)
+            # Fallback to assembleHar if buildHAR is not available (for older templates)
             print("\n--- Step 2: Building HAR ---")
             hvigor_cmd = f"cd '{project_subdir}/ohos' && hvigorw buildHAR --mode module -p product=default --no-daemon --info"
             print(f"Executing: {hvigor_cmd}")
 
             err_code = self._get_exit_code(os.system(hvigor_cmd))
             if err_code != 0:
-                print("ERROR: HAR build failed")
-                self._print_build_time(start_time)
-                sys.exit(err_code)
+                # Fallback to assembleHar for older templates without buildHAR task
+                print("buildHAR task not found, falling back to assembleHar...")
+                hvigor_fallback_cmd = f"cd '{project_subdir}/ohos' && hvigorw assembleHar --mode module -p product=default --no-daemon --info"
+                print(f"Executing: {hvigor_fallback_cmd}")
+                err_code = self._get_exit_code(os.system(hvigor_fallback_cmd))
+                if err_code != 0:
+                    print("ERROR: HAR build failed")
+                    self._print_build_time(start_time)
+                    sys.exit(err_code)
 
             # Step 3: Create unified archive using Python's archive_ohos_project()
             print("\n--- Step 3: Creating unified archive ---")
