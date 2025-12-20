@@ -399,11 +399,11 @@ def print_build_results(link_type='both'):
     if artifacts_moved:
         print(f"[SUCCESS] Moved {len(artifacts_moved)} artifact(s) to target/ohos/")
 
-    # Remove standalone HAR files (already packaged in ZIP)
+    # Keep HAR files in target/ohos/ for publish command
+    # (Similar to Android keeping AAR files for publish)
     har_files_in_target = glob.glob(f"{bin_ohos_dir}/*.har")
-    for har_file in har_files_in_target:
-        os.remove(har_file)
-        print(f"[CLEANUP] Removed {os.path.basename(har_file)} (already in ZIP)")
+    if har_files_in_target:
+        print(f"[INFO] Found {len(har_files_in_target)} HAR file(s) in target/ohos/")
 
     # Copy build_info.json from cmake_build to target/ohos
     copy_build_info_to_target("ohos", SCRIPT_PATH)
@@ -468,6 +468,12 @@ def archive_ohos_project(link_type='both', archs=None):
     bin_dir = os.path.join(SCRIPT_PATH, "target", target_subdir)
     ohos_sdk_path = os.path.join(SCRIPT_PATH, OHOS_PROJECT_PATH)
 
+    # Clean up old ohos directory before creating new archive
+    target_ohos_dir = os.path.join(bin_dir, "ohos")
+    if os.path.exists(target_ohos_dir):
+        shutil.rmtree(target_ohos_dir)
+        print(f"Cleaned up old directory: {target_ohos_dir}")
+
     # Create target directory
     os.makedirs(bin_dir, exist_ok=True)
 
@@ -498,14 +504,30 @@ def archive_ohos_project(link_type='both', archs=None):
                         shared_libs[arc_path] = lib_file
 
     # Prepare HAR files mapping: haars/*.har
-    # Only use HAR from target/ohos/ (Hvigor buildHAR copies the renamed HAR there)
+    # First check target/ohos/, then fallback to hvigor build output
     haars = {}
     target_ohos_dir = os.path.join(bin_dir, "ohos")
-    if os.path.exists(target_ohos_dir):
-        for har_file in glob.glob(os.path.join(target_ohos_dir, "*.har")):
-            har_name = os.path.basename(har_file)
-            arc_path = get_unified_haar_path(har_name)
-            haars[arc_path] = har_file
+    os.makedirs(target_ohos_dir, exist_ok=True)
+
+    # Check for HAR files in target/ohos/
+    existing_hars = glob.glob(os.path.join(target_ohos_dir, "*.har"))
+
+    # If no HAR in target/ohos/, try to copy from hvigor build output
+    if not existing_hars:
+        har_search_path = os.path.join(ohos_sdk_path, "build", "default", "outputs", "default")
+        if os.path.exists(har_search_path):
+            for har_file in glob.glob(os.path.join(har_search_path, "*.har")):
+                # Copy HAR to target/ohos/ with proper naming
+                har_dest = os.path.join(target_ohos_dir, f"{PROJECT_NAME.upper()}_OHOS_SDK-{full_version}.har")
+                shutil.copy(har_file, har_dest)
+                print(f"Copied HAR to: {har_dest}")
+                existing_hars.append(har_dest)
+
+    # Add HAR files to archive
+    for har_file in existing_hars:
+        har_name = os.path.basename(har_file)
+        arc_path = get_unified_haar_path(har_name)
+        haars[arc_path] = har_file
 
     # Prepare include directories mapping
     include_dirs = {}
@@ -602,6 +624,9 @@ def main(incremental, build_archs, target_option="", link_type='both', jobs=None
         incremental=incremental,
         platform="ohos",
     )
+
+    # Sync oh-package.json5 version with CCGO.toml
+    sync_ohos_package_version(SCRIPT_PATH)
 
     # Clean up old directory structures from previous versions
     # 1. Old obj/local/shared and obj/local/static (before restructuring)

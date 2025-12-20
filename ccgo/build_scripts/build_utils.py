@@ -2103,6 +2103,65 @@ def get_ohos_stl(project_path):
     return get_ccgo_config_value(project_path, "ohos.stl", "c++_shared")
 
 
+def sync_ohos_package_version(project_path):
+    """
+    Sync the version in oh-package.json5 with CCGO.toml.
+
+    This function reads the version from CCGO.toml and updates
+    the oh-package.json5 file in the OHOS project directory.
+
+    Args:
+        project_path: Path to project root directory
+
+    Returns:
+        bool: True if version was synced, False if no sync was needed or failed
+    """
+    import re
+
+    # Get version from CCGO.toml
+    version = get_version_name(project_path)
+
+    # Get OHOS project path from config
+    ohos_project_path = get_ccgo_config_value(project_path, "ohos.project_path", "ohos/main_ohos_sdk")
+    oh_package_path = os.path.join(project_path, ohos_project_path, "oh-package.json5")
+
+    if not os.path.exists(oh_package_path):
+        print(f"WARNING: oh-package.json5 not found at {oh_package_path}")
+        return False
+
+    try:
+        with open(oh_package_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Use regex to find and replace version field in JSON5
+        # Match: version: "x.x.x" or version: 'x.x.x'
+        pattern = r'(version\s*:\s*["\'])([^"\']+)(["\'])'
+
+        def replace_version(match):
+            return f'{match.group(1)}{version}{match.group(3)}'
+
+        new_content, count = re.subn(pattern, replace_version, content)
+
+        if count == 0:
+            print(f"WARNING: Could not find version field in {oh_package_path}")
+            return False
+
+        # Check if version actually changed
+        if new_content == content:
+            print(f"oh-package.json5 version already up-to-date: {version}")
+            return False
+
+        with open(oh_package_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+        print(f"Synced oh-package.json5 version to: {version}")
+        return True
+
+    except Exception as e:
+        print(f"WARNING: Failed to sync oh-package.json5 version: {e}")
+        return False
+
+
 def check_vs_env():
     """
     Check and initialize Visual Studio 2015 build environment.
