@@ -689,12 +689,13 @@ def print_build_results(link_type='both'):
     """
     print("==================Windows Build Results========================")
 
-    # Define paths - artifacts are already in target/windows/
-    bin_windows_dir = os.path.join(SCRIPT_PATH, "target", "windows")
+    # Define paths - use target/debug or target/release based on build mode
+    target_subdir = get_target_subdir()
+    bin_windows_dir = os.path.join(SCRIPT_PATH, "target", target_subdir, "windows")
 
-    # Check if target/windows directory exists
+    # Check if target/{debug|release}/windows directory exists
     if not os.path.exists(bin_windows_dir):
-        print(f"ERROR: target/windows directory not found. Please run build first.")
+        print(f"ERROR: {bin_windows_dir} directory not found. Please run build first.")
         sys.exit(1)
 
     # Main package: {PROJECT_NAME}_WINDOWS_SDK-*.zip (not ending with -SYMBOLS.zip)
