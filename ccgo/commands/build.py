@@ -1326,6 +1326,16 @@ REQUIREMENTS:
             print("\n=== OHOS Full Build (Native + Hvigor + Archive) ===")
             print("This will build native libraries, package HAR, and create archive")
 
+            # Determine target subdirectory based on build mode
+            is_release_build = args.release or os.environ.get("CCGO_CI_BUILD_IS_RELEASE") == "1"
+            target_subdir = "release" if is_release_build else "debug"
+
+            # Clean target/{debug|release}/ohos directory before build to remove stale HAR files
+            target_ohos_dir = os.path.join(project_subdir, "target", target_subdir, "ohos")
+            if os.path.exists(target_ohos_dir):
+                shutil.rmtree(target_ohos_dir)
+                print(f"Cleaned up old target/{target_subdir}/ohos/ directory")
+
             # Get build script path for native build
             build_script_name = "build_ohos"
             build_scripts_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_scripts")
@@ -1355,15 +1365,28 @@ REQUIREMENTS:
                 sys.exit(err_code)
 
             # Step 2: Use Hvigor buildHAR task (packages HAR and copies to target/ohos/)
-            # Fallback to assembleHar if buildHAR is not available (for older templates)
+            # Check if buildHAR task exists, fallback to assembleHar if not available
             print("\n--- Step 2: Building HAR ---")
-            hvigor_cmd = f"cd '{project_subdir}/ohos' && hvigorw buildHAR --mode module -p product=default --no-daemon --info"
-            print(f"Executing: {hvigor_cmd}")
 
-            err_code = self._get_exit_code(os.system(hvigor_cmd))
-            if err_code != 0:
+            # Check available tasks using hvigorw list tasks
+            list_tasks_cmd = f"cd '{project_subdir}/ohos' && hvigorw list tasks --no-daemon 2>/dev/null"
+            try:
+                tasks_output = subprocess.check_output(list_tasks_cmd, shell=True, text=True)
+                has_build_har_task = "buildHAR" in tasks_output
+            except subprocess.CalledProcessError:
+                has_build_har_task = False
+
+            if has_build_har_task:
+                hvigor_cmd = f"cd '{project_subdir}/ohos' && hvigorw buildHAR --mode module -p product=default --no-daemon --info"
+                print(f"Executing: {hvigor_cmd}")
+                err_code = self._get_exit_code(os.system(hvigor_cmd))
+                if err_code != 0:
+                    print("ERROR: HAR build failed")
+                    self._print_build_time(start_time)
+                    sys.exit(err_code)
+            else:
                 # Fallback to assembleHar for older templates without buildHAR task
-                print("buildHAR task not found, falling back to assembleHar...")
+                print("buildHAR task not found, using assembleHar...")
                 hvigor_fallback_cmd = f"cd '{project_subdir}/ohos' && hvigorw assembleHar --mode module -p product=default --no-daemon --info"
                 print(f"Executing: {hvigor_fallback_cmd}")
                 err_code = self._get_exit_code(os.system(hvigor_fallback_cmd))
@@ -1371,6 +1394,21 @@ REQUIREMENTS:
                     print("ERROR: HAR build failed")
                     self._print_build_time(start_time)
                     sys.exit(err_code)
+
+                # Manually copy HAR to target/{debug|release}/ohos/ when using assembleHar fallback
+                # (buildHAR task would have done this via copyHarToTarget())
+                print("Copying HAR file to target directory...")
+                os.makedirs(target_ohos_dir, exist_ok=True)
+
+                # Find HAR file in hvigor output
+                har_search_path = os.path.join(project_subdir, "ohos", "main_ohos_sdk", "build", "default", "outputs", "default")
+                if os.path.exists(har_search_path):
+                    har_files = [f for f in os.listdir(har_search_path) if f.endswith('.har')]
+                    for har_file in har_files:
+                        src = os.path.join(har_search_path, har_file)
+                        dst = os.path.join(target_ohos_dir, har_file)
+                        shutil.copy(src, dst)
+                        print(f"Copied HAR: {dst}")
 
             # Step 3: Create unified archive using Python's archive_ohos_project()
             print("\n--- Step 3: Creating unified archive ---")
