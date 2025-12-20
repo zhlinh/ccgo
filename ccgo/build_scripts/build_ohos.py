@@ -419,7 +419,9 @@ def print_build_results(link_type='both'):
                 size = os.path.getsize(item_path) / (1024 * 1024)  # MB
                 print(f"  {item} ({size:.2f} MB)")
 
-                # Print ZIP/HAR file tree structure (HAR is ZIP format)
+                # Print ZIP/HAR file tree structure
+                # ZIP format: .zip, .aar
+                # tar.gz format: .har (OHOS HAR files are tar.gz)
                 if item.endswith(".zip") or item.endswith(".har"):
                     print_zip_tree(item_path)
             elif os.path.isdir(item_path):

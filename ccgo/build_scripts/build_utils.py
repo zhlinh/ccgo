@@ -3256,17 +3256,45 @@ def _add_archive_info_to_zip(zip_path, platform=None):
         return False
 
 
-def print_zip_tree(zip_path, indent="    ", generate_info_file=True):
+def _detect_archive_format(archive_path):
     """
-    Print the tree structure of a ZIP file with library file details.
+    Detect archive format by reading file header (magic bytes).
 
     Args:
-        zip_path: Path to the ZIP file
+        archive_path: Path to the archive file
+
+    Returns:
+        str: 'zip', 'gzip', or 'unknown'
+    """
+    try:
+        with open(archive_path, 'rb') as f:
+            header = f.read(4)
+            # ZIP magic: PK (0x50 0x4B)
+            if header[:2] == b'PK':
+                return 'zip'
+            # GZIP magic: 0x1F 0x8B
+            if header[:2] == b'\x1f\x8b':
+                return 'gzip'
+    except Exception:
+        pass
+    return 'unknown'
+
+
+def print_zip_tree(archive_path, indent="    ", generate_info_file=True):
+    """
+    Print the tree structure of an archive file (ZIP or tar.gz) with library file details.
+
+    Automatically detects archive format:
+    - ZIP format (.zip, .aar): Standard ZIP handling
+    - GZIP/tar.gz format (.har, .tar.gz, .tgz): tar.gz handling
+
+    Args:
+        archive_path: Path to the archive file
         indent: Base indentation string (default: 4 spaces)
-        generate_info_file: Whether to generate archive_info.json (default: True)
+        generate_info_file: Whether to generate archive_info.json (default: True, only for ZIP)
 
     Example output:
-        ZIP contents:
+        Archive contents:
         ├── lib/
         │   └── android/
         │       └── shared/
@@ -3277,18 +3305,27 @@ def print_zip_tree(zip_path, indent="    ", generate_info_file=True):
         │       └── foo.h (0.01 MB)
         └── build_info.json (0.00 MB)
     """
-    if not os.path.exists(zip_path):
-        print(f"{indent}[ZIP file not found]")
+    if not os.path.exists(archive_path):
+        print(f"{indent}[Archive file not found]")
         return
 
-    # Generate archive_info.json if requested
+    # Detect archive format
+    archive_format = _detect_archive_format(archive_path)
+
+    if archive_format == 'gzip':
+        # Handle tar.gz format (used by OHOS HAR files)
+        _print_targz_tree(archive_path, indent)
+        return
+
+    # Handle ZIP format (default)
+    # Generate archive_info.json if requested (only for ZIP files)
     if generate_info_file:
-        info_path = generate_archive_info(zip_path)
+        info_path = generate_archive_info(archive_path)
         if info_path:
             print(f"{indent}Generated: {os.path.basename(info_path)}")
 
     try:
-        with zipfile.ZipFile(zip_path, 'r') as zf:
+        with zipfile.ZipFile(archive_path, 'r') as zf:
             # Build directory tree structure with file paths
             tree = {}
 
@@ -3315,9 +3352,51 @@ def print_zip_tree(zip_path, indent="    ", generate_info_file=True):
             _print_tree_level(tree, indent, "", zf)
 
     except zipfile.BadZipFile:
-        print(f"{indent}[Invalid ZIP file]")
+        print(f"{indent}[Invalid or unsupported archive format]")
     except Exception as e:
-        print(f"{indent}[Error reading ZIP: {e}]")
+        print(f"{indent}[Error reading archive: {e}]")
+
+
+def _print_targz_tree(archive_path, indent="    "):
+    """
+    Print the tree structure of a tar.gz file.
+
+    Args:
+        archive_path: Path to the tar.gz file
+        indent: Base indentation string
+    """
+    import tarfile
+
+    try:
+        with tarfile.open(archive_path, 'r:gz') as tf:
+            # Build directory tree structure
+            tree = {}
+
+            for member in tf.getmembers():
+                parts = member.name.split('/')
+                current = tree
+                for i, part in enumerate(parts):
+                    if not part:
+                        continue
+                    if part not in current:
+                        is_file = (i == len(parts) - 1) and member.isfile()
+                        if is_file:
+                            current[part] = {
+                                '__size__': member.size,
+                                '__path__': member.name
+                            }
+                        else:
+                            current[part] = {}
+                    current = current[part]
+
+            # Print tree structure
+            print(f"{indent}Archive contents:")
+            _print_tree_level(tree, indent, "", None)
+
+    except tarfile.TarError as e:
+        print(f"{indent}[Invalid tar.gz file: {e}]")
+    except Exception as e:
+        print(f"{indent}[Error reading archive: {e}]")
 
 
 def _print_tree_level(tree, base_indent, prefix, zf=None):
