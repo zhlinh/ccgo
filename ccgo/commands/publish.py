@@ -61,11 +61,13 @@ class Publish(CliCommand):
             ccgo publish conan --registry local --skip-build  # Export recipe only
 
             # Apple: publish to CocoaPods and/or SPM
-            ccgo publish apple --manager cocoapods          # Generate podspec and xcframework.zip
-            ccgo publish apple --manager cocoapods --push   # Upload to GitHub releases
-            ccgo publish apple --manager cocoapods --registry private --remote-name myspecs
-            ccgo publish apple --manager spm --push         # Generate Package.swift and push tag
-            ccgo publish apple --manager all --push         # Publish to both
+            ccgo publish apple --to cocoapods --registry local   # Generate podspec/zip only (no publish)
+            ccgo publish apple --to cocoapods               # Generate and publish to trunk
+            ccgo publish apple --to cocoapods --push        # Upload to GitHub releases
+            ccgo publish apple --to cocoapods --registry private --remote-name myspecs
+            ccgo publish apple --to spm --registry local    # Generate Package.swift only
+            ccgo publish apple --to spm --push              # Generate Package.swift and push tag
+            ccgo publish apple --to all --push              # Publish to both
 
             # Documentation: publish to GitHub Pages
             ccgo publish doc --doc-branch gh-pages --doc-open
@@ -127,11 +129,11 @@ class Publish(CliCommand):
 
         # ========== Apple-specific Options ==========
         parser.add_argument(
-            "--manager",
+            "--to",
             type=str,
             choices=["cocoapods", "spm", "all"],
             default=None,
-            help="Package manager for apple target: cocoapods, spm, or all",
+            help="Publish target: cocoapods, spm, or all (for apple target)",
         )
         parser.add_argument(
             "--push",
@@ -1013,16 +1015,16 @@ class Publish(CliCommand):
         print(config.get_config_summary())
         print()
 
-        # Determine what to publish based on --manager argument
+        # Determine what to publish based on --to argument
         publish_cocoapods = False
         publish_spm = False
 
-        if args.manager:
-            if args.manager == "cocoapods":
+        if args.to:
+            if args.to == "cocoapods":
                 publish_cocoapods = True
-            elif args.manager == "spm":
+            elif args.to == "spm":
                 publish_spm = True
-            elif args.manager == "all":
+            elif args.to == "all":
                 publish_cocoapods = True
                 publish_spm = True
         else:
@@ -1047,6 +1049,16 @@ class Publish(CliCommand):
         success = True
         publish_skipped = False  # Track if publishing was skipped (files generated but not published)
 
+        # Determine registry mode for Apple publishing
+        # local: only generate files (podspec, xcframework.zip, Package.swift)
+        # official: publish to CocoaPods trunk / push SPM tag
+        # private: publish to private CocoaPods spec repo
+        apple_registry = args.registry  # can be None, "local", "official", or "private"
+        local_only = (apple_registry == "local")
+
+        if local_only:
+            print("\n[Registry: local] Will only generate files, skip publishing")
+
         # Publish to CocoaPods
         if publish_cocoapods and config.cocoapods.enabled:
             print("\n[CocoaPods] Starting publish process...")
@@ -1060,7 +1072,8 @@ class Publish(CliCommand):
                 print(f"[CocoaPods] Created: {cocoapods_zip}")
 
                 # Upload to GitHub releases if requested (--push for CocoaPods means upload)
-                if args.push:
+                # Skip if local_only mode
+                if args.push and not local_only:
                     print("\n[GitHub] Uploading to GitHub releases...")
                     upload_ok, upload_msg = publisher.upload_to_github_release(cocoapods_zip)
                     if upload_ok:
@@ -1079,31 +1092,36 @@ class Publish(CliCommand):
             podspec_path = publisher.generate_podspec()
             print(f"[CocoaPods] Generated: {podspec_path}")
 
-            # Validate prerequisites for publishing
-            prereq_ok, prereq_msg = publisher.validate_prerequisites()
-            if not prereq_ok:
-                print(f"[CocoaPods] Warning: {prereq_msg}")
-                print("[CocoaPods] Podspec and xcframework.zip generated, but cannot publish to trunk")
-                publish_skipped = True  # Files generated but publishing skipped
+            # Skip publishing if local_only mode
+            if local_only:
+                print("[CocoaPods] Local mode: skipping validation and publishing")
+                publish_skipped = True
             else:
-                # Lint podspec
-                print("[CocoaPods] Validating podspec...")
-                lint_ok, lint_msg = publisher.lint_podspec(allow_warnings=args.allow_warnings)
-                if not lint_ok:
-                    print(f"[CocoaPods] Validation failed: {lint_msg}")
-                    success = False
+                # Validate prerequisites for publishing
+                prereq_ok, prereq_msg = publisher.validate_prerequisites()
+                if not prereq_ok:
+                    print(f"[CocoaPods] Warning: {prereq_msg}")
+                    print("[CocoaPods] Podspec and xcframework.zip generated, but cannot publish to trunk")
+                    publish_skipped = True  # Files generated but publishing skipped
                 else:
-                    print("[CocoaPods] Validation passed")
-
-                    # Publish
-                    print(f"[CocoaPods] Publishing to {config.cocoapods.repo}...")
-                    pub_ok, pub_msg = publisher.publish(allow_warnings=args.allow_warnings)
-                    if pub_ok:
-                        print(f"[CocoaPods] Successfully published!")
-                        print(pub_msg)
-                    else:
-                        print(f"[CocoaPods] Publish failed: {pub_msg}")
+                    # Lint podspec
+                    print("[CocoaPods] Validating podspec...")
+                    lint_ok, lint_msg = publisher.lint_podspec(allow_warnings=args.allow_warnings)
+                    if not lint_ok:
+                        print(f"[CocoaPods] Validation failed: {lint_msg}")
                         success = False
+                    else:
+                        print("[CocoaPods] Validation passed")
+
+                        # Publish
+                        print(f"[CocoaPods] Publishing to {config.cocoapods.repo}...")
+                        pub_ok, pub_msg = publisher.publish(allow_warnings=args.allow_warnings)
+                        if pub_ok:
+                            print(f"[CocoaPods] Successfully published!")
+                            print(pub_msg)
+                        else:
+                            print(f"[CocoaPods] Publish failed: {pub_msg}")
+                            success = False
 
         elif publish_cocoapods and not config.cocoapods.enabled:
             print("[CocoaPods] Skipped (disabled in configuration)")
@@ -1124,22 +1142,27 @@ class Publish(CliCommand):
                 package_path = publisher.generate_package_swift()
                 print(f"[SPM] Generated: {package_path}")
 
-                # Publish (create git tag)
-                print(f"[SPM] Creating git tag for version {config.version}...")
-                pub_ok, pub_msg = publisher.publish(push_tag=args.push)
-                if pub_ok:
-                    print(f"[SPM] Successfully published!")
-                    print(pub_msg)
-
-                    # Show package URL
-                    package_url = publisher.get_package_url()
-                    if package_url:
-                        print(f"\n[SPM] To add this package to your project:")
-                        print(f"      URL: {package_url}")
-                        print(f"      Version: {config.version}")
+                # Skip git tag and push if local_only mode
+                if local_only:
+                    print("[SPM] Local mode: skipping git tag creation and push")
+                    publish_skipped = True
                 else:
-                    print(f"[SPM] Publish failed: {pub_msg}")
-                    success = False
+                    # Publish (create git tag)
+                    print(f"[SPM] Creating git tag for version {config.version}...")
+                    pub_ok, pub_msg = publisher.publish(push_tag=args.push)
+                    if pub_ok:
+                        print(f"[SPM] Successfully published!")
+                        print(pub_msg)
+
+                        # Show package URL
+                        package_url = publisher.get_package_url()
+                        if package_url:
+                            print(f"\n[SPM] To add this package to your project:")
+                            print(f"      URL: {package_url}")
+                            print(f"      Version: {config.version}")
+                    else:
+                        print(f"[SPM] Publish failed: {pub_msg}")
+                        success = False
 
         elif publish_spm and not config.spm.enabled:
             print("[SPM] Skipped (disabled in configuration)")

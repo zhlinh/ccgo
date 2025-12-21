@@ -122,9 +122,14 @@ def _create_conan_variant(project_dir: str, conanfile_path: str, profile: str, c
         cmd_args.append("--no-remote")
 
     # Add user and channel if available (required for Conan 2.x)
-    if conan_config and conan_config.user:
-        cmd_args.extend(["--user", conan_config.user])
-        cmd_args.extend(["--channel", conan_config.channel])
+    if conan_config:
+        if conan_config.user:
+            cmd_args.extend(["--user", conan_config.user])
+            cmd_args.extend(["--channel", conan_config.channel])
+        else:
+            print(f"Note: No user/channel configured, package will be {conan_config.package_name}/{conan_config.version}")
+    else:
+        print("Warning: ConanConfig not available, cannot add user/channel")
 
     # Add profile if specified
     if profile != 'default':
@@ -365,7 +370,16 @@ Note:
     # Load ConanConfig for advanced configuration
     conan_config = None
     try:
-        from ccgo.utils.conan.config import load_conan_config
+        # Try importing from installed package first, then fallback to relative import
+        try:
+            from ccgo.utils.conan.config import load_conan_config
+        except ImportError:
+            # Add parent directory to path for relative import
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
+            from utils.conan.config import load_conan_config
+
         toml_path = os.path.join(project_dir, "CCGO.toml")
         if os.path.exists(toml_path):
             try:
@@ -377,8 +391,15 @@ Note:
             conan_config = load_conan_config(toml_data)
             print(f"\nConan Configuration:")
             print(conan_config.get_config_summary())
+            # Debug: print user/channel info
+            if conan_config.user:
+                print(f"  Will use: {conan_config.package_name}/{conan_config.version}@{conan_config.user}/{conan_config.channel}")
+            else:
+                print(f"  Will use: {conan_config.package_name}/{conan_config.version} (no user/channel)")
     except Exception as e:
+        import traceback
         print(f"Warning: Could not load ConanConfig: {e}")
+        traceback.print_exc()
 
     # Get package info from ConanConfig or fallback to basic config
     if conan_config:
