@@ -566,189 +566,100 @@ class Publish(CliCommand):
             sys.exit(err_code)
 
     def publish_doc(self, context: CliContext, args: CliNameSpace):
-        """Publish documentation to GitHub Pages"""
+        """Publish documentation to GitHub Pages using mkdocs gh-deploy"""
         import subprocess
         import shutil
-        import datetime
+        import webbrowser
 
-        print("\n📚 Publishing documentation to GitHub Pages...\n")
+        print("\n📚 Publishing documentation to GitHub Pages using MkDocs...\n")
 
-        # Get current working directory (project root directory)
+        # Get current working directory
         try:
-            project_dir = os.getcwd()
+            start_dir = os.getcwd()
         except (OSError, FileNotFoundError) as e:
-            project_dir = os.environ.get('PWD')
-            if not project_dir or not os.path.exists(project_dir):
+            start_dir = os.environ.get('PWD')
+            if not start_dir or not os.path.exists(start_dir):
                 print(f"ERROR: Current working directory no longer exists: {e}")
                 print("Please navigate to your project directory and try again.")
                 sys.exit(1)
+
+        # Find project directory with mkdocs.yml
+        project_dir = None
+        # First check if mkdocs.yml exists in start_dir
+        if os.path.isfile(os.path.join(start_dir, "mkdocs.yml")):
+            project_dir = start_dir
+        else:
+            # Check immediate subdirectories
             try:
-                os.chdir(project_dir)
-            except (OSError, FileNotFoundError):
-                print(f"ERROR: Cannot access project directory: {project_dir}")
-                sys.exit(1)
+                for subdir in os.listdir(start_dir):
+                    subdir_path = os.path.join(start_dir, subdir)
+                    if os.path.isdir(subdir_path) and os.path.isfile(os.path.join(subdir_path, "mkdocs.yml")):
+                        project_dir = subdir_path
+                        break
+            except OSError:
+                pass
 
-        # Check if CCGO.toml exists
-        ccgo_toml_path = os.path.join(project_dir, "CCGO.toml")
-        if not os.path.isfile(ccgo_toml_path):
-            print("❌ ERROR: CCGO.toml not found in project root directory")
-            print(f"Expected location: {ccgo_toml_path}")
-            print("\nPlease run this command from the project root directory.")
+        if not project_dir:
+            print("ERROR: mkdocs.yml not found in project directory.")
+            print("Please ensure you are in a CCGO project directory with MkDocs configured.")
+            print("Expected location: <project>/mkdocs.yml or <project>/<subdir>/mkdocs.yml")
             sys.exit(1)
 
-        # Load CCGO.toml to get configuration
-        print(f"Loading configuration from: {ccgo_toml_path}")
-        config = {}
-        try:
-            # Import tomllib (Python 3.11+) or use fallback
-            try:
-                import tomllib
-            except ImportError:
-                try:
-                    import tomli as tomllib
-                except ImportError:
-                    print("ERROR: tomllib not available. Please install tomli for Python < 3.11")
-                    print("Run: pip install tomli")
-                    sys.exit(1)
+        print(f"Project directory: {project_dir}")
 
-            with open(ccgo_toml_path, 'rb') as f:
-                toml_data = tomllib.load(f)
-
-            # Convert TOML structure to match expected format
-            project_relative_path = toml_data.get('project', {}).get('name', '')
-            pages_branch_name = args.doc_branch or toml_data.get('publish', {}).get('pages_branch', 'gh-pages')
-        except Exception as e:
-            print(f"ERROR: Failed to load CCGO.toml: {e}")
+        # Check if mkdocs is installed
+        if not shutil.which("mkdocs"):
+            print("ERROR: MkDocs is not installed or not in PATH.")
+            print("Install it with: pip install ccgo[docs]")
+            print("Or install from project requirements: pip install -r docs/requirements.txt")
             sys.exit(1)
 
-        if not project_relative_path:
-            print("ERROR: project.name not found in CCGO.toml")
-            sys.exit(1)
-
-        print(f"Project relative path: {project_relative_path}")
-        print(f"Pages branch: {pages_branch_name}")
-        print()
-
-        # Get python command
-        python_cmd = "python" if sys.platform.startswith("win") else "python3"
-
-        # Step 1: Build documentation using build.py
-        print("[Step 1/4] Building documentation...")
-        build_cmd = [python_cmd, "build.py", "CI_BUILD_DOCS"]
-        try:
-            subprocess.run(build_cmd, check=True, cwd=project_dir)
-        except subprocess.CalledProcessError as e:
-            print(f"\nERROR: Documentation build failed: {e}")
-            sys.exit(1)
-        print("✓ Documentation built successfully\n")
-
-        # Step 2: Copy HTML files to root
-        print("[Step 2/4] Copying HTML files to root directory...")
-        html_dir = os.path.join(project_dir, project_relative_path, "docs", "_html")
-
-        if not os.path.isdir(html_dir):
-            print(f"ERROR: HTML output directory not found: {html_dir}")
-            sys.exit(1)
-
-        files_list = os.listdir(html_dir)
-        for item in files_list:
-            src = os.path.join(html_dir, item)
-            dst = os.path.join(project_dir, item)
-            if os.path.isdir(src):
-                if os.path.exists(dst):
-                    shutil.rmtree(dst)
-                shutil.copytree(src, dst)
-            else:
-                shutil.copy2(src, dst)
-        print(f"✓ Copied {len(files_list)} items to root directory\n")
-
-        # Step 3: Git operations
-        print("[Step 3/4] Managing Git branches...")
-
-        # Get current branch
-        try:
-            last_branch = subprocess.check_output(
-                ["git", "symbolic-ref", "--short", "-q", "HEAD"],
-                cwd=project_dir
-            ).decode().strip()
-            print(f"Current branch: {last_branch}")
-        except subprocess.CalledProcessError:
-            print("ERROR: Failed to get current branch")
-            sys.exit(1)
-
-        # Delete old pages branch if exists (ignore error if not exists)
+        # Check if git remote is configured
         try:
             subprocess.run(
-                ["git", "branch", "-D", pages_branch_name],
+                ["git", "remote", "get-url", "origin"],
                 cwd=project_dir,
                 check=True,
                 capture_output=True
             )
-            print(f"Deleted old '{pages_branch_name}' branch")
         except subprocess.CalledProcessError:
-            pass  # Branch doesn't exist, that's fine
-
-        # Create new pages branch
-        try:
-            subprocess.run(
-                ["git", "checkout", "-b", pages_branch_name],
-                cwd=project_dir,
-                check=True
-            )
-            print(f"Created new '{pages_branch_name}' branch")
-        except subprocess.CalledProcessError as e:
-            print(f"\nERROR: Failed to create branch '{pages_branch_name}': {e}")
+            print("ERROR: No git remote 'origin' configured.")
+            print("Please configure a git remote before publishing:")
+            print("  git remote add origin <your-repository-url>")
             sys.exit(1)
 
-        # Commit changes
-        now_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        commit_message = f"ci({pages_branch_name}): release {pages_branch_name} on {now_date}"
+        # Build mkdocs gh-deploy command
+        cmd = ["mkdocs", "gh-deploy"]
 
-        try:
-            subprocess.run(["git", "add", "--all"], cwd=project_dir, check=True)
-            subprocess.run(
-                ["git", "commit", "-a", "-m", commit_message],
-                cwd=project_dir,
-                check=True
-            )
-            print(f"✓ Committed changes: {commit_message}\n")
-        except subprocess.CalledProcessError as e:
-            print(f"\nERROR: Failed to commit changes: {e}")
-            # Try to checkout back to original branch
-            subprocess.run(["git", "checkout", last_branch], cwd=project_dir)
-            sys.exit(1)
+        # Map --doc-branch to --remote-branch
+        pages_branch = args.doc_branch or "gh-pages"
+        cmd.extend(["--remote-branch", pages_branch])
 
-        # Step 4: Push to remote
-        print("[Step 4/4] Pushing to remote repository...")
-        push_cmd = ["git", "push", "--set-upstream", "origin", pages_branch_name]
+        # Map --doc-force to --force
         if args.doc_force:
-            push_cmd.append("-f")
-            print("Using force push (-f)")
+            cmd.append("--force")
+            print("Force push enabled")
+
+        print(f"Target branch: {pages_branch}")
+        print(f"Running: {' '.join(cmd)}")
+        print()
 
         try:
-            subprocess.run(push_cmd, cwd=project_dir, check=True)
-            print(f"✓ Successfully pushed to origin/{pages_branch_name}\n")
-        except subprocess.CalledProcessError as e:
-            print(f"\nERROR: Failed to push to remote: {e}")
-            print("You may need to use --force flag if the branch already exists remotely.")
-            # Checkout back to original branch
-            subprocess.run(["git", "checkout", last_branch], cwd=project_dir)
+            result = subprocess.run(cmd, cwd=project_dir, check=False)
+            if result.returncode != 0:
+                print("\nDocumentation deployment failed")
+                sys.exit(result.returncode)
+        except Exception as e:
+            print(f"\nError running mkdocs gh-deploy: {e}")
             sys.exit(1)
-
-        # Checkout back to original branch
-        try:
-            subprocess.run(["git", "checkout", last_branch], cwd=project_dir, check=True)
-            print(f"Switched back to '{last_branch}' branch")
-        except subprocess.CalledProcessError as e:
-            print(f"\nWARNING: Failed to switch back to '{last_branch}': {e}")
 
         # Success message
         print("\n" + "="*60)
-        print("🎉 Documentation published successfully!")
+        print("Documentation published successfully!")
         print("="*60)
-        print(f"\nBranch: {pages_branch_name}")
+        print(f"\nBranch: {pages_branch}")
 
-        # Get repository URL from git config
+        # Get repository URL and display GitHub Pages URL
         try:
             repo_url = subprocess.check_output(
                 ["git", "config", "--get", "remote.origin.url"],
@@ -762,12 +673,9 @@ class Publish(CliCommand):
                 repo_url = repo_url[:-4]
 
             print(f"Repository: {repo_url}")
-            print(f"\nYour documentation should be available at:")
-            print(f"  {repo_url}/tree/{pages_branch_name}")
 
-            # If using gh-pages, show the GitHub Pages URL
-            if pages_branch_name == "gh-pages" and "github.com" in repo_url:
-                # Extract username/repo from URL
+            # Show GitHub Pages URL
+            if "github.com" in repo_url:
                 parts = repo_url.split("/")
                 if len(parts) >= 2:
                     username = parts[-2]
@@ -776,11 +684,11 @@ class Publish(CliCommand):
                     print(f"\nGitHub Pages URL (once enabled):")
                     print(f"  {pages_url}")
 
+                    # Handle --doc-open flag
                     if args.doc_open:
-                        import webbrowser
                         print(f"\nOpening {pages_url} in browser...")
                         webbrowser.open(pages_url)
-        except:
+        except Exception:
             pass  # Ignore errors in URL extraction
 
         print()

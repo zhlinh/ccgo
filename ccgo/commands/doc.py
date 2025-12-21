@@ -12,6 +12,9 @@
 import os
 import sys
 import argparse
+import shutil
+import subprocess
+import webbrowser
 
 # region setup path
 SCRIPT_PATH = os.path.split(os.path.realpath(__file__))[0]
@@ -25,27 +28,98 @@ try:
     from ccgo.utils.context.namespace import CliNameSpace
     from ccgo.utils.context.context import CliContext
     from ccgo.utils.context.command import CliCommand
-    from ccgo.utils.cmd.cmd_util import exec_command
 except ImportError:
     from utils.context.namespace import CliNameSpace
     from utils.context.context import CliContext
     from utils.context.command import CliCommand
-    from utils.cmd.cmd_util import exec_command
+
+
+def check_mkdocs_installed() -> tuple[bool, str]:
+    """Check if mkdocs is available in PATH.
+
+    Returns:
+        Tuple of (is_installed, error_message)
+    """
+    if shutil.which("mkdocs"):
+        return True, ""
+    return False, (
+        "MkDocs is not installed or not in PATH.\n"
+        "Install it with: pip install ccgo[docs]\n"
+        "Or install from project requirements: pip install -r docs/requirements.txt"
+    )
+
+
+def check_doxygen_installed() -> tuple[bool, str]:
+    """Check if doxygen is available in PATH.
+
+    Returns:
+        Tuple of (is_installed, error_message)
+    """
+    if shutil.which("doxygen"):
+        return True, ""
+    return False, (
+        "Doxygen is not installed or not in PATH.\n"
+        "MkDoxy requires Doxygen to generate API documentation.\n"
+        "Install it with:\n"
+        "  macOS: brew install doxygen\n"
+        "  Ubuntu: sudo apt-get install doxygen\n"
+        "  Windows: choco install doxygen"
+    )
+
+
+def find_mkdocs_project(start_dir: str) -> tuple[str | None, str]:
+    """Find the project directory containing mkdocs.yml.
+
+    Searches for mkdocs.yml in start_dir and its immediate subdirectories.
+    Also verifies CCGO.toml exists.
+
+    Args:
+        start_dir: Directory to start searching from
+
+    Returns:
+        Tuple of (project_dir, error_message). project_dir is None if not found.
+    """
+    # First check if mkdocs.yml exists in start_dir
+    if os.path.isfile(os.path.join(start_dir, "mkdocs.yml")):
+        if os.path.isfile(os.path.join(start_dir, "CCGO.toml")):
+            return start_dir, ""
+        # mkdocs.yml found but no CCGO.toml - still valid for docs
+        return start_dir, ""
+
+    # Check immediate subdirectories
+    try:
+        for subdir in os.listdir(start_dir):
+            subdir_path = os.path.join(start_dir, subdir)
+            if not os.path.isdir(subdir_path):
+                continue
+            if os.path.isfile(os.path.join(subdir_path, "mkdocs.yml")):
+                return subdir_path, ""
+    except OSError as e:
+        return None, f"Error scanning directory: {e}"
+
+    return None, (
+        "mkdocs.yml not found in project directory.\n"
+        "Please ensure you are in a CCGO project directory with MkDocs configured.\n"
+        "Expected location: <project>/mkdocs.yml or <project>/<subdir>/mkdocs.yml"
+    )
 
 
 class Doc(CliCommand):
     def description(self) -> str:
         return """
-        This is a subcommand to build and view project documentation.
+        Build and view project documentation using MkDocs + MkDoxy.
 
-        Uses Doxygen to generate documentation from source code comments.
-        The generated documentation will be in HTML format and can be
-        viewed in a web browser.
+        Uses MkDocs with the MkDoxy plugin to generate documentation from
+        Markdown files and C++ source code comments (via Doxygen).
+        The generated documentation uses Material theme and can be viewed
+        in a web browser.
 
         Examples:
-            ccgo doc                # Build documentation
+            ccgo doc                # Build documentation to target/docs/site/
             ccgo doc --open         # Build and open in browser
-            ccgo doc --serve        # Build and start a local web server
+            ccgo doc --serve        # Start live-reload development server
+            ccgo doc --serve --port 9000  # Use custom port
+            ccgo doc --clean        # Clean build before generating
         """
 
     def cli(self) -> CliNameSpace:
@@ -62,18 +136,18 @@ class Doc(CliCommand):
         parser.add_argument(
             "--serve",
             action="store_true",
-            help="Start a local web server to view documentation (requires Python's http.server)",
+            help="Start MkDocs development server with live reload",
         )
         parser.add_argument(
             "--port",
             type=int,
             default=8000,
-            help="Port for local web server (default: 8000, used with --serve)",
+            help="Port for development server (default: 8000, used with --serve)",
         )
         parser.add_argument(
             "--clean",
             action="store_true",
-            help="Clean build before generating documentation",
+            help="Clean build artifacts before generating documentation",
         )
         module_name = os.path.splitext(os.path.basename(__file__))[0]
         input_argv = [x for x in sys.argv[1:] if x != module_name]
@@ -81,140 +155,91 @@ class Doc(CliCommand):
         return args
 
     def exec(self, context: CliContext, args: CliNameSpace):
-        print("Building project documentation...\n")
+        print("Building project documentation with MkDocs...\n")
 
-        # Get current working directory (project directory)
-        # Save it early in case subprocess changes it
+        # Get current working directory
         try:
-            project_dir = os.getcwd()
+            start_dir = os.getcwd()
         except (OSError, FileNotFoundError) as e:
-            # If current directory was deleted, try to use PWD environment variable
-            project_dir = os.environ.get("PWD")
-            if not project_dir or not os.path.exists(project_dir):
+            start_dir = os.environ.get("PWD")
+            if not start_dir or not os.path.exists(start_dir):
                 print(f"ERROR: Current working directory no longer exists: {e}")
                 print("Please navigate to your project directory and try again.")
                 sys.exit(1)
-            # Try to change to the saved directory
-            try:
-                os.chdir(project_dir)
-            except (OSError, FileNotFoundError):
-                print(f"ERROR: Cannot access project directory: {project_dir}")
-                sys.exit(1)
 
-        # Check if CCGO.toml exists to verify we're in a CCGO project
-        config_path = None
-        for subdir in os.listdir(project_dir):
-            subdir_path = os.path.join(project_dir, subdir)
-            if not os.path.isdir(subdir_path):
-                continue
-            potential_config = os.path.join(subdir_path, "CCGO.toml")
-            if os.path.isfile(potential_config):
-                config_path = potential_config
-                project_subdir = subdir_path
-                break
-
-        # If not found in subdirectory, check current directory
-        if not config_path:
-            if os.path.isfile(os.path.join(project_dir, "CCGO.toml")):
-                config_path = os.path.join(project_dir, "CCGO.toml")
-                project_subdir = project_dir
-            else:
-                print("❌ ERROR: CCGO.toml not found in project directory")
-                print("Please ensure you are in a CCGO project directory")
-                sys.exit(1)
-
-        # Get the build script path
-        build_script_name = "build_docs"
-        build_scripts_dir = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "build_scripts"
-        )
-        build_script_path = os.path.join(build_scripts_dir, f"{build_script_name}.py")
-
-        if not os.path.isfile(build_script_path):
-            print(f"ERROR: Build script {build_script_path} not found")
+        # Find project directory with mkdocs.yml
+        project_dir, error = find_mkdocs_project(start_dir)
+        if not project_dir:
+            print(f"ERROR: {error}")
             sys.exit(1)
 
-        print(f"Project directory: {project_subdir}")
-        print(f"Build script: {build_script_path}")
+        print(f"Project directory: {project_dir}")
 
-        # Determine the mode
-        cmd_args = []
-        if args.open:
-            print("Mode: Build and open in browser\n")
-            cmd_args.append("--open")
-        else:
-            print("Mode: Build only\n")
+        # Check for mkdocs.yml
+        mkdocs_yml = os.path.join(project_dir, "mkdocs.yml")
+        if not os.path.isfile(mkdocs_yml):
+            print(f"ERROR: mkdocs.yml not found at {mkdocs_yml}")
+            sys.exit(1)
 
-        # Build the command
-        cmd = f"cd '{project_subdir}' && python3 '{build_script_path}'"
-        if cmd_args:
-            cmd = f"{cmd} {' '.join(cmd_args)}"
-        print(f"Execute command:")
-        print(cmd)
+        # Check dependencies
+        mkdocs_ok, mkdocs_error = check_mkdocs_installed()
+        if not mkdocs_ok:
+            print(f"ERROR: {mkdocs_error}")
+            sys.exit(1)
+
+        doxygen_ok, doxygen_error = check_doxygen_installed()
+        if not doxygen_ok:
+            print(f"WARNING: {doxygen_error}")
+            print("API documentation may not be generated.\n")
+
+        # Handle --serve mode (development server with live reload)
+        if args.serve:
+            print(f"Starting MkDocs development server on port {args.port}...")
+            print(f"Documentation URL: http://127.0.0.1:{args.port}/")
+            print("Press Ctrl+C to stop the server\n")
+
+            cmd = ["mkdocs", "serve", "-a", f"127.0.0.1:{args.port}"]
+            try:
+                # This blocks until Ctrl+C
+                subprocess.run(cmd, cwd=project_dir, check=False)
+            except KeyboardInterrupt:
+                print("\n\nServer stopped")
+            return
+
+        # Build mode
+        print("Mode: Build documentation\n")
+
+        # Output to target/docs/site/ directory
+        site_dir = os.path.join(project_dir, "target", "docs", "site")
+        cmd = ["mkdocs", "build", "--site-dir", site_dir]
+        if args.clean:
+            cmd.append("--clean")
+            print("Clean build enabled")
+
+        print(f"Running: {' '.join(cmd)}")
         print()
 
-        # Execute the build
-        err_code = os.system(cmd)
+        try:
+            result = subprocess.run(cmd, cwd=project_dir, check=False)
+            if result.returncode != 0:
+                print("\nDocumentation build failed")
+                sys.exit(result.returncode)
+        except Exception as e:
+            print(f"\nError running mkdocs: {e}")
+            sys.exit(1)
 
-        if err_code != 0:
-            print("\nDocumentation build failed")
-            sys.exit(err_code)
+        print("\nDocumentation built successfully!")
 
-        print("\nDocumentation built successfully")
+        # Get output path
+        index_path = os.path.join(site_dir, "index.html")
 
-        # Get the output path
-        docs_output = os.path.join(project_subdir, "cmake_build", "Docs")
-        import platform
+        if os.path.exists(index_path):
+            print(f"Documentation location: {site_dir}")
 
-        system_name = platform.system()
-        html_path = os.path.join(
-            docs_output, system_name + ".out", "_html", "index.html"
-        )
-
-        if os.path.exists(html_path):
-            print(f"\nDocumentation location: {html_path}")
-
-            # Handle --serve option
-            if args.serve:
-                print(f"\nStarting local web server on port {args.port}...")
-                docs_dir = os.path.dirname(html_path)
-
-                try:
-                    import webbrowser
-                    import time
-                    import subprocess
-
-                    # Start the server in background
-                    server_cmd = (
-                        f"cd '{docs_dir}' && python3 -m http.server {args.port}"
-                    )
-                    print(f"\nServer command: {server_cmd}")
-                    print(f"Documentation URL: http://localhost:{args.port}/index.html")
-                    print("\nOpening browser...")
-
-                    # Open browser after a short delay
-                    import threading
-
-                    def open_browser():
-                        time.sleep(1.5)
-                        webbrowser.open(f"http://localhost:{args.port}/index.html")
-
-                    browser_thread = threading.Thread(target=open_browser)
-                    browser_thread.daemon = True
-                    browser_thread.start()
-
-                    print("\nPress Ctrl+C to stop the server\n")
-
-                    # Run the server (blocks until Ctrl+C)
-                    os.system(server_cmd)
-
-                except KeyboardInterrupt:
-                    print("\n\nServer stopped")
-                except Exception as e:
-                    print(f"\nError starting server: {e}")
-                    print(
-                        f"   You can manually view the documentation at: file://{html_path}"
-                    )
+            # Handle --open option
+            if args.open:
+                print("\nOpening documentation in browser...")
+                webbrowser.open_new_tab(f"file://{index_path}")
         else:
             print(f"\nWarning: Documentation output not found at expected location")
-            print(f"   Expected: {html_path}")
+            print(f"   Expected: {index_path}")

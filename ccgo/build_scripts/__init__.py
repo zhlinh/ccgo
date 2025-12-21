@@ -14,7 +14,6 @@
 __all__ = [
     "build_android",
     "build_benches",
-    "build_docs",
     "build_include",
     "build_ios",
     "build_linux",
