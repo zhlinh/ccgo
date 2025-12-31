@@ -2,7 +2,11 @@
 //!
 //! Enables building all platform libraries on any OS using Docker containers
 //! with the appropriate toolchains.
+//!
+//! Dockerfiles are embedded in the binary at compile time and extracted to
+//! ~/.ccgo/dockers/ at runtime when needed.
 
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -12,6 +16,13 @@ use anyhow::{bail, Context, Result};
 use super::{BuildContext, BuildResult};
 use crate::commands::build::BuildTarget;
 
+// Embed Dockerfiles at compile time
+const DOCKERFILE_LINUX: &str = include_str!("../../dockers/Dockerfile.linux");
+const DOCKERFILE_ANDROID: &str = include_str!("../../dockers/Dockerfile.android");
+const DOCKERFILE_APPLE: &str = include_str!("../../dockers/Dockerfile.apple");
+const DOCKERFILE_WINDOWS_MINGW: &str = include_str!("../../dockers/Dockerfile.windows-mingw");
+const DOCKERFILE_WINDOWS_MSVC: &str = include_str!("../../dockers/Dockerfile.windows-msvc");
+
 /// GitHub Container Registry organization for prebuilt images
 const GHCR_REPO: &str = "ghcr.io/zhlinh";
 
@@ -19,6 +30,8 @@ const GHCR_REPO: &str = "ghcr.io/zhlinh";
 pub struct PlatformDockerConfig {
     /// Dockerfile name
     pub dockerfile: &'static str,
+    /// Embedded Dockerfile content
+    pub dockerfile_content: &'static str,
     /// Local image name
     pub image_name: &'static str,
     /// Remote image URL (GHCR)
@@ -33,30 +46,35 @@ impl PlatformDockerConfig {
         match platform {
             BuildTarget::Linux => Some(Self {
                 dockerfile: "Dockerfile.linux",
+                dockerfile_content: DOCKERFILE_LINUX,
                 image_name: "ccgo-builder-linux",
                 remote_image: format!("{}/ccgo-builder-linux:latest", GHCR_REPO),
                 size_estimate: "~800MB",
             }),
             BuildTarget::Windows => Some(Self {
                 dockerfile: "Dockerfile.windows-mingw",
+                dockerfile_content: DOCKERFILE_WINDOWS_MINGW,
                 image_name: "ccgo-builder-windows-mingw",
                 remote_image: format!("{}/ccgo-builder-windows-mingw:latest", GHCR_REPO),
                 size_estimate: "~1.2GB",
             }),
             BuildTarget::Macos => Some(Self {
                 dockerfile: "Dockerfile.apple",
+                dockerfile_content: DOCKERFILE_APPLE,
                 image_name: "ccgo-builder-apple",
                 remote_image: format!("{}/ccgo-builder-apple:latest", GHCR_REPO),
                 size_estimate: "~2.5GB",
             }),
             BuildTarget::Ios | BuildTarget::Tvos | BuildTarget::Watchos => Some(Self {
                 dockerfile: "Dockerfile.apple",
+                dockerfile_content: DOCKERFILE_APPLE,
                 image_name: "ccgo-builder-apple",
                 remote_image: format!("{}/ccgo-builder-apple:latest", GHCR_REPO),
                 size_estimate: "~2.5GB",
             }),
             BuildTarget::Android => Some(Self {
                 dockerfile: "Dockerfile.android",
+                dockerfile_content: DOCKERFILE_ANDROID,
                 image_name: "ccgo-builder-android",
                 remote_image: format!("{}/ccgo-builder-android:latest", GHCR_REPO),
                 size_estimate: "~3.5GB",
@@ -72,7 +90,7 @@ pub struct DockerBuilder {
     config: PlatformDockerConfig,
     /// Build context
     ctx: BuildContext,
-    /// Path to Dockerfiles directory
+    /// Path to Dockerfiles directory (cache directory)
     docker_dir: PathBuf,
 }
 
@@ -82,8 +100,8 @@ impl DockerBuilder {
         let config = PlatformDockerConfig::for_platform(&ctx.options.target)
             .ok_or_else(|| anyhow::anyhow!("Platform {:?} does not support Docker builds", ctx.options.target))?;
 
-        // Find Dockerfiles directory
-        let docker_dir = Self::find_docker_dir()?;
+        // Get or create the Docker cache directory with embedded Dockerfiles
+        let docker_dir = Self::ensure_docker_dir(&config)?;
 
         Ok(Self {
             config,
@@ -92,15 +110,9 @@ impl DockerBuilder {
         })
     }
 
-    /// Find the Dockerfiles directory
-    fn find_docker_dir() -> Result<PathBuf> {
-        // Try to find Dockerfiles in the following locations:
-        // 1. Environment variable CCGO_DOCKER_DIR (override)
-        // 2. Relative to ccgo-rs binary in development (ccgo-rs/target/debug -> ccgo-rs/dockers)
-        // 3. Relative to ccgo-rs binary when installed (~/.cargo/bin -> look for ccgo-rs repo)
-        // 4. Via git repository root (find ccgo-rs/dockers)
-
-        // 1. Check environment variable (allows user override)
+    /// Get the Docker cache directory path (~/.ccgo/dockers/)
+    fn get_docker_cache_dir() -> Result<PathBuf> {
+        // Check environment variable override first
         if let Ok(dir) = std::env::var("CCGO_DOCKER_DIR") {
             let path = PathBuf::from(dir);
             if path.exists() {
@@ -108,86 +120,26 @@ impl DockerBuilder {
             }
         }
 
-        // 2. Check relative to current executable (development mode)
-        // ccgo-rs/target/debug/ccgo -> ccgo-rs/dockers
-        // ccgo-rs/target/release/ccgo -> ccgo-rs/dockers
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(ccgo_rs_root) = exe.parent()
-                .and_then(|p| p.parent())  // target/debug -> target
-                .and_then(|p| p.parent())  // target -> ccgo-rs
-            {
-                let docker_dir = ccgo_rs_root.join("dockers");
-                if docker_dir.exists() {
-                    return Ok(docker_dir);
-                }
-            }
-        }
+        // Use ~/.ccgo/dockers/ as the default cache directory
+        let base_dirs = directories::BaseDirs::new()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+        Ok(base_dirs.home_dir().join(".ccgo").join("dockers"))
+    }
 
-        // 3. Try to find ccgo-rs repository via git (works when binary is installed)
-        // This searches for ccgo-rs git repository starting from current directory
-        if let Ok(output) = Command::new("git")
-            .args(["rev-parse", "--show-toplevel"])
-            .current_dir(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-            .output()
-        {
-            if output.status.success() {
-                let git_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let git_root_path = PathBuf::from(&git_root);
+    /// Ensure the Docker directory exists and contains the required Dockerfile
+    fn ensure_docker_dir(config: &PlatformDockerConfig) -> Result<PathBuf> {
+        let docker_dir = Self::get_docker_cache_dir()?;
 
-                // Check if this is ccgo-rs repository itself
-                let docker_dir = git_root_path.join("dockers");
-                if docker_dir.exists() {
-                    return Ok(docker_dir);
-                }
+        // Create the directory if it doesn't exist
+        fs::create_dir_all(&docker_dir)
+            .with_context(|| format!("Failed to create Docker cache directory: {}", docker_dir.display()))?;
 
-                // Check if ccgo-rs is a subdirectory (mono-repo structure)
-                // ccgo-group/ccgo-rs/dockers
-                if let Some(parent) = git_root_path.parent() {
-                    let docker_dir = parent.join("ccgo-rs/dockers");
-                    if docker_dir.exists() {
-                        return Ok(docker_dir);
-                    }
-                }
-            }
-        }
+        // Write the embedded Dockerfile to the cache directory
+        let dockerfile_path = docker_dir.join(config.dockerfile);
+        fs::write(&dockerfile_path, config.dockerfile_content)
+            .with_context(|| format!("Failed to write Dockerfile: {}", dockerfile_path.display()))?;
 
-        // 4. Search for ccgo-rs repository in common development locations
-        // Check if we're in ccgo-group or ccgo-rs directory structure
-        if let Ok(current_dir) = std::env::current_dir() {
-            let mut search_dir = current_dir.clone();
-            for _ in 0..5 {  // Search up to 5 levels
-                // Check ccgo-rs/dockers in current level
-                let docker_dir = search_dir.join("ccgo-rs/dockers");
-                if docker_dir.exists() {
-                    return Ok(docker_dir);
-                }
-
-                // Check dockers in current level (if we're in ccgo-rs itself)
-                let docker_dir = search_dir.join("dockers");
-                if docker_dir.exists() && search_dir.ends_with("ccgo-rs") {
-                    return Ok(docker_dir);
-                }
-
-                // Move up one directory
-                if let Some(parent) = search_dir.parent() {
-                    search_dir = parent.to_path_buf();
-                } else {
-                    break;
-                }
-            }
-        }
-
-        bail!(
-            "Could not find Dockerfiles directory.\n\n\
-             Searched for ccgo-rs/dockers/ in:\n  \
-             1. CCGO_DOCKER_DIR environment variable\n  \
-             2. Relative to ccgo binary (development mode)\n  \
-             3. Git repository root\n  \
-             4. Parent directories\n\n\
-             To fix:\n  \
-             • Set CCGO_DOCKER_DIR environment variable to the dockers directory\n  \
-             • Or run from within a project in the ccgo-rs repository"
-        )
+        Ok(docker_dir)
     }
 
     /// Check if Docker is installed and running
