@@ -378,18 +378,39 @@ impl PlatformBuilder for TvosBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Remove cmake_build/tvos directory
-        let build_dir = ctx.project_root.join("cmake_build/tvos");
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/tvos
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("tvos");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
 
-        // Remove target/tvos directory
-        let target_dir = ctx.project_root.join("target/tvos");
-        if target_dir.exists() {
-            std::fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("Failed to clean {}", target_dir.display()))?;
+        // Clean old structure for backwards compatibility: cmake_build/tvOS, cmake_build/tvos
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/tvOS"),
+            ctx.project_root.join("cmake_build/tvos"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/tvos"),
+            ctx.project_root.join("target/debug/tvos"),
+            ctx.project_root.join("target/release/tvOS"),
+            ctx.project_root.join("target/debug/tvOS"),
+            ctx.project_root.join("target/tvos"),
+            ctx.project_root.join("target/tvOS"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
         }
 
         Ok(())

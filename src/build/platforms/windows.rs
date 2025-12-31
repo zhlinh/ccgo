@@ -512,18 +512,39 @@ impl PlatformBuilder for WindowsBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Remove cmake_build/windows directory
-        let build_dir = ctx.project_root.join("cmake_build/windows");
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/windows
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("windows");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
 
-        // Remove target/windows directory
-        let target_dir = ctx.project_root.join("target/windows");
-        if target_dir.exists() {
-            std::fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("Failed to clean {}", target_dir.display()))?;
+        // Clean old structure for backwards compatibility: cmake_build/Windows, cmake_build/windows
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/Windows"),
+            ctx.project_root.join("cmake_build/windows"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/windows"),
+            ctx.project_root.join("target/debug/windows"),
+            ctx.project_root.join("target/release/Windows"),
+            ctx.project_root.join("target/debug/Windows"),
+            ctx.project_root.join("target/windows"),
+            ctx.project_root.join("target/Windows"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
         }
 
         Ok(())

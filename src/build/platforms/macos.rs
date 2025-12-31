@@ -473,18 +473,39 @@ impl PlatformBuilder for MacosBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Remove cmake_build/macos directory
-        let build_dir = ctx.project_root.join("cmake_build/macos");
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/macos
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("macos");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
 
-        // Remove target/macos directory
-        let target_dir = ctx.project_root.join("target/macos");
-        if target_dir.exists() {
-            std::fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("Failed to clean {}", target_dir.display()))?;
+        // Clean old structure for backwards compatibility: cmake_build/macOS, cmake_build/macos
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/macOS"),
+            ctx.project_root.join("cmake_build/macos"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/macos"),
+            ctx.project_root.join("target/debug/macos"),
+            ctx.project_root.join("target/release/macOS"),
+            ctx.project_root.join("target/debug/macOS"),
+            ctx.project_root.join("target/macos"),
+            ctx.project_root.join("target/macOS"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
         }
 
         Ok(())

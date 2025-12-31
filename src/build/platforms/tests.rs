@@ -20,12 +20,14 @@ impl TestsBuilder {
 
     /// Get build output directory
     fn build_dir(&self, ctx: &BuildContext) -> PathBuf {
-        ctx.project_root.join("cmake_build").join("Tests")
+        // Uses cmake_build/{release|debug}/tests/ structure
+        let release_subdir = if ctx.options.release { "release" } else { "debug" };
+        ctx.project_root.join("cmake_build").join(release_subdir).join("tests")
     }
 
     /// Get install directory
     fn install_dir(&self, ctx: &BuildContext) -> PathBuf {
-        // Tests are installed to cmake_build/Tests/out/
+        // Tests are installed to cmake_build/{release|debug}/tests/out/
         self.build_dir(ctx).join("out")
     }
 
@@ -366,12 +368,26 @@ impl PlatformBuilder for TestsBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        let build_dir = self.build_dir(ctx);
+        // Clean new directory structure: cmake_build/{release|debug}/tests
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("tests");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+                eprintln!("Cleaned: {}", build_dir.display());
+            }
+        }
 
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-            eprintln!("Cleaned: {}", build_dir.display());
+        // Clean old structure for backwards compatibility: cmake_build/Tests, cmake_build/tests
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/Tests"),
+            ctx.project_root.join("cmake_build/tests"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+                eprintln!("Cleaned: {}", old_dir.display());
+            }
         }
 
         Ok(())

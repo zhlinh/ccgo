@@ -864,46 +864,34 @@ impl PlatformBuilder for AndroidBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Remove cmake_build/Android directory (capital A to match Python)
-        let build_dir = ctx.project_root.join("cmake_build/Android");
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/android
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("android");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
 
-        // Also clean old lowercase android directory for backwards compatibility
-        let old_build_dir = ctx.project_root.join("cmake_build/android");
-        if old_build_dir.exists() {
-            std::fs::remove_dir_all(&old_build_dir)
-                .with_context(|| format!("Failed to clean {}", old_build_dir.display()))?;
-        }
-
-        // Remove target/release/Android directory
-        let target_release_dir = ctx.project_root.join("target/release/Android");
-        if target_release_dir.exists() {
-            std::fs::remove_dir_all(&target_release_dir)
-                .with_context(|| format!("Failed to clean {}", target_release_dir.display()))?;
-        }
-
-        // Remove target/debug/Android directory
-        let target_debug_dir = ctx.project_root.join("target/debug/Android");
-        if target_debug_dir.exists() {
-            std::fs::remove_dir_all(&target_debug_dir)
-                .with_context(|| format!("Failed to clean {}", target_debug_dir.display()))?;
-        }
-
-        // Also clean old structure (target/Android) for backwards compatibility
-        let old_target_dir = ctx.project_root.join("target/Android");
-        if old_target_dir.exists() {
-            std::fs::remove_dir_all(&old_target_dir)
-                .with_context(|| format!("Failed to clean {}", old_target_dir.display()))?;
-        }
-
-        // Also clean old lowercase android directories for backwards compatibility
+        // Clean old structure for backwards compatibility: cmake_build/Android, cmake_build/android
         for old_dir in &[
-            ctx.project_root.join("target/android"),
+            ctx.project_root.join("cmake_build/Android"),
+            ctx.project_root.join("cmake_build/android"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
             ctx.project_root.join("target/release/android"),
             ctx.project_root.join("target/debug/android"),
+            ctx.project_root.join("target/release/Android"),
+            ctx.project_root.join("target/debug/Android"),
+            ctx.project_root.join("target/android"),
+            ctx.project_root.join("target/Android"),
         ] {
             if old_dir.exists() {
                 std::fs::remove_dir_all(old_dir)

@@ -53,11 +53,13 @@ function(ccgo_link_dependency TARGET_NAME DEP_NAME LIB_NAME)
     # Try to find the library in dependency paths
     set(_lib_found FALSE)
     foreach(_dep_path ${_dep_paths})
-        # Check common library locations
+        # Check common library locations (including both old and new cmake_build structure)
         set(_potential_paths
             "${_dep_path}/lib"
             "${_dep_path}/build/lib"
             "${_dep_path}/cmake_build/lib"
+            "${_dep_path}/cmake_build/release/lib"
+            "${_dep_path}/cmake_build/debug/lib"
             "${_dep_path}"
         )
 

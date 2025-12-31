@@ -217,26 +217,38 @@ impl PlatformBuilder for ConanBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean cmake_build/conan directory
-        let build_dir = ctx.project_root.join("cmake_build/conan");
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/conan
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("conan");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
 
-        // Clean target/conan directory (Python output)
-        let target_dir = ctx.project_root.join("target/conan");
-        if target_dir.exists() {
-            std::fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("Failed to clean {}", target_dir.display()))?;
+        // Clean old structure for backwards compatibility: cmake_build/Conan, cmake_build/conan
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/Conan"),
+            ctx.project_root.join("cmake_build/conan"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
         }
 
-        // Clean debug/release conan directories
-        for subdir in &["debug", "release"] {
-            let conan_target = ctx.project_root.join("target").join(subdir).join("conan");
-            if conan_target.exists() {
-                std::fs::remove_dir_all(&conan_target)
-                    .with_context(|| format!("Failed to clean {}", conan_target.display()))?;
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/conan"),
+            ctx.project_root.join("target/debug/conan"),
+            ctx.project_root.join("target/release/Conan"),
+            ctx.project_root.join("target/debug/Conan"),
+            ctx.project_root.join("target/conan"),
+            ctx.project_root.join("target/Conan"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
             }
         }
 

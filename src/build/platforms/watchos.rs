@@ -394,18 +394,39 @@ impl PlatformBuilder for WatchosBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Remove cmake_build/watchos directory
-        let build_dir = ctx.project_root.join("cmake_build/watchos");
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/watchos
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("watchos");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
 
-        // Remove target/watchos directory
-        let target_dir = ctx.project_root.join("target/watchos");
-        if target_dir.exists() {
-            std::fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("Failed to clean {}", target_dir.display()))?;
+        // Clean old structure for backwards compatibility: cmake_build/watchOS, cmake_build/watchos
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/watchOS"),
+            ctx.project_root.join("cmake_build/watchos"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/watchos"),
+            ctx.project_root.join("target/debug/watchos"),
+            ctx.project_root.join("target/release/watchOS"),
+            ctx.project_root.join("target/debug/watchOS"),
+            ctx.project_root.join("target/watchos"),
+            ctx.project_root.join("target/watchOS"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
         }
 
         Ok(())

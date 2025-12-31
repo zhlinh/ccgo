@@ -86,7 +86,7 @@ pub struct BuildContext {
     pub config: CcgoConfig,
     /// Build options
     pub options: BuildOptions,
-    /// CMake build directory (cmake_build/<platform>)
+    /// CMake build directory (cmake_build/{debug|release}/<platform>)
     pub cmake_build_dir: PathBuf,
     /// Output directory for final artifacts (target/<platform>)
     pub output_dir: PathBuf,
@@ -99,11 +99,15 @@ impl BuildContext {
     pub fn new(project_root: PathBuf, config: CcgoConfig, options: BuildOptions) -> Self {
         // Convert platform name to lowercase for consistent directory structure
         let platform_name = options.target.to_string().to_lowercase();
-        let cmake_build_dir = project_root.join("cmake_build").join(&platform_name);
 
-        // Output dir uses release/debug subdirectory:
+        // Both cmake_build and target use release/debug subdirectory for consistency:
+        // cmake_build/release/android/ or cmake_build/debug/android/
         // target/release/android/ or target/debug/android/
         let release_subdir = if options.release { "release" } else { "debug" };
+        let cmake_build_dir = project_root
+            .join("cmake_build")
+            .join(release_subdir)
+            .join(&platform_name);
         let output_dir = project_root
             .join("target")
             .join(release_subdir)

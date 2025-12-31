@@ -517,18 +517,39 @@ impl PlatformBuilder for IosBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Remove cmake_build/ios directory
-        let build_dir = ctx.project_root.join("cmake_build/ios");
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/ios
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("ios");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
 
-        // Remove target/ios directory
-        let target_dir = ctx.project_root.join("target/ios");
-        if target_dir.exists() {
-            std::fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("Failed to clean {}", target_dir.display()))?;
+        // Clean old structure for backwards compatibility: cmake_build/iOS, cmake_build/ios
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/iOS"),
+            ctx.project_root.join("cmake_build/ios"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/ios"),
+            ctx.project_root.join("target/debug/ios"),
+            ctx.project_root.join("target/release/iOS"),
+            ctx.project_root.join("target/debug/iOS"),
+            ctx.project_root.join("target/ios"),
+            ctx.project_root.join("target/iOS"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
         }
 
         Ok(())

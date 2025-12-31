@@ -20,12 +20,14 @@ impl BenchesBuilder {
 
     /// Get build output directory
     fn build_dir(&self, ctx: &BuildContext) -> PathBuf {
-        ctx.project_root.join("cmake_build").join("Benches")
+        // Uses cmake_build/{release|debug}/benches/ structure
+        let release_subdir = if ctx.options.release { "release" } else { "debug" };
+        ctx.project_root.join("cmake_build").join(release_subdir).join("benches")
     }
 
     /// Get install directory
     fn install_dir(&self, ctx: &BuildContext) -> PathBuf {
-        // CMake installs to build_dir/out/
+        // CMake installs to cmake_build/{release|debug}/benches/out/
         self.build_dir(ctx).join("out")
     }
 
@@ -362,11 +364,26 @@ impl PlatformBuilder for BenchesBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        let build_dir = self.build_dir(ctx);
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        // Clean new directory structure: cmake_build/{release|debug}/benches
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("benches");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
         }
+
+        // Clean old structure for backwards compatibility: cmake_build/Benches, cmake_build/benches
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/Benches"),
+            ctx.project_root.join("cmake_build/benches"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
         Ok(())
     }
 }
