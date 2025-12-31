@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Args;
 
 /// Check platform dependencies
@@ -224,6 +224,7 @@ impl PlatformChecker {
     }
 
     /// Check Gradle installation
+    #[allow(dead_code)]
     fn check_gradle(&mut self) -> bool {
         // Check for global gradle
         if which::which("gradle").is_ok() {
@@ -297,10 +298,10 @@ impl PlatformChecker {
 
         // Check Java
         let (java_exists, _) = self.check_command_exists("java", Some("Java"));
-        let (javac_exists, _) = self.check_command_exists("javac", Some("Java Compiler"));
+        let (_javac_exists, _) = self.check_command_exists("javac", Some("Java Compiler"));
 
         // Check JAVA_HOME
-        let (java_home_exists, java_home) = self.check_env_var("JAVA_HOME", true);
+        let (java_home_exists, _java_home) = self.check_env_var("JAVA_HOME", true);
 
         // Check Android SDK
         let (android_home_exists, android_home) = self.check_env_var("ANDROID_HOME", true);

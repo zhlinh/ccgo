@@ -4,7 +4,6 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::io::{self, Write};
 use std::fs;
 
 /// Publish target
@@ -476,7 +475,7 @@ impl PublishCommand {
         Ok(())
     }
 
-    fn publish_spm(&self, project_dir: &Path, verbose: bool) -> Result<()> {
+    fn publish_spm(&self, project_dir: &Path, _verbose: bool) -> Result<()> {
         println!("Publishing to Swift Package Manager...");
 
         // Verify Package.swift exists

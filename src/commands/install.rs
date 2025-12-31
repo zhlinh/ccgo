@@ -6,15 +6,10 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-#[cfg(unix)]
-use std::os::unix;
-#[cfg(windows)]
-use std::os::windows;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
-use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::config::CcgoConfig;
@@ -45,6 +40,7 @@ pub struct InstallCommand {
 /// Dependency source type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 enum SourceType {
     LocalDir,
     LocalArchive,
@@ -239,7 +235,7 @@ impl InstallCommand {
     /// Install from local path
     fn install_from_local_path(
         &self,
-        dep_name: &str,
+        _dep_name: &str,
         path: &str,
         project_dir: &Path,
         install_path: &Path,

@@ -7,6 +7,7 @@ use std::process::Command;
 
 /// Git version information
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GitVersion {
     /// Full version string with suffix (e.g., "1.0.2-beta.18-dirty")
     pub version_with_suffix: String,

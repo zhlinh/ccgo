@@ -109,7 +109,7 @@ impl TvosBuilder {
     /// Create XCFramework from device and simulator libraries
     fn create_xcframework(
         &self,
-        xcode: &XcodeToolchain,
+        _xcode: &XcodeToolchain,
         device_lib: &PathBuf,
         simulator_lib: &PathBuf,
         output: &PathBuf,

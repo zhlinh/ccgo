@@ -12,6 +12,7 @@ use crate::build::archive::{
     ARCHIVE_DIR_STATIC,
 };
 use crate::build::cmake::{BuildType, CMakeConfig};
+#[cfg(target_os = "linux")]
 use crate::build::toolchains::detect_default_compiler;
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
@@ -96,7 +97,7 @@ impl PlatformBuilder for LinuxBuilder {
         vec!["x86_64".to_string()]
     }
 
-    fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
+    fn validate_prerequisites(&self, _ctx: &BuildContext) -> Result<()> {
         // Check if we're on Linux
         #[cfg(not(target_os = "linux"))]
         {
@@ -109,25 +110,28 @@ impl PlatformBuilder for LinuxBuilder {
             );
         }
 
-        // Check for CMake
-        if !crate::build::cmake::is_cmake_available() {
-            bail!("CMake is required for Linux builds. Please install CMake.");
+        #[cfg(target_os = "linux")]
+        {
+            // Check for CMake
+            if !crate::build::cmake::is_cmake_available() {
+                bail!("CMake is required for Linux builds. Please install CMake.");
+            }
+
+            // Check for C++ compiler
+            let compiler = detect_default_compiler()
+                .context("No C/C++ compiler found. Please install GCC or Clang.")?;
+
+            if _ctx.options.verbose {
+                eprintln!(
+                    "Using {} compiler: {} ({})",
+                    compiler.compiler_type,
+                    compiler.cxx.display(),
+                    compiler.version
+                );
+            }
+
+            Ok(())
         }
-
-        // Check for C++ compiler
-        let compiler = detect_default_compiler()
-            .context("No C/C++ compiler found. Please install GCC or Clang.")?;
-
-        if ctx.options.verbose {
-            eprintln!(
-                "Using {} compiler: {} ({})",
-                compiler.compiler_type,
-                compiler.cxx.display(),
-                compiler.version
-            );
-        }
-
-        Ok(())
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
