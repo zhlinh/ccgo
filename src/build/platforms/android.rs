@@ -774,6 +774,7 @@ impl PlatformBuilder for AndroidBuilder {
         }
 
         // Add AAR to archive if it exists (not in native-only mode)
+        // Only add to haars/android/ subdirectory, not to root
         if !ctx.options.native_only {
             // AAR file now uses versioned naming from build_aar()
             // Format: {PROJECT}_ANDROID_SDK-{version}-{publish_suffix}.aar
@@ -787,17 +788,11 @@ impl PlatformBuilder for AndroidBuilder {
             let aar_path = ctx.output_dir.join(&aar_versioned_name);
 
             if aar_path.exists() {
-                // Add to haars/android/ subdirectory
+                // Add to haars/android/ subdirectory only
                 let aar_dest = format!("haars/android/{}", aar_versioned_name);
                 archive.add_file(&aar_path, &aar_dest)?;
                 if ctx.options.verbose {
                     eprintln!("Added AAR to archive: {}", aar_dest);
-                }
-
-                // Also add to root directory
-                archive.add_file(&aar_path, &aar_versioned_name)?;
-                if ctx.options.verbose {
-                    eprintln!("Added AAR to archive root: {}", aar_versioned_name);
                 }
             }
         }
