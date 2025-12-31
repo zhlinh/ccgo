@@ -1,163 +1,30 @@
-######################
-# Java
-######################
-*.class
-*.war
-*.ear
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
 
-######################
-# Maven
-######################
-**/target/
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
-dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
-.mvn/wrapper/maven-wrapper.jar
+# Cargo lock is committed for binaries
+# Cargo.lock
 
-######################
-# IDE
-######################
-# IntelliJ IDEA
-*.iml
+# IDE and editor files
 .idea/
-.idea_modules/
-/out/
-
-# Visual Studio / VS Code
-**/.vscode/
-**/.vs/
-
-# Eclipse
-.project
-.classpath
-.settings/
-
-# Other
-**/.cache/
-
-######################
-# Gradle
-######################
-local.properties
-.gradle/
-**/build/
-!src/**/build/
-!gradle/wrapper/gradle-wrapper.jar
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-######################
-# CMake
-######################
-**/cmake_build/
-**/CMakeFiles/
-**/CMakeCache.txt
-**/cmake_install.cmake
-**/Makefile
-**/compile_commands.json
-**/.cxx/
-
-######################
-# Python
-######################
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-**/dist/
-*.egg-info/
-*.egg
-.eggs/
-.venv/
-venv/
-ENV/
-.python-version
-
-######################
-# Android
-######################
-captures/
-**/.externalNativeBuild/
-
-######################
-# iOS / macOS
-######################
-*.build/
-*.xcodeproj/
-*.xcworkspace/
-xcuserdata/
-*.pbxuser
-*.perspective
-*.perspectivev3
-DerivedData/
-*.hmap
-*.ipa
-*.dSYM.zip
-*.dSYM
-
-######################
-# macOS
-######################
+.vscode/
+*.swp
+*.swo
+*~
 .DS_Store
-.AppleDouble
-.LSOverride
-._*
-.Spotlight-V100
-.Trashes
 
-######################
-# OHOS (OpenHarmony)
-######################
-**/.hvigor/
-**/oh_modules/
+# Debug files
+*.dSYM/
 
-######################
-# ccgo
-######################
-**/.ccgo/
+# Test artifacts
+/tests/fixtures/*/target/
 
-######################
-# Doxygen
-######################
-**/_html/
-**/_latex/
+# Benchmark results
+/benches/results/
 
-######################
-# Logs
-######################
-*.log
-log.log*
-error.log
-nohup.out
-*lint_detail.txt
-.lint.conf
-**/nul
-
-######################
-# Archives
-######################
-*.zip
-*.tar.gz
-*.rar
-
-######################
-# Binaries
-######################
-/bin/
-**/bin/
-
-######################
-# Project specific
-######################
-source_sdk/
-*_result/
-*result.log
-**/include/*/base/verinfo.h
-**/src/**/verinfo.h
-**/android/*/libs/
-**/android/*/obj/
+# Coverage reports
+/coverage/
+*.profraw
+*.profdata
+tarpaulin-report.html

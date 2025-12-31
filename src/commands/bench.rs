@@ -1,0 +1,89 @@
+//! Benchmark command implementation
+
+use anyhow::Result;
+use clap::Args;
+
+use crate::build::platforms::benches::BenchesBuilder;
+use crate::build::{BuildContext, BuildOptions, PlatformBuilder};
+use crate::commands::build::{BuildTarget, LinkType, WindowsToolchain};
+use crate::config::CcgoConfig;
+
+/// Run Google Benchmark benchmarks
+#[derive(Args, Debug)]
+pub struct BenchCommand {
+    /// Benchmark filter pattern (e.g., "BM_Sort*")
+    #[arg(long)]
+    pub filter: Option<String>,
+
+    /// Generate IDE project for benchmarks instead of running
+    #[arg(long)]
+    pub ide_project: bool,
+
+    /// Build benchmarks without running them
+    #[arg(long)]
+    pub build_only: bool,
+
+    /// Run benchmarks without building (assumes already built)
+    #[arg(long)]
+    pub run_only: bool,
+
+    /// Number of parallel jobs for building
+    #[arg(short, long)]
+    pub jobs: Option<usize>,
+
+    /// Build in release mode
+    #[arg(long)]
+    pub release: bool,
+}
+
+impl BenchCommand {
+    /// Execute the bench command
+    pub fn execute(self, verbose: bool) -> Result<()> {
+        // Load project configuration
+        let config = CcgoConfig::load()?;
+        let project_root = std::env::current_dir()?;
+
+        // Create build context for benchmarks
+        let options = BuildOptions {
+            target: BuildTarget::Linux, // Placeholder, not used by benchmarks
+            architectures: vec![],
+            link_type: LinkType::Both,
+            use_docker: false,
+            jobs: self.jobs,
+            ide_project: self.ide_project,
+            release: self.release,
+            native_only: false,
+            toolchain: WindowsToolchain::Auto,
+            verbose,
+        };
+
+        let ctx = BuildContext::new(project_root, config, options);
+        let builder = BenchesBuilder::new();
+
+        if self.ide_project {
+            // Generate IDE project
+            builder.generate_ide_project(&ctx)?;
+        } else if self.run_only {
+            // Run benchmarks without building
+            if verbose {
+                eprintln!("Running benchmarks (without rebuilding)...");
+            }
+            builder.run_benchmarks(&ctx, self.filter.as_deref())?;
+        } else if self.build_only {
+            // Build benchmarks without running
+            if verbose {
+                eprintln!("Building benchmarks...");
+            }
+            builder.build(&ctx)?;
+        } else {
+            // Build and run benchmarks (default)
+            if verbose {
+                eprintln!("Building and running benchmarks...");
+            }
+            builder.build(&ctx)?;
+            builder.run_benchmarks(&ctx, self.filter.as_deref())?;
+        }
+
+        Ok(())
+    }
+}

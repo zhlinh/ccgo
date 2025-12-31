@@ -1,0 +1,67 @@
+[package]
+name = "ccgo"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "A high-performance C++ cross-platform build CLI"
+license = "MIT"
+repository = "https://github.com/zhlinh/ccgo"
+keywords = ["cli", "cpp", "cross-platform", "build", "cmake"]
+categories = ["command-line-utilities", "development-tools::build-utils"]
+
+[dependencies]
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+
+# Async runtime for subprocess execution
+tokio = { version = "1.41", features = ["rt-multi-thread", "process", "fs", "io-util", "macros"] }
+
+# Serialization and configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Terminal output
+indicatif = "0.17"
+console = "0.15"
+
+# Path and file utilities
+directories = "5.0"
+which = "7.0"
+walkdir = "2.5"
+glob = "0.3"
+open = "5.3"
+
+# Archive and compression
+zip = "2.2"
+
+# Parallel execution
+rayon = "1.10"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Temporary file handling (also in dev-deps for tests)
+tempfile = "3.14"
+md5 = "0.8.0"
+regex = "1.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+
+[profile.release]
+lto = "thin"
+strip = true
+panic = "abort"
+codegen-units = 1
+opt-level = 3
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false

@@ -1,0 +1,289 @@
+//! Linux platform builder
+//!
+//! Builds static and shared libraries for Linux using CMake with GCC or Clang.
+
+use std::path::PathBuf;
+use std::time::Instant;
+
+use anyhow::{bail, Context, Result};
+
+use crate::build::archive::{
+    ArchiveBuilder, ARCHIVE_DIR_INCLUDE, ARCHIVE_DIR_OBJ, ARCHIVE_DIR_SHARED,
+    ARCHIVE_DIR_STATIC,
+};
+use crate::build::cmake::{BuildType, CMakeConfig};
+use crate::build::toolchains::detect_default_compiler;
+use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::commands::build::LinkType;
+
+/// Linux platform builder
+pub struct LinuxBuilder;
+
+impl LinuxBuilder {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Build a specific link type (static or shared)
+    /// Returns the build directory where output is located
+    fn build_link_type(&self, ctx: &BuildContext, link_type: &str) -> Result<PathBuf> {
+        let build_dir = ctx.cmake_build_dir.join(link_type);
+        let install_dir = build_dir.join("install");
+
+        let build_shared = link_type == "shared";
+
+        // Configure and build with CMake
+        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+            .build_type(if ctx.options.release {
+                BuildType::Release
+            } else {
+                BuildType::Debug
+            })
+            .install_prefix(install_dir.clone())
+            .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
+            .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_LIB_NAME", ctx.lib_name())
+            .jobs(ctx.jobs())
+            .verbose(ctx.options.verbose);
+
+        // Add CCGO_CMAKE_DIR if available
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
+        }
+
+        // Add CCGO configuration variables
+        cmake = cmake.variable(
+            "CCGO_CONFIG_PRESET_VISIBILITY",
+            ctx.symbol_visibility().to_string(),
+        );
+
+        // Add submodule dependencies for shared library linking
+        if let Some(deps_map) = ctx.deps_map() {
+            cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
+        }
+
+        cmake.configure_build_install()?;
+
+        // Return build_dir since CCGO cmake installs to build_dir/out/
+        Ok(build_dir)
+    }
+
+    /// Find library directory in build output
+    /// Checks multiple possible locations: lib/, out/, and root
+    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+        let possible_dirs = vec![
+            build_dir.join("install/lib"),
+            build_dir.join("out"),
+            build_dir.join("lib"),
+        ];
+
+        for dir in possible_dirs {
+            if dir.exists() {
+                return Some(dir);
+            }
+        }
+        None
+    }
+}
+
+impl PlatformBuilder for LinuxBuilder {
+    fn platform_name(&self) -> &str {
+        "linux"
+    }
+
+    fn default_architectures(&self) -> Vec<String> {
+        vec!["x86_64".to_string()]
+    }
+
+    fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
+        // Check if we're on Linux
+        #[cfg(not(target_os = "linux"))]
+        {
+            bail!(
+                "Linux builds can only be run on Linux systems.\n\
+                 Current OS: {}\n\n\
+                 To build for Linux from your current OS, use Docker:\n  \
+                 ccgo build linux --docker",
+                std::env::consts::OS
+            );
+        }
+
+        // Check for CMake
+        if !crate::build::cmake::is_cmake_available() {
+            bail!("CMake is required for Linux builds. Please install CMake.");
+        }
+
+        // Check for C++ compiler
+        let compiler = detect_default_compiler()
+            .context("No C/C++ compiler found. Please install GCC or Clang.")?;
+
+        if ctx.options.verbose {
+            eprintln!(
+                "Using {} compiler: {} ({})",
+                compiler.compiler_type,
+                compiler.cxx.display(),
+                compiler.version
+            );
+        }
+
+        Ok(())
+    }
+
+    fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        let start = Instant::now();
+
+        // Validate prerequisites first
+        self.validate_prerequisites(ctx)?;
+
+        if ctx.options.verbose {
+            eprintln!("Building {} for Linux...", ctx.lib_name());
+        }
+
+        // Create output directory
+        std::fs::create_dir_all(&ctx.output_dir)?;
+
+        // Create archive builder
+        let archive = ArchiveBuilder::new(
+            ctx.lib_name(),
+            ctx.version(),
+            ctx.publish_suffix(),
+            ctx.options.release,
+            "linux",
+            ctx.output_dir.clone(),
+        )?;
+
+        let mut built_link_types = Vec::new();
+
+        // Build static libraries
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+            if ctx.options.verbose {
+                eprintln!("Building static library...");
+            }
+            let build_dir = self.build_link_type(ctx, "static")?;
+
+            // Add static library to archive: lib/linux/static/
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_STATIC);
+                archive.add_directory(&lib_dir, &archive_path)?;
+            }
+            built_link_types.push("static");
+        }
+
+        // Build shared libraries
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+            if ctx.options.verbose {
+                eprintln!("Building shared library...");
+            }
+            let build_dir = self.build_link_type(ctx, "shared")?;
+
+            // Add shared library to archive: lib/linux/shared/
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED);
+                archive.add_directory(&lib_dir, &archive_path)?;
+            }
+            built_link_types.push("shared");
+        }
+
+        // Add include files (from either build - they're the same)
+        // Path: include/{lib_name}/
+        let include_source = if built_link_types.contains(&"static") {
+            ctx.cmake_build_dir.join("static/install/include")
+        } else {
+            ctx.cmake_build_dir.join("shared/install/include")
+        };
+        if include_source.exists() {
+            let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
+            archive.add_directory(&include_source, &include_path)?;
+        }
+
+        // Create the SDK archive
+        let link_type_str = ctx.options.link_type.to_string();
+        let sdk_archive = archive.create_sdk_archive(&["x86_64".to_string()], &link_type_str)?;
+
+        // Create symbols archive with unstripped binaries
+        // Structure: obj/linux/x86_64/*.so (for shared libs)
+        let mut symbols_archive_result = None;
+        if ctx.options.link_type != LinkType::Static {
+            // For shared builds, collect unstripped .so files
+            let symbols_temp = std::env::temp_dir().join(format!("ccgo-symbols-{}", ctx.lib_name()));
+            std::fs::create_dir_all(&symbols_temp)?;
+
+            // Create obj/linux/x86_64/ structure
+            let obj_arch_dir = symbols_temp
+                .join(ARCHIVE_DIR_OBJ)
+                .join(self.platform_name())
+                .join("x86_64");
+            std::fs::create_dir_all(&obj_arch_dir)?;
+
+            // Find and copy unstripped .so files from build directory
+            let shared_build_dir = ctx.cmake_build_dir.join("shared");
+            if let Some(lib_dir) = self.find_lib_dir(&shared_build_dir) {
+                for entry in std::fs::read_dir(&lib_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.extension().map_or(false, |ext| ext == "so") {
+                        let file_name = path.file_name().unwrap();
+                        std::fs::copy(&path, obj_arch_dir.join(file_name))?;
+                    }
+                }
+
+                // Only create symbols archive if we found .so files
+                if obj_arch_dir.read_dir()?.next().is_some() {
+                    let symbols_archive_path = archive.create_symbols_archive(&symbols_temp)?;
+                    symbols_archive_result = Some(symbols_archive_path);
+                }
+            }
+
+            // Clean up temp directory
+            if symbols_temp.exists() {
+                std::fs::remove_dir_all(&symbols_temp)?;
+            }
+        }
+
+        let duration = start.elapsed();
+
+        if ctx.options.verbose {
+            eprintln!(
+                "Linux build completed in {:.2}s: {}",
+                duration.as_secs_f64(),
+                sdk_archive.display()
+            );
+            if let Some(ref sym) = symbols_archive_result {
+                eprintln!("  Symbols archive: {}", sym.display());
+            }
+        }
+
+        Ok(BuildResult {
+            sdk_archive,
+            symbols_archive: symbols_archive_result,
+            aar_archive: None,
+            duration_secs: duration.as_secs_f64(),
+            architectures: vec!["x86_64".to_string()],
+        })
+    }
+
+    fn clean(&self, ctx: &BuildContext) -> Result<()> {
+        // Remove cmake_build/linux directory
+        let build_dir = ctx.project_root.join("cmake_build/linux");
+        if build_dir.exists() {
+            std::fs::remove_dir_all(&build_dir)
+                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        }
+
+        // Remove target/linux directory
+        let target_dir = ctx.project_root.join("target/linux");
+        if target_dir.exists() {
+            std::fs::remove_dir_all(&target_dir)
+                .with_context(|| format!("Failed to clean {}", target_dir.display()))?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for LinuxBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
