@@ -2,6 +2,7 @@
 
 A cross-platform C++ build system designed to simplify and accelerate multi-platform development.
 
+[![Crates.io](https://img.shields.io/crates/v/ccgo.svg)](https://crates.io/crates/ccgo)
 [![PyPI version](https://badge.fury.io/py/ccgo.svg)](https://pypi.org/project/ccgo/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/license/MIT)
 
@@ -60,11 +61,13 @@ ccgo new <project-name> [options]
 ```
 
 **Options:**
+
 - `--template-url <url>` - Custom template repository URL
 - `--data <key>=<value>` - Template variables (repeatable)
 - `--defaults` - Use default values for all prompts
 
 **Examples:**
+
 ```bash
 # Create with interactive prompts
 ccgo new my-project
@@ -89,12 +92,14 @@ ccgo init [options]
 ```
 
 **Options:**
+
 - `--template-url <url>` - Custom template repository URL
 - `--data <key>=<value>` - Template variables (repeatable)
 - `--defaults` - Use default values for all prompts
 - `--force` - Skip confirmation prompt
 
 **Examples:**
+
 ```bash
 ccgo init
 ccgo init --defaults --force
@@ -111,6 +116,7 @@ ccgo build <target> [options]
 ```
 
 **Targets:**
+
 - `android` - Build for Android (supports `--arch`)
 - `ios` - Build for iOS
 - `macos` - Build for macOS
@@ -122,6 +128,7 @@ ccgo build <target> [options]
 - `include` - Build include headers
 
 **Options:**
+
 - `--arch <architectures>` - Comma-separated architecture list (Android/OHOS only)
   - Android: `armeabi-v7a`, `arm64-v8a`, `x86_64`
   - OHOS: `armeabi-v7a`, `arm64-v8a`, `x86_64`
@@ -131,6 +138,7 @@ ccgo build <target> [options]
 - `--docker` - Build using Docker (cross-platform builds)
 
 **Examples:**
+
 ```bash
 # Build for Android with specific architectures
 ccgo build android --arch armeabi-v7a,arm64-v8a
@@ -188,6 +196,7 @@ ccgo test [options]
 ```
 
 **Options:**
+
 - `--build-only` - Only build tests without running
 - `--run-only` - Only run tests (assumes already built)
 - `--filter <pattern>` - GoogleTest filter (e.g., 'MyTest*')
@@ -195,6 +204,7 @@ ccgo test [options]
 - `--gtest-args <args>` - Additional GoogleTest arguments
 
 **Examples:**
+
 ```bash
 # Build and run all tests
 ccgo test
@@ -221,6 +231,7 @@ ccgo bench [options]
 ```
 
 **Options:**
+
 - `--build-only` - Only build benchmarks without running
 - `--run-only` - Only run benchmarks (assumes already built)
 - `--filter <pattern>` - Google Benchmark filter (e.g., 'BM_Sort*')
@@ -229,6 +240,7 @@ ccgo bench [options]
 - `--format <format>` - Output format: `console`, `json`, `csv` (default: console)
 
 **Examples:**
+
 ```bash
 # Build and run all benchmarks
 ccgo bench
@@ -257,12 +269,14 @@ ccgo doc [options]
 ```
 
 **Options:**
+
 - `--open` - Open documentation in browser after building
 - `--serve` - Start local web server to view documentation
 - `--port <port>` - Port for web server (default: 8000)
 - `--clean` - Clean build before generating
 
 **Examples:**
+
 ```bash
 # Build documentation
 ccgo doc
@@ -291,11 +305,13 @@ ccgo publish <target>
 ```
 
 **Targets:**
+
 - `android` - Publish to Maven repository
 - `ohos` - Publish to OHPM repository
 - `kmp` - Publish KMP library to Maven (local or remote)
 
 **Examples:**
+
 ```bash
 # Publish Android library to Maven
 ccgo publish android
@@ -318,6 +334,7 @@ ccgo check [target] [options]
 ```
 
 **Targets:**
+
 - `all` - Check all platforms (default)
 - `android` - Check Android development environment
 - `ios` - Check iOS development environment
@@ -327,9 +344,11 @@ ccgo check [target] [options]
 - `ohos` - Check OpenHarmony development environment
 
 **Options:**
+
 - `--verbose` - Show detailed information
 
 **Examples:**
+
 ```bash
 # Check all platforms
 ccgo check
@@ -350,6 +369,7 @@ ccgo clean [target] [options]
 ```
 
 **Targets:**
+
 - `all` - Clean all platforms (default)
 - `android` - Clean Android build caches
 - `ios` - Clean iOS build caches
@@ -359,11 +379,13 @@ ccgo clean [target] [options]
 - `examples` - Clean examples build caches
 
 **Options:**
+
 - `--native-only` - Clean only `cmake_build/` (native CMake builds)
 - `--dry-run` - Show what would be cleaned without deleting
 - `-y, --yes` - Skip confirmation prompts
 
 **Examples:**
+
 ```bash
 # Clean all (with confirmation)
 ccgo clean
@@ -397,14 +419,17 @@ ccgo <command> --help
 ## Environment Variables
 
 ### Android
+
 - `ANDROID_HOME` - Android SDK location
 - `ANDROID_NDK_HOME` - Android NDK location
 - `JAVA_HOME` - Java Development Kit location
 
 ### OpenHarmony (OHOS)
+
 - `OHOS_SDK_HOME` or `HOS_SDK_HOME` - OHOS Native SDK location
 
 ### iOS/macOS
+
 - Requires Xcode and command-line tools
 
 ## Project Structure
@@ -447,6 +472,7 @@ The generated `build.py` script supports CI/CD workflows with environment variab
 - `CI_BUILD_<PLATFORM>` - Enable/disable platform builds
 
 Example:
+
 ```bash
 export CI_IS_RELEASE=1
 export CI_BUILD_ANDROID=1
@@ -471,18 +497,22 @@ ccgo build ohos --arch armeabi-v7a,arm64-v8a,x86_64
 ### Common Issues
 
 1. **"Command not found" after installation**
+   
    - Ensure `pip3` install directory is in your PATH
    - Try `python3 -m ccgo` instead of `ccgo`
 
 2. **Android build fails**
+   
    - Verify `ANDROID_HOME`, `ANDROID_NDK_HOME`, and `JAVA_HOME` are set
    - Run `ccgo check android --verbose` to diagnose
 
 3. **OHOS build fails**
+   
    - Verify `OHOS_SDK_HOME` or `HOS_SDK_HOME` is set
    - Run `ccgo check ohos --verbose` to diagnose
 
 4. **iOS/macOS build fails**
+   
    - Ensure Xcode and command-line tools are installed
    - Run `xcode-select --install` if needed
 
