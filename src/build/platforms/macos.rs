@@ -347,9 +347,9 @@ impl PlatformBuilder for MacosBuilder {
                     xcode.build_version()
                 );
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {

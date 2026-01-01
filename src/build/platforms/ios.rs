@@ -400,9 +400,9 @@ impl PlatformBuilder for IosBuilder {
                     xcode.sdk_version(ApplePlatform::IOSSimulator)?
                 );
             }
-        }
 
-        Ok(())
+            Ok(())
+        }
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
