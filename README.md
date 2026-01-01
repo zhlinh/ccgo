@@ -9,7 +9,7 @@ A cross-platform C++ build system designed to simplify and accelerate multi-plat
 ## Features
 
 - 🚀 Fast cross-platform C++ builds for Android, iOS, macOS, Windows, Linux, and OpenHarmony (OHOS)
-- 📦 Kotlin Multiplatform (KMP) support
+- 🗂️ Kotlin Multiplatform (KMP) support
 - 📦 Conan C/C++ package manager integration
 - 🧪 Integrated testing with GoogleTest
 - 📊 Benchmarking support with Google Benchmark
