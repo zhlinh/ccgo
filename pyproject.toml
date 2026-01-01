@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ccgo"
-version = "3.0.1"
+version = "3.0.2"
 description = "A high-performance C++ cross-platform build CLI"
 readme = "README.md"
 license = { text = "MIT" }
