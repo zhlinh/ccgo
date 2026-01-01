@@ -1,0 +1,40 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ccgo"
+version = "3.0.0"
+description = "A high-performance C++ cross-platform build CLI"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+keywords = ["cli", "cpp", "cross-platform", "build", "cmake"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Compilers",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhlinh/ccgo"
+Repository = "https://github.com/zhlinh/ccgo"
+Documentation = "https://github.com/zhlinh/ccgo#readme"
+
+[tool.maturin]
+# Build a binary distribution (standalone executable)
+bindings = "bin"
+# Strip debug symbols for smaller binaries
+strip = true

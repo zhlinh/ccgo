@@ -137,6 +137,10 @@ pub struct BuildCommand {
     /// Windows toolchain selection
     #[arg(long, value_enum, default_value_t = WindowsToolchain::Auto)]
     pub toolchain: WindowsToolchain,
+
+    /// Development mode: use pre-built ccgo binary from GitHub releases in Docker builds
+    #[arg(long)]
+    pub dev: bool,
 }
 
 impl BuildCommand {
@@ -173,6 +177,7 @@ impl BuildCommand {
             native_only: self.native_only,
             toolchain: self.toolchain,
             verbose,
+            dev: self.dev,
         };
 
         // Create build context

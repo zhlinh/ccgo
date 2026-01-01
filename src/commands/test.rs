@@ -55,6 +55,7 @@ impl TestCommand {
             native_only: false,
             toolchain: WindowsToolchain::Auto,
             verbose,
+            dev: false,
         };
 
         let ctx = BuildContext::new(project_root, config, options);

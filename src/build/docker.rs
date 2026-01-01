@@ -330,28 +330,103 @@ impl DockerBuilder {
         // Set working directory
         cmd.arg("-w").arg("/workspace");
 
+        // Mount ccgo source directory for building inside Docker (only when not in dev mode)
+        // In dev mode, we download pre-built ccgo from GitHub releases instead
+        if !self.ctx.options.dev {
+            // CCGO_SRC_PATH can be set to override the default location
+            let ccgo_src_path = std::env::var("CCGO_SRC_PATH")
+                .map(PathBuf::from)
+                .or_else(|_| {
+                    // Try to find ccgo source relative to current executable
+                    if let Ok(exe) = std::env::current_exe() {
+                        // Go up from target/debug/ccgo or target/release/ccgo to project root
+                        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+                            if root.join("Cargo.toml").exists() {
+                                return Ok(root.to_path_buf());
+                            }
+                        }
+                    }
+                    Err(())
+                });
+
+            match ccgo_src_path {
+                Ok(path) if path.join("Cargo.toml").exists() => {
+                    cmd.arg("-v").arg(format!("{}:/ccgo-src:ro", path.canonicalize().unwrap_or(path.clone()).display()));
+                    eprintln!("Mounting ccgo source: {} (at /ccgo-src)", path.display());
+
+                    // Mount cargo cache to speed up repeated builds
+                    // Uses ~/.ccgo/cargo-cache/ to persist cargo registry between builds
+                    let cargo_cache_dir = Self::get_docker_cache_dir()
+                        .map(|d| d.parent().unwrap().join("cargo-cache"))
+                        .unwrap_or_else(|_| PathBuf::from("/tmp/ccgo-cargo-cache"));
+                    if let Err(e) = fs::create_dir_all(&cargo_cache_dir) {
+                        eprintln!("⚠ Could not create cargo cache directory: {}", e);
+                    } else {
+                        cmd.arg("-v").arg(format!("{}:/usr/local/cargo/registry", cargo_cache_dir.display()));
+                        eprintln!("Using cargo cache: {}", cargo_cache_dir.display());
+                    }
+                }
+                _ => {
+                    bail!(
+                        "ccgo source directory not found.\n\n\
+                         To fix this, either:\n  \
+                         1. Set CCGO_SRC_PATH environment variable to the ccgo project directory\n  \
+                         2. Use --dev flag to download pre-built ccgo from GitHub releases\n\n\
+                         Example:\n  \
+                         CCGO_SRC_PATH=/path/to/ccgo ccgo build linux --docker\n  \
+                         ccgo build linux --docker --dev"
+                    );
+                }
+            }
+        } else {
+            eprintln!("Using --dev mode: downloading pre-built ccgo from GitHub releases");
+        }
+
         // Image name
         cmd.arg(self.config.image_name);
 
         // Build command to run in container
-        // Install Python ccgo from PyPI and run build (CCGO.toml has backward compatibility keys)
         let platform = self.ctx.options.target.to_string().to_lowercase();
         let link_type = self.ctx.options.link_type.to_string();
 
+        // Determine how to get ccgo binary
+        // --dev mode: Download pre-built ccgo from GitHub releases (faster)
+        // Default: Build ccgo from source (for testing local changes)
+        let (setup_cmd, ccgo_bin) = if self.ctx.options.dev {
+            // Download pre-built ccgo from GitHub releases
+            // Use -f to fail on HTTP errors (404, etc.)
+            let download_cmd = format!(
+                "echo 'Downloading pre-built ccgo from GitHub releases...' && \
+                 curl -fsSL https://github.com/zhlinh/ccgo/releases/latest/download/ccgo-x86_64-unknown-linux-gnu.tar.gz -o /tmp/ccgo.tar.gz && \
+                 tar xzf /tmp/ccgo.tar.gz -C /tmp && \
+                 chmod +x /tmp/ccgo-x86_64-unknown-linux-gnu/ccgo || \
+                 (echo 'ERROR: Failed to download ccgo from GitHub releases.' && \
+                  echo 'No release found. Please either:' && \
+                  echo '  1. Remove --dev flag to build ccgo from source' && \
+                  echo '  2. Publish a release to GitHub first' && \
+                  exit 1)"
+            );
+            (download_cmd, "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string())
+        } else {
+            // Build ccgo from source using cargo
+            // Use /tmp/ccgo-build as cargo target directory (writable)
+            // This avoids issues with read-only source mount
+            let cargo_build_cmd = "CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release --manifest-path /ccgo-src/Cargo.toml".to_string();
+            (cargo_build_cmd, "/tmp/ccgo-build/release/ccgo".to_string())
+        };
+
         let build_cmd = if self.ctx.options.target == BuildTarget::Android {
             format!(
-                "pip3 install -q --upgrade pip && \
-                 pip3 install -q ccgo && \
-                 python3 -m ccgo.main build android --native-only --archive \
-                 --arch armeabi-v7a,arm64-v8a,x86_64 --no-docker --link-type {}",
-                link_type
+                "{} && \
+                 {} build android --native-only \
+                 --arch armeabi-v7a,arm64-v8a,x86_64 --link-type {}",
+                setup_cmd, ccgo_bin, link_type
             )
         } else {
             format!(
-                "pip3 install -q --upgrade pip && \
-                 pip3 install -q ccgo && \
-                 python3 -m ccgo.main build {} --no-docker --link-type {}",
-                platform, link_type
+                "{} && \
+                 {} build {} --link-type {}",
+                setup_cmd, ccgo_bin, platform, link_type
             )
         };
 
@@ -395,14 +470,26 @@ impl DockerBuilder {
     fn collect_build_results(&self, duration_secs: f64) -> Result<BuildResult> {
         let platform = self.ctx.options.target.to_string().to_lowercase();
 
-        // Python ccgo inside Docker outputs to target/{platform}/ (not target/debug/{platform}/)
-        let scan_dir = self.ctx.project_root.join("target").join(&platform);
+        // Python ccgo inside Docker may output to:
+        // - New structure: target/{release|debug}/{platform}/
+        // - Old structure: target/{platform}/
+        // We scan both to ensure compatibility
+        let release_subdir = if self.ctx.options.release { "release" } else { "debug" };
+        let new_scan_dir = self.ctx.project_root.join("target").join(release_subdir).join(&platform);
+        let old_scan_dir = self.ctx.project_root.join("target").join(&platform);
 
         // Scan output directory for generated archives
         let mut sdk_archive: Option<PathBuf> = None;
         let mut symbols_archive: Option<PathBuf> = None;
         let mut aar_archive: Option<PathBuf> = None;
         let mut architectures: Vec<String> = Vec::new();
+
+        // Try new structure first, fall back to old structure
+        let scan_dir = if new_scan_dir.exists() {
+            new_scan_dir
+        } else {
+            old_scan_dir
+        };
 
         if scan_dir.exists() {
             for entry in std::fs::read_dir(&scan_dir)? {

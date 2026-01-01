@@ -14,6 +14,7 @@ use crate::build::archive::{
 };
 use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::toolchains::xcode::{ApplePlatform, XcodeToolchain};
+#[cfg(target_os = "macos")]
 use crate::build::toolchains::Toolchain;
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
@@ -312,8 +313,8 @@ impl PlatformBuilder for MacosBuilder {
         vec!["x86_64".to_string(), "arm64".to_string()]
     }
 
-    fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
-        // Check if we're on macOS
+    fn validate_prerequisites(&self, _ctx: &BuildContext) -> Result<()> {
+        // Check if we're on macOS - bail on other platforms
         #[cfg(not(target_os = "macos"))]
         {
             bail!(
@@ -325,20 +326,21 @@ impl PlatformBuilder for MacosBuilder {
             );
         }
 
-        // Check for CMake
-        if !crate::build::cmake::is_cmake_available() {
-            bail!("CMake is required for macOS builds. Please install CMake.");
-        }
-
-        // Check for Xcode (only on macOS)
+        // All following checks only run on macOS
         #[cfg(target_os = "macos")]
         {
+            // Check for CMake
+            if !crate::build::cmake::is_cmake_available() {
+                bail!("CMake is required for macOS builds. Please install CMake.");
+            }
+
+            // Check for Xcode
             let xcode = XcodeToolchain::detect()
                 .context("Xcode is required for macOS builds. Please install Xcode.")?;
 
             xcode.validate()?;
 
-            if ctx.options.verbose {
+            if _ctx.options.verbose {
                 eprintln!(
                     "Using Xcode {} (build {})",
                     xcode.version(),

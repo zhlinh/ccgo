@@ -58,6 +58,8 @@ pub struct BuildOptions {
     pub toolchain: WindowsToolchain,
     /// Verbose output
     pub verbose: bool,
+    /// Development mode: use pre-built ccgo binary from GitHub releases in Docker
+    pub dev: bool,
 }
 
 impl Default for BuildOptions {
@@ -73,6 +75,7 @@ impl Default for BuildOptions {
             native_only: false,
             toolchain: WindowsToolchain::Auto,
             verbose: false,
+            dev: false,
         }
     }
 }

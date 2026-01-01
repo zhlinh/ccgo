@@ -16,8 +16,6 @@ RUN dpkg --add-architecture i386 && \
     make \
     ninja-build \
     git \
-    python3 \
-    python3-pip \
     wget \
     curl \
     zip \
@@ -62,12 +60,6 @@ RUN . ~/.cargo/env && \
     mkdir -p /opt/xwin && \
     xwin --accept-license splat --output /opt/xwin/sdk
 
-# Install Python dependencies for CCGO
-RUN pip3 install --no-cache-dir \
-    tomli \
-    copier>=9.2.0 \
-    copier-templates-extensions>=0.3.0
-
 # Set environment variables for MSVC-compatible cross-compilation
 # xwin splat output structure:
 #   /opt/xwin/sdk/crt/include/  - CRT headers
@@ -102,8 +94,8 @@ RUN echo "=== Verify lld ===" && ld.lld --version && lld-link --version
 # Verify: cmake
 RUN echo "=== Verify cmake ===" && cmake --version
 
-# Verify: python3
-RUN echo "=== Verify python3 ===" && python3 --version
+# Verify: Rust toolchain
+RUN echo "=== Verify Rust ===" && . ~/.cargo/env && rustc --version && cargo --version
 
 # Verify: wrapper scripts
 RUN echo "=== Verify wrapper scripts ===" && \
