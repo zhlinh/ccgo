@@ -18,15 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     ca-certificates \
     openjdk-17-jdk \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust toolchain
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
-    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+# Install ccgo from PyPI (pre-compiled wheel, fast installation)
+RUN pip3 install --no-cache-dir ccgo
 
 # Set Java environment
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
@@ -90,8 +87,8 @@ RUN echo "=== Verification ===" && \
     echo "ANDROID_HOME: ${ANDROID_HOME}" && \
     echo "ANDROID_NDK_HOME: ${ANDROID_NDK_HOME}" && \
     gradle --version && \
-    rustc --version && \
-    cargo --version && \
+    python3 --version && \
+    ccgo --version && \
     echo "=== Android SDK Components ===" && \
     sdkmanager --list | grep "build-tools\|platforms\|ndk\|cmake"
 

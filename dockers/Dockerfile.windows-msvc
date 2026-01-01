@@ -24,6 +24,8 @@ RUN dpkg --add-architecture i386 && \
     gnupg \
     lsb-release \
     software-properties-common \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install LLVM/Clang 19 from official LLVM repository
@@ -109,6 +111,12 @@ RUN echo "=== Verify Windows SDK ===" && \
     ls -la /opt/xwin/sdk/ && \
     echo "CRT include:" && ls /opt/xwin/sdk/crt/include/ | head -5 && \
     echo "SDK include:" && ls /opt/xwin/sdk/sdk/include/ | head -5
+
+# Install ccgo from PyPI (pre-compiled wheel, fast installation)
+RUN pip3 install --no-cache-dir ccgo
+
+# Verify ccgo installation
+RUN echo "=== Verify ccgo ===" && python3 --version && ccgo --version
 
 # Set working directory
 WORKDIR /workspace

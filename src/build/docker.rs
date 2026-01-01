@@ -330,10 +330,13 @@ impl DockerBuilder {
         // Set working directory
         cmd.arg("-w").arg("/workspace");
 
-        // Mount ccgo source directory for building inside Docker (only when not in dev mode)
-        // In dev mode, we download pre-built ccgo from GitHub releases instead
-        if !self.ctx.options.dev {
-            // CCGO_SRC_PATH can be set to override the default location
+        // Determine ccgo installation method:
+        // Default mode: Install ccgo from crates.io (for normal users)
+        // --dev mode: Build from local source or download pre-built binary (for developers)
+        let mut use_local_source = false;
+
+        if self.ctx.options.dev {
+            // Dev mode: Try to find and mount local ccgo source
             let ccgo_src_path = std::env::var("CCGO_SRC_PATH")
                 .map(PathBuf::from)
                 .or_else(|_| {
@@ -349,13 +352,12 @@ impl DockerBuilder {
                     Err(())
                 });
 
-            match ccgo_src_path {
-                Ok(path) if path.join("Cargo.toml").exists() => {
+            if let Ok(path) = ccgo_src_path {
+                if path.join("Cargo.toml").exists() {
                     cmd.arg("-v").arg(format!("{}:/ccgo-src:ro", path.canonicalize().unwrap_or(path.clone()).display()));
-                    eprintln!("Mounting ccgo source: {} (at /ccgo-src)", path.display());
+                    eprintln!("Using --dev mode: mounting local ccgo source from {}", path.display());
 
                     // Mount cargo cache to speed up repeated builds
-                    // Uses ~/.ccgo/cargo-cache/ to persist cargo registry between builds
                     let cargo_cache_dir = Self::get_docker_cache_dir()
                         .map(|d| d.parent().unwrap().join("cargo-cache"))
                         .unwrap_or_else(|_| PathBuf::from("/tmp/ccgo-cargo-cache"));
@@ -365,21 +367,15 @@ impl DockerBuilder {
                         cmd.arg("-v").arg(format!("{}:/usr/local/cargo/registry", cargo_cache_dir.display()));
                         eprintln!("Using cargo cache: {}", cargo_cache_dir.display());
                     }
-                }
-                _ => {
-                    bail!(
-                        "ccgo source directory not found.\n\n\
-                         To fix this, either:\n  \
-                         1. Set CCGO_SRC_PATH environment variable to the ccgo project directory\n  \
-                         2. Use --dev flag to download pre-built ccgo from GitHub releases\n\n\
-                         Example:\n  \
-                         CCGO_SRC_PATH=/path/to/ccgo ccgo build linux --docker\n  \
-                         ccgo build linux --docker --dev"
-                    );
+                    use_local_source = true;
                 }
             }
+
+            if !use_local_source {
+                eprintln!("Using --dev mode: will download pre-built ccgo from GitHub releases");
+            }
         } else {
-            eprintln!("Using --dev mode: downloading pre-built ccgo from GitHub releases");
+            eprintln!("Using pre-installed ccgo from Docker image...");
         }
 
         // Image name
@@ -390,29 +386,30 @@ impl DockerBuilder {
         let link_type = self.ctx.options.link_type.to_string();
 
         // Determine how to get ccgo binary
-        // --dev mode: Download pre-built ccgo from GitHub releases (faster)
-        // Default: Build ccgo from source (for testing local changes)
-        let (setup_cmd, ccgo_bin) = if self.ctx.options.dev {
+        // Default: Use pre-installed ccgo from Docker image (fastest)
+        // --dev with local source: Build from source
+        // --dev without local source: Download pre-built from GitHub releases
+        let (setup_cmd, ccgo_bin) = if use_local_source {
+            // Build ccgo from local source using cargo
+            let cargo_build_cmd = "CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release --manifest-path /ccgo-src/Cargo.toml".to_string();
+            (cargo_build_cmd, "/tmp/ccgo-build/release/ccgo".to_string())
+        } else if self.ctx.options.dev {
             // Download pre-built ccgo from GitHub releases
-            // Use -f to fail on HTTP errors (404, etc.)
             let download_cmd = format!(
                 "echo 'Downloading pre-built ccgo from GitHub releases...' && \
                  curl -fsSL https://github.com/zhlinh/ccgo/releases/latest/download/ccgo-x86_64-unknown-linux-gnu.tar.gz -o /tmp/ccgo.tar.gz && \
                  tar xzf /tmp/ccgo.tar.gz -C /tmp && \
                  chmod +x /tmp/ccgo-x86_64-unknown-linux-gnu/ccgo || \
                  (echo 'ERROR: Failed to download ccgo from GitHub releases.' && \
-                  echo 'No release found. Please either:' && \
-                  echo '  1. Remove --dev flag to build ccgo from source' && \
-                  echo '  2. Publish a release to GitHub first' && \
+                  echo 'No release found. Try without --dev flag to use pre-installed ccgo' && \
                   exit 1)"
             );
             (download_cmd, "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string())
         } else {
-            // Build ccgo from source using cargo
-            // Use /tmp/ccgo-build as cargo target directory (writable)
-            // This avoids issues with read-only source mount
-            let cargo_build_cmd = "CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release --manifest-path /ccgo-src/Cargo.toml".to_string();
-            (cargo_build_cmd, "/tmp/ccgo-build/release/ccgo".to_string())
+            // Default: Use pre-installed ccgo from Docker image
+            // Fall back to pip install if not available
+            let setup_cmd = "command -v ccgo >/dev/null 2>&1 || pip3 install -q ccgo".to_string();
+            (setup_cmd, "ccgo".to_string())
         };
 
         let build_cmd = if self.ctx.options.target == BuildTarget::Android {
@@ -504,8 +501,8 @@ impl DockerBuilder {
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
 
-                // Look for SDK archive: {lib}_{platform}_SDK-{version}.zip
-                if file_name.contains("_SDK-") && file_name.ends_with(".zip") {
+                // Look for SDK archive: {lib}_{platform}_SDK-{version}.zip (exclude -SYMBOLS.zip)
+                if file_name.contains("_SDK-") && file_name.ends_with(".zip") && !file_name.contains("-SYMBOLS.zip") {
                     sdk_archive = Some(path.clone());
 
                     // Extract architectures from archive name if present

@@ -18,15 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     ca-certificates \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Rust toolchain
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
-    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 # Set environment variables for MinGW cross-compilation
 ENV LANG=C.UTF-8 \
@@ -36,13 +30,16 @@ ENV LANG=C.UTF-8 \
     AR=x86_64-w64-mingw32-ar \
     RANLIB=x86_64-w64-mingw32-ranlib
 
+# Install ccgo from PyPI (pre-compiled wheel, fast installation)
+RUN pip3 install --no-cache-dir ccgo
+
 # Verify MinGW toolchain installation
 RUN echo "=== MinGW Toolchain Verification ===" && \
     x86_64-w64-mingw32-gcc --version && \
     x86_64-w64-mingw32-g++ --version && \
     cmake --version && \
-    rustc --version && \
-    cargo --version
+    python3 --version && \
+    ccgo --version
 
 # Set working directory
 WORKDIR /workspace

@@ -27,15 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cpio \
     ca-certificates \
     python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Rust toolchain
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && \
-    chmod -R a+w $RUSTUP_HOME $CARGO_HOME
 
 # Set up OSXCross
 # OSXCross allows cross-compilation from Linux to macOS/iOS/watchOS/tvOS
@@ -78,13 +71,16 @@ ENV LANG=C.UTF-8 \
     AR=x86_64-apple-darwin22-ar \
     RANLIB=x86_64-apple-darwin22-ranlib
 
+# Install ccgo from PyPI (pre-compiled wheel, fast installation)
+RUN pip3 install --no-cache-dir ccgo
+
 # Verify OSXCross toolchain installation
 RUN echo "=== OSXCross Toolchain Verification ===" && \
     o64-clang --version && \
     o64-clang++ --version && \
     cmake --version && \
-    rustc --version && \
-    cargo --version && \
+    python3 --version && \
+    ccgo --version && \
     echo "OSXCross SDK: ${OSXCROSS_SDK}"
 
 # Entry point - execute build script
