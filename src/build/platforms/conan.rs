@@ -1,61 +1,30 @@
 //! Conan package manager platform builder
 //!
 //! Builds C/C++ library using Conan package manager.
-//! This builder wraps the Python build_conan.py script for now.
+//! Pure Rust implementation that directly invokes Conan CLI.
 
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
+use crate::build::archive::{ArchiveBuilder, ARCHIVE_DIR_INCLUDE, ARCHIVE_DIR_SHARED, ARCHIVE_DIR_STATIC};
+use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
-use crate::exec::python::run_python_script;
 
 /// Conan platform builder
-pub struct ConanBuilder {}
+pub struct ConanBuilder;
 
 impl ConanBuilder {
     pub fn new() -> Self {
-        Self {}
+        Self
     }
 
-    /// Find the Python build script in ccgo package
-    fn find_build_script() -> Result<PathBuf> {
-        // Check environment variable first
-        if let Ok(ccgo_dir) = std::env::var("CCGO_DIR") {
-            let script = PathBuf::from(ccgo_dir)
-                .join("build_scripts")
-                .join("build_conan.py");
-            if script.exists() {
-                return Ok(script);
-            }
-        }
-
-        // Try to find from Python package
-        let output = std::process::Command::new("python3")
-            .args(&[
-                "-c",
-                "import ccgo; import os; print(os.path.dirname(ccgo.__file__))",
-            ])
-            .output()?;
-
-        if output.status.success() {
-            let ccgo_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let script = PathBuf::from(ccgo_path)
-                .join("build_scripts")
-                .join("build_conan.py");
-            if script.exists() {
-                return Ok(script);
-            }
-        }
-
-        bail!("Could not find build_conan.py. Please ensure ccgo Python package is installed.")
-    }
-
-    /// Check if Conan is installed
+    /// Check if Conan is installed and return version
     fn check_conan_installed() -> Result<String> {
-        let output = std::process::Command::new("conan")
+        let output = Command::new("conan")
             .arg("--version")
             .output()
             .context("Failed to run 'conan --version'. Is Conan installed?")?;
@@ -67,6 +36,181 @@ impl ConanBuilder {
         let version = String::from_utf8_lossy(&output.stdout);
         Ok(version.trim().to_string())
     }
+
+    /// Detect host architecture
+    fn detect_host_arch() -> String {
+        #[cfg(target_arch = "x86_64")]
+        {
+            "x86_64".to_string()
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            "arm64".to_string()
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            std::env::consts::ARCH.to_string()
+        }
+    }
+
+    /// Build a specific link type (static or shared) using Conan
+    fn build_link_type(&self, ctx: &BuildContext, link_type: &str) -> Result<PathBuf> {
+        let build_dir = ctx.cmake_build_dir.join(link_type);
+        let install_dir = build_dir.join("install");
+
+        std::fs::create_dir_all(&build_dir)?;
+        std::fs::create_dir_all(&install_dir)?;
+
+        let build_shared = link_type == "shared";
+        let build_type = if ctx.options.release { "Release" } else { "Debug" };
+
+        // Check if conanfile.py exists in project root or conan/ subdirectory
+        let conanfile = if ctx.project_root.join("conanfile.py").exists() {
+            ctx.project_root.join("conanfile.py")
+        } else if ctx.project_root.join("conan").join("conanfile.py").exists() {
+            ctx.project_root.join("conan").join("conanfile.py")
+        } else {
+            // No conanfile.py, use CMake directly like Linux builder
+            return self.build_with_cmake(ctx, link_type);
+        };
+
+        let conanfile_dir = conanfile.parent().unwrap();
+
+        if ctx.options.verbose {
+            eprintln!("Using conanfile: {}", conanfile.display());
+        }
+
+        // Step 1: conan install - install dependencies and generate build files
+        let mut install_cmd = Command::new("conan");
+        install_cmd
+            .current_dir(conanfile_dir)
+            .arg("install")
+            .arg(".")
+            .arg("--output-folder")
+            .arg(build_dir.display().to_string())
+            .arg("--build=missing")
+            .arg(format!("-s:h=build_type={}", build_type));
+
+        // Add shared library setting
+        if build_shared {
+            install_cmd.arg("-o:h=*:shared=True");
+        } else {
+            install_cmd.arg("-o:h=*:shared=False");
+        }
+
+        if ctx.options.verbose {
+            eprintln!("Running: conan install {:?}", install_cmd.get_args().collect::<Vec<_>>());
+        }
+
+        let status = install_cmd
+            .status()
+            .context("Failed to run conan install")?;
+
+        if !status.success() {
+            bail!("conan install failed");
+        }
+
+        // Step 2: conan build - build the library
+        let mut build_cmd = Command::new("conan");
+        build_cmd
+            .current_dir(conanfile_dir)
+            .arg("build")
+            .arg(".")
+            .arg("--output-folder")
+            .arg(build_dir.display().to_string());
+
+        if ctx.options.verbose {
+            eprintln!("Running: conan build {:?}", build_cmd.get_args().collect::<Vec<_>>());
+        }
+
+        let status = build_cmd
+            .status()
+            .context("Failed to run conan build")?;
+
+        if !status.success() {
+            bail!("conan build failed");
+        }
+
+        Ok(build_dir)
+    }
+
+    /// Build using CMake directly (fallback when no conanfile.py)
+    fn build_with_cmake(&self, ctx: &BuildContext, link_type: &str) -> Result<PathBuf> {
+        let build_dir = ctx.cmake_build_dir.join(link_type);
+        let install_dir = build_dir.join("install");
+
+        let build_shared = link_type == "shared";
+
+        // Configure and build with CMake
+        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+            .build_type(if ctx.options.release {
+                BuildType::Release
+            } else {
+                BuildType::Debug
+            })
+            .install_prefix(install_dir.clone())
+            .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
+            .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_LIB_NAME", ctx.lib_name())
+            .jobs(ctx.jobs())
+            .verbose(ctx.options.verbose);
+
+        // Add CCGO_CMAKE_DIR if available
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
+        }
+
+        // Add CCGO configuration variables
+        cmake = cmake.variable(
+            "CCGO_CONFIG_PRESET_VISIBILITY",
+            ctx.symbol_visibility().to_string(),
+        );
+
+        // Add submodule dependencies for shared library linking
+        if let Some(deps_map) = ctx.deps_map() {
+            cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
+        }
+
+        cmake.configure_build_install()?;
+
+        Ok(build_dir)
+    }
+
+    /// Find library directory in build output
+    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+        let possible_dirs = vec![
+            build_dir.join("out"),           // CCGO cmake output
+            build_dir.join("install/lib"),   // CMake install
+            build_dir.join("lib"),           // Direct lib output
+            build_dir.join("build/lib"),     // Conan build output
+            build_dir.join("build/Release/lib"), // Conan Release build
+            build_dir.join("build/Debug/lib"),   // Conan Debug build
+        ];
+
+        for dir in possible_dirs {
+            if dir.exists() {
+                return Some(dir);
+            }
+        }
+        None
+    }
+
+    /// Find include directory in build output
+    fn find_include_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+        let possible_dirs = vec![
+            build_dir.join("install/include"),
+            build_dir.join("include"),
+            build_dir.join("build/include"),
+        ];
+
+        for dir in possible_dirs {
+            if dir.exists() {
+                return Some(dir);
+            }
+        }
+        None
+    }
 }
 
 impl PlatformBuilder for ConanBuilder {
@@ -75,8 +219,8 @@ impl PlatformBuilder for ConanBuilder {
     }
 
     fn default_architectures(&self) -> Vec<String> {
-        // Conan builds for the host architecture by default
-        vec![]
+        // Conan builds for the host architecture
+        vec![Self::detect_host_arch()]
     }
 
     fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
@@ -88,9 +232,10 @@ impl PlatformBuilder for ConanBuilder {
             eprintln!("Found {}", version);
         }
 
-        // Check if Python ccgo package is available
-        Self::find_build_script()
-            .context("Conan build requires ccgo Python package to be installed")?;
+        // Check for CMake
+        if !crate::build::cmake::is_cmake_available() {
+            bail!("CMake is required for Conan builds. Please install CMake.");
+        }
 
         if ctx.options.verbose {
             eprintln!("Conan prerequisites validated");
@@ -109,93 +254,77 @@ impl PlatformBuilder for ConanBuilder {
             eprintln!("Building {} for Conan...", ctx.lib_name());
         }
 
-        // Find the Python build script
-        let build_script = Self::find_build_script()?;
+        // Create output directory
+        std::fs::create_dir_all(&ctx.output_dir)?;
 
-        // Prepare arguments based on link type
-        let link_type_arg = match ctx.options.link_type {
-            LinkType::Static => "--link-type=static",
-            LinkType::Shared => "--link-type=shared",
-            LinkType::Both => "--link-type=both",
-        };
-
-        // Run the Python build script
-        let status = run_python_script(
-            &build_script,
-            &[link_type_arg],
-            Some(&ctx.project_root),
+        // Create archive builder
+        let archive = ArchiveBuilder::new(
+            ctx.lib_name(),
+            ctx.version(),
+            ctx.publish_suffix(),
+            ctx.options.release,
+            "conan",
+            ctx.output_dir.clone(),
         )?;
 
-        if !status.success() {
-            bail!("Conan build failed");
+        let host_arch = Self::detect_host_arch();
+        let mut built_link_types = Vec::new();
+
+        // Build static libraries
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+            if ctx.options.verbose {
+                eprintln!("Building static library...");
+            }
+            let build_dir = self.build_link_type(ctx, "static")?;
+
+            // Add static library to archive: lib/conan/static/
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_STATIC);
+                archive.add_directory_filtered(&lib_dir, &archive_path, &["a", "lib"])?;
+            }
+            built_link_types.push("static");
         }
 
-        // Python script outputs to target/conan/, we need to move it to target/{debug|release}/conan/
-        let python_output_dir = ctx.project_root.join("target").join("conan");
+        // Build shared libraries
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+            if ctx.options.verbose {
+                eprintln!("Building shared library...");
+            }
+            let build_dir = self.build_link_type(ctx, "shared")?;
 
-        // Determine final output directory based on release mode
-        let target_subdir = if ctx.options.release {
-            "release"
+            // Add shared library to archive: lib/conan/shared/
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED);
+                // Include platform-appropriate shared library extensions
+                #[cfg(target_os = "windows")]
+                let extensions = &["dll", "lib"];
+                #[cfg(target_os = "macos")]
+                let extensions = &["dylib", "so"];
+                #[cfg(target_os = "linux")]
+                let extensions = &["so"];
+                #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+                let extensions = &["so", "dylib", "dll"];
+
+                archive.add_directory_filtered(&lib_dir, &archive_path, extensions)?;
+            }
+            built_link_types.push("shared");
+        }
+
+        // Add include files
+        let include_source = if built_link_types.contains(&"static") {
+            self.find_include_dir(&ctx.cmake_build_dir.join("static"))
         } else {
-            "debug"
+            self.find_include_dir(&ctx.cmake_build_dir.join("shared"))
         };
-        let final_output_dir = ctx
-            .project_root
-            .join("target")
-            .join(target_subdir)
-            .join("conan");
 
-        // Find the ZIP file in Python output directory
-        let mut temp_archive = None;
-        if python_output_dir.exists() {
-            for entry in std::fs::read_dir(&python_output_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.extension().map_or(false, |e| e == "zip") {
-                    let file_name = path.file_name().unwrap().to_str().unwrap();
-                    if file_name.contains("_CONAN_SDK-") {
-                        temp_archive = Some(path);
-                        break;
-                    }
-                }
-            }
+        if let Some(include_dir) = include_source {
+            let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
+            archive.add_directory(&include_dir, &include_path)?;
         }
 
-        let temp_archive = temp_archive.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Conan SDK archive not found in {}",
-                python_output_dir.display()
-            )
-        })?;
-
-        // Create final output directory
-        std::fs::create_dir_all(&final_output_dir)?;
-
-        // Move the archive to the final location
-        let archive_name = temp_archive.file_name().unwrap();
-        let sdk_archive = final_output_dir.join(archive_name);
-        std::fs::rename(&temp_archive, &sdk_archive)
-            .with_context(|| {
-                format!(
-                    "Failed to move archive from {} to {}",
-                    temp_archive.display(),
-                    sdk_archive.display()
-                )
-            })?;
-
-        // Move metadata files (archive_info.json, build_info.json) if they exist
-        for metadata_file in &["archive_info.json", "build_info.json"] {
-            let src = python_output_dir.join(metadata_file);
-            if src.exists() {
-                let dst = final_output_dir.join(metadata_file);
-                let _ = std::fs::rename(&src, &dst);
-            }
-        }
-
-        // Clean up the temporary Python output directory
-        if python_output_dir.exists() {
-            let _ = std::fs::remove_dir_all(&python_output_dir);
-        }
+        // Create the SDK archive
+        let link_type_str = ctx.options.link_type.to_string();
+        let sdk_archive = archive.create_sdk_archive(&[host_arch.clone()], &link_type_str)?;
 
         let duration = start.elapsed();
 
@@ -212,12 +341,12 @@ impl PlatformBuilder for ConanBuilder {
             symbols_archive: None,
             aar_archive: None,
             duration_secs: duration.as_secs_f64(),
-            architectures: vec![], // Conan builds for host architecture
+            architectures: vec![host_arch],
         })
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean new directory structure: cmake_build/{release|debug}/conan
+        // Clean cmake_build/{release|debug}/conan
         for subdir in &["release", "debug"] {
             let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("conan");
             if build_dir.exists() {
@@ -226,7 +355,7 @@ impl PlatformBuilder for ConanBuilder {
             }
         }
 
-        // Clean old structure for backwards compatibility: cmake_build/Conan, cmake_build/conan
+        // Clean old structure
         for old_dir in &[
             ctx.project_root.join("cmake_build/Conan"),
             ctx.project_root.join("cmake_build/conan"),
@@ -241,10 +370,7 @@ impl PlatformBuilder for ConanBuilder {
         for old_dir in &[
             ctx.project_root.join("target/release/conan"),
             ctx.project_root.join("target/debug/conan"),
-            ctx.project_root.join("target/release/Conan"),
-            ctx.project_root.join("target/debug/Conan"),
             ctx.project_root.join("target/conan"),
-            ctx.project_root.join("target/Conan"),
         ] {
             if old_dir.exists() {
                 std::fs::remove_dir_all(old_dir)
@@ -252,14 +378,15 @@ impl PlatformBuilder for ConanBuilder {
             }
         }
 
-        // Clean conan/ directory build artifacts if it exists
+        // Clean conan/ directory build artifacts
         let conan_dir = ctx.project_root.join("conan");
         if conan_dir.exists() {
-            // Clean only build directories, not conanfile.py
-            let build_dir = conan_dir.join("build");
-            if build_dir.exists() {
-                std::fs::remove_dir_all(&build_dir)
-                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            for subdir in &["build", "cmake-build-release", "cmake-build-debug"] {
+                let build_subdir = conan_dir.join(subdir);
+                if build_subdir.exists() {
+                    std::fs::remove_dir_all(&build_subdir)
+                        .with_context(|| format!("Failed to clean {}", build_subdir.display()))?;
+                }
             }
         }
 

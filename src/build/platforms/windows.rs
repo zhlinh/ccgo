@@ -192,11 +192,13 @@ impl WindowsBuilder {
         let mut libs = Vec::new();
 
         // Check multiple possible directories
+        // Prioritize out/ directory where CCGO cmake puts the merged library
+        // This avoids including intermediate module libs (e.g., lib{name}-api.a)
         let possible_dirs = vec![
-            build_dir.join("install/lib"),
-            build_dir.join("out"),
+            build_dir.join("out"),           // Merged library (priority)
+            build_dir.join("install/lib"),   // Fallback: CMake install location
             build_dir.join("lib"),
-            build_dir.join("bin"), // DLLs often go to bin/
+            build_dir.join("bin"),           // DLLs often go to bin/
         ];
 
         for lib_dir in possible_dirs {
@@ -235,9 +237,10 @@ impl WindowsBuilder {
                 WindowsToolchain::MSVC => "lib",
             };
 
+            // Prioritize out/ directory for import libraries as well
             for lib_dir in &[
-                build_dir.join("install/lib"),
                 build_dir.join("out"),
+                build_dir.join("install/lib"),
                 build_dir.join("lib"),
             ] {
                 if !lib_dir.exists() {

@@ -170,10 +170,10 @@ impl PlatformBuilder for LinuxBuilder {
             let build_dir = self.build_link_type(ctx, "static")?;
 
             // Add static library to archive: lib/linux/static/
-            // Only include final .a files (exclude intermediate module libs like -api.a, -base.a)
+            // find_lib_dir prioritizes out/ which contains only the merged library
             if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
                 let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_STATIC);
-                archive.add_directory_final_libs(&lib_dir, &archive_path, &["a"])?;
+                archive.add_directory_filtered(&lib_dir, &archive_path, &["a"])?;
             }
             built_link_types.push("static");
         }
@@ -186,10 +186,10 @@ impl PlatformBuilder for LinuxBuilder {
             let build_dir = self.build_link_type(ctx, "shared")?;
 
             // Add shared library to archive: lib/linux/shared/
-            // Only include final .so/.a files (exclude intermediate module libs)
+            // find_lib_dir prioritizes out/ which contains only the merged library
             if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
                 let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED);
-                archive.add_directory_final_libs(&lib_dir, &archive_path, &["so", "a"])?;
+                archive.add_directory_filtered(&lib_dir, &archive_path, &["so", "a"])?;
             }
             built_link_types.push("shared");
         }

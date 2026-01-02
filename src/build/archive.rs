@@ -345,22 +345,7 @@ impl ArchiveBuilder {
         extensions: &[&str],
     ) -> Result<()> {
         let dest = self.staging_dir.join(dest_relative);
-        copy_dir_filtered(source, &dest, extensions, false)?;
-        Ok(())
-    }
-
-    /// Add a directory to the archive, filtering for final library files only
-    ///
-    /// This excludes intermediate module libraries (e.g., lib{name}-api.a, lib{name}-base.a)
-    /// and only keeps the final merged library (e.g., lib{name}.a, lib{name}.so).
-    pub fn add_directory_final_libs(
-        &self,
-        source: &Path,
-        dest_relative: &str,
-        extensions: &[&str],
-    ) -> Result<()> {
-        let dest = self.staging_dir.join(dest_relative);
-        copy_dir_filtered(source, &dest, extensions, true)?;
+        copy_dir_filtered(source, &dest, extensions)?;
         Ok(())
     }
 
@@ -505,10 +490,7 @@ fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
 ///
 /// Only copies files that match one of the specified extensions.
 /// Also handles symlinks for versioned shared libraries (e.g., libfoo.so -> libfoo.so.1).
-///
-/// When `final_libs_only` is true, excludes intermediate module libraries
-/// (files matching pattern lib{name}-{module}.{ext}, e.g., libfoo-api.a, libfoo-base.a).
-fn copy_dir_filtered(src: &Path, dst: &Path, extensions: &[&str], final_libs_only: bool) -> Result<()> {
+fn copy_dir_filtered(src: &Path, dst: &Path, extensions: &[&str]) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -516,7 +498,7 @@ fn copy_dir_filtered(src: &Path, dst: &Path, extensions: &[&str], final_libs_onl
         let dest_path = dst.join(entry.file_name());
 
         if path.is_dir() {
-            copy_dir_filtered(&path, &dest_path, extensions, final_libs_only)?;
+            copy_dir_filtered(&path, &dest_path, extensions)?;
         } else {
             // Check if file matches any of the allowed extensions
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -532,29 +514,6 @@ fn copy_dir_filtered(src: &Path, dst: &Path, extensions: &[&str], final_libs_onl
             });
 
             if matches {
-                // When final_libs_only is enabled, exclude intermediate module libraries
-                // Pattern: lib{name}-{module}.{ext} (e.g., libfoo-api.a, libfoo-base.a)
-                // Final libs: lib{name}.{ext} or lib{name}.so.{version}
-                if final_libs_only {
-                    // Check if this is an intermediate module library
-                    // These have a hyphen before the extension: lib{name}-{module}.a
-                    // But NOT versioned libs like libfoo.so.1.0.0
-                    let is_intermediate = file_name.starts_with("lib") && {
-                        // Find the base name (before extension)
-                        let base = if let Some(dot_pos) = file_name.find('.') {
-                            &file_name[..dot_pos]
-                        } else {
-                            file_name
-                        };
-                        // Check if base name contains a hyphen (indicates module)
-                        // e.g., "libfoo-api" has hyphen, "libfoo" does not
-                        base.contains('-')
-                    };
-
-                    if is_intermediate {
-                        continue; // Skip intermediate module libraries
-                    }
-                }
                 std::fs::copy(&path, &dest_path)?;
             }
         }
