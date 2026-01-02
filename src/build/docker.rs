@@ -19,6 +19,7 @@ use crate::commands::build::BuildTarget;
 // Embed Dockerfiles at compile time
 const DOCKERFILE_LINUX: &str = include_str!("../../dockers/Dockerfile.linux");
 const DOCKERFILE_ANDROID: &str = include_str!("../../dockers/Dockerfile.android");
+const DOCKERFILE_OHOS: &str = include_str!("../../dockers/Dockerfile.ohos");
 const DOCKERFILE_APPLE: &str = include_str!("../../dockers/Dockerfile.apple");
 const DOCKERFILE_WINDOWS_MINGW: &str = include_str!("../../dockers/Dockerfile.windows-mingw");
 const DOCKERFILE_WINDOWS_MSVC: &str = include_str!("../../dockers/Dockerfile.windows-msvc");
@@ -78,6 +79,13 @@ impl PlatformDockerConfig {
                 image_name: "ccgo-builder-android",
                 remote_image: format!("{}/ccgo-builder-android:latest", GHCR_REPO),
                 size_estimate: "~3.5GB",
+            }),
+            BuildTarget::Ohos => Some(Self {
+                dockerfile: "Dockerfile.ohos",
+                dockerfile_content: DOCKERFILE_OHOS,
+                image_name: "ccgo-builder-ohos",
+                remote_image: format!("{}/ccgo-builder-ohos:latest", GHCR_REPO),
+                size_estimate: "~2.5GB",
             }),
             _ => None,
         }
@@ -407,8 +415,17 @@ impl DockerBuilder {
             (download_cmd, "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string())
         } else {
             // Default: Use pre-installed ccgo from Docker image
-            // Fall back to pip install if not available
-            let setup_cmd = "command -v ccgo >/dev/null 2>&1 || pip3 install -q ccgo".to_string();
+            // Fall back to pip install if not available, with helpful error message
+            let setup_cmd = format!(
+                "command -v ccgo >/dev/null 2>&1 || \
+                 (command -v pip3 >/dev/null 2>&1 && pip3 install -q ccgo) || \
+                 (echo 'ERROR: ccgo not found and pip3 not available.' && \
+                  echo 'Your Docker image may be outdated. Please rebuild it:' && \
+                  echo '  docker rmi {}' && \
+                  echo 'Then run your build command again.' && \
+                  exit 1)",
+                self.config.image_name
+            );
             (setup_cmd, "ccgo".to_string())
         };
 
@@ -416,6 +433,13 @@ impl DockerBuilder {
             format!(
                 "{} && \
                  {} build android --native-only \
+                 --arch armeabi-v7a,arm64-v8a,x86_64 --link-type {}",
+                setup_cmd, ccgo_bin, link_type
+            )
+        } else if self.ctx.options.target == BuildTarget::Ohos {
+            format!(
+                "{} && \
+                 {} build ohos --native-only \
                  --arch armeabi-v7a,arm64-v8a,x86_64 --link-type {}",
                 setup_cmd, ccgo_bin, link_type
             )

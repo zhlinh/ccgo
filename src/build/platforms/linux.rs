@@ -71,11 +71,14 @@ impl LinuxBuilder {
     }
 
     /// Find library directory in build output
-    /// Checks multiple possible locations: lib/, out/, and root
+    /// Prioritizes out/ directory where CCGO cmake puts the merged library
     fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+        // CCGO cmake puts the combined/merged library in out/
+        // e.g., static/out/libccgonow.a or shared/out/libccgonow.so
+        // This is the preferred location as it contains only the final merged library
         let possible_dirs = vec![
-            build_dir.join("install/lib"),
-            build_dir.join("out"),
+            build_dir.join("out"),           // Merged library (priority)
+            build_dir.join("install/lib"),   // Fallback: CMake install location
             build_dir.join("lib"),
         ];
 
@@ -167,9 +170,10 @@ impl PlatformBuilder for LinuxBuilder {
             let build_dir = self.build_link_type(ctx, "static")?;
 
             // Add static library to archive: lib/linux/static/
+            // Only include final .a files (exclude intermediate module libs like -api.a, -base.a)
             if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
                 let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_STATIC);
-                archive.add_directory(&lib_dir, &archive_path)?;
+                archive.add_directory_final_libs(&lib_dir, &archive_path, &["a"])?;
             }
             built_link_types.push("static");
         }
@@ -182,9 +186,10 @@ impl PlatformBuilder for LinuxBuilder {
             let build_dir = self.build_link_type(ctx, "shared")?;
 
             // Add shared library to archive: lib/linux/shared/
+            // Only include final .so/.a files (exclude intermediate module libs)
             if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
                 let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED);
-                archive.add_directory(&lib_dir, &archive_path)?;
+                archive.add_directory_final_libs(&lib_dir, &archive_path, &["so", "a"])?;
             }
             built_link_types.push("shared");
         }

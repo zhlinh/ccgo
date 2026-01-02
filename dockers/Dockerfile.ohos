@@ -1,0 +1,83 @@
+# Dockerfile for building OpenHarmony (OHOS) native libraries on any platform
+# Includes OHOS Native SDK and all required build tools
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    wget \
+    curl \
+    zip \
+    unzip \
+    pkg-config \
+    libssl-dev \
+    ca-certificates \
+    python3 \
+    python3-pip \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment variables
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Download and install OpenHarmony SDK
+# Using the official release from repo.huaweicloud.com
+# SDK version 5.0.0 (API 12) - adjust version as needed
+WORKDIR /opt
+
+# Download OHOS SDK native component
+# The native SDK contains the toolchain for cross-compilation
+ENV OHOS_SDK_VERSION=5.0.0.71
+ENV OHOS_API_VERSION=12
+
+RUN mkdir -p /opt/ohos-sdk && \
+    cd /opt/ohos-sdk && \
+    echo "Downloading OpenHarmony SDK ${OHOS_SDK_VERSION}..." && \
+    wget -q --show-progress \
+        "https://repo.huaweicloud.com/openharmony/os/${OHOS_SDK_VERSION}/ohos-sdk-windows_linux-public.tar.gz" \
+        -O ohos-sdk.tar.gz && \
+    echo "Extracting SDK..." && \
+    tar xzf ohos-sdk.tar.gz && \
+    rm ohos-sdk.tar.gz && \
+    cd linux && \
+    echo "Extracting native toolchain..." && \
+    unzip -q native-linux-*.zip && \
+    rm -f *.zip && \
+    echo "SDK extraction complete"
+
+# Set OHOS SDK environment variables
+ENV OHOS_SDK_HOME=/opt/ohos-sdk/linux
+ENV HOS_SDK_HOME=/opt/ohos-sdk/linux
+ENV OHOS_SDK_NATIVE=/opt/ohos-sdk/linux/native
+
+# Add OHOS toolchain to PATH
+ENV PATH="${OHOS_SDK_NATIVE}/llvm/bin:${PATH}"
+
+# Install ccgo from PyPI (pre-compiled wheel, fast installation)
+RUN pip3 install --no-cache-dir ccgo
+
+# Set working directory
+WORKDIR /workspace
+
+# Verify installations
+RUN echo "=== OHOS SDK Verification ===" && \
+    echo "OHOS_SDK_HOME: ${OHOS_SDK_HOME}" && \
+    echo "OHOS SDK Native path: ${OHOS_SDK_NATIVE}" && \
+    ls -la ${OHOS_SDK_NATIVE} && \
+    echo "=== LLVM Toolchain ===" && \
+    ${OHOS_SDK_NATIVE}/llvm/bin/clang --version && \
+    echo "=== Build Tools ===" && \
+    cmake --version && \
+    ninja --version && \
+    python3 --version && \
+    ccgo --version
+
+# Entry point - execute build script
+ENTRYPOINT ["/bin/bash", "-c"]

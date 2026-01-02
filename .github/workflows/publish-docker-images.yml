@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: 'Platforms to build (comma-separated: linux,windows-mingw,windows-msvc,apple,android or "all")'
+        description: 'Platforms to build (comma-separated: linux,windows-mingw,windows-msvc,apple,android,ohos or "all")'
         required: true
         default: 'all'
       registry:
@@ -67,6 +67,9 @@ jobs:
           - platform: android
             dockerfile: Dockerfile.android
             image: ccgo-builder-android
+          - platform: ohos
+            dockerfile: Dockerfile.ohos
+            image: ccgo-builder-ohos
 
     steps:
       - name: Checkout code
@@ -186,6 +189,7 @@ jobs:
             echo "| Windows (MSVC) | \`${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${GHCR_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${GHCR_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| OHOS | \`${GHCR_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Docker Hub" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -196,6 +200,7 @@ jobs:
             echo "| Windows (MSVC) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| OHOS | \`${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY
           elif [ "${{ env.REGISTRY }}" = "ghcr.io" ]; then
             echo "All CCGO builder images have been successfully built and pushed to **GitHub Container Registry (GHCR)**!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -206,6 +211,7 @@ jobs:
             echo "| Windows (MSVC) | \`${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${GHCR_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${GHCR_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| OHOS | \`${GHCR_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY
           else
             echo "All CCGO builder images have been successfully built and pushed to **Docker Hub**!" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -216,6 +222,7 @@ jobs:
             echo "| Windows (MSVC) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| OHOS | \`${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo "" >> $GITHUB_STEP_SUMMARY
