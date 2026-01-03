@@ -429,6 +429,13 @@ impl DockerBuilder {
             (setup_cmd, "ccgo".to_string())
         };
 
+        // Build toolchain argument for Windows builds
+        let toolchain_arg = if self.ctx.options.target == BuildTarget::Windows {
+            format!(" --toolchain {}", self.ctx.options.toolchain)
+        } else {
+            String::new()
+        };
+
         let build_cmd = if self.ctx.options.target == BuildTarget::Android {
             format!(
                 "{} && \
@@ -446,8 +453,8 @@ impl DockerBuilder {
         } else {
             format!(
                 "{} && \
-                 {} build {} --link-type {}",
-                setup_cmd, ccgo_bin, platform, link_type
+                 {} build {} --link-type {}{}",
+                setup_cmd, ccgo_bin, platform, link_type, toolchain_arg
             )
         };
 
