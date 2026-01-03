@@ -3,7 +3,7 @@
 A cross-platform C++ build system designed to simplify and accelerate multi-platform development.
 
 [![Crates.io](https://img.shields.io/crates/v/ccgo.svg)](https://crates.io/crates/ccgo)
-[![PyPI version](https://badge.fury.io/py/ccgo.svg)](https://pypi.org/project/ccgo/)
+[![PyPI version](https://img.shields.io/pypi/v/ccgo.svg)](https://pypi.org/project/ccgo/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/license/MIT)
 
 ## Features
