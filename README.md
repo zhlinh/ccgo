@@ -450,6 +450,297 @@ my-project/
 ├── kmp/                        # Kotlin Multiplatform files (Gradle)
 ```
 
+## SDK Archive Structure
+
+When you run `ccgo build <target>`, the output is placed in `target/{debug|release}/<platform>/` with a unified archive structure.
+
+### Archive Naming Convention
+
+```
+{PROJECT}_{PLATFORM}_SDK-{version}[-{suffix}].zip        # Main SDK archive
+{PROJECT}_{PLATFORM}_SDK-{version}[-{suffix}]-SYMBOLS.zip  # Debug symbols archive
+```
+
+**Examples:**
+- `MYLIB_ANDROID_SDK-1.0.0-release.zip`
+- `MYLIB_IOS_SDK-1.0.0-beta.5-dirty.zip`
+- `MYLIB_LINUX_SDK-2.1.0-SYMBOLS.zip`
+
+### Unified SDK Archive Structure
+
+All platforms follow the same archive structure:
+
+```
+{PROJECT}_{PLATFORM}_SDK-{version}.zip
+├── lib/{platform}/
+│   ├── static/                    # Static libraries (.a, .lib)
+│   │   └── [{arch}/]              # Architecture subdirectory (if multi-arch)
+│   │       └── lib{name}.a
+│   └── shared/                    # Shared libraries (.so, .dylib, .dll)
+│       └── [{arch}/]
+│           └── lib{name}.so
+├── include/{project}/             # Public header files
+│   └── **/*.h
+├── haars/{platform}/              # Platform packages (Android AAR / OHOS HAR)
+│   └── {PROJECT}_{PLATFORM}_SDK-{version}.aar
+└── meta/{platform}/               # Metadata files
+    ├── build_info.json            # Build information
+    └── archive_info.json          # Archive file listing
+```
+
+### Platform-Specific Build Artifacts
+
+#### Android
+
+```bash
+ccgo build android [--arch armeabi-v7a,arm64-v8a,x86_64]
+```
+
+**Output:** `target/{debug|release}/android/`
+
+| File | Description |
+|------|-------------|
+| `MYLIB_ANDROID_SDK-{version}.zip` | Main SDK archive |
+| `MYLIB_ANDROID_SDK-{version}-SYMBOLS.zip` | Debug symbols (unstripped .so) |
+| `MYLIB_ANDROID_SDK-{version}.aar` | Android Archive (standalone) |
+
+**SDK Contents:**
+```
+├── lib/android/static/{arch}/lib{name}.a
+├── lib/android/shared/{arch}/lib{name}.so
+├── include/{project}/**/*.h
+├── haars/android/*.aar
+└── meta/android/build_info.json
+```
+
+#### iOS
+
+```bash
+ccgo build ios
+```
+
+**Output:** `target/{debug|release}/ios/`
+
+| File | Description |
+|------|-------------|
+| `MYLIB_IOS_SDK-{version}.zip` | Main SDK archive |
+| `MYLIB_IOS_SDK-{version}-SYMBOLS.zip` | Debug symbols (dSYM) |
+
+**SDK Contents:**
+```
+├── lib/ios/static/{name}.xcframework/
+├── lib/ios/shared/{name}.xcframework/
+├── include/{project}/**/*.h
+└── meta/ios/build_info.json
+```
+
+**Architectures:** arm64 (device), arm64-simulator, x86_64-simulator
+
+#### macOS
+
+```bash
+ccgo build macos
+```
+
+**Output:** `target/{debug|release}/macos/`
+
+| File | Description |
+|------|-------------|
+| `MYLIB_MACOS_SDK-{version}.zip` | Main SDK archive |
+| `MYLIB_MACOS_SDK-{version}-SYMBOLS.zip` | Debug symbols (dSYM) |
+
+**SDK Contents:**
+```
+├── lib/macos/static/{name}.xcframework/
+├── lib/macos/shared/{name}.xcframework/
+├── include/{project}/**/*.h
+└── meta/macos/build_info.json
+```
+
+**Architectures:** Universal binary (arm64 + x86_64)
+
+#### tvOS
+
+```bash
+ccgo build tvos
+```
+
+**Output:** `target/{debug|release}/tvos/`
+
+**SDK Contents:**
+```
+├── lib/tvos/static/{name}.xcframework/
+├── lib/tvos/shared/{name}.xcframework/
+├── include/{project}/**/*.h
+└── meta/tvos/build_info.json
+```
+
+**Architectures:** arm64 (device), arm64-simulator
+
+#### watchOS
+
+```bash
+ccgo build watchos
+```
+
+**Output:** `target/{debug|release}/watchos/`
+
+**SDK Contents:**
+```
+├── lib/watchos/static/{name}.xcframework/
+├── lib/watchos/shared/{name}.xcframework/
+├── include/{project}/**/*.h
+└── meta/watchos/build_info.json
+```
+
+**Architectures:** arm64_32, armv7k (device), arm64-simulator
+
+#### Linux
+
+```bash
+ccgo build linux
+```
+
+**Output:** `target/{debug|release}/linux/`
+
+| File | Description |
+|------|-------------|
+| `MYLIB_LINUX_SDK-{version}.zip` | Main SDK archive |
+| `MYLIB_LINUX_SDK-{version}-SYMBOLS.zip` | Debug symbols (unstripped .so) |
+
+**SDK Contents:**
+```
+├── lib/linux/static/lib{name}.a
+├── lib/linux/shared/lib{name}.so
+├── include/{project}/**/*.h
+└── meta/linux/build_info.json
+```
+
+**Architecture:** x86_64
+
+#### Windows
+
+```bash
+ccgo build windows [--toolchain auto|msvc|mingw]
+```
+
+**Output:** `target/{debug|release}/windows/`
+
+| File | Description |
+|------|-------------|
+| `MYLIB_WINDOWS_SDK-{version}.zip` | Main SDK archive |
+
+**SDK Contents (MinGW):**
+```
+├── lib/windows/static/lib{name}.a
+├── lib/windows/shared/{name}.dll
+├── lib/windows/shared/lib{name}.dll.a    # Import library
+├── include/{project}/**/*.h
+└── meta/windows/build_info.json
+```
+
+**SDK Contents (MSVC):**
+```
+├── lib/windows/static/{name}.lib
+├── lib/windows/shared/{name}.dll
+├── lib/windows/shared/{name}.lib         # Import library
+├── include/{project}/**/*.h
+└── meta/windows/build_info.json
+```
+
+**Architecture:** x86_64
+
+#### OpenHarmony (OHOS)
+
+```bash
+ccgo build ohos [--arch armeabi-v7a,arm64-v8a,x86_64]
+```
+
+**Output:** `target/{debug|release}/ohos/`
+
+| File | Description |
+|------|-------------|
+| `MYLIB_OHOS_SDK-{version}.zip` | Main SDK archive |
+| `MYLIB_OHOS_SDK-{version}-SYMBOLS.zip` | Debug symbols (unstripped .so) |
+| `MYLIB_OHOS_SDK-{version}.har` | Harmony Archive (standalone) |
+
+**SDK Contents:**
+```
+├── lib/ohos/static/{arch}/lib{name}.a
+├── lib/ohos/shared/{arch}/lib{name}.so
+├── include/{project}/**/*.h
+├── haars/ohos/*.har
+└── meta/ohos/build_info.json
+```
+
+#### Conan
+
+```bash
+ccgo build conan
+```
+
+**Output:** `target/{debug|release}/conan/`
+
+**SDK Contents:**
+```
+├── lib/conan/static/lib{name}.a
+├── lib/conan/shared/lib{name}.so
+├── include/{project}/**/*.h
+└── meta/conan/build_info.json
+```
+
+### Metadata Files
+
+#### build_info.json
+
+Contains build metadata:
+
+```json
+{
+  "project": "mylib",
+  "platform": "android",
+  "version": "1.0.0",
+  "link_type": "both",
+  "build_time": "2024-01-15T10:30:00.123456",
+  "build_host": "Darwin",
+  "architectures": ["arm64-v8a", "armeabi-v7a", "x86_64"],
+  "git_commit": "abc1234",
+  "git_branch": "main"
+}
+```
+
+#### archive_info.json
+
+Contains file listing with sizes:
+
+```json
+{
+  "archive_metadata": {
+    "version": "1.0",
+    "generated_at": "2024-01-15T10:30:00Z",
+    "archive_name": "MYLIB_ANDROID_SDK-1.0.0.zip",
+    "archive_size": 1234567
+  },
+  "files": [
+    {"path": "lib/android/shared/arm64-v8a/libmylib.so", "size": 123456}
+  ],
+  "summary": {
+    "total_files": 10,
+    "total_size": 500000,
+    "library_count": 6,
+    "platforms": ["android"],
+    "architectures": ["arm64-v8a", "armeabi-v7a", "x86_64"]
+  }
+}
+```
+
+### Excluded Files
+
+The following files are automatically excluded from archives:
+- `CPPLINT.cfg`
+- `.clang-format`
+- `.clang-tidy`
+
 ## Advanced Usage
 
 ### Using Custom Templates

@@ -24,6 +24,7 @@ pub mod archive;
 pub mod cmake;
 pub mod cmake_templates;
 pub mod docker;
+pub mod elf;
 pub mod platforms;
 pub mod toolchains;
 
@@ -296,6 +297,92 @@ pub struct BuildInfo {
     /// Git branch (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git_branch: Option<String>,
+}
+
+/// Comprehensive build information matching pyccgo format
+///
+/// This is the full JSON structure that matches Python ccgo's build_info output:
+/// - build_metadata: version, generated_at, generator
+/// - project: name, version
+/// - git: branch, revision, revision_full, tag, is_dirty, remote_url
+/// - build: time, timestamp, platform, and platform-specific info
+/// - environment: os, os_version, python_version, ccgo_version
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BuildInfoFull {
+    pub build_metadata: BuildMetadata,
+    pub project: ProjectInfo,
+    pub git: GitInfo,
+    pub build: BuildDetails,
+    pub environment: EnvironmentInfo,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BuildMetadata {
+    pub version: String,
+    pub generated_at: String,
+    pub generator: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProjectInfo {
+    pub name: String,
+    pub version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GitInfo {
+    pub branch: String,
+    pub revision: String,
+    pub revision_full: String,
+    pub tag: String,
+    pub is_dirty: bool,
+    pub remote_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BuildDetails {
+    pub time: String,
+    pub timestamp: i64,
+    pub platform: String,
+    /// Platform-specific build info (ios, android, etc.)
+    #[serde(flatten)]
+    pub platform_info: Option<PlatformBuildInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PlatformBuildInfo {
+    Ios { ios: IosBuildInfo },
+    Android { android: AndroidBuildInfo },
+    Macos { macos: MacosBuildInfo },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IosBuildInfo {
+    pub xcode_version: String,
+    pub xcode_build: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AndroidBuildInfo {
+    pub ndk_version: String,
+    pub stl: String,
+    pub min_sdk_version: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MacosBuildInfo {
+    pub xcode_version: String,
+    pub xcode_build: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EnvironmentInfo {
+    pub os: String,
+    pub os_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub python_version: Option<String>,
+    pub ccgo_version: String,
 }
 
 /// Trait for platform-specific builders

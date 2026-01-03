@@ -247,6 +247,40 @@ impl XcodeToolchain {
     }
 
     /// Create an XCFramework from multiple frameworks/libraries
+    /// Merge multiple static libraries into a single static library using libtool
+    ///
+    /// This is essential for creating a complete static library from multiple
+    /// module libraries (e.g., libfoo-api.a, libfoo-base.a -> libfoo.a)
+    pub fn merge_static_libs(&self, src_libs: &[PathBuf], dst_lib: &PathBuf) -> Result<()> {
+        if src_libs.is_empty() {
+            bail!("No source libraries to merge");
+        }
+
+        // Ensure output directory exists
+        if let Some(parent) = dst_lib.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Use libtool to merge static libraries
+        let mut cmd = Command::new("libtool");
+        cmd.arg("-static")
+           .arg("-no_warning_for_no_symbols")
+           .arg("-o")
+           .arg(dst_lib);
+
+        for lib in src_libs {
+            cmd.arg(lib);
+        }
+
+        let output = cmd.output().context("Failed to run libtool")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("libtool failed: {}", stderr);
+        }
+
+        Ok(())
+    }
+
     pub fn create_xcframework(
         &self,
         inputs: &[(PathBuf, Option<PathBuf>)], // (library/framework path, optional dSYM)

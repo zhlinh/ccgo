@@ -1,8 +1,11 @@
 //! Build command implementation
 
+use std::path::Path;
+
 use anyhow::{bail, Result};
 use clap::{Args, ValueEnum};
 
+use crate::build::archive::{create_build_info_full, print_build_info_json};
 use crate::build::platforms::{build_all, build_apple, get_builder};
 use crate::build::{BuildContext, BuildOptions, BuildResult};
 use crate::config::CcgoConfig;
@@ -200,12 +203,15 @@ impl BuildCommand {
                 _ => {}
             }
 
+            // Save project_root before ctx is moved
+            let docker_project_root = ctx.project_root.clone();
+
             // Create Docker builder and execute
             let docker_builder = DockerBuilder::new(ctx)?;
             let result = docker_builder.execute()?;
 
             // Print results summary (same as non-Docker builds)
-            Self::print_results(&config.package.name, &[result], verbose);
+            Self::print_results(&config.package.name, &config.package.version, &self.target.to_string(), &docker_project_root, &[result], verbose);
             return Ok(());
         }
 
@@ -233,13 +239,13 @@ impl BuildCommand {
         };
 
         // Print results summary
-        Self::print_results(&config.package.name, &results, verbose);
+        Self::print_results(&config.package.name, &config.package.version, &self.target.to_string(), &ctx.project_root, &results, verbose);
 
         Ok(())
     }
 
     /// Print build results summary
-    fn print_results(lib_name: &str, results: &[BuildResult], verbose: bool) {
+    fn print_results(lib_name: &str, version: &str, platform: &str, project_root: &Path, results: &[BuildResult], verbose: bool) {
         let total_duration: f64 = results.iter().map(|r| r.duration_secs).sum();
 
         if results.is_empty() {
@@ -286,6 +292,24 @@ impl BuildCommand {
                     eprintln!("      Warning: Failed to print symbols archive contents: {}", e);
                 }
             }
+
+            // Print AAR/HAR archive tree if present (Android/OHOS)
+            if let Some(archive_path) = &result.aar_archive {
+                // Detect archive type from extension
+                let archive_type = if archive_path.extension().map_or(false, |e| e == "har") {
+                    "HAR"
+                } else {
+                    "AAR"
+                };
+                eprintln!("\n      {} contents:", archive_type);
+                if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
+                    eprintln!("      Warning: Failed to print {} contents: {}", archive_type, e);
+                }
+            }
         }
+
+        // Print build info JSON in pyccgo format
+        let build_info = create_build_info_full(lib_name, version, platform, project_root);
+        print_build_info_json(&build_info);
     }
 }

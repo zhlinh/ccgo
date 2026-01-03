@@ -9,7 +9,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 
 use crate::build::archive::{
-    ArchiveBuilder, ARCHIVE_DIR_FRAMEWORKS, ARCHIVE_DIR_INCLUDE, ARCHIVE_DIR_SHARED,
+    get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_FRAMEWORKS, ARCHIVE_DIR_SHARED,
     ARCHIVE_DIR_STATIC,
 };
 use crate::build::cmake::{BuildType, CMakeConfig};
@@ -48,6 +48,76 @@ pub struct IosBuilder;
 impl IosBuilder {
     pub fn new() -> Self {
         Self
+    }
+
+    /// Merge all module static libraries into a single library
+    /// This is essential for KMP cinterop which expects a single complete library
+    fn merge_module_static_libs(
+        &self,
+        xcode: &XcodeToolchain,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        // Find the output directory where CMake puts libraries
+        let out_dir = build_dir.join("out");
+        if !out_dir.exists() {
+            // No out directory means no libraries to merge
+            return Ok(());
+        }
+
+        // Find all .a files (module libraries)
+        let mut module_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&out_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        module_libs.push(path);
+                    }
+                }
+            }
+        }
+
+        if module_libs.is_empty() {
+            return Ok(());
+        }
+
+        // Check if we only have the main library (already merged or single module)
+        let main_lib_name = format!("lib{}.a", lib_name);
+        if module_libs.len() == 1 && module_libs[0].file_name().map_or(false, |n| n == main_lib_name.as_str()) {
+            // Already a single main library, nothing to merge
+            return Ok(());
+        }
+
+        // Filter out the main library if it exists (we'll recreate it)
+        let main_lib_path = out_dir.join(&main_lib_name);
+        module_libs.retain(|p| p != &main_lib_path);
+
+        if module_libs.is_empty() {
+            return Ok(());
+        }
+
+        if verbose {
+            eprintln!(
+                "    Merging {} module libraries into {}",
+                module_libs.len(),
+                main_lib_name
+            );
+        }
+
+        // Merge all module libraries into the main library
+        xcode.merge_static_libs(&module_libs, &main_lib_path)?;
+
+        // Clean up module libraries after merge (optional, keeps output clean)
+        for lib in &module_libs {
+            if lib != &main_lib_path {
+                let _ = std::fs::remove_file(lib);
+            }
+        }
+
+        Ok(())
     }
 
     /// Build for a single target (device or simulator) and architecture
@@ -110,6 +180,12 @@ impl IosBuilder {
         }
 
         cmake.configure_build_install()?;
+
+        // For static builds, merge all module libraries into a single library
+        // This is essential for KMP cinterop which expects a single complete library
+        if !build_shared {
+            self.merge_module_static_libs(xcode, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+        }
 
         // Return build_dir since CCGO cmake installs to build_dir/out/
         Ok(build_dir)
@@ -478,16 +554,14 @@ impl PlatformBuilder for IosBuilder {
             built_link_types.push("shared");
         }
 
-        // Add include files
-        // Path: include/{lib_name}/
-        let include_source = if built_link_types.contains(&"static") {
-            ctx.cmake_build_dir.join("static/device/arm64/install/include")
-        } else {
-            ctx.cmake_build_dir.join("shared/device/arm64/install/include")
-        };
+        // Add include files from project's include directory (matching pyccgo behavior)
+        let include_source = ctx.project_root.join("include");
         if include_source.exists() {
-            let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+            }
         }
 
         // Create the SDK archive

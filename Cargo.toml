@@ -38,6 +38,8 @@ open = "5.3"
 
 # Archive and compression
 zip = "2.2"
+tar = "0.4"
+flate2 = "1.0"
 
 # Parallel execution
 rayon = "1.10"

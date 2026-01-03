@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{ArchiveBuilder, ARCHIVE_DIR_INCLUDE};
+use crate::build::archive::{get_unified_include_path, ArchiveBuilder};
 use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::toolchains::android_ndk::{AndroidAbi, AndroidNdkToolchain, DEFAULT_API_LEVEL};
 use crate::build::toolchains::Toolchain;
@@ -688,17 +688,11 @@ impl PlatformBuilder for AndroidBuilder {
         std::fs::create_dir_all(&symbols_staging)?;
 
         let mut built_link_types = Vec::new();
-        let mut first_install_dir: Option<PathBuf> = None;
         let mut symbols_archive: Option<PathBuf> = None;
 
         // Build static libraries
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
             let results = self.build_link_type(ctx, &ndk, "static", &abis, api_level)?;
-
-            if first_install_dir.is_none() && !results.is_empty() {
-                first_install_dir = Some(results[0].1.clone());
-            }
-
             self.add_libraries_to_archive(&archive, &results, "static", false)?;
             built_link_types.push("static");
         }
@@ -706,10 +700,6 @@ impl PlatformBuilder for AndroidBuilder {
         // Build shared libraries
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
             let results = self.build_link_type(ctx, &ndk, "shared", &abis, api_level)?;
-
-            if first_install_dir.is_none() && !results.is_empty() {
-                first_install_dir = Some(results[0].1.clone());
-            }
 
             // For release builds: First copy unstripped to obj/local, then strip, then copy to jniLibs
             // For debug builds: Just copy to jniLibs (Gradle will handle obj/local)
@@ -732,20 +722,14 @@ impl PlatformBuilder for AndroidBuilder {
             self.copy_libraries_to_jnilibs(ctx, &abis)?;
         }
 
-        // Add include files
-        // Path: include/{lib_name}/
-        if let Some(build_dir) = first_install_dir {
-            // Check multiple possible include locations
-            let possible_include_dirs = vec![
-                build_dir.join("install/include"),
-                build_dir.join("include"),
-            ];
-            for include_source in possible_include_dirs {
-                if include_source.exists() {
-                    let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
-                    archive.add_directory(&include_source, &include_path)?;
-                    break;
-                }
+        // Add include files from project's include directory (matching pyccgo behavior)
+        // Path: include/{lib_name}/ (if source has project subdir) or include/ (if not)
+        let include_source = ctx.project_root.join("include");
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
             }
         }
 

@@ -2,6 +2,9 @@
 //!
 //! Builds KMP library for all supported platforms using Gradle.
 //! This is a pure Rust implementation that directly runs Gradle commands.
+//!
+//! KMP requires native C/C++ libraries to be built first before Gradle can
+//! compile the Kotlin/Native targets with cinterop.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -29,6 +32,159 @@ impl KmpBuilder {
         }
     }
 
+    /// Check if native libraries already exist for a platform
+    ///
+    /// Checks both pyccgo path (cmake_build/{Platform}/) and Rust ccgo path
+    /// (cmake_build/{debug|release}/{platform}/)
+    fn native_libs_exist(&self, ctx: &BuildContext, platform: &str) -> bool {
+        let cmake_build = ctx.project_root.join("cmake_build");
+
+        // Platform name mapping for pyccgo paths (capitalized)
+        let pyccgo_platform = match platform {
+            "ios" => "iOS",
+            "macos" => "macOS",
+            "tvos" => "tvOS",
+            "watchos" => "watchOS",
+            "android" => "Android",
+            "linux" => "Linux",
+            "windows" => "Windows",
+            _ => platform,
+        };
+
+        // Check pyccgo path: cmake_build/{Platform}/static/
+        let pyccgo_path = cmake_build.join(pyccgo_platform).join("static");
+        if pyccgo_path.exists() {
+            // Check if there's a .a file in out/ or directly
+            let out_dir = pyccgo_path.join("out");
+            if out_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&out_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().extension().map_or(false, |e| e == "a") {
+                            return true;
+                        }
+                    }
+                }
+            }
+            // Also check for xcframework (iOS/macOS)
+            let xcframework = pyccgo_path.join("xcframework");
+            if xcframework.exists() {
+                return true;
+            }
+        }
+
+        // Check Rust ccgo path: cmake_build/{debug|release}/{platform}/static/
+        let mode = if ctx.options.release { "release" } else { "debug" };
+        let rust_path = cmake_build.join(mode).join(platform).join("static");
+        if rust_path.exists() {
+            let out_dir = rust_path.join("out");
+            if out_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&out_dir) {
+                    for entry in entries.flatten() {
+                        if entry.path().extension().map_or(false, |e| e == "a") {
+                            return true;
+                        }
+                    }
+                }
+            }
+            let xcframework = rust_path.join("xcframework");
+            if xcframework.exists() {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Build native C/C++ libraries required for KMP cinterop
+    ///
+    /// This builds native libraries for the current platform using ccgo:
+    /// - Android (always, cross-platform)
+    /// - iOS + macOS (on macOS)
+    /// - Linux (on Linux)
+    /// - Windows (on Windows)
+    ///
+    /// Skips platforms that already have native libraries built.
+    fn build_native_libraries(&self, ctx: &BuildContext) -> Result<()> {
+        eprintln!("\n{}", "=".repeat(80));
+        eprintln!("Building Native Libraries for KMP");
+        eprintln!("{}\n", "=".repeat(80));
+
+        // Determine which platforms to build based on current OS
+        let mut platforms = vec!["android"]; // Always build Android
+
+        #[cfg(target_os = "macos")]
+        {
+            platforms.push("ios");
+            platforms.push("macos");
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            platforms.push("linux");
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            platforms.push("windows");
+        }
+
+        // Get the current executable path to call ccgo
+        let ccgo_exe = std::env::current_exe()
+            .unwrap_or_else(|_| PathBuf::from("ccgo"));
+
+        for platform in platforms {
+            // Check if native libraries already exist
+            if self.native_libs_exist(ctx, platform) {
+                eprintln!("✅ {} native libraries already exist, skipping build.\n", platform);
+                continue;
+            }
+
+            eprintln!("\n--- Building {} native libraries ---\n", platform);
+
+            // Build using: ccgo build <platform> --native-only
+            // --native-only already skips archive creation
+            let mut cmd = Command::new(&ccgo_exe);
+            cmd.current_dir(&ctx.project_root);
+            cmd.args(["build", platform, "--native-only"]);
+
+            if ctx.options.release {
+                cmd.arg("--release");
+            }
+
+            if ctx.options.verbose {
+                cmd.arg("--verbose");
+                eprintln!("Executing: {:?}", cmd);
+            }
+
+            let status = cmd.status();
+
+            match status {
+                Ok(s) if s.success() => {
+                    eprintln!("\n✅ {} native libraries built successfully.\n", platform);
+                }
+                Ok(s) => {
+                    eprintln!(
+                        "\n⚠️  WARNING: {} build failed with exit code {:?}",
+                        platform,
+                        s.code()
+                    );
+                    eprintln!("   KMP may not work correctly on {}.\n", platform);
+                    // Don't exit, continue with other platforms
+                }
+                Err(e) => {
+                    eprintln!("\n⚠️  WARNING: Failed to build {}: {}", platform, e);
+                    eprintln!("   KMP may not work correctly on {}.\n", platform);
+                }
+            }
+        }
+
+        eprintln!("\n{}", "=".repeat(80));
+        eprintln!("Native Libraries Build Complete");
+        eprintln!("{}\n", "=".repeat(80));
+
+        Ok(())
+    }
+
     /// Run a Gradle command in the KMP directory
     fn run_gradle(&self, ctx: &BuildContext, args: &[&str]) -> Result<()> {
         let kmp_dir = ctx.project_root.join("kmp");
@@ -44,6 +200,8 @@ impl KmpBuilder {
 
         // Add common Gradle options
         cmd.arg("--no-daemon");
+        // Disable configuration cache to avoid Kotlin/Native issues
+        cmd.arg("--no-configuration-cache");
         if !ctx.options.verbose {
             cmd.arg("--quiet");
         }
@@ -64,31 +222,90 @@ impl KmpBuilder {
         let kmp_dir = ctx.project_root.join("kmp");
         let mut outputs = Vec::new();
 
-        // Common KMP build output locations:
-        // - build/libs/*.jar (JVM)
+        // Common KMP build output locations (matching pyccgo structure):
+        // - build/libs/*.jar (JVM/Desktop)
         // - build/outputs/aar/*.aar (Android)
-        // - build/bin/**/*.klib (Native)
-        // - build/XCFrameworks/**/*.xcframework (Apple)
+        // - build/classes/kotlin/{target}/main/klib/*.klib (Native main klib)
+        // - build/classes/kotlin/{target}/main/cinterop/*.klib (Native cinterop klib)
 
-        let search_dirs = vec![
-            kmp_dir.join("build/libs"),
-            kmp_dir.join("build/outputs/aar"),
-            kmp_dir.join("build/bin"),
-            kmp_dir.join("build/XCFrameworks"),
-            // Also check submodule builds
-            kmp_dir.join("shared/build/libs"),
-            kmp_dir.join("shared/build/outputs/aar"),
-        ];
+        // Collect JAR files from build/libs/
+        let jar_dir = kmp_dir.join("build/libs");
+        if jar_dir.exists() {
+            self.collect_artifacts(&jar_dir, &mut outputs)?;
+        }
 
-        for search_dir in search_dirs {
-            if !search_dir.exists() {
-                continue;
-            }
+        // Collect AAR files from build/outputs/aar/
+        let aar_dir = kmp_dir.join("build/outputs/aar");
+        if aar_dir.exists() {
+            self.collect_artifacts(&aar_dir, &mut outputs)?;
+        }
 
-            self.collect_artifacts(&search_dir, &mut outputs)?;
+        // Collect klib files from build/classes/kotlin/{target}/main/
+        // This is the key difference from the old implementation
+        let classes_dir = kmp_dir.join("build/classes/kotlin");
+        if classes_dir.exists() {
+            self.collect_klib_artifacts(&classes_dir, &mut outputs)?;
+        }
+
+        // Also check submodule builds
+        let shared_jar_dir = kmp_dir.join("shared/build/libs");
+        if shared_jar_dir.exists() {
+            self.collect_artifacts(&shared_jar_dir, &mut outputs)?;
+        }
+        let shared_aar_dir = kmp_dir.join("shared/build/outputs/aar");
+        if shared_aar_dir.exists() {
+            self.collect_artifacts(&shared_aar_dir, &mut outputs)?;
         }
 
         Ok(outputs)
+    }
+
+    /// Collect klib artifacts from build/classes/kotlin/{target}/main/
+    /// Returns tuples of (klib_path, target_name, klib_type) where klib_type is "klib" or "cinterop"
+    fn collect_klib_artifacts(&self, classes_dir: &PathBuf, outputs: &mut Vec<PathBuf>) -> Result<()> {
+        if !classes_dir.exists() {
+            return Ok(());
+        }
+
+        // Iterate over target directories (e.g., iosArm64, macosX64, etc.)
+        for target_entry in std::fs::read_dir(classes_dir)? {
+            let target_entry = target_entry?;
+            let target_path = target_entry.path();
+            if !target_path.is_dir() {
+                continue;
+            }
+
+            let main_dir = target_path.join("main");
+            if !main_dir.exists() {
+                continue;
+            }
+
+            // Check for main klib directory
+            let klib_dir = main_dir.join("klib");
+            if klib_dir.exists() {
+                for entry in std::fs::read_dir(&klib_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.extension().map_or(false, |e| e == "klib") {
+                        outputs.push(path);
+                    }
+                }
+            }
+
+            // Check for cinterop directory
+            let cinterop_dir = main_dir.join("cinterop");
+            if cinterop_dir.exists() {
+                for entry in std::fs::read_dir(&cinterop_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.extension().map_or(false, |e| e == "klib") {
+                        outputs.push(path);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Recursively collect artifact files
@@ -135,17 +352,22 @@ impl KmpBuilder {
     }
 
     /// Create SDK archive from build outputs
+    /// Matches pyccgo directory structure:
+    /// - lib/kmp/android/{aar}
+    /// - lib/kmp/desktop/{jar}
+    /// - lib/kmp/native/{target}/klib/{klib}
+    /// - lib/kmp/native/{target}/cinterop/{cinterop_klib}
     fn create_sdk_archive(&self, ctx: &BuildContext, outputs: &[PathBuf]) -> Result<PathBuf> {
         let archive = ArchiveBuilder::new(
             ctx.lib_name().to_string(),
             ctx.version().to_string(),
-            "".to_string(),  // publish_suffix
+            ctx.publish_suffix().to_string(),
             ctx.options.release,
             "kmp".to_string(),
             ctx.output_dir.clone(),
         )?;
 
-        // Organize outputs by type
+        // Organize outputs by type (matching pyccgo structure)
         for output in outputs {
             let file_name = output.file_name()
                 .and_then(|n| n.to_str())
@@ -154,29 +376,32 @@ impl KmpBuilder {
                 .and_then(|e| e.to_str())
                 .unwrap_or("");
 
-            let dest_dir = match ext {
-                "jar" => "lib/jvm",
-                "aar" => "lib/android",
-                "klib" => {
-                    // Determine platform from path
-                    let path_str = output.to_string_lossy();
-                    if path_str.contains("ios") {
-                        "lib/native/ios"
-                    } else if path_str.contains("macos") || path_str.contains("macosX64") || path_str.contains("macosArm64") {
-                        "lib/native/macos"
-                    } else if path_str.contains("linux") {
-                        "lib/native/linux"
-                    } else if path_str.contains("mingw") || path_str.contains("windows") {
-                        "lib/native/windows"
-                    } else {
-                        "lib/native/common"
+            // Get the path as string for analysis
+            let path_str = output.to_string_lossy();
+
+            let dest_path = match ext {
+                "jar" => {
+                    // Skip metadata jars (they are not main artifacts)
+                    if file_name.contains("-metadata") {
+                        continue;
                     }
+                    format!("lib/kmp/desktop/{}", file_name)
                 }
-                "xcframework" | "framework" => "lib/apple",
+                "aar" => format!("lib/kmp/android/{}", file_name),
+                "klib" => {
+                    // Determine target and type from path
+                    // Path format: build/classes/kotlin/{target}/main/{klib|cinterop}/{file}.klib
+                    let is_cinterop = path_str.contains("/cinterop/");
+                    let klib_type = if is_cinterop { "cinterop" } else { "klib" };
+
+                    // Extract target name from path (e.g., iosArm64, macosX64)
+                    let target = self.extract_target_from_path(&path_str);
+
+                    format!("lib/kmp/native/{}/{}/{}", target, klib_type, file_name)
+                }
+                "xcframework" | "framework" => format!("lib/apple/{}", file_name),
                 _ => continue,
             };
-
-            let dest_path = format!("{}/{}", dest_dir, file_name);
 
             if output.is_dir() {
                 archive.add_directory(output, &dest_path)?;
@@ -188,6 +413,37 @@ impl KmpBuilder {
         // Create the SDK archive
         let link_type = ctx.options.link_type.to_string();
         archive.create_sdk_archive(&[], &link_type)
+    }
+
+    /// Extract target name from klib path
+    /// Path format: .../build/classes/kotlin/{target}/main/...
+    fn extract_target_from_path(&self, path: &str) -> String {
+        // Look for pattern: /kotlin/{target}/main/
+        if let Some(kotlin_idx) = path.find("/kotlin/") {
+            let after_kotlin = &path[kotlin_idx + 8..]; // Skip "/kotlin/"
+            if let Some(main_idx) = after_kotlin.find("/main/") {
+                return after_kotlin[..main_idx].to_string();
+            }
+        }
+
+        // Fallback: try to determine from common patterns
+        if path.contains("iosArm64") {
+            "iosArm64".to_string()
+        } else if path.contains("iosX64") {
+            "iosX64".to_string()
+        } else if path.contains("iosSimulatorArm64") {
+            "iosSimulatorArm64".to_string()
+        } else if path.contains("macosArm64") {
+            "macosArm64".to_string()
+        } else if path.contains("macosX64") {
+            "macosX64".to_string()
+        } else if path.contains("linuxX64") {
+            "linuxX64".to_string()
+        } else if path.contains("linuxArm64") {
+            "linuxArm64".to_string()
+        } else {
+            "common".to_string()
+        }
     }
 }
 
@@ -255,15 +511,49 @@ impl PlatformBuilder for KmpBuilder {
             eprintln!("Building {} for KMP...", ctx.lib_name());
         }
 
-        // Determine the Gradle task to run
-        let gradle_task = if ctx.options.release {
-            "assemble"
-        } else {
-            "build"
-        };
+        // Step 1: Build native C/C++ libraries first
+        // KMP cinterop requires native .a/.so files to link against
+        self.build_native_libraries(ctx)?;
 
-        // Run Gradle build
-        self.run_gradle(ctx, &[gradle_task])?;
+        // Step 2: Build KMP using Gradle
+        eprintln!("\n{}", "=".repeat(80));
+        eprintln!("Building Kotlin Multiplatform Library");
+        eprintln!("{}\n", "=".repeat(80));
+
+        // Determine the Gradle tasks to run based on platform
+        let mut tasks = vec!["clean"];
+
+        if ctx.options.release {
+            tasks.push("assembleRelease");
+        } else {
+            tasks.push("assemble");
+        }
+
+        // Add desktop JAR task
+        tasks.push("desktopJar");
+
+        // Add platform-specific native targets
+        #[cfg(target_os = "macos")]
+        {
+            tasks.extend([
+                "iosArm64MainKlibrary",
+                "iosX64MainKlibrary",
+                "iosSimulatorArm64MainKlibrary",
+                "macosArm64MainKlibrary",
+                "macosX64MainKlibrary",
+            ]);
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            tasks.extend([
+                "linuxX64MainKlibrary",
+                "linuxArm64MainKlibrary",
+            ]);
+        }
+
+        // Run Gradle build with all tasks
+        self.run_gradle(ctx, &tasks)?;
 
         // Find build outputs
         let outputs = self.find_build_outputs(ctx)?;

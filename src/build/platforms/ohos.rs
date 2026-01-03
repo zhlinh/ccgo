@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{ArchiveBuilder, ARCHIVE_DIR_INCLUDE};
+use crate::build::archive::{get_unified_include_path, ArchiveBuilder};
 use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::toolchains::ohos::{OhosAbi, OhosSdkToolchain, DEFAULT_MIN_SDK_VERSION};
 use crate::build::toolchains::Toolchain;
@@ -588,17 +588,11 @@ impl PlatformBuilder for OhosBuilder {
         std::fs::create_dir_all(&symbols_staging)?;
 
         let mut built_link_types = Vec::new();
-        let mut first_build_dir: Option<PathBuf> = None;
         let mut symbols_archive: Option<PathBuf> = None;
 
         // Build static libraries
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
             let results = self.build_link_type(ctx, &sdk, "static", &abis, min_sdk_version)?;
-
-            if first_build_dir.is_none() && !results.is_empty() {
-                first_build_dir = Some(results[0].1.clone());
-            }
-
             self.add_libraries_to_archive(&archive, &results, "static", false, ctx.lib_name())?;
             built_link_types.push("static");
         }
@@ -606,10 +600,6 @@ impl PlatformBuilder for OhosBuilder {
         // Build shared libraries
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
             let results = self.build_link_type(ctx, &sdk, "shared", &abis, min_sdk_version)?;
-
-            if first_build_dir.is_none() && !results.is_empty() {
-                first_build_dir = Some(results[0].1.clone());
-            }
 
             // Save unstripped libraries to symbols staging
             if ctx.options.verbose {
@@ -635,19 +625,13 @@ impl PlatformBuilder for OhosBuilder {
             self.copy_libraries_to_libs(ctx, &abis, ctx.lib_name())?;
         }
 
-        // Add include files
-        if let Some(build_dir) = first_build_dir {
-            // Check multiple possible include locations
-            let possible_include_dirs = vec![
-                build_dir.join("install/include"),
-                build_dir.join("include"),
-            ];
-            for include_source in possible_include_dirs {
-                if include_source.exists() {
-                    let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
-                    archive.add_directory(&include_source, &include_path)?;
-                    break;
-                }
+        // Add include files from project's include directory (matching pyccgo behavior)
+        let include_source = ctx.project_root.join("include");
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
             }
         }
 

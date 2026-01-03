@@ -8,7 +8,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 
 use crate::build::archive::{
-    ArchiveBuilder, ARCHIVE_DIR_INCLUDE, ARCHIVE_DIR_OBJ, ARCHIVE_DIR_SHARED,
+    get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_OBJ, ARCHIVE_DIR_SHARED,
     ARCHIVE_DIR_STATIC,
 };
 use crate::build::cmake::{BuildType, CMakeConfig};
@@ -194,16 +194,14 @@ impl PlatformBuilder for LinuxBuilder {
             built_link_types.push("shared");
         }
 
-        // Add include files (from either build - they're the same)
-        // Path: include/{lib_name}/
-        let include_source = if built_link_types.contains(&"static") {
-            ctx.cmake_build_dir.join("static/install/include")
-        } else {
-            ctx.cmake_build_dir.join("shared/install/include")
-        };
+        // Add include files from project's include directory (matching pyccgo behavior)
+        let include_source = ctx.project_root.join("include");
         if include_source.exists() {
-            let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+            }
         }
 
         // Create the SDK archive

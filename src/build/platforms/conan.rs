@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{ArchiveBuilder, ARCHIVE_DIR_INCLUDE, ARCHIVE_DIR_SHARED, ARCHIVE_DIR_STATIC};
+use crate::build::archive::{get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_SHARED, ARCHIVE_DIR_STATIC};
 use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
@@ -80,6 +80,14 @@ impl ConanBuilder {
             eprintln!("Using conanfile: {}", conanfile.display());
         }
 
+        // Get CCGO_CMAKE_DIR to pass to conan
+        let ccgo_cmake_dir = ctx.ccgo_cmake_dir();
+        if ctx.options.verbose {
+            if let Some(ref dir) = ccgo_cmake_dir {
+                eprintln!("CCGO_CMAKE_DIR: {}", dir.display());
+            }
+        }
+
         // Step 1: conan install - install dependencies and generate build files
         let mut install_cmd = Command::new("conan");
         install_cmd
@@ -91,12 +99,20 @@ impl ConanBuilder {
             .arg("--build=missing")
             .arg(format!("-s:h=build_type={}", build_type));
 
+        // Pass CCGO_CMAKE_DIR environment variable
+        if let Some(ref cmake_dir) = ccgo_cmake_dir {
+            install_cmd.env("CCGO_CMAKE_DIR", cmake_dir);
+        }
+
         // Add shared library setting
         if build_shared {
             install_cmd.arg("-o:h=*:shared=True");
         } else {
             install_cmd.arg("-o:h=*:shared=False");
         }
+
+        // Pass CCGO_BUILD_SHARED environment variable for conanfile.py to read
+        install_cmd.env("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" });
 
         if ctx.options.verbose {
             eprintln!("Running: conan install {:?}", install_cmd.get_args().collect::<Vec<_>>());
@@ -111,6 +127,7 @@ impl ConanBuilder {
         }
 
         // Step 2: conan build - build the library
+        // Note: conan build may regenerate toolchain files, so we need to pass settings again
         let mut build_cmd = Command::new("conan");
         build_cmd
             .current_dir(conanfile_dir)
@@ -118,6 +135,15 @@ impl ConanBuilder {
             .arg(".")
             .arg("--output-folder")
             .arg(build_dir.display().to_string());
+
+        // Pass CCGO_CMAKE_DIR environment variable
+        if let Some(ref cmake_dir) = ccgo_cmake_dir {
+            build_cmd.env("CCGO_CMAKE_DIR", cmake_dir);
+        }
+
+        // Pass CCGO_BUILD_SHARED environment variable for conanfile.py to read
+        // This ensures the shared setting is preserved when conan build regenerates toolchain
+        build_cmd.env("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" });
 
         if ctx.options.verbose {
             eprintln!("Running: conan build {:?}", build_cmd.get_args().collect::<Vec<_>>());
@@ -178,19 +204,38 @@ impl ConanBuilder {
     }
 
     /// Find library directory in build output
-    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+    /// Checks for actual library files, not just directory existence
+    fn find_lib_dir(&self, build_dir: &PathBuf, _is_release: bool) -> Option<PathBuf> {
+        // Conan 2.x with cmake_layout puts libraries directly in build/Release or build/Debug
+        // Always check Release first since Conan often builds Release even for debug configs
         let possible_dirs = vec![
-            build_dir.join("out"),           // CCGO cmake output
-            build_dir.join("install/lib"),   // CMake install
-            build_dir.join("lib"),           // Direct lib output
-            build_dir.join("build/lib"),     // Conan build output
-            build_dir.join("build/Release/lib"), // Conan Release build
-            build_dir.join("build/Debug/lib"),   // Conan Debug build
+            build_dir.join("out"),                          // CCGO cmake output
+            build_dir.join("build/Release"),                // Conan Release build (most common)
+            build_dir.join("build/Debug"),                  // Conan Debug build
+            build_dir.join("install/lib"),                  // CMake install
+            build_dir.join("lib"),                          // Direct lib output
+            build_dir.join("build/lib"),                    // Conan build output
         ];
 
-        for dir in possible_dirs {
-            if dir.exists() {
-                return Some(dir);
+        // Library extensions to look for
+        let lib_extensions = ["a", "so", "dylib", "lib", "dll"];
+
+        for dir in &possible_dirs {
+            if !dir.exists() {
+                continue;
+            }
+            // Check if directory contains any library files
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            if lib_extensions.contains(&ext) {
+                                return Some(dir.clone());
+                            }
+                        }
+                    }
+                }
             }
         }
         None
@@ -278,9 +323,10 @@ impl PlatformBuilder for ConanBuilder {
             let build_dir = self.build_link_type(ctx, "static")?;
 
             // Add static library to archive: lib/conan/static/
-            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+            // Use add_files_flat to only copy files at root level (merged library only)
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir, ctx.options.release) {
                 let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_STATIC);
-                archive.add_directory_filtered(&lib_dir, &archive_path, &["a", "lib"])?;
+                archive.add_files_flat(&lib_dir, &archive_path, &["a", "lib"])?;
             }
             built_link_types.push("static");
         }
@@ -293,33 +339,32 @@ impl PlatformBuilder for ConanBuilder {
             let build_dir = self.build_link_type(ctx, "shared")?;
 
             // Add shared library to archive: lib/conan/shared/
-            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+            // Use add_files_flat to only copy files at root level (merged library only)
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir, ctx.options.release) {
                 let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED);
                 // Include platform-appropriate shared library extensions
                 #[cfg(target_os = "windows")]
                 let extensions = &["dll", "lib"];
                 #[cfg(target_os = "macos")]
-                let extensions = &["dylib", "so"];
+                let extensions = &["dylib", "so", "a"]; // Include .a for static archives used with shared
                 #[cfg(target_os = "linux")]
-                let extensions = &["so"];
+                let extensions = &["so", "a"];
                 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-                let extensions = &["so", "dylib", "dll"];
+                let extensions = &["so", "dylib", "dll", "a"];
 
-                archive.add_directory_filtered(&lib_dir, &archive_path, extensions)?;
+                archive.add_files_flat(&lib_dir, &archive_path, extensions)?;
             }
             built_link_types.push("shared");
         }
 
-        // Add include files
-        let include_source = if built_link_types.contains(&"static") {
-            self.find_include_dir(&ctx.cmake_build_dir.join("static"))
-        } else {
-            self.find_include_dir(&ctx.cmake_build_dir.join("shared"))
-        };
-
-        if let Some(include_dir) = include_source {
-            let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
-            archive.add_directory(&include_dir, &include_path)?;
+        // Add include files from project's include directory (matching pyccgo behavior)
+        let include_source = ctx.project_root.join("include");
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+            }
         }
 
         // Create the SDK archive

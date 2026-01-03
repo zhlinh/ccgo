@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{ArchiveBuilder, ARCHIVE_DIR_INCLUDE};
+use crate::build::archive::{get_unified_include_path, ArchiveBuilder};
 use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::toolchains::mingw::{is_mingw_available, MingwToolchain};
 use crate::build::toolchains::msvc::is_msvc_available;
@@ -440,16 +440,10 @@ impl PlatformBuilder for WindowsBuilder {
         )?;
 
         let mut built_link_types = Vec::new();
-        let mut first_build_dir: Option<PathBuf> = None;
 
         // Build static libraries
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
             let build_dir = self.build_link_type(ctx, "static", toolchain)?;
-
-            if first_build_dir.is_none() {
-                first_build_dir = Some(build_dir.clone());
-            }
-
             self.add_libraries_to_archive(&archive, &build_dir, "static", false, toolchain)?;
             built_link_types.push("static");
         }
@@ -457,10 +451,6 @@ impl PlatformBuilder for WindowsBuilder {
         // Build shared libraries
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
             let build_dir = self.build_link_type(ctx, "shared", toolchain)?;
-
-            if first_build_dir.is_none() {
-                first_build_dir = Some(build_dir.clone());
-            }
 
             // Strip shared libraries for release builds (MinGW only)
             if ctx.options.release && toolchain == WindowsToolchain::MinGW {
@@ -475,18 +465,13 @@ impl PlatformBuilder for WindowsBuilder {
             built_link_types.push("shared");
         }
 
-        // Add include files
-        if let Some(build_dir) = first_build_dir {
-            let possible_include_dirs = vec![
-                build_dir.join("install/include"),
-                build_dir.join("include"),
-            ];
-            for include_source in possible_include_dirs {
-                if include_source.exists() {
-                    let include_path = format!("{}/{}", ARCHIVE_DIR_INCLUDE, ctx.lib_name());
-                    archive.add_directory(&include_source, &include_path)?;
-                    break;
-                }
+        // Add include files from project's include directory (matching pyccgo behavior)
+        let include_source = ctx.project_root.join("include");
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
             }
         }
 
