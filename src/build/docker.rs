@@ -483,7 +483,8 @@ impl DockerBuilder {
         self.check_docker()?;
 
         // 2. Build/pull image
-        self.build_image(true)?;
+        // FIXME: Temporarily disable prebuilt images to test new code
+        self.build_image(false)?;
 
         // 3. Run build
         self.run_build()?;

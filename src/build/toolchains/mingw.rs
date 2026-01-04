@@ -196,6 +196,91 @@ impl MingwToolchain {
         let ar_name = format!("{}-ar", self.arch.triple_prefix());
         find_executable(&ar_name).unwrap_or_else(|| PathBuf::from(&ar_name))
     }
+
+    /// Merge multiple static libraries into a single library using ar
+    /// This is essential for KMP cinterop which expects a single complete library
+    pub fn merge_static_libs(&self, src_libs: &[PathBuf], dst_lib: &PathBuf) -> Result<()> {
+        use anyhow::Context;
+
+        if src_libs.is_empty() {
+            bail!("No source libraries to merge");
+        }
+
+        // Ensure output directory exists
+        if let Some(parent) = dst_lib.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Create a temporary directory for extracting object files
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ccgo-merge-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ));
+        std::fs::create_dir_all(&temp_dir)?;
+
+        let ar_cmd = self.ar_path();
+
+        // Extract all object files from source libraries
+        for (idx, lib) in src_libs.iter().enumerate() {
+            let extract_dir = temp_dir.join(format!("lib{}", idx));
+            std::fs::create_dir_all(&extract_dir)?;
+
+            // Extract objects: ar x libname.a
+            let output = Command::new(&ar_cmd)
+                .arg("x")
+                .arg(lib)
+                .current_dir(&extract_dir)
+                .output()
+                .context("Failed to run ar for extraction")?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                std::fs::remove_dir_all(&temp_dir).ok();
+                bail!("ar extraction failed for {}: {}", lib.display(), stderr);
+            }
+        }
+
+        // Collect all .o files from all extraction directories
+        let mut object_files: Vec<PathBuf> = Vec::new();
+        for entry in walkdir::WalkDir::new(&temp_dir) {
+            let entry = entry?;
+            if entry.path().extension().map_or(false, |ext| ext == "o") {
+                object_files.push(entry.path().to_path_buf());
+            }
+        }
+
+        if object_files.is_empty() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+            bail!("No object files found in source libraries");
+        }
+
+        // Remove existing output library if it exists
+        if dst_lib.exists() {
+            std::fs::remove_file(dst_lib)?;
+        }
+
+        // Create the merged library: ar rcs output.a obj1.o obj2.o ...
+        let mut cmd = Command::new(&ar_cmd);
+        cmd.arg("rcs").arg(dst_lib);
+        for obj in &object_files {
+            cmd.arg(obj);
+        }
+
+        let output = cmd.output().context("Failed to run ar for merging")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            std::fs::remove_dir_all(&temp_dir).ok();
+            bail!("ar merge failed: {}", stderr);
+        }
+
+        // Clean up temporary directory
+        std::fs::remove_dir_all(&temp_dir).ok();
+
+        Ok(())
+    }
 }
 
 impl Toolchain for MingwToolchain {

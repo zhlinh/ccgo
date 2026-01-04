@@ -25,6 +25,113 @@ impl LinuxBuilder {
         Self
     }
 
+    /// Merge all module static libraries into a single library
+    /// This is essential for KMP cinterop which expects a single complete library
+    fn merge_module_static_libs(
+        &self,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        use crate::build::toolchains::linux::LinuxToolchain;
+
+        // Find the output directory where CMake puts libraries
+        let out_dir = build_dir.join("out");
+        if verbose {
+            eprintln!("    [merge] Checking out directory: {}", out_dir.display());
+        }
+        if !out_dir.exists() {
+            if verbose {
+                eprintln!("    [merge] Out directory does not exist, skipping merge");
+            }
+            return Ok(());
+        }
+
+        // Find all .a files (module libraries)
+        let mut module_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&out_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        module_libs.push(path);
+                    }
+                }
+            }
+        }
+
+        if verbose {
+            eprintln!("    [merge] Found {} .a files:", module_libs.len());
+            for lib in &module_libs {
+                eprintln!("      - {}", lib.file_name().unwrap().to_string_lossy());
+            }
+        }
+
+        if module_libs.is_empty() {
+            if verbose {
+                eprintln!("    [merge] No libraries found, skipping merge");
+            }
+            return Ok(());
+        }
+
+        // Check if we only have the main library (already merged or single module)
+        let main_lib_name = format!("lib{}.a", lib_name);
+        if module_libs.len() == 1 && module_libs[0].file_name().map_or(false, |n| n == main_lib_name.as_str()) {
+            if verbose {
+                eprintln!("    [merge] Only main library exists, skipping merge");
+            }
+            return Ok(());
+        }
+
+        // Filter out the main library if it exists (we'll recreate it)
+        let main_lib_path = out_dir.join(&main_lib_name);
+        module_libs.retain(|p| p != &main_lib_path);
+
+        if verbose {
+            eprintln!("    [merge] Module libraries to merge: {}", module_libs.len());
+            for lib in &module_libs {
+                eprintln!("      - {}", lib.file_name().unwrap().to_string_lossy());
+            }
+        }
+
+        if module_libs.is_empty() {
+            if verbose {
+                eprintln!("    [merge] No module libraries after filtering, skipping merge");
+            }
+            return Ok(());
+        }
+
+        eprintln!(
+            "    Merging {} module libraries into {}",
+            module_libs.len(),
+            main_lib_name
+        );
+
+        // Merge all module libraries into the main library
+        let toolchain = LinuxToolchain::detect()?;
+        toolchain.merge_static_libs(&module_libs, &main_lib_path)?;
+
+        // Clean up module libraries after merge
+        eprintln!("    Cleaning up {} module libraries...", module_libs.len());
+        for lib in &module_libs {
+            if lib != &main_lib_path {
+                match std::fs::remove_file(lib) {
+                    Ok(_) => {
+                        if verbose {
+                            eprintln!("      ✓ Removed: {}", lib.file_name().unwrap().to_string_lossy());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("      ⚠ Failed to remove {}: {}", lib.file_name().unwrap().to_string_lossy(), e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Build a specific link type (static or shared)
     /// Returns the build directory where output is located
     fn build_link_type(&self, ctx: &BuildContext, link_type: &str) -> Result<PathBuf> {
@@ -65,6 +172,12 @@ impl LinuxBuilder {
         }
 
         cmake.configure_build_install()?;
+
+        // For static builds, merge all module libraries into a single library
+        // This is essential for KMP cinterop which expects a single complete library
+        if !build_shared {
+            self.merge_module_static_libs(&build_dir, ctx.lib_name(), ctx.options.verbose)?;
+        }
 
         // Return build_dir since CCGO cmake installs to build_dir/out/
         Ok(build_dir)

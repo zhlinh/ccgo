@@ -45,6 +45,76 @@ impl WindowsBuilder {
         Self
     }
 
+    /// Merge all module static libraries into a single library (MinGW)
+    /// This is essential for KMP cinterop which expects a single complete library
+    fn merge_module_static_libs_mingw(
+        &self,
+        mingw: &MingwToolchain,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        // Find the output directory where CMake puts libraries
+        let out_dir = build_dir.join("out");
+        if !out_dir.exists() {
+            // No out directory means no libraries to merge
+            return Ok(());
+        }
+
+        // Find all .a files (module libraries)
+        let mut module_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&out_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        module_libs.push(path);
+                    }
+                }
+            }
+        }
+
+        if module_libs.is_empty() {
+            return Ok(());
+        }
+
+        // Check if we only have the main library (already merged or single module)
+        let main_lib_name = format!("lib{}.a", lib_name);
+        if module_libs.len() == 1 && module_libs[0].file_name().map_or(false, |n| n == main_lib_name.as_str()) {
+            // Already a single main library, nothing to merge
+            return Ok(());
+        }
+
+        // Filter out the main library if it exists (we'll recreate it)
+        let main_lib_path = out_dir.join(&main_lib_name);
+        module_libs.retain(|p| p != &main_lib_path);
+
+        if module_libs.is_empty() {
+            return Ok(());
+        }
+
+        if verbose {
+            eprintln!(
+                "    Merging {} module libraries into {}",
+                module_libs.len(),
+                main_lib_name
+            );
+        }
+
+        // Merge all module libraries into the main library
+        mingw.merge_static_libs(&module_libs, &main_lib_path)?;
+
+        // Clean up module libraries after merge (optional, keeps output clean)
+        for lib in &module_libs {
+            if lib != &main_lib_path {
+                let _ = std::fs::remove_file(lib);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Detect available Windows toolchain
     fn detect_toolchain() -> Result<WindowsToolchain> {
         // Prefer MinGW for cross-platform builds
@@ -119,6 +189,12 @@ impl WindowsBuilder {
         }
 
         cmake.configure_build_install()?;
+
+        // For static builds, merge all module libraries into a single library
+        // This is essential for KMP cinterop which expects a single complete library
+        if !build_shared {
+            self.merge_module_static_libs_mingw(mingw, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+        }
 
         Ok(build_dir)
     }
