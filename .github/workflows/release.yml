@@ -196,10 +196,53 @@ jobs:
           pattern: binaries-*
           path: binaries
           merge-multiple: true
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: binaries/*
+          body: |
+            ## Installation
+
+            **Python Package (PyPI):**
+            ```bash
+            pip install ccgo==${{ steps.version.outputs.VERSION }}
+            # or
+            pip install --upgrade ccgo
+            ```
+
+            **Rust Binary (crates.io):**
+            ```bash
+            cargo install ccgo
+            ```
+
+            **Pre-built Binaries:**
+            Download platform-specific binaries from the assets below.
+
+            ## Quick Start
+
+            ```bash
+            # Create a new C++ cross-platform project
+            ccgo new my-project
+
+            # Build for different platforms
+            cd my-project/<project_name>
+            ccgo build android
+            ccgo build ios
+            ccgo build macos
+            ccgo build linux
+            ccgo build windows
+
+            # Cross-platform builds using Docker
+            ccgo build linux --docker
+            ccgo build windows --docker
+            ccgo build macos --docker
+            ccgo build ios --docker
+            ```
+
+            See [CHANGELOG.md](https://github.com/ccgo-group/ccgo/blob/main/CHANGELOG.md) for details.
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
