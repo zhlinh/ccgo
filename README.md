@@ -21,12 +21,17 @@ A cross-platform C++ build system designed to simplify and accelerate multi-plat
 ## Installation
 
 ```bash
-# Install from PyPI
-pip3 install ccgo
+# Install from PyPI (pre-built binaries)
+pip install ccgo
 
-# Or install from source in development mode
+# Or install from crates.io
+cargo install ccgo
+
+# Or build from source
+git clone https://github.com/zhlinh/ccgo.git
 cd ccgo
-pip3 install -e .
+cargo build --release
+# Binary will be at target/release/ccgo
 ```
 
 ## Quick Start
@@ -788,9 +793,10 @@ ccgo build ohos --arch armeabi-v7a,arm64-v8a,x86_64
 ### Common Issues
 
 1. **"Command not found" after installation**
-   
-   - Ensure `pip3` install directory is in your PATH
-   - Try `python3 -m ccgo` instead of `ccgo`
+
+   - Ensure `pip` or `cargo` install directory is in your PATH
+   - For pip: typically `~/.local/bin` (Linux/macOS) or `%APPDATA%\Python\Scripts` (Windows)
+   - For cargo: typically `~/.cargo/bin`
 
 2. **Android build fails**
    
@@ -819,5 +825,6 @@ See the LICENSE file for the full license text.
 ## Links
 
 - [GitHub Repository](https://github.com/zhlinh/ccgo)
+- [Crates.io Package](https://crates.io/crates/ccgo)
 - [PyPI Package](https://pypi.org/project/ccgo/)
 - [Issue Tracker](https://github.com/zhlinh/ccgo/issues)
