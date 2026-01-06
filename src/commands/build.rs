@@ -265,6 +265,10 @@ impl BuildCommand {
             }
         }
 
+        // Print build info JSON before success message
+        let build_info = create_build_info_full(lib_name, version, platform, project_root);
+        print_build_info_json(&build_info);
+
         eprintln!(
             "\n✓ {} built successfully in {:.2}s",
             lib_name, total_duration
@@ -307,9 +311,5 @@ impl BuildCommand {
                 }
             }
         }
-
-        // Print build info JSON in pyccgo format
-        let build_info = create_build_info_full(lib_name, version, platform, project_root);
-        print_build_info_json(&build_info);
     }
 }
