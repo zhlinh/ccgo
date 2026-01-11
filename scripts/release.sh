@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release script for linthis
+# Release script for ccgo
 # Usage: ./scripts/release.sh <version> [--push]
 #        ./scripts/release.sh --patch|--minor|--major [--push]
 #
@@ -112,7 +112,7 @@ main() {
 		exit 0
 	fi
 
-	echo -e "${GREEN}Releasing linthis${NC}"
+	echo -e "${GREEN}Releasing ccgo${NC}"
 	echo -e "  Current version: ${YELLOW}$current_version${NC}"
 	echo -e "  New version:     ${GREEN}$new_version${NC}"
 	echo ""
@@ -125,7 +125,7 @@ main() {
 	# Sync Cargo.lock
 	echo ""
 	echo "Syncing Cargo.lock..."
-	cargo update -p linthis
+	cargo update -p ccgo
 	echo -e "  ${GREEN}Updated${NC} Cargo.lock"
 
 	echo ""
