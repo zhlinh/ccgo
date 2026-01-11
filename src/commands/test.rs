@@ -49,6 +49,7 @@ impl TestCommand {
             architectures: vec![],
             link_type: LinkType::Both,
             use_docker: false,
+            auto_docker: false,
             jobs: self.jobs,
             ide_project: self.ide_project,
             release: self.release,

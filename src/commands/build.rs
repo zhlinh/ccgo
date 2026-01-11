@@ -11,7 +11,7 @@ use crate::build::{BuildContext, BuildOptions, BuildResult};
 use crate::config::CcgoConfig;
 
 /// Target platform for building
-#[derive(Debug, Clone, PartialEq, ValueEnum)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, ValueEnum)]
 pub enum BuildTarget {
     /// Build for all platforms
     All,
@@ -121,6 +121,13 @@ pub struct BuildCommand {
     #[arg(long)]
     pub docker: bool,
 
+    /// Automatically use Docker when native build is not possible
+    ///
+    /// For example, on macOS building for Linux or Windows requires Docker.
+    /// This flag will automatically detect and use Docker when needed.
+    #[arg(long)]
+    pub auto_docker: bool,
+
     /// Number of parallel jobs
     #[arg(short, long)]
     pub jobs: Option<usize>,
@@ -147,6 +154,48 @@ pub struct BuildCommand {
 }
 
 impl BuildCommand {
+    /// Check if a platform can be built natively on the current host
+    fn can_build_natively(target: &BuildTarget) -> bool {
+        let host_os = std::env::consts::OS;
+
+        match target {
+            // All/Apple/Kmp/Conan are meta-targets, check individual platforms
+            BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => true,
+
+            // Linux can only be built natively on Linux
+            BuildTarget::Linux => host_os == "linux",
+
+            // Windows can only be built natively on Windows
+            BuildTarget::Windows => host_os == "windows",
+
+            // Apple platforms can only be built on macOS (Xcode required)
+            BuildTarget::Macos | BuildTarget::Ios | BuildTarget::Tvos | BuildTarget::Watchos => {
+                host_os == "macos"
+            }
+
+            // Android can be built on any platform with NDK
+            BuildTarget::Android => true,
+
+            // OHOS can be built on any platform with OHOS SDK
+            BuildTarget::Ohos => true,
+        }
+    }
+
+    /// Determine if Docker should be used for this build
+    fn should_use_docker(&self, target: &BuildTarget) -> bool {
+        // Explicit --docker flag always uses Docker
+        if self.docker {
+            return true;
+        }
+
+        // --auto-docker enables automatic Docker detection
+        if self.auto_docker && !Self::can_build_natively(target) {
+            return true;
+        }
+
+        false
+    }
+
     /// Execute the build command
     pub fn execute(self, verbose: bool) -> Result<()> {
         // Load project configuration
@@ -162,9 +211,22 @@ impl BuildCommand {
             );
         }
 
+        // Check if we should use Docker (explicit or auto-detected)
+        let use_docker = self.should_use_docker(&self.target);
+
+        // If auto-docker detected Docker is needed, inform the user
+        if self.auto_docker && use_docker && !self.docker {
+            let host_os = std::env::consts::OS;
+            eprintln!(
+                "🐳 Auto-docker: {} cannot be built natively on {} - using Docker",
+                self.target, host_os
+            );
+        }
+
         // Parse architectures from comma-separated string
         let architectures = self
             .arch
+            .clone()
             .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
             .unwrap_or_default();
 
@@ -172,13 +234,14 @@ impl BuildCommand {
         let options = BuildOptions {
             target: self.target.clone(),
             architectures,
-            link_type: self.link_type,
-            use_docker: self.docker,
+            link_type: self.link_type.clone(),
+            use_docker,
+            auto_docker: self.auto_docker,
             jobs: self.jobs,
             ide_project: self.ide_project,
             release: self.release,
             native_only: self.native_only,
-            toolchain: self.toolchain,
+            toolchain: self.toolchain.clone(),
             verbose,
             dev: self.dev,
         };
@@ -186,33 +249,43 @@ impl BuildCommand {
         // Create build context
         let ctx = BuildContext::new(project_root, config.clone(), options);
 
-        // Check if Docker build is requested
-        if self.docker {
+        // Check if Docker build is requested (explicit or auto-detected)
+        if use_docker {
             use crate::build::docker::DockerBuilder;
 
             // Docker builds only support specific platforms
             match self.target {
                 BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
-                    bail!(
-                        "Docker builds are not supported for '{}' target.\n\n\
-                         Docker builds support: linux, windows, macos, ios, tvos, watchos, android\n\
-                         Build these platforms individually with --docker flag.",
-                        self.target
-                    );
+                    if self.auto_docker {
+                        // For auto-docker with multi-platform targets, we should fall through
+                        // to native build which will handle Docker per-platform
+                        eprintln!(
+                            "ℹ Auto-docker with '{}' will build each platform with Docker as needed",
+                            self.target
+                        );
+                    } else {
+                        bail!(
+                            "Docker builds are not supported for '{}' target.\n\n\
+                             Docker builds support: linux, windows, macos, ios, tvos, watchos, android\n\
+                             Build these platforms individually with --docker flag.\n\
+                             Or use --auto-docker to automatically use Docker when needed.",
+                            self.target
+                        );
+                    }
                 }
-                _ => {}
+                _ => {
+                    // Save project_root before ctx is moved
+                    let docker_project_root = ctx.project_root.clone();
+
+                    // Create Docker builder and execute
+                    let docker_builder = DockerBuilder::new(ctx)?;
+                    let result = docker_builder.execute()?;
+
+                    // Print results summary (same as non-Docker builds)
+                    Self::print_results(&config.package.name, &config.package.version, &self.target.to_string(), &docker_project_root, &[result], verbose);
+                    return Ok(());
+                }
             }
-
-            // Save project_root before ctx is moved
-            let docker_project_root = ctx.project_root.clone();
-
-            // Create Docker builder and execute
-            let docker_builder = DockerBuilder::new(ctx)?;
-            let result = docker_builder.execute()?;
-
-            // Print results summary (same as non-Docker builds)
-            Self::print_results(&config.package.name, &config.package.version, &self.target.to_string(), &docker_project_root, &[result], verbose);
-            return Ok(());
         }
 
         // Check CCGO_CMAKE_DIR availability

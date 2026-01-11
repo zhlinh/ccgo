@@ -61,6 +61,34 @@ impl WindowsBuilder {
             return Ok(());
         }
 
+        // Check if the main library already exists (CMake may have already merged it)
+        let main_lib_name = format!("lib{}.a", lib_name);
+        let main_lib_path = out_dir.join(&main_lib_name);
+
+        if main_lib_path.exists() {
+            // Check if it's a non-empty file (CMake already created the merged library)
+            if let Ok(metadata) = std::fs::metadata(&main_lib_path) {
+                if metadata.len() > 0 {
+                    if verbose {
+                        eprintln!("    Main library {} already exists, skipping merge", main_lib_name);
+                    }
+                    // Clean up module libraries (keep output directory clean)
+                    for entry in std::fs::read_dir(&out_dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.is_file() && path != main_lib_path {
+                            if let Some(ext) = path.extension() {
+                                if ext == "a" {
+                                    let _ = std::fs::remove_file(&path);
+                                }
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
         // Find all .a files (module libraries)
         let mut module_libs: Vec<PathBuf> = Vec::new();
         for entry in std::fs::read_dir(&out_dir)? {
@@ -80,14 +108,12 @@ impl WindowsBuilder {
         }
 
         // Check if we only have the main library (already merged or single module)
-        let main_lib_name = format!("lib{}.a", lib_name);
         if module_libs.len() == 1 && module_libs[0].file_name().map_or(false, |n| n == main_lib_name.as_str()) {
             // Already a single main library, nothing to merge
             return Ok(());
         }
 
         // Filter out the main library if it exists (we'll recreate it)
-        let main_lib_path = out_dir.join(&main_lib_name);
         module_libs.retain(|p| p != &main_lib_path);
 
         if module_libs.is_empty() {

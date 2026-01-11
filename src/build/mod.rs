@@ -47,6 +47,8 @@ pub struct BuildOptions {
     pub link_type: LinkType,
     /// Use Docker for building
     pub use_docker: bool,
+    /// Automatically use Docker when native build is not possible
+    pub auto_docker: bool,
     /// Number of parallel jobs
     pub jobs: Option<usize>,
     /// Generate IDE project files
@@ -70,6 +72,7 @@ impl Default for BuildOptions {
             architectures: Vec::new(),
             link_type: LinkType::Both,
             use_docker: false,
+            auto_docker: false,
             jobs: None,
             ide_project: false,
             release: true,

@@ -243,11 +243,12 @@ impl MingwToolchain {
             }
         }
 
-        // Collect all .o files from all extraction directories
+        // Collect all object files (.o or .obj) from all extraction directories
         let mut object_files: Vec<PathBuf> = Vec::new();
         for entry in walkdir::WalkDir::new(&temp_dir) {
             let entry = entry?;
-            if entry.path().extension().map_or(false, |ext| ext == "o") {
+            let ext = entry.path().extension().and_then(|e| e.to_str());
+            if matches!(ext, Some("o") | Some("obj")) {
                 object_files.push(entry.path().to_path_buf());
             }
         }
