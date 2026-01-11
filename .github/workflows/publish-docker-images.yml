@@ -36,8 +36,11 @@ env:
   # GHCR settings
   GHCR_REGISTRY: ghcr.io
   GHCR_USERNAME: ${{ github.repository_owner }}
-  # Docker Hub settings (requires secrets: DOCKER_HUB_USERNAME, DOCKER_HUB_TOKEN)
+  # Docker Hub settings (requires secrets: DOCKER_HUB_TOKEN)
+  # Note: Using github.repository_owner for username to avoid masking in logs
+  # If your Docker Hub username differs, use repository variables instead of secrets
   DOCKERHUB_REGISTRY: docker.io
+  DOCKERHUB_USERNAME: zhlinhub
 
 # Required permissions for pushing to GHCR
 permissions:
@@ -103,7 +106,7 @@ jobs:
         id: image_names
         run: |
           GHCR_IMAGE="${{ env.GHCR_REGISTRY }}/${{ env.GHCR_USERNAME }}/${{ matrix.image }}"
-          DOCKERHUB_IMAGE="${{ secrets.DOCKER_HUB_USERNAME }}/${{ matrix.image }}"
+          DOCKERHUB_IMAGE="${{ env.DOCKERHUB_USERNAME }}/${{ matrix.image }}"
 
           echo "ghcr_image=${GHCR_IMAGE}" >> $GITHUB_OUTPUT
           echo "dockerhub_image=${DOCKERHUB_IMAGE}" >> $GITHUB_OUTPUT
@@ -172,7 +175,7 @@ jobs:
       - name: Summary
         run: |
           GHCR_PREFIX="${{ env.GHCR_REGISTRY }}/${{ env.GHCR_USERNAME }}"
-          DOCKERHUB_PREFIX="${{ secrets.DOCKER_HUB_USERNAME }}"
+          DOCKERHUB_PREFIX="${{ env.DOCKERHUB_USERNAME }}"
 
           echo "## Docker Images Published 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
