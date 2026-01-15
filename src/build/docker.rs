@@ -24,6 +24,9 @@ const DOCKERFILE_APPLE: &str = include_str!("../../dockers/Dockerfile.apple");
 const DOCKERFILE_WINDOWS_MINGW: &str = include_str!("../../dockers/Dockerfile.windows-mingw");
 const DOCKERFILE_WINDOWS_MSVC: &str = include_str!("../../dockers/Dockerfile.windows-msvc");
 
+// Embed CMake toolchain files at compile time
+const CMAKE_TOOLCHAIN_WINDOWS_MSVC: &str = include_str!("../../cmake/windows-msvc.toolchain.cmake");
+
 /// GitHub Container Registry organization for prebuilt images
 const GHCR_REPO: &str = "ghcr.io/zhlinh";
 
@@ -43,8 +46,10 @@ pub struct PlatformDockerConfig {
 
 impl PlatformDockerConfig {
     /// Get Docker configuration for a platform
-    pub fn for_platform(platform: &BuildTarget) -> Option<Self> {
-        match platform {
+    pub fn for_platform(options: &super::BuildOptions) -> Option<Self> {
+        use crate::commands::build::WindowsToolchain;
+
+        match options.target {
             BuildTarget::Linux => Some(Self {
                 dockerfile: "Dockerfile.linux",
                 dockerfile_content: DOCKERFILE_LINUX,
@@ -52,13 +57,35 @@ impl PlatformDockerConfig {
                 remote_image: format!("{}/ccgo-builder-linux:latest", GHCR_REPO),
                 size_estimate: "~800MB",
             }),
-            BuildTarget::Windows => Some(Self {
-                dockerfile: "Dockerfile.windows-mingw",
-                dockerfile_content: DOCKERFILE_WINDOWS_MINGW,
-                image_name: "ccgo-builder-windows-mingw",
-                remote_image: format!("{}/ccgo-builder-windows-mingw:latest", GHCR_REPO),
-                size_estimate: "~1.2GB",
-            }),
+            BuildTarget::Windows => {
+                // Choose Docker image based on toolchain parameter
+                match options.toolchain {
+                    WindowsToolchain::Msvc => Some(Self {
+                        dockerfile: "Dockerfile.windows-msvc",
+                        dockerfile_content: DOCKERFILE_WINDOWS_MSVC,
+                        image_name: "ccgo-builder-windows-msvc",
+                        remote_image: format!("{}/ccgo-builder-windows-msvc:latest", GHCR_REPO),
+                        size_estimate: "~2.5GB",
+                    }),
+                    WindowsToolchain::Mingw => Some(Self {
+                        dockerfile: "Dockerfile.windows-mingw",
+                        dockerfile_content: DOCKERFILE_WINDOWS_MINGW,
+                        image_name: "ccgo-builder-windows-mingw",
+                        remote_image: format!("{}/ccgo-builder-windows-mingw:latest", GHCR_REPO),
+                        size_estimate: "~1.2GB",
+                    }),
+                    WindowsToolchain::Auto => {
+                        // Default to MinGW for cross-platform compatibility
+                        Some(Self {
+                            dockerfile: "Dockerfile.windows-mingw",
+                            dockerfile_content: DOCKERFILE_WINDOWS_MINGW,
+                            image_name: "ccgo-builder-windows-mingw",
+                            remote_image: format!("{}/ccgo-builder-windows-mingw:latest", GHCR_REPO),
+                            size_estimate: "~1.2GB",
+                        })
+                    }
+                }
+            },
             BuildTarget::Macos => Some(Self {
                 dockerfile: "Dockerfile.apple",
                 dockerfile_content: DOCKERFILE_APPLE,
@@ -105,7 +132,7 @@ pub struct DockerBuilder {
 impl DockerBuilder {
     /// Create a new Docker builder
     pub fn new(ctx: BuildContext) -> Result<Self> {
-        let config = PlatformDockerConfig::for_platform(&ctx.options.target)
+        let config = PlatformDockerConfig::for_platform(&ctx.options)
             .ok_or_else(|| anyhow::anyhow!("Platform {:?} does not support Docker builds", ctx.options.target))?;
 
         // Get or create the Docker cache directory with embedded Dockerfiles
@@ -146,6 +173,17 @@ impl DockerBuilder {
         let dockerfile_path = docker_dir.join(config.dockerfile);
         fs::write(&dockerfile_path, config.dockerfile_content)
             .with_context(|| format!("Failed to write Dockerfile: {}", dockerfile_path.display()))?;
+
+        // Extract embedded CMake toolchain files for MSVC Docker builds
+        if config.image_name == "ccgo-builder-windows-msvc" {
+            let cmake_dir = docker_dir.join("cmake");
+            fs::create_dir_all(&cmake_dir)
+                .with_context(|| format!("Failed to create cmake directory: {}", cmake_dir.display()))?;
+
+            let toolchain_path = cmake_dir.join("windows-msvc.toolchain.cmake");
+            fs::write(&toolchain_path, CMAKE_TOOLCHAIN_WINDOWS_MSVC)
+                .with_context(|| format!("Failed to write toolchain file: {}", toolchain_path.display()))?;
+        }
 
         Ok(docker_dir)
     }
@@ -341,9 +379,21 @@ impl DockerBuilder {
         // Determine ccgo installation method:
         // Default mode: Install ccgo from crates.io (for normal users)
         // --dev mode: Build from local source or download pre-built binary (for developers)
+        // MSVC mode: Auto-enable dev mode (xwin support not in PyPI yet)
         let mut use_local_source = false;
+        // Temporarily disable auto_dev for MSVC testing
+        // TODO: Re-enable when Rust cross-compilation issues are resolved
+        let auto_dev = false;
+        // let auto_dev = !self.ctx.options.dev
+        //     && self.ctx.options.target == BuildTarget::Windows
+        //     && matches!(self.ctx.options.toolchain, crate::commands::build::WindowsToolchain::Msvc);
 
-        if self.ctx.options.dev {
+        if auto_dev {
+            eprintln!("⚠ MSVC toolchain requires local ccgo build (xwin support not in PyPI yet)");
+            eprintln!("  Auto-enabling dev mode...");
+        }
+
+        if self.ctx.options.dev || auto_dev {
             // Dev mode: Try to find and mount local ccgo source
             let ccgo_src_path = std::env::var("CCGO_SRC_PATH")
                 .map(PathBuf::from)
@@ -380,10 +430,22 @@ impl DockerBuilder {
             }
 
             if !use_local_source {
+                if auto_dev {
+                    bail!(
+                        "MSVC toolchain requires local ccgo build (xwin support not in PyPI yet).\n\
+                         Could not find ccgo source directory.\n\n\
+                         Please set CCGO_SRC_PATH environment variable:\n  \
+                         export CCGO_SRC_PATH=/path/to/ccgo/source\n  \
+                         ccgo build windows --docker --toolchain msvc\n\n\
+                         Or build and install ccgo from source first:\n  \
+                         cd /path/to/ccgo\n  \
+                         cargo install --path ."
+                    );
+                }
                 eprintln!("Using --dev mode: will download pre-built ccgo from GitHub releases");
             }
         } else {
-            eprintln!("Using pre-installed ccgo from Docker image...");
+            eprintln!("Using pre-installed ccgo from Docker image (PyPI 3.x+ Rust version)...");
         }
 
         // Image name
@@ -394,7 +456,8 @@ impl DockerBuilder {
         let link_type = self.ctx.options.link_type.to_string();
 
         // Determine how to get ccgo binary
-        // Default: Use pre-installed ccgo from Docker image (fastest)
+        // NOTE: PyPI ccgo 3.x+ versions are Rust-based with pre-built binaries
+        // Default: Use pre-installed ccgo from Docker image (PyPI 3.x+ Rust version)
         // --dev with local source: Build from source
         // --dev without local source: Download pre-built from GitHub releases
         let (setup_cmd, ccgo_bin) = if use_local_source {
@@ -415,16 +478,10 @@ impl DockerBuilder {
             (download_cmd, "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string())
         } else {
             // Default: Use pre-installed ccgo from Docker image
-            // Fall back to pip install if not available, with helpful error message
             let setup_cmd = format!(
                 "command -v ccgo >/dev/null 2>&1 || \
-                 (command -v pip3 >/dev/null 2>&1 && pip3 install -q ccgo) || \
-                 (echo 'ERROR: ccgo not found and pip3 not available.' && \
-                  echo 'Your Docker image may be outdated. Please rebuild it:' && \
-                  echo '  docker rmi {}' && \
-                  echo 'Then run your build command again.' && \
-                  exit 1)",
-                self.config.image_name
+                 (pip3 install -q ccgo) || \
+                 (echo 'ERROR: ccgo not found.' && exit 1)"
             );
             (setup_cmd, "ccgo".to_string())
         };

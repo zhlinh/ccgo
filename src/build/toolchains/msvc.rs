@@ -22,23 +22,70 @@ pub struct MsvcToolchain {
 }
 
 impl MsvcToolchain {
-    /// Detect MSVC installation using vswhere
+    /// Detect MSVC installation using vswhere (Windows) or xwin (Linux/Docker)
     ///
-    /// This only works on Windows where Visual Studio is installed.
+    /// On Windows: Uses native Visual Studio installation
+    /// On Linux: Checks for xwin + clang-cl setup (Docker environment)
     pub fn detect() -> Result<Self> {
-        // On non-Windows platforms, MSVC is not available
-        #[cfg(not(target_os = "windows"))]
-        {
-            bail!(
-                "MSVC toolchain is only available on Windows. \
-                 Use MinGW for cross-compilation from macOS/Linux."
-            );
-        }
-
         #[cfg(target_os = "windows")]
         {
             Self::detect_windows()
         }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            Self::detect_xwin()
+        }
+    }
+
+    /// Detect xwin-based MSVC setup (Linux/Docker with clang-cl)
+    #[cfg(not(target_os = "windows"))]
+    fn detect_xwin() -> Result<Self> {
+        // Check for xwin SDK directory
+        let xwin_sdk_path = PathBuf::from("/opt/xwin/sdk");
+        if !xwin_sdk_path.exists() {
+            bail!(
+                "xwin Windows SDK not found at /opt/xwin/sdk\n\
+                 For Docker builds with MSVC toolchain, use: --docker --toolchain msvc\n\
+                 For cross-compilation, use MinGW instead: --toolchain mingw"
+            );
+        }
+
+        // Check for clang-cl wrapper script
+        let clang_cl_path = PathBuf::from("/usr/local/bin/clang-cl");
+        if !clang_cl_path.exists() {
+            bail!(
+                "clang-cl wrapper not found at /usr/local/bin/clang-cl\n\
+                 Your Docker image may be outdated. Please rebuild it:\n\
+                 docker rmi ccgo-builder-windows-msvc"
+            );
+        }
+
+        // Verify LLVM/Clang is available
+        let clang_output = std::process::Command::new("clang")
+            .arg("--version")
+            .output();
+
+        if clang_output.is_err() {
+            bail!("clang not found. xwin requires LLVM/Clang to be installed.");
+        }
+
+        // Get LLVM/Clang version
+        let version = if let Ok(output) = clang_output {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("unknown")
+                .to_string()
+        } else {
+            "unknown".to_string()
+        };
+
+        Ok(Self {
+            vs_path: xwin_sdk_path,
+            version,
+            vc_tools_version: "xwin".to_string(),
+        })
     }
 
     #[cfg(target_os = "windows")]
@@ -139,6 +186,12 @@ impl MsvcToolchain {
 
     /// Get CMake generator for this MSVC version
     pub fn cmake_generator(&self) -> &str {
+        // xwin environment (Linux + clang-cl) uses Ninja
+        if self.vc_tools_version == "xwin" {
+            return "Ninja";
+        }
+
+        // Native Windows MSVC uses Visual Studio generator
         // Parse major version to determine generator
         let major = self
             .version
@@ -153,6 +206,11 @@ impl MsvcToolchain {
             15 => "Visual Studio 15 2017",
             _ => "Visual Studio 16 2019", // Default to VS 2019
         }
+    }
+
+    /// Check if this is an xwin-based setup (Linux + clang-cl)
+    pub fn is_xwin(&self) -> bool {
+        self.vc_tools_version == "xwin"
     }
 }
 
@@ -170,26 +228,61 @@ impl Toolchain for MsvcToolchain {
     }
 
     fn cmake_variables(&self) -> Vec<(String, String)> {
-        vec![
+        let mut vars = vec![
             (
                 "CMAKE_GENERATOR".to_string(),
                 self.cmake_generator().to_string(),
             ),
-            ("CMAKE_GENERATOR_PLATFORM".to_string(), "x64".to_string()),
-        ]
+        ];
+
+        // Native Windows MSVC needs platform specification
+        if !self.is_xwin() {
+            vars.push(("CMAKE_GENERATOR_PLATFORM".to_string(), "x64".to_string()));
+        } else {
+            // xwin environment uses a CMake toolchain file
+            // This file sets CMAKE_SYSTEM_NAME, compilers, and all necessary flags
+            // before the project() command, which is required for cross-compilation
+            vars.push((
+                "CMAKE_TOOLCHAIN_FILE".to_string(),
+                "/opt/ccgo/windows-msvc.toolchain.cmake".to_string(),
+            ));
+        }
+
+        vars
     }
 
     fn validate(&self) -> Result<()> {
         if !self.vs_path.exists() {
-            bail!(
-                "Visual Studio installation not found at: {}",
-                self.vs_path.display()
-            );
+            if self.is_xwin() {
+                bail!(
+                    "xwin Windows SDK not found at: {}\n\
+                     Your Docker image may be missing xwin installation.",
+                    self.vs_path.display()
+                );
+            } else {
+                bail!(
+                    "Visual Studio installation not found at: {}",
+                    self.vs_path.display()
+                );
+            }
         }
 
-        let vcvarsall = self.vcvarsall_path();
-        if !vcvarsall.exists() {
-            bail!("vcvarsall.bat not found at: {}", vcvarsall.display());
+        // For native Windows, check vcvarsall.bat
+        if !self.is_xwin() {
+            let vcvarsall = self.vcvarsall_path();
+            if !vcvarsall.exists() {
+                bail!("vcvarsall.bat not found at: {}", vcvarsall.display());
+            }
+        } else {
+            // For xwin, check clang-cl
+            let clang_cl = PathBuf::from("/usr/local/bin/clang-cl");
+            if !clang_cl.exists() {
+                bail!(
+                    "clang-cl wrapper not found at: {}\n\
+                     Your Docker image may be outdated.",
+                    clang_cl.display()
+                );
+            }
         }
 
         Ok(())

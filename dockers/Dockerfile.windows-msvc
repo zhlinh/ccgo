@@ -39,6 +39,7 @@ RUN wget https://apt.llvm.org/llvm.sh && \
 # Create symlinks for LLVM 19 tools to default names
 RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100 && \
     update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100 && \
+    update-alternatives --install /usr/bin/clang-cl clang-cl /usr/bin/clang-cl-19 100 && \
     update-alternatives --install /usr/bin/lld lld /usr/bin/lld-19 100 && \
     update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-19 100 && \
     update-alternatives --install /usr/bin/lld-link lld-link /usr/bin/lld-link-19 100 && \
@@ -49,9 +50,13 @@ RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100 && 
 
 # Install build-essential for C/C++ compilation (needed by Rust crate builds)
 # and install Rust/xwin in the same layer to ensure gcc is available
+# Also install compression libraries needed for ccgo Rust dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
+    libzstd-dev \
+    libbz2-dev \
+    liblzma-dev \
     && rm -rf /var/lib/apt/lists/* && \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
     . ~/.cargo/env && \
@@ -61,6 +66,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN . ~/.cargo/env && \
     mkdir -p /opt/xwin && \
     xwin --accept-license splat --output /opt/xwin/sdk
+
+# Copy CMake toolchain file for MSVC cross-compilation
+# This file is automatically extracted from embedded content at runtime to ~/.ccgo/dockers/cmake/
+# Source: cmake/windows-msvc.toolchain.cmake (embedded in Rust binary via include_str!)
+RUN mkdir -p /opt/ccgo
+COPY cmake/windows-msvc.toolchain.cmake /opt/ccgo/windows-msvc.toolchain.cmake
 
 # Set environment variables for MSVC-compatible cross-compilation
 # xwin splat output structure:
@@ -78,14 +89,10 @@ ENV LANG=C.UTF-8 \
     PATH="/root/.cargo/bin:${PATH}"
 
 # Create wrapper scripts for MSVC-compatible compilation
-RUN printf '#!/bin/bash\nexec clang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/clang-cl && \
-    chmod +x /usr/local/bin/clang-cl && \
-    printf '#!/bin/bash\nexec clang --target=x86_64-pc-windows-msvc -fms-extensions -fms-compatibility "$@"\n' > /usr/local/bin/cl && \
-    chmod +x /usr/local/bin/cl && \
-    printf '#!/bin/bash\nexec lld-link "$@"\n' > /usr/local/bin/link && \
-    chmod +x /usr/local/bin/link && \
-    printf '#!/bin/bash\nexec llvm-lib "$@"\n' > /usr/local/bin/lib && \
-    chmod +x /usr/local/bin/lib
+# IMPORTANT: Only add Windows-specific flags when targeting Windows
+# Check if --target contains "windows" to determine if we need Windows SDK paths
+RUN printf '#!/bin/bash\n# Check if targeting Windows\nif [[ "$*" == *"--target="*"windows"* ]] || [[ "$*" != *"--target="* ]]; then\n  # Windows target: use real clang-cl with Windows SDK paths\n  export INCLUDE="/opt/xwin/sdk/crt/include;/opt/xwin/sdk/sdk/include/ucrt;/opt/xwin/sdk/sdk/include/um;/opt/xwin/sdk/sdk/include/shared"\n  export LIB="/opt/xwin/sdk/crt/lib/x86_64;/opt/xwin/sdk/sdk/lib/um/x86_64;/opt/xwin/sdk/sdk/lib/ucrt/x86_64"\n  exec /usr/bin/clang-cl-19 "$@"\nelse\n  # Non-Windows target: passthrough to clang without modifications\n  exec clang "$@"\nfi\n' > /usr/local/bin/clang-cl && \
+    chmod +x /usr/local/bin/clang-cl
 
 # Verify: clang
 RUN echo "=== Verify clang ===" && clang --version
@@ -101,10 +108,7 @@ RUN echo "=== Verify Rust ===" && . ~/.cargo/env && rustc --version && cargo --v
 
 # Verify: wrapper scripts
 RUN echo "=== Verify wrapper scripts ===" && \
-    ls -la /usr/local/bin/clang-cl && \
-    ls -la /usr/local/bin/cl && \
-    ls -la /usr/local/bin/link && \
-    ls -la /usr/local/bin/lib
+    ls -la /usr/local/bin/clang-cl
 
 # Verify: Windows SDK directory
 RUN echo "=== Verify Windows SDK ===" && \
@@ -112,11 +116,13 @@ RUN echo "=== Verify Windows SDK ===" && \
     echo "CRT include:" && ls /opt/xwin/sdk/crt/include/ | head -5 && \
     echo "SDK include:" && ls /opt/xwin/sdk/sdk/include/ | head -5
 
-# Install ccgo from PyPI (pre-compiled wheel, fast installation)
+# Install ccgo from PyPI (pre-compiled Rust binary wheel, fast installation)
+# NOTE: PyPI ccgo 3.x+ versions are Rust-based, not Python-based
+# The wheel contains a pre-built Rust binary with no Python runtime dependency
 RUN pip3 install --no-cache-dir ccgo
 
 # Verify ccgo installation
-RUN echo "=== Verify ccgo ===" && python3 --version && ccgo --version
+RUN echo "=== Verify ccgo ===" && ccgo --version
 
 # Set working directory
 WORKDIR /workspace

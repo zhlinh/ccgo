@@ -11,9 +11,7 @@ use anyhow::{bail, Context, Result};
 use crate::build::archive::{get_unified_include_path, ArchiveBuilder};
 use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::toolchains::mingw::{is_mingw_available, MingwToolchain};
-use crate::build::toolchains::msvc::is_msvc_available;
-#[cfg(target_os = "windows")]
-use crate::build::toolchains::msvc::MsvcToolchain;
+use crate::build::toolchains::msvc::{is_msvc_available, MsvcToolchain};
 use crate::build::toolchains::Toolchain;
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
@@ -226,7 +224,7 @@ impl WindowsBuilder {
     }
 
     /// Build for a specific link type with MSVC
-    #[cfg(target_os = "windows")]
+    /// Supports both native Windows (Visual Studio) and Linux (xwin + clang-cl)
     fn build_with_msvc(
         &self,
         ctx: &BuildContext,
@@ -240,7 +238,7 @@ impl WindowsBuilder {
 
         let build_shared = link_type == "shared";
 
-        // Configure and build with CMake using Visual Studio generator
+        // Configure and build with CMake
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .generator(msvc.cmake_generator())
             .build_type(if ctx.options.release {
@@ -253,9 +251,13 @@ impl WindowsBuilder {
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
             .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
             .variable("CCGO_LIB_NAME", ctx.lib_name())
-            .variable("CMAKE_GENERATOR_PLATFORM", "x64")
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
+
+        // Add MSVC-specific CMake variables
+        for (name, value) in msvc.cmake_variables() {
+            cmake = cmake.variable(&name, &value);
+        }
 
         // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
@@ -387,14 +389,9 @@ impl WindowsBuilder {
                 let mingw = MingwToolchain::detect()?;
                 self.build_with_mingw(ctx, &mingw, link_type)
             }
-            #[cfg(target_os = "windows")]
             WindowsToolchain::MSVC => {
                 let msvc = MsvcToolchain::detect()?;
                 self.build_with_msvc(ctx, &msvc, link_type)
-            }
-            #[cfg(not(target_os = "windows"))]
-            WindowsToolchain::MSVC => {
-                bail!("MSVC builds are only available on Windows")
             }
         }
     }
@@ -493,22 +490,15 @@ impl PlatformBuilder for WindowsBuilder {
                 }
             }
             WindowsToolchain::MSVC => {
-                #[cfg(target_os = "windows")]
-                {
-                    let msvc = MsvcToolchain::detect()?;
-                    msvc.validate()?;
+                let msvc = MsvcToolchain::detect()?;
+                msvc.validate()?;
 
-                    if ctx.options.verbose {
-                        eprintln!(
-                            "Using MSVC {} at {}",
-                            msvc.version(),
-                            msvc.path().unwrap().display()
-                        );
-                    }
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    bail!("MSVC is only available on Windows");
+                if ctx.options.verbose {
+                    eprintln!(
+                        "Using MSVC {} at {}",
+                        msvc.version(),
+                        msvc.path().unwrap().display()
+                    );
                 }
             }
         }

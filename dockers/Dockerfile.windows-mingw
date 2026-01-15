@@ -35,7 +35,9 @@ ENV LANG=C.UTF-8 \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install ccgo from PyPI (pre-compiled wheel, fast installation)
+# Install ccgo from PyPI (pre-compiled Rust binary wheel, fast installation)
+# NOTE: PyPI ccgo 3.x+ versions are Rust-based, not Python-based
+# The wheel contains a pre-built Rust binary with no Python runtime dependency
 RUN pip3 install --no-cache-dir ccgo
 
 # Verify MinGW toolchain installation
