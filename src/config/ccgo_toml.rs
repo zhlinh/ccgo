@@ -55,7 +55,7 @@ pub struct DependencyConfig {
     /// Dependency name
     pub name: String,
 
-    /// Version requirement
+    /// Version requirement (supports semver ranges like ^1.0, ~1.2.3, >=1.0,<2.0)
     pub version: String,
 
     /// Git repository URL
@@ -66,6 +66,17 @@ pub struct DependencyConfig {
 
     /// Local path (for development)
     pub path: Option<String>,
+}
+
+impl DependencyConfig {
+    /// Validate the dependency configuration
+    pub fn validate(&self) -> Result<()> {
+        // Validate version requirement syntax
+        crate::version::VersionReq::parse(&self.version)
+            .with_context(|| format!("Invalid version requirement '{}' for dependency '{}'", self.version, self.name))?;
+
+        Ok(())
+    }
 }
 
 /// Build configuration from [build] section
@@ -176,7 +187,14 @@ impl CcgoConfig {
 
     /// Parse configuration from TOML string
     pub fn parse(content: &str) -> Result<Self> {
-        toml::from_str(content).context("Failed to parse CCGO.toml")
+        let config: Self = toml::from_str(content).context("Failed to parse CCGO.toml")?;
+
+        // Validate dependencies
+        for dep in &config.dependencies {
+            dep.validate().with_context(|| format!("Invalid dependency: {}", dep.name))?;
+        }
+
+        Ok(config)
     }
 
     /// Find CCGO.toml by searching up from current directory

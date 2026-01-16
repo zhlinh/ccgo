@@ -2,6 +2,7 @@
 //!
 //! Each command module provides a clap-derived struct and execute method.
 
+pub mod add;
 pub mod bench;
 pub mod build;
 pub mod check;
@@ -12,5 +13,7 @@ pub mod install;
 pub mod new;
 pub mod package;
 pub mod publish;
+pub mod remove;
 pub mod tag;
 pub mod test;
+pub mod update;

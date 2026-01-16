@@ -4,10 +4,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    bench::BenchCommand, build::BuildCommand, check::CheckCommand,
+    add::AddCommand, bench::BenchCommand, build::BuildCommand, check::CheckCommand,
     clean::CleanCommand, doc::DocCommand, init::InitCommand, install::InstallCommand,
-    new::NewCommand, package::PackageCommand, publish::PublishCommand, tag::TagCommand,
-    test::TestCommand,
+    new::NewCommand, package::PackageCommand, publish::PublishCommand, remove::RemoveCommand,
+    tag::TagCommand, test::TestCommand, update::UpdateCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -66,8 +66,17 @@ pub enum Commands {
     /// Package SDK for distribution
     Package(PackageCommand),
 
-    /// Manage project dependencies
+    /// Install project dependencies
     Install(InstallCommand),
+
+    /// Add a dependency to CCGO.toml
+    Add(AddCommand),
+
+    /// Remove a dependency from CCGO.toml
+    Remove(RemoveCommand),
+
+    /// Update dependencies to latest versions
+    Update(UpdateCommand),
 }
 
 impl Cli {
@@ -93,6 +102,9 @@ impl Cli {
             Commands::Tag(cmd) => cmd.execute(self.verbose),
             Commands::Package(cmd) => cmd.execute(self.verbose),
             Commands::Install(cmd) => cmd.execute(self.verbose),
+            Commands::Add(cmd) => cmd.execute(self.verbose),
+            Commands::Remove(cmd) => cmd.execute(self.verbose),
+            Commands::Update(cmd) => cmd.execute(self.verbose),
         }
     }
 }

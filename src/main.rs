@@ -15,6 +15,7 @@ mod commands;
 mod config;
 mod exec;
 mod utils;
+mod version;
 
 use anyhow::Result;
 use clap::Parser;
