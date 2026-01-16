@@ -16,4 +16,5 @@ pub mod publish;
 pub mod remove;
 pub mod tag;
 pub mod test;
+pub mod tree;
 pub mod update;

@@ -7,7 +7,7 @@ use crate::commands::{
     add::AddCommand, bench::BenchCommand, build::BuildCommand, check::CheckCommand,
     clean::CleanCommand, doc::DocCommand, init::InitCommand, install::InstallCommand,
     new::NewCommand, package::PackageCommand, publish::PublishCommand, remove::RemoveCommand,
-    tag::TagCommand, test::TestCommand, update::UpdateCommand,
+    tag::TagCommand, test::TestCommand, tree::TreeCommand, update::UpdateCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -77,6 +77,9 @@ pub enum Commands {
 
     /// Update dependencies to latest versions
     Update(UpdateCommand),
+
+    /// Display dependency tree
+    Tree(TreeCommand),
 }
 
 impl Cli {
@@ -105,6 +108,7 @@ impl Cli {
             Commands::Add(cmd) => cmd.execute(self.verbose),
             Commands::Remove(cmd) => cmd.execute(self.verbose),
             Commands::Update(cmd) => cmd.execute(self.verbose),
+            Commands::Tree(cmd) => cmd.execute(self.verbose),
         }
     }
 }

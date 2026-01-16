@@ -185,6 +185,11 @@ impl CcgoConfig {
         Self::parse(&content)
     }
 
+    /// Load configuration from a specific file path (alias for compatibility)
+    pub fn load_from<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::load_from_path(path)
+    }
+
     /// Parse configuration from TOML string
     pub fn parse(content: &str) -> Result<Self> {
         let config: Self = toml::from_str(content).context("Failed to parse CCGO.toml")?;
