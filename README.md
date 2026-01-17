@@ -11,6 +11,7 @@ A cross-platform C++ build system designed to simplify and accelerate multi-plat
 - 🚀 Fast cross-platform C++ builds for Android, iOS, macOS, Windows, Linux, and OpenHarmony (OHOS)
 - 🗂️ Kotlin Multiplatform (KMP) support
 - 📦 Conan C/C++ package manager integration
+- 🎛️ Conditional compilation with Features system (similar to Cargo)
 - 🧪 Integrated testing with GoogleTest
 - 📊 Benchmarking support with Google Benchmark
 - 📚 Documentation generation
@@ -141,6 +142,9 @@ ccgo build <target> [options]
 - `--toolchain <toolchain>` - Windows toolchain: `auto`, `msvc`, or `mingw` (default: `auto`)
 - `--ide-project` - Generate IDE project files
 - `--docker` - Build using Docker (cross-platform builds)
+- `-F, --features <features>` - Comma-separated list of features to enable
+- `--no-default-features` - Disable default features
+- `--all-features` - Enable all available features
 
 **Examples:**
 
@@ -188,6 +192,15 @@ ccgo build android --ide-project
 # Cross-platform build using Docker
 ccgo build linux --docker
 ccgo build windows --docker
+
+# Build with specific features enabled
+ccgo build android --features networking,advanced
+
+# Build without default features
+ccgo build linux --no-default-features --features minimal
+
+# Build with all features enabled
+ccgo build ios --all-features
 ```
 
 ### 3. Testing & Benchmarking
@@ -745,6 +758,115 @@ The following files are automatically excluded from archives:
 - `CPPLINT.cfg`
 - `.clang-format`
 - `.clang-tidy`
+
+## Features System
+
+CCGO supports a features system similar to Cargo's, enabling conditional compilation and optional dependencies. This allows you to:
+
+- Enable/disable parts of your library at build time
+- Make dependencies optional and only include them when needed
+- Define feature groups that enable multiple sub-features
+
+### Defining Features in CCGO.toml
+
+```toml
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[features]
+# Default features enabled when none are specified
+default = ["std"]
+
+# Feature definitions
+std = []
+networking = ["http-client"]        # Enables optional dependency
+advanced = ["networking", "async"]  # Enables other features
+full = ["networking", "advanced", "logging"]
+
+# Dependency feature syntax
+derive = ["serde/derive"]           # Enables feature on dependency
+
+[[dependencies]]
+name = "http-client"
+version = "^1.0"
+optional = true                     # Only included when enabled by a feature
+
+[[dependencies]]
+name = "async"
+version = "^2.0"
+optional = true
+
+[[dependencies]]
+name = "serde"
+version = "^1.0"
+features = ["std"]                  # Features to enable on this dependency
+default_features = false            # Disable dependency's default features
+```
+
+### Using Features in Builds
+
+```bash
+# Build with default features
+ccgo build android
+
+# Build with specific features
+ccgo build android --features networking,advanced
+
+# Build without default features
+ccgo build linux --no-default-features
+
+# Build with specific features, no defaults
+ccgo build linux --no-default-features --features minimal
+
+# Build with all available features
+ccgo build ios --all-features
+```
+
+### CMake Integration
+
+Features are passed to CMake as compile definitions with the `CCGO_FEATURE_` prefix:
+
+```cmake
+# In your CMakeLists.txt, check for features:
+if(DEFINED CCGO_FEATURE_DEFINITIONS)
+    foreach(def ${CCGO_FEATURE_DEFINITIONS})
+        target_compile_definitions(${PROJECT_NAME} PRIVATE ${def})
+    endforeach()
+endif()
+```
+
+In your C++ code:
+
+```cpp
+#ifdef CCGO_FEATURE_NETWORKING
+#include "networking/http_client.h"
+#endif
+
+#ifdef CCGO_FEATURE_ADVANCED
+void advanced_function() {
+    // Advanced implementation
+}
+#endif
+```
+
+### Feature Resolution
+
+Features are resolved transitively:
+
+1. **Default features** are enabled unless `--no-default-features` is specified
+2. **Requested features** from `--features` are added
+3. **Transitive features** are resolved (e.g., `full` enables `advanced` which enables `networking`)
+4. **Optional dependencies** are included only if enabled by an active feature
+
+Example resolution for `--features full`:
+```
+full → advanced, networking, logging
+advanced → networking, async
+networking → http-client (optional dep)
+```
+
+Result: `full`, `advanced`, `networking`, `logging`, `async`, `http-client` are all enabled.
 
 ## Advanced Usage
 
