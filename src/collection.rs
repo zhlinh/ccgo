@@ -272,20 +272,55 @@ impl CollectionManager {
     /// Fetch collection from URL
     fn fetch_collection(&self, url: &str) -> Result<PackageCollection> {
         // For local file URLs
-        if url.starts_with("file://") || (!url.starts_with("http://") && !url.starts_with("https://")) {
+        if url.starts_with("file://")
+            || (!url.starts_with("http://") && !url.starts_with("https://"))
+        {
             let path = url.strip_prefix("file://").unwrap_or(url);
             let content = fs::read_to_string(path)
                 .with_context(|| format!("Failed to read collection from {}", path))?;
-            let collection: PackageCollection = serde_json::from_str(&content)
-                .context("Failed to parse collection JSON")?;
+            let collection: PackageCollection =
+                serde_json::from_str(&content).context("Failed to parse collection JSON")?;
             return Ok(collection);
         }
 
-        // For HTTP(S) URLs, use reqwest (we'll need to add this dependency)
-        // For now, return an error with instructions
-        bail!(
-            "HTTP(S) collection fetching not yet implemented. Use local file:// URLs or place the JSON file locally and reference it."
-        );
+        // For HTTP(S) URLs, use reqwest
+        self.fetch_collection_http(url)
+    }
+
+    /// Fetch collection from HTTP(S) URL
+    fn fetch_collection_http(&self, url: &str) -> Result<PackageCollection> {
+        use std::time::Duration;
+
+        // Build HTTP client with timeout
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
+            .user_agent(format!("ccgo/{}", env!("CARGO_PKG_VERSION")))
+            .build()
+            .context("Failed to create HTTP client")?;
+
+        // Send GET request
+        let response = client
+            .get(url)
+            .send()
+            .with_context(|| format!("Failed to fetch collection from {}", url))?;
+
+        // Check HTTP status
+        let status = response.status();
+        if !status.is_success() {
+            bail!(
+                "Failed to fetch collection from {}: HTTP {}",
+                url,
+                status.as_u16()
+            );
+        }
+
+        // Parse JSON response
+        let collection: PackageCollection = response
+            .json()
+            .with_context(|| format!("Failed to parse collection JSON from {}", url))?;
+
+        Ok(collection)
     }
 
     /// Save collection to cache

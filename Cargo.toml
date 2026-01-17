@@ -47,6 +47,9 @@ rayon = "1.10"
 # Date/time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# HTTP client for fetching remote collections (using rustls to avoid OpenSSL dependency)
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
 # Temporary file handling (also in dev-deps for tests)
 tempfile = "3.14"
 md5 = "0.8.0"
