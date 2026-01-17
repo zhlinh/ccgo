@@ -28,6 +28,7 @@ pub mod elf;
 pub mod platforms;
 pub mod toolchains;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -63,6 +64,12 @@ pub struct BuildOptions {
     pub verbose: bool,
     /// Development mode: use pre-built ccgo binary from GitHub releases in Docker
     pub dev: bool,
+    /// Features to enable (resolved from command line)
+    pub features: Vec<String>,
+    /// Whether to use default features
+    pub use_default_features: bool,
+    /// Enable all available features
+    pub all_features: bool,
 }
 
 impl Default for BuildOptions {
@@ -80,6 +87,9 @@ impl Default for BuildOptions {
             toolchain: WindowsToolchain::Auto,
             verbose: false,
             dev: false,
+            features: Vec::new(),
+            use_default_features: true,
+            all_features: false,
         }
     }
 }
@@ -200,6 +210,53 @@ impl BuildContext {
         } else {
             0
         }
+    }
+
+    /// Resolve and get enabled features based on build options
+    ///
+    /// Returns the full set of enabled features after resolving:
+    /// - Default features (unless --no-default-features)
+    /// - Explicitly requested features (--features)
+    /// - All features (if --all-features)
+    pub fn resolved_features(&self) -> Result<HashSet<String>> {
+        let features_config = &self.config.features;
+
+        if self.options.all_features {
+            // Enable all available features
+            let mut all = HashSet::new();
+            for name in features_config.feature_names() {
+                features_config.resolve_feature(name, &mut all)?;
+            }
+            // Also include default features
+            features_config.resolve_feature("default", &mut all)?;
+            Ok(all)
+        } else {
+            // Resolve requested features with/without defaults
+            features_config.resolve_features(
+                &self.options.features,
+                self.options.use_default_features,
+            )
+        }
+    }
+
+    /// Get CMake feature definitions as a semicolon-separated list
+    ///
+    /// Returns a string like "CCGO_FEATURE_NETWORKING;CCGO_FEATURE_ADVANCED"
+    /// that can be passed to CMake as compile definitions.
+    pub fn cmake_feature_defines(&self) -> Result<String> {
+        let resolved = self.resolved_features()?;
+        let defines: Vec<String> = resolved
+            .iter()
+            .filter(|f| !f.contains('/')) // Skip dep/feature syntax
+            .map(|f| format!("CCGO_FEATURE_{}", f.to_uppercase().replace('-', "_")))
+            .collect();
+        Ok(defines.join(";"))
+    }
+
+    /// Get enabled dependencies (non-optional + enabled optional deps)
+    pub fn enabled_dependencies(&self) -> Result<Vec<&crate::config::DependencyConfig>> {
+        let resolved = self.resolved_features()?;
+        Ok(self.config.features.get_enabled_optional_deps(&resolved, &self.config.dependencies))
     }
 
     /// Get the CCGO cmake directory path

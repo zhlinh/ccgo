@@ -4,9 +4,10 @@
 
 #![allow(dead_code)]
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 /// Root configuration from CCGO.toml
@@ -19,6 +20,10 @@ pub struct CcgoConfig {
     /// Project dependencies
     #[serde(default)]
     pub dependencies: Vec<DependencyConfig>,
+
+    /// Features configuration
+    #[serde(default)]
+    pub features: FeaturesConfig,
 
     /// Build configuration
     pub build: Option<BuildConfig>,
@@ -66,6 +71,137 @@ pub struct DependencyConfig {
 
     /// Local path (for development)
     pub path: Option<String>,
+
+    /// Whether this dependency is optional (only included when a feature enables it)
+    #[serde(default)]
+    pub optional: bool,
+
+    /// Features to enable for this dependency
+    #[serde(default)]
+    pub features: Vec<String>,
+
+    /// Whether to disable default features for this dependency
+    #[serde(default)]
+    pub default_features: Option<bool>,
+}
+
+/// Features configuration from [features] section
+///
+/// Features allow conditional compilation and optional dependencies.
+/// Similar to Cargo's features system.
+///
+/// # Example
+///
+/// ```toml
+/// [features]
+/// default = ["std"]
+/// std = []
+/// networking = ["http-client"]
+/// advanced = ["networking", "async"]
+/// full = ["networking", "advanced", "logging"]
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FeaturesConfig {
+    /// Default features enabled when none are specified
+    #[serde(default)]
+    pub default: Vec<String>,
+
+    /// Feature definitions - maps feature name to its dependencies
+    /// The dependencies can be:
+    /// - Other feature names (e.g., "networking")
+    /// - Optional dependency names (e.g., "http-client")
+    /// - Dependency feature syntax (e.g., "dep-name/feature-name")
+    #[serde(flatten)]
+    pub features: HashMap<String, Vec<String>>,
+}
+
+impl FeaturesConfig {
+    /// Check if a feature is defined
+    pub fn has_feature(&self, name: &str) -> bool {
+        name == "default" || self.features.contains_key(name)
+    }
+
+    /// Get all feature names (excluding "default")
+    pub fn feature_names(&self) -> Vec<&str> {
+        self.features.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Resolve a feature and all its transitive dependencies
+    pub fn resolve_feature(&self, name: &str, resolved: &mut HashSet<String>) -> Result<()> {
+        // Avoid infinite loops from circular dependencies
+        if resolved.contains(name) {
+            return Ok(());
+        }
+
+        if name == "default" {
+            // Resolve all default features
+            for default_feature in &self.default {
+                self.resolve_feature(default_feature, resolved)?;
+            }
+            return Ok(());
+        }
+
+        // Add this feature to resolved set
+        resolved.insert(name.to_string());
+
+        // Get dependencies of this feature
+        if let Some(deps) = self.features.get(name) {
+            for dep in deps {
+                // Check if this is a dependency/feature syntax (e.g., "dep-name/feature")
+                if dep.contains('/') {
+                    // This is a dependency feature, add as-is for later processing
+                    resolved.insert(dep.clone());
+                } else if self.has_feature(dep) {
+                    // This is another feature, resolve recursively
+                    self.resolve_feature(dep, resolved)?;
+                } else {
+                    // This is likely an optional dependency name
+                    resolved.insert(dep.clone());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resolve multiple features and return the full set of enabled features
+    pub fn resolve_features(&self, requested: &[String], use_defaults: bool) -> Result<HashSet<String>> {
+        let mut resolved = HashSet::new();
+
+        // Include default features if requested
+        if use_defaults {
+            self.resolve_feature("default", &mut resolved)?;
+        }
+
+        // Resolve each requested feature
+        for feature in requested {
+            if !self.has_feature(feature) && !feature.contains('/') {
+                bail!("Unknown feature: '{}'. Available features: {:?}",
+                    feature, self.feature_names());
+            }
+            self.resolve_feature(feature, &mut resolved)?;
+        }
+
+        Ok(resolved)
+    }
+
+    /// Get optional dependencies enabled by a set of resolved features
+    pub fn get_enabled_optional_deps<'a>(
+        &self,
+        resolved_features: &HashSet<String>,
+        dependencies: &'a [DependencyConfig],
+    ) -> Vec<&'a DependencyConfig> {
+        dependencies
+            .iter()
+            .filter(|dep| {
+                if !dep.optional {
+                    return true; // Non-optional deps are always included
+                }
+                // Check if this optional dep is enabled by any feature
+                resolved_features.contains(&dep.name)
+            })
+            .collect()
+    }
 }
 
 impl DependencyConfig {
@@ -275,5 +411,189 @@ min_version = "12.0"
         assert_eq!(config.dependencies[0].name, "fmt");
         assert!(config.build.is_some());
         assert!(config.platforms.is_some());
+    }
+
+    #[test]
+    fn test_parse_features_config() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[features]
+default = ["std"]
+std = []
+networking = ["http-client"]
+advanced = ["networking", "async"]
+full = ["networking", "advanced"]
+
+[[dependencies]]
+name = "http-client"
+version = "^1.0"
+optional = true
+
+[[dependencies]]
+name = "async"
+version = "^2.0"
+optional = true
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        // Check features parsed correctly
+        assert_eq!(config.features.default, vec!["std"]);
+        assert!(config.features.has_feature("std"));
+        assert!(config.features.has_feature("networking"));
+        assert!(config.features.has_feature("advanced"));
+        assert!(config.features.has_feature("full"));
+
+        // Check optional dependencies
+        assert_eq!(config.dependencies.len(), 2);
+        assert!(config.dependencies[0].optional);
+        assert!(config.dependencies[1].optional);
+    }
+
+    #[test]
+    fn test_features_resolution() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[features]
+default = ["std"]
+std = []
+networking = ["http-client"]
+advanced = ["networking"]
+full = ["advanced", "logging"]
+logging = []
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        // Test resolving single feature
+        let resolved = config.features.resolve_features(&["networking".to_string()], false).unwrap();
+        assert!(resolved.contains("networking"));
+        assert!(resolved.contains("http-client"));
+        assert!(!resolved.contains("std")); // No defaults
+
+        // Test resolving with defaults
+        let resolved = config.features.resolve_features(&["networking".to_string()], true).unwrap();
+        assert!(resolved.contains("networking"));
+        assert!(resolved.contains("std")); // Default included
+
+        // Test resolving transitive features
+        let resolved = config.features.resolve_features(&["advanced".to_string()], false).unwrap();
+        assert!(resolved.contains("advanced"));
+        assert!(resolved.contains("networking"));
+        assert!(resolved.contains("http-client"));
+
+        // Test resolving complex feature
+        let resolved = config.features.resolve_features(&["full".to_string()], false).unwrap();
+        assert!(resolved.contains("full"));
+        assert!(resolved.contains("advanced"));
+        assert!(resolved.contains("networking"));
+        assert!(resolved.contains("logging"));
+        assert!(resolved.contains("http-client"));
+    }
+
+    #[test]
+    fn test_features_unknown_feature_error() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[features]
+std = []
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        // Requesting unknown feature should error
+        let result = config.features.resolve_features(&["unknown".to_string()], false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_optional_dependency_filtering() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[features]
+networking = ["http-client"]
+
+[[dependencies]]
+name = "fmt"
+version = "^10.0"
+
+[[dependencies]]
+name = "http-client"
+version = "^1.0"
+optional = true
+
+[[dependencies]]
+name = "unused-optional"
+version = "^1.0"
+optional = true
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        // Without networking feature, only non-optional deps
+        let resolved = config.features.resolve_features(&[], false).unwrap();
+        let enabled_deps = config.features.get_enabled_optional_deps(&resolved, &config.dependencies);
+        assert_eq!(enabled_deps.len(), 1);
+        assert_eq!(enabled_deps[0].name, "fmt");
+
+        // With networking feature, http-client should be enabled
+        let resolved = config.features.resolve_features(&["networking".to_string()], false).unwrap();
+        let enabled_deps = config.features.get_enabled_optional_deps(&resolved, &config.dependencies);
+        assert_eq!(enabled_deps.len(), 2);
+        let names: Vec<_> = enabled_deps.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"fmt"));
+        assert!(names.contains(&"http-client"));
+        assert!(!names.contains(&"unused-optional"));
+    }
+
+    #[test]
+    fn test_dependency_features() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[[dependencies]]
+name = "serde"
+version = "^1.0"
+features = ["derive", "std"]
+default_features = false
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        assert_eq!(config.dependencies[0].features, vec!["derive", "std"]);
+        assert_eq!(config.dependencies[0].default_features, Some(false));
+    }
+
+    #[test]
+    fn test_dependency_feature_syntax() {
+        // Test dep/feature syntax in feature dependencies
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[features]
+derive = ["serde/derive"]
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        let resolved = config.features.resolve_features(&["derive".to_string()], false).unwrap();
+        assert!(resolved.contains("derive"));
+        assert!(resolved.contains("serde/derive"));
     }
 }

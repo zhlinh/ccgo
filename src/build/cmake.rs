@@ -52,6 +52,8 @@ pub struct CMakeConfig {
     jobs: Option<usize>,
     /// Verbose output
     verbose: bool,
+    /// Compile definitions to add
+    compile_definitions: Vec<String>,
 }
 
 impl CMakeConfig {
@@ -125,6 +127,33 @@ impl CMakeConfig {
         self
     }
 
+    /// Add a compile definition
+    pub fn compile_definition(mut self, definition: impl Into<String>) -> Self {
+        self.compile_definitions.push(definition.into());
+        self
+    }
+
+    /// Add multiple compile definitions
+    pub fn compile_definitions(mut self, definitions: Vec<String>) -> Self {
+        self.compile_definitions.extend(definitions);
+        self
+    }
+
+    /// Add feature-based compile definitions from a semicolon-separated string
+    ///
+    /// This is used to pass feature flags from BuildContext to CMake.
+    /// Example input: "CCGO_FEATURE_NETWORKING;CCGO_FEATURE_ADVANCED"
+    pub fn feature_definitions(mut self, features_str: &str) -> Self {
+        if !features_str.is_empty() {
+            for def in features_str.split(';') {
+                if !def.is_empty() {
+                    self.compile_definitions.push(def.to_string());
+                }
+            }
+        }
+        self
+    }
+
     /// Find CMake executable
     fn find_cmake() -> Result<PathBuf> {
         which::which("cmake").context("CMake not found. Please install CMake and add it to PATH.")
@@ -174,6 +203,13 @@ impl CMakeConfig {
         // Cache variables with type
         for (name, value, var_type) in &self.cache_variables {
             cmd.arg(format!("-D{}:{}={}", name, var_type, value));
+        }
+
+        // Add compile definitions (for features)
+        if !self.compile_definitions.is_empty() {
+            // Pass as CCGO_FEATURE_DEFINITIONS which CMake can use
+            let definitions = self.compile_definitions.join(";");
+            cmd.arg(format!("-DCCGO_FEATURE_DEFINITIONS={}", definitions));
         }
 
         if self.verbose {

@@ -57,6 +57,9 @@ impl BenchCommand {
             toolchain: WindowsToolchain::Auto,
             verbose,
             dev: false,
+            features: vec![],
+            use_default_features: true,
+            all_features: false,
         };
 
         let ctx = BuildContext::new(project_root, config, options);

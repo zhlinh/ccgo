@@ -151,6 +151,23 @@ pub struct BuildCommand {
     /// Development mode: use pre-built ccgo binary from GitHub releases in Docker builds
     #[arg(long)]
     pub dev: bool,
+
+    /// Features to enable (comma-separated)
+    ///
+    /// Example: --features networking,advanced
+    #[arg(long, short = 'F', value_delimiter = ',')]
+    pub features: Vec<String>,
+
+    /// Do not enable default features
+    ///
+    /// By default, the features listed in [features].default are enabled.
+    /// Use this flag to disable them.
+    #[arg(long)]
+    pub no_default_features: bool,
+
+    /// Enable all available features
+    #[arg(long)]
+    pub all_features: bool,
 }
 
 impl BuildCommand {
@@ -244,6 +261,9 @@ impl BuildCommand {
             toolchain: self.toolchain.clone(),
             verbose,
             dev: self.dev,
+            features: self.features.clone(),
+            use_default_features: !self.no_default_features,
+            all_features: self.all_features,
         };
 
         // Create build context

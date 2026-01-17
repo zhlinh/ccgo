@@ -198,6 +198,16 @@ impl ConanBuilder {
             cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
         }
 
+        // Add feature definitions for conditional compilation
+        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
+            if !feature_defines.is_empty() {
+                cmake = cmake.feature_definitions(&feature_defines);
+                if ctx.options.verbose {
+                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                }
+            }
+        }
+
         cmake.configure_build_install()?;
 
         Ok(build_dir)
