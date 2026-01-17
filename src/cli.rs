@@ -5,9 +5,10 @@ use clap::{Parser, Subcommand};
 
 use crate::commands::{
     add::AddCommand, bench::BenchCommand, build::BuildCommand, check::CheckCommand,
-    clean::CleanCommand, doc::DocCommand, init::InitCommand, install::InstallCommand,
-    new::NewCommand, package::PackageCommand, publish::PublishCommand, remove::RemoveCommand,
-    tag::TagCommand, test::TestCommand, tree::TreeCommand, update::UpdateCommand,
+    clean::CleanCommand, collection::CollectionCommand, doc::DocCommand, init::InitCommand,
+    install::InstallCommand, new::NewCommand, package::PackageCommand, publish::PublishCommand,
+    remove::RemoveCommand, search::SearchCommand, tag::TagCommand, test::TestCommand,
+    tree::TreeCommand, update::UpdateCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -80,6 +81,12 @@ pub enum Commands {
 
     /// Display dependency tree
     Tree(TreeCommand),
+
+    /// Manage package collections
+    Collection(CollectionCommand),
+
+    /// Search for packages
+    Search(SearchCommand),
 }
 
 impl Cli {
@@ -109,6 +116,8 @@ impl Cli {
             Commands::Remove(cmd) => cmd.execute(self.verbose),
             Commands::Update(cmd) => cmd.execute(self.verbose),
             Commands::Tree(cmd) => cmd.execute(self.verbose),
+            Commands::Collection(cmd) => cmd.execute(self.verbose),
+            Commands::Search(cmd) => cmd.execute(self.verbose),
         }
     }
 }

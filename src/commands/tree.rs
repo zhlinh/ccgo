@@ -33,7 +33,8 @@ pub struct TreeCommand {
     pub locked: bool,
 }
 
-/// Dependency node in the tree
+// Note: DepNode is reserved for future use when implementing transitive dependency resolution
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct DepNode {
     name: String,
@@ -51,6 +52,7 @@ struct LockInfo {
 #[derive(Debug, Clone)]
 struct LockedDep {
     version: String,
+    #[allow(dead_code)]
     source: String,
     install_path: String,
 }

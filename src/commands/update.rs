@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::{CcgoConfig, DependencyConfig};
-use crate::version::{Version, VersionReq};
+use crate::version::VersionReq;
 
 /// Update dependencies to latest compatible versions
 #[derive(Args, Debug)]
@@ -282,7 +282,7 @@ impl UpdateCommand {
     /// Apply updates to CCGO.toml
     fn apply_updates(&self, updates: &[UpdateInfo]) -> Result<()> {
         let config_path = Path::new("CCGO.toml");
-        let mut content = fs::read_to_string(config_path)?;
+        let content = fs::read_to_string(config_path)?;
 
         let mut update_map = HashMap::new();
         for update in updates {
@@ -333,6 +333,7 @@ struct UpdateInfo {
     name: String,
     current_version: String,
     new_version: String,
+    #[allow(dead_code)]
     source: UpdateSource,
 }
 

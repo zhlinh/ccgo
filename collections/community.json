@@ -1,0 +1,159 @@
+{
+  "name": "ccgo-community",
+  "description": "Community-curated CCGO Package Collection",
+  "version": "1.0.0",
+  "author": "CCGO Community",
+  "homepage": "https://github.com/ccgo-project/collections",
+  "packages": [
+    {
+      "name": "rapidjson",
+      "version": "1.1.0",
+      "summary": "A fast JSON parser/generator for C++ with both SAX/DOM style API",
+      "repository": "https://github.com/Tencent/rapidjson",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["json", "parser", "fast", "header-only"],
+      "license": "MIT",
+      "homepage": "https://rapidjson.org/"
+    },
+    {
+      "name": "simdjson",
+      "version": "3.6.4",
+      "summary": "Parsing gigabytes of JSON per second - The fastest JSON parser",
+      "repository": "https://github.com/simdjson/simdjson",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["json", "parser", "simd", "fast"],
+      "license": "Apache-2.0",
+      "homepage": "https://simdjson.org/"
+    },
+    {
+      "name": "benchmark",
+      "version": "1.8.3",
+      "summary": "Google Benchmark - A microbenchmark support library",
+      "repository": "https://github.com/google/benchmark",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["benchmark", "performance", "testing", "google"],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/google/benchmark"
+    },
+    {
+      "name": "cxxopts",
+      "version": "3.1.1",
+      "summary": "Lightweight C++ command line option parser",
+      "repository": "https://github.com/jarro2783/cxxopts",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["cli", "argument-parser", "options", "header-only"],
+      "license": "MIT",
+      "homepage": "https://github.com/jarro2783/cxxopts"
+    },
+    {
+      "name": "cli11",
+      "version": "2.4.1",
+      "summary": "CLI11 - A command line parser for C++11 and beyond",
+      "repository": "https://github.com/CLIUtils/CLI11",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["cli", "argument-parser", "options", "header-only"],
+      "license": "BSD-3-Clause",
+      "homepage": "https://cliutils.github.io/CLI11/"
+    },
+    {
+      "name": "toml11",
+      "version": "3.8.1",
+      "summary": "TOML for Modern C++ - A feature-rich TOML language library",
+      "repository": "https://github.com/ToruNiina/toml11",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["toml", "parser", "config", "header-only"],
+      "license": "MIT",
+      "homepage": "https://github.com/ToruNiina/toml11"
+    },
+    {
+      "name": "rang",
+      "version": "3.2.0",
+      "summary": "A simple, modern & header-only library for terminal text colorization",
+      "repository": "https://github.com/agauniyal/rang",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["terminal", "color", "ansi", "header-only"],
+      "license": "Unlicense",
+      "homepage": "https://github.com/agauniyal/rang"
+    },
+    {
+      "name": "indicators",
+      "version": "2.3.0",
+      "summary": "Activity Indicators for Modern C++ - Beautiful progress bars",
+      "repository": "https://github.com/p-ranav/indicators",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["progress-bar", "terminal", "cli", "header-only"],
+      "license": "MIT",
+      "homepage": "https://github.com/p-ranav/indicators"
+    },
+    {
+      "name": "cpp-httplib",
+      "version": "0.15.1",
+      "summary": "A C++ header-only HTTP/HTTPS server and client library",
+      "repository": "https://github.com/yhirose/cpp-httplib",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["http", "https", "server", "client", "header-only"],
+      "license": "MIT",
+      "homepage": "https://github.com/yhirose/cpp-httplib"
+    },
+    {
+      "name": "asio",
+      "version": "1.28.1",
+      "summary": "Asio C++ Library - Cross-platform C++ library for network programming",
+      "repository": "https://github.com/chriskohlhoff/asio",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["networking", "async", "io", "header-only"],
+      "license": "BSL-1.0",
+      "homepage": "https://think-async.com/Asio/"
+    },
+    {
+      "name": "date",
+      "version": "3.0.1",
+      "summary": "A date and time library based on the C++11/14/17 <chrono> header",
+      "repository": "https://github.com/HowardHinnant/date",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["date", "time", "chrono", "header-only"],
+      "license": "MIT",
+      "homepage": "https://howardhinnant.github.io/date/date.html"
+    },
+    {
+      "name": "magic_enum",
+      "version": "0.9.5",
+      "summary": "Static reflection for enums (to string, from string, iteration) for modern C++",
+      "repository": "https://github.com/Neargye/magic_enum",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["enum", "reflection", "metaprogramming", "header-only"],
+      "license": "MIT",
+      "homepage": "https://github.com/Neargye/magic_enum"
+    },
+    {
+      "name": "taskflow",
+      "version": "3.6.0",
+      "summary": "A General-purpose Parallel and Heterogeneous Task Programming System",
+      "repository": "https://github.com/taskflow/taskflow",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["parallel", "threading", "task", "async", "header-only"],
+      "license": "MIT",
+      "homepage": "https://taskflow.github.io/"
+    },
+    {
+      "name": "doctest",
+      "version": "2.4.11",
+      "summary": "The fastest feature-rich C++11/14/17/20 single-header testing framework",
+      "repository": "https://github.com/doctest/doctest",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["testing", "unit-test", "header-only"],
+      "license": "MIT",
+      "homepage": "https://github.com/doctest/doctest"
+    },
+    {
+      "name": "expected",
+      "version": "1.1.0",
+      "summary": "C++11/14/17 std::expected with functional-style extensions",
+      "repository": "https://github.com/TartanLlama/expected",
+      "platforms": ["android", "ios", "macos", "windows", "linux", "ohos"],
+      "keywords": ["error-handling", "expected", "result", "header-only"],
+      "license": "CC0-1.0",
+      "homepage": "https://github.com/TartanLlama/expected"
+    }
+  ]
+}
