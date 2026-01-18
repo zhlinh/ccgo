@@ -12,6 +12,17 @@ fn check_command_installed(command: &str) -> bool {
     which::which(command).is_ok()
 }
 
+/// Get the available pip command (prefer pip over pip3)
+fn get_pip_command() -> Option<&'static str> {
+    if check_command_installed("pip") {
+        Some("pip")
+    } else if check_command_installed("pip3") {
+        Some("pip3")
+    } else {
+        None
+    }
+}
+
 /// Check if a Python package is installed
 fn check_python_package_installed(package: &str) -> bool {
     Command::new("python3")
@@ -23,6 +34,9 @@ fn check_python_package_installed(package: &str) -> bool {
 
 /// Install Python dependencies from requirements.txt
 fn install_python_requirements(requirements_file: &Path) -> Result<()> {
+    let pip_cmd = get_pip_command()
+        .ok_or_else(|| anyhow!("Neither pip nor pip3 found in PATH. Please install Python pip first."))?;
+
     println!(
         "{}",
         style(format!(
@@ -32,14 +46,37 @@ fn install_python_requirements(requirements_file: &Path) -> Result<()> {
         .cyan()
     );
 
-    let status = Command::new("pip3")
+    // Try without --break-system-packages first
+    let status = Command::new(pip_cmd)
         .args(["install", "-r"])
         .arg(requirements_file)
         .status()
-        .context("Failed to execute pip3")?;
+        .with_context(|| format!("Failed to execute {}", pip_cmd))?;
+
+    if status.success() {
+        println!("{}", style("Dependencies installed successfully!\n").green());
+        return Ok(());
+    }
+
+    // If failed, try with --break-system-packages (needed for PEP 668 compliant systems like Ubuntu 24.04+)
+    println!(
+        "{}",
+        style("Retrying with --break-system-packages for PEP 668 compliance...").yellow()
+    );
+
+    let status = Command::new(pip_cmd)
+        .args(["install", "--break-system-packages", "-r"])
+        .arg(requirements_file)
+        .status()
+        .with_context(|| format!("Failed to execute {}", pip_cmd))?;
 
     if !status.success() {
-        return Err(anyhow!("Failed to install dependencies"));
+        return Err(anyhow!(
+            "Failed to install dependencies.\n\
+             You may need to create a virtual environment:\n\
+             python3 -m venv .venv && source .venv/bin/activate && pip install -r {}",
+            requirements_file.display()
+        ));
     }
 
     println!("{}", style("Dependencies installed successfully!\n").green());
@@ -143,12 +180,13 @@ fn check_and_install_deps(project_dir: &Path, auto_install: bool) -> Result<()> 
     if input.is_empty() || input == "y" || input == "yes" {
         install_python_requirements(&requirements_file)?;
     } else {
+        let pip_cmd = get_pip_command().unwrap_or("pip");
         println!(
             "{}",
             style("Skipping dependency installation. Documentation build may fail.\n").yellow()
         );
         println!("You can install dependencies later with:");
-        println!("  pip3 install -r {}", requirements_file.display());
+        println!("  {} install -r {}", pip_cmd, requirements_file.display());
         println!("Or run:");
         println!("  ccgo doc --install-deps\n");
     }
@@ -204,10 +242,12 @@ impl DocCommand {
 
         // Check dependencies
         if !check_command_installed("mkdocs") {
+            let pip_cmd = get_pip_command().unwrap_or("pip");
             return Err(anyhow!(
                 "MkDocs is not installed or not in PATH.\n\
-                 Install it with: pip3 install ccgo[docs]\n\
-                 Or install from project requirements: pip3 install -r docs/requirements.txt"
+                 Install it with: {} install ccgo[docs]\n\
+                 Or install from project requirements: {} install -r docs/requirements.txt",
+                pip_cmd, pip_cmd
             ));
         }
 
