@@ -92,12 +92,15 @@ impl BenchesBuilder {
         }
 
         // Configure with CMake
+        // Use -S and -B to explicitly specify source and build directories
         let mut cmake_cmd = Command::new("cmake");
         cmake_cmd
-            .arg("../..")
+            .arg("-S")
+            .arg(&ctx.project_root)
+            .arg("-B")
+            .arg(&build_dir)
             .arg("-G")
-            .arg(self.cmake_generator())
-            .current_dir(&build_dir);
+            .arg(self.cmake_generator());
 
         // Add extra flags
         let extra_flags = self.cmake_extra_flags(ctx)?;
@@ -272,12 +275,15 @@ impl BenchesBuilder {
         eprintln!("Generating IDE project in {}...", build_dir.display());
 
         // Configure with CMake
+        // Use -S and -B to explicitly specify source and build directories
         let mut cmake_cmd = Command::new("cmake");
         cmake_cmd
-            .arg("../..")
+            .arg("-S")
+            .arg(&ctx.project_root)
+            .arg("-B")
+            .arg(&build_dir)
             .arg("-G")
-            .arg(self.cmake_generator())
-            .current_dir(&build_dir);
+            .arg(self.cmake_generator());
 
         // Add extra flags
         let extra_flags = self.cmake_extra_flags(ctx)?;
