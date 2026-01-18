@@ -98,6 +98,7 @@ impl AddCommand {
                 platform: None,
                 clean_cache: false,
                 copy: false,
+                locked: false,
             };
 
             if let Err(e) = install_cmd.execute(_verbose) {

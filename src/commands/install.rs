@@ -3,7 +3,6 @@
 //! Manages project dependencies from CCGO.toml.
 //! Dependencies are cached globally in ~/.ccgo/ and linked to project's .ccgo/deps/.
 
-use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,7 +11,8 @@ use anyhow::{bail, Context, Result};
 use clap::Args;
 use serde::{Deserialize, Serialize};
 
-use crate::config::CcgoConfig;
+use crate::config::{CcgoConfig, DependencyConfig};
+use crate::lockfile::{Lockfile, LockedPackage, LockedGitInfo, LOCKFILE_NAME};
 
 /// Install project dependencies from CCGO.toml
 #[derive(Args, Debug)]
@@ -35,34 +35,13 @@ pub struct InstallCommand {
     /// Copy files instead of using symlinks
     #[arg(long)]
     pub copy: bool,
+
+    /// Require CCGO.lock and use exact versions from it
+    #[arg(long)]
+    pub locked: bool,
 }
 
-/// Dependency source type
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
-enum SourceType {
-    LocalDir,
-    LocalArchive,
-    RemoteUrl,
-}
-
-/// Dependency installation information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct InstallInfo {
-    source_type: String,
-    source: String,
-    install_path: String,
-    installed_at: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    checksum: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    git_info: Option<GitInfo>,
-}
-
-/// Git repository information
+/// Git repository information (internal use)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct GitInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,6 +77,21 @@ impl InstallCommand {
         println!("\n📖 Reading dependencies from CCGO.toml...");
         let config = CcgoConfig::load().context("Failed to load CCGO.toml")?;
 
+        // Load existing lockfile
+        let existing_lockfile = Lockfile::load(&project_dir)?;
+        if let Some(ref lockfile) = existing_lockfile {
+            println!("📋 Found existing {}", LOCKFILE_NAME);
+        }
+
+        // In locked mode, lockfile is required
+        if self.locked && existing_lockfile.is_none() {
+            bail!(
+                "No {} found. Run 'ccgo install' first to generate a lockfile, \
+                 or remove --locked flag.",
+                LOCKFILE_NAME
+            );
+        }
+
         let dependencies = &config.dependencies;
         if dependencies.is_empty() {
             println!("   ℹ️  No dependencies defined in CCGO.toml");
@@ -108,6 +102,21 @@ impl InstallCommand {
             println!("   path = \"../my_lib\"  # or git = \"https://github.com/...\"");
             println!("\n✓ Install completed successfully (no dependencies to install)");
             return Ok(());
+        }
+
+        // Check for outdated dependencies in locked mode
+        if self.locked {
+            if let Some(ref lockfile) = existing_lockfile {
+                let outdated = lockfile.check_outdated(dependencies);
+                if !outdated.is_empty() {
+                    bail!(
+                        "Dependencies have changed since lockfile was generated.\n\
+                         Changed dependencies: {}\n\
+                         Run 'ccgo install' to update the lockfile, or remove --locked flag.",
+                        outdated.join(", ")
+                    );
+                }
+            }
         }
 
         // Filter dependencies to install
@@ -133,6 +142,13 @@ impl InstallCommand {
 
         println!("\nFound {} dependency(ies) to install:", deps_to_install.len());
         for dep in &deps_to_install {
+            // Show locked version if available
+            if let Some(ref lockfile) = existing_lockfile {
+                if let Some(locked) = lockfile.get_package(&dep.name) {
+                    println!("  - {} (locked: {})", dep.name, locked.version);
+                    continue;
+                }
+            }
             println!("  - {}", dep.name);
         }
 
@@ -143,13 +159,16 @@ impl InstallCommand {
 
         let mut installed_count = 0;
         let mut failed_count = 0;
-        let mut installed_deps = HashMap::new();
+        let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
 
         for dep in deps_to_install {
-            match self.install_dependency(dep, &project_dir, &ccgo_home) {
-                Ok(install_info) => {
+            // Get locked info if available
+            let locked_pkg = lockfile.get_package(&dep.name).cloned();
+
+            match self.install_dependency(dep, &project_dir, &ccgo_home, locked_pkg.as_ref()) {
+                Ok(locked_package) => {
                     installed_count += 1;
-                    installed_deps.insert(dep.name.clone(), install_info);
+                    lockfile.upsert_package(locked_package);
                 }
                 Err(e) => {
                     eprintln!("   ✗ Failed to install {}: {}", dep.name, e);
@@ -158,9 +177,11 @@ impl InstallCommand {
             }
         }
 
-        // Generate lock file if any dependencies were installed
-        if !installed_deps.is_empty() {
-            Self::generate_lock_file(&project_dir, &installed_deps)?;
+        // Save lockfile if any dependencies were installed
+        if installed_count > 0 {
+            lockfile.touch();
+            lockfile.save(&project_dir)?;
+            println!("\n📝 Updated {}", LOCKFILE_NAME);
             Self::update_gitignore(&project_dir)?;
         }
 
@@ -185,10 +206,11 @@ impl InstallCommand {
     /// Install a single dependency
     fn install_dependency(
         &self,
-        dep: &crate::config::DependencyConfig,
+        dep: &DependencyConfig,
         project_dir: &Path,
         ccgo_home: &Path,
-    ) -> Result<InstallInfo> {
+        locked: Option<&LockedPackage>,
+    ) -> Result<LockedPackage> {
         println!("\n📦 Installing {}...", dep.name);
 
         let deps_dir = project_dir.join(".ccgo").join("deps");
@@ -196,17 +218,22 @@ impl InstallCommand {
 
         let install_path = deps_dir.join(&dep.name);
 
-        // Check if already installed
+        // Check if already installed and matches lockfile
         if install_path.exists() && !self.force {
+            if let Some(locked_pkg) = locked {
+                println!("   {} already installed (locked: {})", dep.name, locked_pkg.version);
+                return Ok(locked_pkg.clone());
+            }
             println!("   {} already installed (use --force to reinstall)", dep.name);
-            return Ok(InstallInfo {
-                source_type: "local_dir".to_string(),
-                source: dep.path.as_ref().unwrap_or(&"".to_string()).clone(),
-                install_path: install_path.to_string_lossy().to_string(),
-                installed_at: chrono::Local::now().to_rfc3339(),
-                version: Some(dep.version.clone()),
+            // Return a basic locked package for already installed deps
+            return Ok(LockedPackage {
+                name: dep.name.clone(),
+                version: dep.version.clone(),
+                source: Self::build_source_string(dep),
                 checksum: None,
-                git_info: None,
+                dependencies: vec![],
+                git: None,
+                installed_at: Some(chrono::Local::now().to_rfc3339()),
             });
         }
 
@@ -223,23 +250,36 @@ impl InstallCommand {
         // Handle based on source type
         if let Some(ref path) = dep.path {
             // Local path dependency
-            self.install_from_local_path(&dep.name, path, project_dir, &install_path)
+            self.install_from_local_path(&dep.name, &dep.version, path, project_dir, &install_path)
         } else if let Some(ref git_url) = dep.git {
-            // Git dependency
-            self.install_from_git(&dep.name, git_url, dep.branch.as_deref(), &install_path, ccgo_home)
+            // Git dependency - use locked revision if available
+            let locked_rev = locked.and_then(|l| l.git_revision()).map(|s| s.to_string());
+            self.install_from_git(&dep.name, &dep.version, git_url, dep.branch.as_deref(), locked_rev.as_deref(), &install_path, ccgo_home)
         } else {
             bail!("No valid source found for dependency '{}'", dep.name);
+        }
+    }
+
+    /// Build source string from dependency config
+    fn build_source_string(dep: &DependencyConfig) -> String {
+        if let Some(ref git) = dep.git {
+            format!("git+{}", git)
+        } else if let Some(ref path) = dep.path {
+            format!("path+{}", path)
+        } else {
+            format!("registry+{}@{}", dep.name, dep.version)
         }
     }
 
     /// Install from local path
     fn install_from_local_path(
         &self,
-        _dep_name: &str,
+        dep_name: &str,
+        version: &str,
         path: &str,
         project_dir: &Path,
         install_path: &Path,
-    ) -> Result<InstallInfo> {
+    ) -> Result<LockedPackage> {
         let source_path = if Path::new(path).is_absolute() {
             PathBuf::from(path)
         } else {
@@ -258,27 +298,58 @@ impl InstallCommand {
 
         println!("   ✓ Installed to {}", install_path.display());
 
-        Ok(InstallInfo {
-            source_type: "local_dir".to_string(),
-            source: source_path.to_string_lossy().to_string(),
-            install_path: install_path.to_string_lossy().to_string(),
-            installed_at: chrono::Local::now().to_rfc3339(),
-            version: None,
+        // Try to get version from dependency's CCGO.toml if not specified
+        let resolved_version = if version.is_empty() {
+            Self::get_dep_version(&source_path).unwrap_or_else(|| "0.0.0".to_string())
+        } else {
+            version.to_string()
+        };
+
+        // Get git info if this is a git repo
+        let git_info = Self::get_git_info(&source_path).map(|info| LockedGitInfo {
+            revision: info.revision.unwrap_or_default(),
+            branch: info.branch,
+            tag: None,
+            dirty: info.dirty.unwrap_or(false),
+        });
+
+        Ok(LockedPackage {
+            name: dep_name.to_string(),
+            version: resolved_version,
+            source: format!("path+{}", path),
             checksum: None,
-            git_info: Self::get_git_info(&source_path),
+            dependencies: vec![],
+            git: git_info,
+            installed_at: Some(chrono::Local::now().to_rfc3339()),
         })
+    }
+
+    /// Get version from dependency's CCGO.toml
+    fn get_dep_version(dep_path: &Path) -> Option<String> {
+        let ccgo_toml = dep_path.join("CCGO.toml");
+        if !ccgo_toml.exists() {
+            return None;
+        }
+        CcgoConfig::load_from(&ccgo_toml)
+            .ok()
+            .and_then(|c| c.package.map(|p| p.version))
     }
 
     /// Install from git repository
     fn install_from_git(
         &self,
         dep_name: &str,
+        version: &str,
         git_url: &str,
         branch: Option<&str>,
+        locked_rev: Option<&str>,
         install_path: &Path,
         ccgo_home: &Path,
-    ) -> Result<InstallInfo> {
+    ) -> Result<LockedPackage> {
         println!("   Source: {}", git_url);
+        if let Some(rev) = locked_rev {
+            println!("   Locked revision: {}", &rev[..8.min(rev.len())]);
+        }
         println!("   Installing from git repository...");
 
         // Create registry directory
@@ -299,10 +370,10 @@ impl InstallCommand {
 
             println!("   Cloning repository...");
             let mut cmd = std::process::Command::new("git");
-            cmd.args(&["clone", git_url, registry_path.to_string_lossy().as_ref()]);
+            cmd.args(["clone", git_url, registry_path.to_string_lossy().as_ref()]);
 
             if let Some(branch_name) = branch {
-                cmd.args(&["--branch", branch_name]);
+                cmd.args(["--branch", branch_name]);
             }
 
             let output = cmd.output().context("Failed to execute git clone")?;
@@ -310,6 +381,19 @@ impl InstallCommand {
                 bail!("Git clone failed: {}", String::from_utf8_lossy(&output.stderr));
             }
             println!("   ✓ Cloned to {}", registry_path.display());
+
+            // Checkout specific revision if locked
+            if let Some(rev) = locked_rev {
+                println!("   Checking out locked revision {}...", &rev[..8.min(rev.len())]);
+                let checkout = std::process::Command::new("git")
+                    .args(["checkout", rev])
+                    .current_dir(&registry_path)
+                    .output()
+                    .context("Failed to checkout revision")?;
+                if !checkout.status.success() {
+                    bail!("Git checkout failed: {}", String::from_utf8_lossy(&checkout.stderr));
+                }
+            }
         }
 
         // Link/copy from registry to project
@@ -317,14 +401,32 @@ impl InstallCommand {
 
         println!("   ✓ Installed to {}", install_path.display());
 
-        Ok(InstallInfo {
-            source_type: "git".to_string(),
-            source: git_url.to_string(),
-            install_path: install_path.to_string_lossy().to_string(),
-            installed_at: chrono::Local::now().to_rfc3339(),
-            version: None,
+        // Get git info
+        let git_info = Self::get_git_info(&registry_path);
+        let revision = git_info.as_ref()
+            .and_then(|g| g.revision.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Try to get version from dependency's CCGO.toml if not specified
+        let resolved_version = if version.is_empty() {
+            Self::get_dep_version(&registry_path).unwrap_or_else(|| "0.0.0".to_string())
+        } else {
+            version.to_string()
+        };
+
+        Ok(LockedPackage {
+            name: dep_name.to_string(),
+            version: resolved_version,
+            source: format!("git+{}#{}", git_url, revision),
             checksum: None,
-            git_info: Self::get_git_info(&registry_path),
+            dependencies: vec![],
+            git: Some(LockedGitInfo {
+                revision,
+                branch: branch.map(|s| s.to_string()),
+                tag: None,
+                dirty: git_info.and_then(|g| g.dirty).unwrap_or(false),
+            }),
+            installed_at: Some(chrono::Local::now().to_rfc3339()),
         })
     }
 
@@ -439,60 +541,6 @@ impl InstallCommand {
         }
 
         Some(git_info)
-    }
-
-    /// Generate CCGO.toml.lock file
-    fn generate_lock_file(project_dir: &Path, installed_deps: &HashMap<String, InstallInfo>) -> Result<()> {
-        let lock_file_path = project_dir.join("CCGO.toml.lock");
-
-        let mut content = String::new();
-        content.push_str("# CCGO.toml.lock - Auto-generated lock file\n");
-        content.push_str("# Do not edit this file manually\n");
-        content.push_str("# Regenerate with: ccgo install --force\n\n");
-
-        content.push_str("[metadata]\n");
-        content.push_str("version = \"1.0\"\n");
-        content.push_str(&format!("generated_at = \"{}\"\n", chrono::Local::now().to_rfc3339()));
-        content.push_str("generator = \"ccgo install\"\n\n");
-
-        for (dep_name, dep_info) in installed_deps {
-            content.push_str(&format!("[dependencies.{}]\n", dep_name));
-            content.push_str(&format!("source_type = \"{}\"\n", dep_info.source_type));
-            content.push_str(&format!("source = \"{}\"\n", dep_info.source));
-            content.push_str(&format!("installed_at = \"{}\"\n", dep_info.installed_at));
-            content.push_str(&format!("install_path = \"{}\"\n", dep_info.install_path));
-
-            if let Some(ref version) = dep_info.version {
-                content.push_str(&format!("version = \"{}\"\n", version));
-            }
-
-            if let Some(ref checksum) = dep_info.checksum {
-                content.push_str(&format!("checksum = \"{}\"\n", checksum));
-            }
-
-            if let Some(ref git_info) = dep_info.git_info {
-                content.push_str(&format!("\n[dependencies.{}.git]\n", dep_name));
-                if let Some(ref revision) = git_info.revision {
-                    content.push_str(&format!("revision = \"{}\"\n", revision));
-                }
-                if let Some(ref branch) = git_info.branch {
-                    content.push_str(&format!("branch = \"{}\"\n", branch));
-                }
-                if let Some(ref remote_url) = git_info.remote_url {
-                    content.push_str(&format!("remote_url = \"{}\"\n", remote_url));
-                }
-                if let Some(dirty) = git_info.dirty {
-                    content.push_str(&format!("dirty = {}\n", dirty));
-                }
-            }
-
-            content.push_str("\n");
-        }
-
-        fs::write(&lock_file_path, content).context("Failed to write lock file")?;
-        println!("\n📝 Generated lock file: {}", lock_file_path.display());
-
-        Ok(())
     }
 
     /// Update .gitignore to exclude .ccgo/

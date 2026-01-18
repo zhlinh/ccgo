@@ -15,6 +15,7 @@ mod collection;
 mod commands;
 mod config;
 mod exec;
+mod lockfile;
 mod utils;
 mod version;
 
