@@ -565,7 +565,7 @@ impl AndroidBuilder {
         // Copy AAR to output_dir with versioned naming format
         // Format: {PROJECT}_ANDROID_SDK-{version}-{publish_suffix}.aar
         // Example: CCGONOW_ANDROID_SDK-1.0.2-beta.18-dirty.aar
-        let project_name_upper = ctx.config.package.name.to_uppercase();
+        let project_name_upper = ctx.lib_name().to_uppercase();
         let dest_name = format!(
             "{}_ANDROID_SDK-{}-{}.aar",
             project_name_upper,
@@ -772,7 +772,7 @@ impl PlatformBuilder for AndroidBuilder {
         if !ctx.options.native_only {
             // AAR file now uses versioned naming from build_aar()
             // Format: {PROJECT}_ANDROID_SDK-{version}-{publish_suffix}.aar
-            let project_name_upper = ctx.config.package.name.to_uppercase();
+            let project_name_upper = ctx.lib_name().to_uppercase();
             let aar_versioned_name = format!(
                 "{}_ANDROID_SDK-{}-{}.aar",
                 project_name_upper,
@@ -821,7 +821,7 @@ impl PlatformBuilder for AndroidBuilder {
 
         // Check if AAR was generated (not in native-only mode)
         let aar_archive = if !ctx.options.native_only {
-            let project_name_upper = ctx.config.package.name.to_uppercase();
+            let project_name_upper = ctx.lib_name().to_uppercase();
             let aar_versioned_name = format!(
                 "{}_ANDROID_SDK-{}-{}.aar",
                 project_name_upper,

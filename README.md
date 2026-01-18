@@ -868,6 +868,122 @@ networking → http-client (optional dep)
 
 Result: `full`, `advanced`, `networking`, `logging`, `async`, `http-client` are all enabled.
 
+## Workspaces
+
+CCGO supports workspaces for managing multiple related packages in a single repository. Workspaces provide:
+
+- Unified dependency management across packages
+- Shared configuration and settings
+- Single-command builds for all packages
+
+### Creating a Workspace
+
+Create a root `CCGO.toml` with a `[workspace]` section:
+
+```toml
+# Root CCGO.toml (workspace root)
+[workspace]
+members = [
+    "core",
+    "utils",
+    "examples/*"      # Glob patterns supported
+]
+exclude = ["examples/deprecated"]
+resolver = "2"        # Dependency resolver version
+
+# Shared dependencies for workspace members
+[[workspace.dependencies]]
+name = "fmt"
+version = "^10.0"
+git = "https://github.com/fmtlib/fmt.git"
+features = ["std"]
+
+[[workspace.dependencies]]
+name = "spdlog"
+version = "^1.12"
+```
+
+### Workspace Member Configuration
+
+Member packages can inherit dependencies from the workspace:
+
+```toml
+# core/CCGO.toml
+[package]
+name = "my-core"
+version = "1.0.0"
+
+[[dependencies]]
+name = "fmt"
+workspace = true          # Inherit from workspace
+features = ["extra"]      # Additional features (merged with workspace)
+
+[[dependencies]]
+name = "spdlog"
+workspace = true
+```
+
+### Workspace Structure
+
+```
+my-workspace/
+├── CCGO.toml              # Workspace root configuration
+├── core/
+│   ├── CCGO.toml          # Member package
+│   ├── CMakeLists.txt
+│   └── src/
+├── utils/
+│   ├── CCGO.toml          # Member package
+│   ├── CMakeLists.txt
+│   └── src/
+└── examples/
+    ├── demo1/
+    │   └── CCGO.toml      # Member (matched by glob)
+    └── deprecated/
+        └── CCGO.toml      # Excluded member
+```
+
+### Workspace with Root Package
+
+A workspace root can also be a package itself (virtual workspace):
+
+```toml
+[workspace]
+members = ["crates/*"]
+
+[package]
+name = "my-workspace-root"
+version = "1.0.0"
+```
+
+### Dependency Inheritance
+
+When a member uses `workspace = true`:
+
+1. **Version** is inherited from workspace if not specified locally
+2. **Git/Path** sources are inherited from workspace
+3. **Features** are merged (workspace features + local features)
+4. **default_features** uses workspace setting if not specified locally
+
+```toml
+# Workspace defines:
+[[workspace.dependencies]]
+name = "fmt"
+version = "^10.0"
+features = ["std"]
+
+# Member uses:
+[[dependencies]]
+name = "fmt"
+workspace = true
+features = ["color"]  # Results in: ["std", "color"]
+```
+
+### Resolver Versions
+
+- `resolver = "1"` - Legacy resolver (default)
+- `resolver = "2"` - New resolver with better feature unification across packages
+
 ## Advanced Usage
 
 ### Using Custom Templates

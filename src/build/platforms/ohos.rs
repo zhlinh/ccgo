@@ -485,7 +485,7 @@ impl OhosBuilder {
 
         // Copy HAR to output_dir with versioned naming format
         // Format: {PROJECT}_OHOS_SDK-{version}-{publish_suffix}.har
-        let project_name_upper = ctx.config.package.name.to_uppercase();
+        let project_name_upper = ctx.lib_name().to_uppercase();
         let dest_name = format!(
             "{}_OHOS_SDK-{}-{}.har",
             project_name_upper,
@@ -659,7 +659,7 @@ impl PlatformBuilder for OhosBuilder {
         }
 
         // Add HAR to archive if it exists
-        let project_name_upper = ctx.config.package.name.to_uppercase();
+        let project_name_upper = ctx.lib_name().to_uppercase();
         let har_versioned_name = format!(
             "{}_OHOS_SDK-{}-{}.har",
             project_name_upper,

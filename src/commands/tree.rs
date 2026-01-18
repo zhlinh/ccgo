@@ -189,6 +189,9 @@ impl TreeCommand {
         // Load CCGO.toml
         let config = CcgoConfig::load().context("Failed to load CCGO.toml")?;
 
+        // Get package info (required for tree command)
+        let package = config.require_package()?;
+
         // Handle invert mode (reverse dependency lookup)
         if let Some(ref target) = self.invert {
             return self.execute_invert(target, &config, &project_dir);
@@ -199,8 +202,8 @@ impl TreeCommand {
                 println!("\n✓ No dependencies defined in CCGO.toml");
             } else if self.format == OutputFormat::Json {
                 let tree = TreeJson {
-                    name: config.package.name.clone(),
-                    version: config.package.version.clone(),
+                    name: package.name.clone(),
+                    version: package.version.clone(),
                     dependencies: vec![],
                     conflicts: None,
                 };
@@ -226,10 +229,10 @@ impl TreeCommand {
 
         // Output based on format
         match self.format {
-            OutputFormat::Json => self.output_json(&config, &resolved),
-            OutputFormat::Dot => self.output_dot(&config, &resolved),
+            OutputFormat::Json => self.output_json(&package.name, &package.version, &config, &resolved),
+            OutputFormat::Dot => self.output_dot(&package.name, &package.version, &config, &resolved),
             OutputFormat::Text => {
-                self.output_text(&config, &resolved, &lock_info, &project_dir)?;
+                self.output_text(&package.name, &package.version, &config, &resolved, &lock_info, &project_dir)?;
 
                 // Show conflicts if requested
                 if self.conflicts {
@@ -329,6 +332,8 @@ impl TreeCommand {
 
     fn output_text(
         &self,
+        pkg_name: &str,
+        pkg_version: &str,
         config: &CcgoConfig,
         _resolved: &[ResolvedDep],
         lock_info: &Option<LockInfo>,
@@ -338,7 +343,7 @@ impl TreeCommand {
         println!("CCGO Tree - Dependency Tree Viewer");
         println!("{}", "=".repeat(80));
 
-        println!("\n{} v{}", config.package.name, config.package.version);
+        println!("\n{} v{}", pkg_name, pkg_version);
 
         // Filter dependencies if specific package requested
         let deps_to_show: Vec<_> = if let Some(ref pkg) = self.package {
@@ -611,7 +616,7 @@ impl TreeCommand {
     // JSON Output
     // ========================================================================
 
-    fn output_json(&self, config: &CcgoConfig, resolved: &[ResolvedDep]) -> Result<()> {
+    fn output_json(&self, pkg_name: &str, pkg_version: &str, _config: &CcgoConfig, resolved: &[ResolvedDep]) -> Result<()> {
         let conflicts = if self.conflicts {
             let c = self.detect_conflicts(resolved);
             if c.is_empty() {
@@ -624,8 +629,8 @@ impl TreeCommand {
         };
 
         let tree = TreeJson {
-            name: config.package.name.clone(),
-            version: config.package.version.clone(),
+            name: pkg_name.to_string(),
+            version: pkg_version.to_string(),
             dependencies: resolved.iter().map(|d| self.resolved_to_json(d)).collect(),
             conflicts,
         };
@@ -648,7 +653,7 @@ impl TreeCommand {
     // DOT (Graphviz) Output
     // ========================================================================
 
-    fn output_dot(&self, config: &CcgoConfig, resolved: &[ResolvedDep]) -> Result<()> {
+    fn output_dot(&self, pkg_name: &str, pkg_version: &str, _config: &CcgoConfig, resolved: &[ResolvedDep]) -> Result<()> {
         println!("digraph dependencies {{");
         println!("    rankdir=TB;");
         println!("    node [shape=box, style=filled, fillcolor=lightblue, fontname=\"Helvetica\"];");
@@ -656,8 +661,8 @@ impl TreeCommand {
         println!();
 
         // Root node
-        let root_id = self.node_id(&config.package.name, &config.package.version);
-        let root_label = format!("{}\\nv{}", config.package.name, config.package.version);
+        let root_id = self.node_id(pkg_name, pkg_version);
+        let root_label = format!("{}\\nv{}", pkg_name, pkg_version);
         println!(
             "    \"{}\" [label=\"{}\", fillcolor=lightgreen];",
             root_id, root_label
@@ -729,12 +734,15 @@ impl TreeCommand {
         println!("CCGO Tree - Reverse Dependencies for '{}'", target);
         println!("{}", "=".repeat(80));
 
+        // Get package info (required)
+        let package = config.require_package()?;
+
         // Build reverse dependency map
         let mut reverse_deps: HashMap<String, Vec<String>> = HashMap::new();
         let lock_info = Self::load_lock_file(project_dir).ok();
 
         self.build_reverse_map(
-            &config.package.name,
+            &package.name,
             &config.dependencies,
             &mut reverse_deps,
             &lock_info,
@@ -859,6 +867,9 @@ impl TreeCommand {
     // ========================================================================
 
     fn execute_duplicates(&self, config: &CcgoConfig, resolved: &[ResolvedDep]) -> Result<()> {
+        // Get package info (required)
+        let package = config.require_package()?;
+
         let mut count_map: HashMap<String, usize> = HashMap::new();
         self.count_occurrences(resolved, &mut count_map);
 
@@ -883,8 +894,8 @@ impl TreeCommand {
             }
 
             let json = DuplicatesJson {
-                project: config.package.name.clone(),
-                version: config.package.version.clone(),
+                project: package.name.clone(),
+                version: package.version.clone(),
                 duplicates: duplicates
                     .iter()
                     .map(|(name, count)| DuplicateEntry {
@@ -959,6 +970,7 @@ mod tests {
             optional: false,
             features: vec![],
             default_features: None,
+            workspace: false,
         };
 
         assert_eq!(cmd.format_source(&dep), "  (path: ../mylib)");
@@ -977,6 +989,7 @@ mod tests {
             optional: false,
             features: vec![],
             default_features: None,
+            workspace: false,
         };
 
         assert_eq!(
@@ -996,6 +1009,7 @@ mod tests {
             optional: false,
             features: vec![],
             default_features: None,
+            workspace: false,
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1016,6 +1030,7 @@ mod tests {
             optional: false,
             features: vec![],
             default_features: None,
+            workspace: false,
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1039,6 +1054,7 @@ mod tests {
             optional: false,
             features: vec![],
             default_features: None,
+            workspace: false,
         };
 
         let source = DepSourceInfo::from(&dep);

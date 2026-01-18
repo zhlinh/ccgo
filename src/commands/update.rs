@@ -219,15 +219,17 @@ impl UpdateCommand {
         let dep_config_path = source_path.join("CCGO.toml");
         if dep_config_path.exists() {
             let dep_config = CcgoConfig::load_from_path(&dep_config_path)?;
-            let new_version = dep_config.package.version;
+            if let Some(package) = &dep_config.package {
+                let new_version = package.version.clone();
 
-            if new_version != dep.version {
-                return Ok(Some(UpdateInfo {
-                    name: dep.name.clone(),
-                    current_version: dep.version.clone(),
-                    new_version,
-                    source: UpdateSource::Path,
-                }));
+                if new_version != dep.version {
+                    return Ok(Some(UpdateInfo {
+                        name: dep.name.clone(),
+                        current_version: dep.version.clone(),
+                        new_version,
+                        source: UpdateSource::Path,
+                    }));
+                }
             }
         }
 

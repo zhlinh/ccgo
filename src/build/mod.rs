@@ -130,10 +130,14 @@ impl BuildContext {
             .join(release_subdir)
             .join(&platform_name);
 
+        // Get package info (required for builds)
+        let package = config.package.as_ref()
+            .expect("Build requires [package] section in CCGO.toml");
+
         // Calculate git version information (ignore errors - continue without git info)
         let git_version = crate::utils::git_version::GitVersion::from_project_root(
             &project_root,
-            &config.package.version,
+            &package.version,
         ).ok();
 
         Self {
@@ -148,12 +152,16 @@ impl BuildContext {
 
     /// Get the library name from config
     pub fn lib_name(&self) -> &str {
-        &self.config.package.name
+        &self.config.package.as_ref()
+            .expect("Build requires [package] section")
+            .name
     }
 
     /// Get the version string
     pub fn version(&self) -> &str {
-        &self.config.package.version
+        &self.config.package.as_ref()
+            .expect("Build requires [package] section")
+            .version
     }
 
     /// Get the publish suffix (e.g., "beta.18-dirty" or "release")
@@ -162,7 +170,7 @@ impl BuildContext {
         self.git_version
             .as_ref()
             .map(|gv| gv.publish_suffix.as_str())
-            .unwrap_or(&self.config.package.version)
+            .unwrap_or_else(|| self.version())
     }
 
     /// Get the full version with suffix (e.g., "1.0.2-beta.18-dirty")
@@ -170,7 +178,7 @@ impl BuildContext {
         self.git_version
             .as_ref()
             .map(|gv| gv.version_with_suffix.as_str())
-            .unwrap_or(&self.config.package.version)
+            .unwrap_or_else(|| self.version())
     }
 
     /// Get the number of parallel jobs (default to CPU count)

@@ -81,12 +81,15 @@ impl TagCommand {
 
         let project_dir = std::env::current_dir().context("Failed to get current directory")?;
 
+        // Get package info (required for tag command)
+        let package = config.require_package()?;
+
         // Determine tag version
         let tag_version = if let Some(v) = self.version {
             v
         } else {
             // Auto-generate from CCGO.toml
-            let config_version = &config.package.version;
+            let config_version = &package.version;
             if config_version.starts_with('v') {
                 config_version.clone()
             } else {
@@ -103,7 +106,7 @@ impl TagCommand {
         let tag_message = if let Some(msg) = self.message {
             msg
         } else {
-            generate_tag_message(&tag_version, &config.package.name, &git_info)
+            generate_tag_message(&tag_version, &package.name, &git_info)
         };
 
         if !self.lightweight {

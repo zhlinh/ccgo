@@ -1,6 +1,35 @@
 //! CCGO.toml configuration parsing
 //!
 //! These structs are parsed from TOML and will be used for native Rust implementation.
+//!
+//! # Workspace Support
+//!
+//! CCGO supports workspaces for managing multiple related packages. A workspace is defined
+//! by a root CCGO.toml that contains a `[workspace]` section.
+//!
+//! ## Workspace Configuration Example
+//!
+//! ```toml
+//! [workspace]
+//! members = ["core", "utils", "examples/*"]
+//! resolver = "2"
+//!
+//! [workspace.dependencies]
+//! fmt = { version = "^10.0", git = "https://github.com/fmtlib/fmt.git" }
+//! spdlog = { version = "^1.12" }
+//! ```
+//!
+//! Member packages can inherit workspace dependencies:
+//!
+//! ```toml
+//! [package]
+//! name = "my-core"
+//! version = "1.0.0"
+//!
+//! [[dependencies]]
+//! name = "fmt"
+//! workspace = true
+//! ```
 
 #![allow(dead_code)]
 
@@ -11,11 +40,18 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 /// Root configuration from CCGO.toml
+///
+/// This can be either a package configuration (with [package] section)
+/// or a workspace configuration (with [workspace] section), or both.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CcgoConfig {
     /// Package metadata (supports both [package] and [project] sections)
+    /// Optional when this is a workspace-only configuration
     #[serde(alias = "project")]
-    pub package: PackageConfig,
+    pub package: Option<PackageConfig>,
+
+    /// Workspace configuration
+    pub workspace: Option<WorkspaceConfig>,
 
     /// Project dependencies
     #[serde(default)]
@@ -30,6 +66,110 @@ pub struct CcgoConfig {
 
     /// Platform-specific configurations
     pub platforms: Option<PlatformConfigs>,
+}
+
+/// Workspace configuration from [workspace] section
+///
+/// Workspaces allow managing multiple related packages together with shared
+/// dependencies and unified builds.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceConfig {
+    /// Workspace member paths (relative to workspace root)
+    ///
+    /// Supports glob patterns like "examples/*" or "crates/**"
+    #[serde(default)]
+    pub members: Vec<String>,
+
+    /// Paths to exclude from workspace membership
+    ///
+    /// Useful when using glob patterns in members
+    #[serde(default)]
+    pub exclude: Vec<String>,
+
+    /// Dependency resolver version
+    ///
+    /// - "1": Legacy resolver (default)
+    /// - "2": New resolver with better feature unification
+    #[serde(default = "default_resolver")]
+    pub resolver: String,
+
+    /// Shared dependencies that workspace members can inherit
+    #[serde(default)]
+    pub dependencies: Vec<WorkspaceDependency>,
+
+    /// Default members for workspace commands
+    ///
+    /// If not specified, all members are used
+    #[serde(default)]
+    pub default_members: Vec<String>,
+}
+
+fn default_resolver() -> String {
+    "1".to_string()
+}
+
+impl Default for WorkspaceConfig {
+    fn default() -> Self {
+        Self {
+            members: Vec::new(),
+            exclude: Vec::new(),
+            resolver: default_resolver(),
+            dependencies: Vec::new(),
+            default_members: Vec::new(),
+        }
+    }
+}
+
+/// Workspace-level dependency definition
+///
+/// These dependencies can be inherited by workspace members using `workspace = true`
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceDependency {
+    /// Dependency name
+    pub name: String,
+
+    /// Version requirement
+    pub version: String,
+
+    /// Git repository URL
+    pub git: Option<String>,
+
+    /// Git branch name
+    pub branch: Option<String>,
+
+    /// Git tag
+    pub tag: Option<String>,
+
+    /// Git revision (commit hash)
+    pub rev: Option<String>,
+
+    /// Local path (for development)
+    pub path: Option<String>,
+
+    /// Features to enable for this dependency
+    #[serde(default)]
+    pub features: Vec<String>,
+
+    /// Whether to disable default features for this dependency
+    #[serde(default)]
+    pub default_features: Option<bool>,
+}
+
+impl WorkspaceDependency {
+    /// Convert to a regular DependencyConfig
+    pub fn to_dependency_config(&self) -> DependencyConfig {
+        DependencyConfig {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            git: self.git.clone(),
+            branch: self.branch.clone(),
+            path: self.path.clone(),
+            optional: false,
+            features: self.features.clone(),
+            default_features: self.default_features,
+            workspace: false,
+        }
+    }
 }
 
 /// Package metadata from [package] section
@@ -61,6 +201,8 @@ pub struct DependencyConfig {
     pub name: String,
 
     /// Version requirement (supports semver ranges like ^1.0, ~1.2.3, >=1.0,<2.0)
+    /// Can be empty if `workspace = true` (inherited from workspace)
+    #[serde(default)]
     pub version: String,
 
     /// Git repository URL
@@ -83,6 +225,59 @@ pub struct DependencyConfig {
     /// Whether to disable default features for this dependency
     #[serde(default)]
     pub default_features: Option<bool>,
+
+    /// Whether to inherit this dependency from workspace
+    ///
+    /// When true, the dependency configuration is inherited from
+    /// [workspace.dependencies] in the workspace root CCGO.toml.
+    /// Additional features can be specified that will be merged
+    /// with the workspace dependency's features.
+    #[serde(default)]
+    pub workspace: bool,
+}
+
+impl DependencyConfig {
+    /// Merge with a workspace dependency, inheriting missing fields
+    pub fn merge_with_workspace(&mut self, ws_dep: &WorkspaceDependency) {
+        // Only merge if workspace inheritance is enabled
+        if !self.workspace {
+            return;
+        }
+
+        // Inherit version if not specified
+        if self.version.is_empty() {
+            self.version = ws_dep.version.clone();
+        }
+
+        // Inherit git if not specified
+        if self.git.is_none() {
+            self.git = ws_dep.git.clone();
+        }
+
+        // Inherit branch if not specified
+        if self.branch.is_none() {
+            self.branch = ws_dep.branch.clone();
+        }
+
+        // Inherit path if not specified
+        if self.path.is_none() {
+            self.path = ws_dep.path.clone();
+        }
+
+        // Merge features (local features are added to workspace features)
+        let mut merged_features = ws_dep.features.clone();
+        for feat in &self.features {
+            if !merged_features.contains(feat) {
+                merged_features.push(feat.clone());
+            }
+        }
+        self.features = merged_features;
+
+        // Use workspace default_features if not explicitly set
+        if self.default_features.is_none() {
+            self.default_features = ws_dep.default_features;
+        }
+    }
 }
 
 /// Features configuration from [features] section
@@ -330,9 +525,16 @@ impl CcgoConfig {
     pub fn parse(content: &str) -> Result<Self> {
         let config: Self = toml::from_str(content).context("Failed to parse CCGO.toml")?;
 
-        // Validate dependencies
+        // Validate: must have either package or workspace
+        if config.package.is_none() && config.workspace.is_none() {
+            bail!("CCGO.toml must contain either [package] or [workspace] section");
+        }
+
+        // Validate dependencies (only non-workspace dependencies need version validation)
         for dep in &config.dependencies {
-            dep.validate().with_context(|| format!("Invalid dependency: {}", dep.name))?;
+            if !dep.workspace {
+                dep.validate().with_context(|| format!("Invalid dependency: {}", dep.name))?;
+            }
         }
 
         Ok(config)
@@ -359,6 +561,145 @@ impl CcgoConfig {
             }
         }
     }
+
+    /// Check if this is a workspace configuration
+    pub fn is_workspace(&self) -> bool {
+        self.workspace.is_some()
+    }
+
+    /// Check if this is a package configuration
+    pub fn is_package(&self) -> bool {
+        self.package.is_some()
+    }
+
+    /// Get package configuration, returning an error if not present
+    pub fn require_package(&self) -> Result<&PackageConfig> {
+        self.package.as_ref().context(
+            "This operation requires a [package] section in CCGO.toml.\n\
+             Workspace-only configurations cannot be used for this operation."
+        )
+    }
+
+    /// Get workspace configuration, returning an error if not present
+    pub fn require_workspace(&self) -> Result<&WorkspaceConfig> {
+        self.workspace.as_ref().context(
+            "This operation requires a [workspace] section in CCGO.toml."
+        )
+    }
+
+    /// Find workspace root by searching up from the given directory
+    ///
+    /// Returns (workspace_root_path, workspace_config)
+    pub fn find_workspace_root(start_dir: &Path) -> Result<Option<(PathBuf, Self)>> {
+        let mut dir = start_dir;
+
+        loop {
+            let config_path = dir.join("CCGO.toml");
+            if config_path.exists() {
+                let config = Self::load_from_path(&config_path)?;
+                if config.is_workspace() {
+                    return Ok(Some((dir.to_path_buf(), config)));
+                }
+            }
+
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// Get workspace member paths
+    ///
+    /// Resolves glob patterns and returns absolute paths to member directories
+    pub fn get_workspace_members(&self, workspace_root: &Path) -> Result<Vec<PathBuf>> {
+        let workspace = self.require_workspace()?;
+        let mut members = Vec::new();
+
+        for pattern in &workspace.members {
+            let full_pattern = workspace_root.join(pattern);
+            let pattern_str = full_pattern.to_string_lossy();
+
+            // Use glob to expand patterns
+            let paths = glob::glob(&pattern_str)
+                .with_context(|| format!("Invalid glob pattern: {}", pattern))?;
+
+            for path_result in paths {
+                let path = path_result
+                    .with_context(|| format!("Failed to resolve glob pattern: {}", pattern))?;
+
+                // Check if it's a directory with CCGO.toml
+                if path.is_dir() && path.join("CCGO.toml").exists() {
+                    // Check if excluded
+                    let relative = path.strip_prefix(workspace_root)
+                        .unwrap_or(&path)
+                        .to_string_lossy();
+
+                    let is_excluded = workspace.exclude.iter().any(|exc| {
+                        // Simple check - could be improved with proper glob matching
+                        relative.starts_with(exc) || relative.as_ref() == exc
+                    });
+
+                    if !is_excluded {
+                        members.push(path);
+                    }
+                }
+            }
+        }
+
+        // Sort for consistent ordering
+        members.sort();
+        Ok(members)
+    }
+
+    /// Load all workspace member configurations
+    ///
+    /// Returns a list of (member_path, member_config) tuples
+    pub fn load_workspace_members(&self, workspace_root: &Path) -> Result<Vec<(PathBuf, Self)>> {
+        let member_paths = self.get_workspace_members(workspace_root)?;
+        let mut members = Vec::new();
+
+        for member_path in member_paths {
+            let config_path = member_path.join("CCGO.toml");
+            let config = Self::load_from_path(&config_path)
+                .with_context(|| format!("Failed to load member config: {}", config_path.display()))?;
+            members.push((member_path, config));
+        }
+
+        Ok(members)
+    }
+
+    /// Resolve workspace dependencies for this configuration
+    ///
+    /// If this is a member of a workspace, inherits dependencies marked with `workspace = true`
+    /// from the workspace root configuration.
+    pub fn resolve_workspace_dependencies(&mut self, workspace_config: &Self) -> Result<()> {
+        let workspace = workspace_config.require_workspace()?;
+
+        // Build a map of workspace dependencies for quick lookup
+        let ws_deps: HashMap<&str, &WorkspaceDependency> = workspace
+            .dependencies
+            .iter()
+            .map(|d| (d.name.as_str(), d))
+            .collect();
+
+        // Resolve each dependency that uses workspace inheritance
+        for dep in &mut self.dependencies {
+            if dep.workspace {
+                if let Some(ws_dep) = ws_deps.get(dep.name.as_str()) {
+                    dep.merge_with_workspace(ws_dep);
+                } else {
+                    bail!(
+                        "Dependency '{}' is marked as workspace = true, but not found in \
+                         [workspace.dependencies]",
+                        dep.name
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -374,8 +715,9 @@ version = "1.0.0"
 "#;
 
         let config = CcgoConfig::parse(toml).unwrap();
-        assert_eq!(config.package.name, "mylib");
-        assert_eq!(config.package.version, "1.0.0");
+        let package = config.package.as_ref().unwrap();
+        assert_eq!(package.name, "mylib");
+        assert_eq!(package.version, "1.0.0");
     }
 
     #[test]
@@ -406,7 +748,8 @@ min_version = "12.0"
 "#;
 
         let config = CcgoConfig::parse(toml).unwrap();
-        assert_eq!(config.package.name, "mylib");
+        let package = config.package.as_ref().unwrap();
+        assert_eq!(package.name, "mylib");
         assert_eq!(config.dependencies.len(), 1);
         assert_eq!(config.dependencies[0].name, "fmt");
         assert!(config.build.is_some());
@@ -595,5 +938,143 @@ derive = ["serde/derive"]
         let resolved = config.features.resolve_features(&["derive".to_string()], false).unwrap();
         assert!(resolved.contains("derive"));
         assert!(resolved.contains("serde/derive"));
+    }
+
+    #[test]
+    fn test_parse_workspace_config() {
+        let toml = r#"
+[workspace]
+members = ["core", "utils", "examples/*"]
+exclude = ["examples/deprecated"]
+resolver = "2"
+
+[[workspace.dependencies]]
+name = "fmt"
+version = "^10.0"
+git = "https://github.com/fmtlib/fmt.git"
+
+[[workspace.dependencies]]
+name = "spdlog"
+version = "^1.12"
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+        assert!(config.is_workspace());
+        assert!(!config.is_package());
+
+        let workspace = config.workspace.as_ref().unwrap();
+        assert_eq!(workspace.members, vec!["core", "utils", "examples/*"]);
+        assert_eq!(workspace.exclude, vec!["examples/deprecated"]);
+        assert_eq!(workspace.resolver, "2");
+        assert_eq!(workspace.dependencies.len(), 2);
+        assert_eq!(workspace.dependencies[0].name, "fmt");
+        assert_eq!(workspace.dependencies[1].name, "spdlog");
+    }
+
+    #[test]
+    fn test_parse_workspace_with_package() {
+        // A CCGO.toml can have both workspace and package sections
+        // (virtual workspace root that is also a package)
+        let toml = r#"
+[workspace]
+members = ["crates/*"]
+
+[package]
+name = "my-workspace"
+version = "1.0.0"
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+        assert!(config.is_workspace());
+        assert!(config.is_package());
+
+        let package = config.package.as_ref().unwrap();
+        assert_eq!(package.name, "my-workspace");
+    }
+
+    #[test]
+    fn test_workspace_dependency_inheritance() {
+        // Workspace config
+        let ws_toml = r#"
+[workspace]
+members = ["core"]
+
+[[workspace.dependencies]]
+name = "fmt"
+version = "^10.0"
+git = "https://github.com/fmtlib/fmt.git"
+features = ["std"]
+"#;
+
+        // Member config with workspace dependency inheritance
+        let member_toml = r#"
+[package]
+name = "my-core"
+version = "1.0.0"
+
+[[dependencies]]
+name = "fmt"
+workspace = true
+features = ["extra"]
+"#;
+
+        let ws_config = CcgoConfig::parse(ws_toml).unwrap();
+        let mut member_config = CcgoConfig::parse(member_toml).unwrap();
+
+        // Before resolution
+        assert!(member_config.dependencies[0].workspace);
+        assert!(member_config.dependencies[0].version.is_empty());
+
+        // Resolve workspace dependencies
+        member_config.resolve_workspace_dependencies(&ws_config).unwrap();
+
+        // After resolution
+        let dep = &member_config.dependencies[0];
+        assert_eq!(dep.version, "^10.0");
+        assert_eq!(dep.git.as_ref().unwrap(), "https://github.com/fmtlib/fmt.git");
+        // Features should be merged (workspace + local)
+        assert!(dep.features.contains(&"std".to_string()));
+        assert!(dep.features.contains(&"extra".to_string()));
+    }
+
+    #[test]
+    fn test_workspace_dependency_not_found() {
+        let ws_toml = r#"
+[workspace]
+members = ["core"]
+
+[[workspace.dependencies]]
+name = "fmt"
+version = "^10.0"
+"#;
+
+        let member_toml = r#"
+[package]
+name = "my-core"
+version = "1.0.0"
+
+[[dependencies]]
+name = "nonexistent"
+workspace = true
+"#;
+
+        let ws_config = CcgoConfig::parse(ws_toml).unwrap();
+        let mut member_config = CcgoConfig::parse(member_toml).unwrap();
+
+        // Should fail because 'nonexistent' is not in workspace.dependencies
+        let result = member_config.resolve_workspace_dependencies(&ws_config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_requires_package_or_workspace() {
+        // Empty config should fail
+        let toml = r#"
+[build]
+parallel = true
+"#;
+
+        let result = CcgoConfig::parse(toml);
+        assert!(result.is_err());
     }
 }

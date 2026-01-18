@@ -221,10 +221,13 @@ impl BuildCommand {
         // Get project root (where CCGO.toml is located)
         let project_root = std::env::current_dir()?;
 
+        // Get package info (required for builds)
+        let package = config.require_package()?;
+
         if verbose {
             eprintln!(
                 "Building {} for {} platform...",
-                config.package.name, self.target
+                package.name, self.target
             );
         }
 
@@ -302,7 +305,7 @@ impl BuildCommand {
                     let result = docker_builder.execute()?;
 
                     // Print results summary (same as non-Docker builds)
-                    Self::print_results(&config.package.name, &config.package.version, &self.target.to_string(), &docker_project_root, &[result], verbose);
+                    Self::print_results(&package.name, &package.version, &self.target.to_string(), &docker_project_root, &[result], verbose);
                     return Ok(());
                 }
             }
@@ -332,7 +335,7 @@ impl BuildCommand {
         };
 
         // Print results summary
-        Self::print_results(&config.package.name, &config.package.version, &self.target.to_string(), &ctx.project_root, &results, verbose);
+        Self::print_results(&package.name, &package.version, &self.target.to_string(), &ctx.project_root, &results, verbose);
 
         Ok(())
     }
