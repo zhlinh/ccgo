@@ -7,8 +7,8 @@ use crate::commands::{
     add::AddCommand, bench::BenchCommand, build::BuildCommand, check::CheckCommand,
     clean::CleanCommand, collection::CollectionCommand, doc::DocCommand, init::InitCommand,
     install::InstallCommand, new::NewCommand, package::PackageCommand, publish::PublishCommand,
-    remove::RemoveCommand, search::SearchCommand, tag::TagCommand, test::TestCommand,
-    tree::TreeCommand, update::UpdateCommand,
+    remove::RemoveCommand, run::RunCommand, search::SearchCommand, tag::TagCommand,
+    test::TestCommand, tree::TreeCommand, update::UpdateCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -42,6 +42,9 @@ pub enum Commands {
 
     /// Initialize library project in current directory
     Init(InitCommand),
+
+    /// Run an example or binary target
+    Run(RunCommand),
 
     /// Run GoogleTest unit tests
     Test(TestCommand),
@@ -103,6 +106,7 @@ impl Cli {
             Commands::Build(cmd) => cmd.execute(self.verbose),
             Commands::New(cmd) => cmd.execute(self.verbose),
             Commands::Init(cmd) => cmd.execute(self.verbose),
+            Commands::Run(cmd) => cmd.execute(self.verbose),
             Commands::Test(cmd) => cmd.execute(self.verbose),
             Commands::Bench(cmd) => cmd.execute(self.verbose),
             Commands::Doc(cmd) => cmd.execute(self.verbose),

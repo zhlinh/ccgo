@@ -20,7 +20,7 @@ pub struct AddCommand {
     pub name: String,
 
     /// Version requirement (e.g., "^1.0", "~1.2.3", ">=1.0,<2.0")
-    #[arg(long, short = 'v', conflicts_with_all = &["git", "path"])]
+    #[arg(long, short = 'V', conflicts_with_all = &["git", "path"])]
     pub version: Option<String>,
 
     /// Git repository URL

@@ -66,6 +66,14 @@ pub struct CcgoConfig {
 
     /// Platform-specific configurations
     pub platforms: Option<PlatformConfigs>,
+
+    /// Binary targets
+    #[serde(default, rename = "bin")]
+    pub bins: Vec<BinConfig>,
+
+    /// Example programs
+    #[serde(default, rename = "example")]
+    pub examples: Vec<ExampleConfig>,
 }
 
 /// Workspace configuration from [workspace] section
@@ -192,6 +200,47 @@ pub struct PackageConfig {
 
     /// Git repository URL
     pub repository: Option<String>,
+}
+
+/// Binary target configuration from [[bin]] section
+///
+/// Defines an executable binary target that can be built and run.
+///
+/// # Example
+///
+/// ```toml
+/// [[bin]]
+/// name = "my-cli"
+/// path = "src/bin/cli.cpp"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct BinConfig {
+    /// Binary target name (used for executable name)
+    pub name: String,
+
+    /// Path to the main source file (relative to project root)
+    pub path: String,
+}
+
+/// Example configuration from [[example]] section
+///
+/// Defines an example program that demonstrates library usage.
+///
+/// # Example
+///
+/// ```toml
+/// [[example]]
+/// name = "basic-usage"
+/// path = "examples/basic.cpp"  # Optional, defaults to examples/{name}.cpp
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExampleConfig {
+    /// Example name
+    pub name: String,
+
+    /// Path to the example source file (optional)
+    /// Defaults to examples/{name}.cpp or examples/{name}/main.cpp
+    pub path: Option<String>,
 }
 
 /// Dependency configuration from [[dependencies]] array
