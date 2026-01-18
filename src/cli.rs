@@ -8,7 +8,7 @@ use crate::commands::{
     clean::CleanCommand, collection::CollectionCommand, doc::DocCommand, init::InitCommand,
     install::InstallCommand, new::NewCommand, package::PackageCommand, publish::PublishCommand,
     remove::RemoveCommand, run::RunCommand, search::SearchCommand, tag::TagCommand,
-    test::TestCommand, tree::TreeCommand, update::UpdateCommand,
+    test::TestCommand, tree::TreeCommand, update::UpdateCommand, vendor::VendorCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -90,6 +90,9 @@ pub enum Commands {
 
     /// Search for packages
     Search(SearchCommand),
+
+    /// Vendor dependencies to local directory for offline builds
+    Vendor(VendorCommand),
 }
 
 impl Cli {
@@ -122,6 +125,7 @@ impl Cli {
             Commands::Tree(cmd) => cmd.execute(self.verbose),
             Commands::Collection(cmd) => cmd.execute(self.verbose),
             Commands::Search(cmd) => cmd.execute(self.verbose),
+            Commands::Vendor(cmd) => cmd.execute(self.verbose),
         }
     }
 }
