@@ -79,7 +79,7 @@ impl InstallCommand {
 
         // Load existing lockfile
         let existing_lockfile = Lockfile::load(&project_dir)?;
-        if let Some(ref lockfile) = existing_lockfile {
+        if let Some(ref _lockfile) = existing_lockfile {
             println!("📋 Found existing {}", LOCKFILE_NAME);
         }
 

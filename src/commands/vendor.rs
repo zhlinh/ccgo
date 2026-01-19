@@ -4,7 +4,6 @@
 //! This ensures reproducible builds without network access.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -554,21 +553,3 @@ impl VendorCommand {
     }
 }
 
-/// Check if vendor directory exists and has packages
-pub fn has_vendor_dir(project_dir: &Path) -> bool {
-    let vendor_dir = project_dir.join(VENDOR_DIR);
-    let vendor_toml = vendor_dir.join(VENDOR_TOML);
-    vendor_dir.exists() && vendor_toml.exists()
-}
-
-/// Get vendored package path if available
-pub fn get_vendored_path(project_dir: &Path, package_name: &str) -> Option<PathBuf> {
-    let vendor_dir = project_dir.join(VENDOR_DIR);
-    let pkg_dir = vendor_dir.join(package_name);
-
-    if pkg_dir.exists() {
-        Some(pkg_dir)
-    } else {
-        None
-    }
-}

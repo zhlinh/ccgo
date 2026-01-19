@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -234,10 +234,6 @@ impl Lockfile {
         self.packages.iter().find(|p| p.name == name)
     }
 
-    /// Check if a package is locked
-    pub fn has_package(&self, name: &str) -> bool {
-        self.packages.iter().any(|p| p.name == name)
-    }
 
     /// Add or update a package in the lockfile
     pub fn upsert_package(&mut self, package: LockedPackage) {
@@ -251,12 +247,6 @@ impl Lockfile {
         self.packages.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
-    /// Remove a package from the lockfile
-    pub fn remove_package(&mut self, name: &str) -> bool {
-        let len_before = self.packages.len();
-        self.packages.retain(|p| p.name != name);
-        self.packages.len() < len_before
-    }
 
     /// Update metadata timestamp
     pub fn touch(&mut self) {
@@ -325,38 +315,6 @@ impl Lockfile {
 }
 
 impl LockedPackage {
-    /// Create a new locked package from git source
-    pub fn from_git(
-        name: String,
-        version: String,
-        git_url: &str,
-        git_info: LockedGitInfo,
-    ) -> Self {
-        let source = format!("git+{}#{}", git_url, git_info.revision);
-        Self {
-            name,
-            version,
-            source,
-            checksum: None,
-            dependencies: Vec::new(),
-            git: Some(git_info),
-            installed_at: Some(chrono::Local::now().to_rfc3339()),
-        }
-    }
-
-    /// Create a new locked package from local path
-    pub fn from_path(name: String, version: String, path: &Path) -> Self {
-        let source = format!("path+{}", path.display());
-        Self {
-            name,
-            version,
-            source,
-            checksum: None,
-            dependencies: Vec::new(),
-            git: None,
-            installed_at: Some(chrono::Local::now().to_rfc3339()),
-        }
-    }
 
     /// Parse the source string to extract type and location
     pub fn parse_source(&self) -> (SourceType, String) {
@@ -387,90 +345,6 @@ pub enum SourceType {
     Unknown,
 }
 
-/// Resolve locked packages against current dependencies
-///
-/// Returns packages that should be installed based on lockfile and config.
-pub fn resolve_with_lockfile(
-    lockfile: Option<&Lockfile>,
-    config_deps: &[crate::config::DependencyConfig],
-    locked_mode: bool,
-) -> Result<Vec<ResolvedDependency>> {
-    let mut resolved = Vec::new();
-
-    let locked_map: HashMap<&str, &LockedPackage> = lockfile
-        .map(|l| l.packages_map())
-        .unwrap_or_default();
-
-    for dep in config_deps {
-        let locked = locked_map.get(dep.name.as_str()).copied();
-
-        if locked_mode {
-            // In locked mode, all dependencies must be in lockfile
-            let locked = locked.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Dependency '{}' not found in lockfile. \
-                     Run 'ccgo install' first to update the lockfile, \
-                     or remove --locked flag.",
-                    dep.name
-                )
-            })?;
-
-            resolved.push(ResolvedDependency {
-                name: dep.name.clone(),
-                version: locked.version.clone(),
-                source: locked.source.clone(),
-                locked: Some(locked.clone()),
-                from_lockfile: true,
-            });
-        } else {
-            // Normal mode: use lockfile if available and compatible
-            if let Some(locked) = locked {
-                // Check if config source matches locked source
-                let config_source = Lockfile::build_source_string(dep);
-                if Lockfile::source_matches(&locked.source, &config_source) {
-                    resolved.push(ResolvedDependency {
-                        name: dep.name.clone(),
-                        version: locked.version.clone(),
-                        source: locked.source.clone(),
-                        locked: Some(locked.clone()),
-                        from_lockfile: true,
-                    });
-                    continue;
-                }
-            }
-
-            // No lockfile entry or source changed - resolve from config
-            resolved.push(ResolvedDependency {
-                name: dep.name.clone(),
-                version: dep.version.clone(),
-                source: Lockfile::build_source_string(dep),
-                locked: None,
-                from_lockfile: false,
-            });
-        }
-    }
-
-    Ok(resolved)
-}
-
-/// A resolved dependency ready for installation
-#[derive(Debug, Clone)]
-pub struct ResolvedDependency {
-    /// Dependency name
-    pub name: String,
-
-    /// Resolved version
-    pub version: String,
-
-    /// Source string
-    pub source: String,
-
-    /// Locked package info (if from lockfile)
-    pub locked: Option<LockedPackage>,
-
-    /// Whether this was resolved from lockfile
-    pub from_lockfile: bool,
-}
 
 #[cfg(test)]
 mod tests {

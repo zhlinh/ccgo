@@ -8,6 +8,8 @@
 //! - Greater/Less: ">=1.0.0", "<2.0.0", ">1.0,<2.0"
 //! - Range: ">=1.2.0, <1.8.0"
 
+#![allow(dead_code)]
+
 use anyhow::{bail, Context, Result};
 use std::cmp::Ordering;
 use std::fmt;
