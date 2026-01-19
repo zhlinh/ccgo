@@ -1,0 +1,148 @@
+site_name: CCGO
+site_description: Modern C++ Cross-Platform Build System and Project Generator
+site_url: https://ccgo.readthedocs.io
+repo_url: https://github.com/zhlinh/ccgo
+repo_name: zhlinh/ccgo
+
+theme:
+  name: material
+  logo: assets/logo.png
+  favicon: assets/favicon.png
+  palette:
+    - scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: zh
+          name: 简体中文
+          build: true
+          nav_translations:
+            Home: 首页
+            Getting Started: 快速入门
+            Installation: 安装
+            Quick Start: 快速开始
+            Configuration: 配置
+            Project Structure: 项目结构
+            Platforms: 平台支持
+            Overview: 概览
+            Android: Android
+            iOS: iOS
+            macOS: macOS
+            Windows: Windows
+            Linux: Linux
+            OpenHarmony: 鸿蒙
+            Kotlin Multiplatform: Kotlin 多平台
+            Features: 功能特性
+            Build System: 构建系统
+            Dependency Management: 依赖管理
+            Publishing: 发布管理
+            Docker Builds: Docker 构建
+            Version Management: 版本管理
+            Git Integration: Git 集成
+            Reference: 参考文档
+            CLI Commands: CLI 命令
+            CCGO.toml Reference: CCGO.toml 参考
+            CMake Integration: CMake 集成
+            Gradle Plugins: Gradle 插件
+            Development: 开发指南
+            Contributing: 贡献指南
+            Roadmap: 路线图
+            Changelog: 更新日志
+            Architecture: 架构设计
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/zhlinh/ccgo
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/ccgo/
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+    - Project Structure: getting-started/project-structure.md
+  - Platforms:
+    - Overview: platforms/index.md
+    - Android: platforms/android.md
+    - iOS: platforms/ios.md
+    - macOS: platforms/macos.md
+    - Windows: platforms/windows.md
+    - Linux: platforms/linux.md
+    - OpenHarmony: platforms/openharmony.md
+    # - Kotlin Multiplatform: platforms/kmp.md  # TODO: Create this file
+  - Features:
+    - Build System: features/build-system.md
+    - Dependency Management: features/dependency-management.md
+    - Publishing: features/publishing.md
+    - Docker Builds: features/docker-builds.md
+    # - Version Management: features/version-management.md  # TODO: Create this file
+    # - Git Integration: features/git-integration.md  # TODO: Create this file
+  - Reference:
+    - CLI Commands: reference/cli.md
+    - CCGO.toml Reference: reference/ccgo-toml.md
+    # - CMake Integration: reference/cmake.md  # TODO: Create this file
+    # - Gradle Plugins: reference/gradle-plugins.md  # TODO: Create this file
+  - Development:
+    - Contributing: development/contributing.md
+    - Roadmap: development/roadmap.md
+    # - Changelog: development/changelog.md  # TODO: Create this file
+    # - Architecture: development/architecture.md  # TODO: Create this file

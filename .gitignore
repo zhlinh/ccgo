@@ -28,3 +28,6 @@
 *.profraw
 *.profdata
 tarpaulin-report.html
+
+# MkDocs build output
+site/

@@ -242,7 +242,7 @@ jobs:
             ccgo build ios --docker
             ```
 
-            See [CHANGELOG.md](https://github.com/ccgo-group/ccgo/blob/main/CHANGELOG.md) for details.
+            See [CHANGELOG.md](https://github.com/zhlinh/ccgo/blob/main/CHANGELOG.md) for details.
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
