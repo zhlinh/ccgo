@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Background -->
+  <rect width="64" height="64" fill="#673ab7" rx="8"/>
+
+  <!-- Stylized C++ -->
+  <g fill="white">
+    <!-- C letters -->
+    <path d="M 18 20 Q 12 20 12 26 L 12 38 Q 12 44 18 44"
+          fill="none" stroke="white" stroke-width="4" stroke-linecap="round"/>
+
+    <path d="M 28 20 Q 34 20 34 26 L 34 38 Q 34 44 28 44"
+          fill="none" stroke="white" stroke-width="4" stroke-linecap="round"/>
+
+    <!-- Plus signs -->
+    <rect x="40" y="29" width="8" height="2" rx="1"/>
+    <rect x="43" y="26" width="2" height="8" rx="1"/>
+
+    <rect x="50" y="29" width="8" height="2" rx="1"/>
+    <rect x="53" y="26" width="2" height="8" rx="1"/>
+  </g>
+
+  <!-- GO text -->
+  <text x="32" y="58" font-family="Arial, sans-serif" font-size="10"
+        font-weight="bold" text-anchor="middle" fill="white">GO</text>
+</svg>
