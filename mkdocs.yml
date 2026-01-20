@@ -128,21 +128,21 @@ nav:
     - Windows: platforms/windows.md
     - Linux: platforms/linux.md
     - OpenHarmony: platforms/openharmony.md
-    # - Kotlin Multiplatform: platforms/kmp.md  # TODO: Create this file
+    - Kotlin Multiplatform: platforms/kmp.md
   - Features:
     - Build System: features/build-system.md
     - Dependency Management: features/dependency-management.md
     - Publishing: features/publishing.md
     - Docker Builds: features/docker-builds.md
-    # - Version Management: features/version-management.md  # TODO: Create this file
-    # - Git Integration: features/git-integration.md  # TODO: Create this file
+    - Version Management: features/version-management.md
+    - Git Integration: features/git-integration.md
   - Reference:
     - CLI Commands: reference/cli.md
     - CCGO.toml Reference: reference/ccgo-toml.md
-    # - CMake Integration: reference/cmake.md  # TODO: Create this file
-    # - Gradle Plugins: reference/gradle-plugins.md  # TODO: Create this file
+    - CMake Integration: reference/cmake.md
+    - Gradle Plugins: reference/gradle-plugins.md
   - Development:
     - Contributing: development/contributing.md
     - Roadmap: development/roadmap.md
-    # - Changelog: development/changelog.md  # TODO: Create this file
-    # - Architecture: development/architecture.md  # TODO: Create this file
+    - Changelog: development/changelog.md
+    - Architecture: development/architecture.md
