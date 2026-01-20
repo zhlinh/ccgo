@@ -5,6 +5,7 @@ Comprehensive guide to CCGO's cross-platform build system.
 ## Overview
 
 CCGO provides a unified build system that:
+
 - **Multi-platform support**: Build for Android, iOS, macOS, Windows, Linux, OpenHarmony, watchOS, tvOS
 - **Architecture flexibility**: Single or multiple architectures per platform
 - **Build type control**: Debug and release builds

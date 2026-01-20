@@ -5,6 +5,7 @@ CCGO 跨平台构建系统的综合指南。
 ## 概述
 
 CCGO 提供统一的构建系统：
+
 - **多平台支持**：为 Android、iOS、macOS、Windows、Linux、OpenHarmony、watchOS、tvOS 构建
 - **架构灵活性**：每个平台支持单个或多个架构
 - **构建类型控制**：Debug 和 Release 构建
