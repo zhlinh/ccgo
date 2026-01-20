@@ -5,6 +5,7 @@ Complete guide to building C++ libraries for macOS with CCGO.
 ## Overview
 
 CCGO provides comprehensive macOS support with:
+
 - **Multiple architectures**: x86_64 (Intel), arm64 (Apple Silicon)
 - **Universal binaries**: Fat binaries containing both architectures
 - **Output formats**: Static/Dynamic Framework, dylib

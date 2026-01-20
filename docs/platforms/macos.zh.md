@@ -5,6 +5,7 @@
 ## 概述
 
 CCGO 提供全面的 macOS 支持：
+
 - **多架构支持**：x86_64（Intel）、arm64（Apple Silicon）
 - **通用二进制**：包含两种架构的 Fat 二进制文件
 - **输出格式**：静态/动态 Framework、dylib

@@ -5,6 +5,7 @@
 ## 概述
 
 CCGO 提供全面的 Android 支持：
+
 - **多架构构建**：arm64-v8a、armeabi-v7a、x86、x86_64
 - **AAR 打包**：即用型 Android Archive 格式
 - **Gradle 集成**：与 Android Studio 项目无缝集成

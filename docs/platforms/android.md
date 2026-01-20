@@ -5,6 +5,7 @@ Complete guide for building C++ libraries for Android with CCGO.
 ## Overview
 
 CCGO provides comprehensive Android support with:
+
 - **Multi-architecture builds**: arm64-v8a, armeabi-v7a, x86, x86_64
 - **AAR packaging**: Ready-to-use Android Archive format
 - **Gradle integration**: Seamless integration with Android Studio projects

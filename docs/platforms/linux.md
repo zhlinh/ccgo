@@ -5,6 +5,7 @@ Complete guide to building C++ libraries for Linux with CCGO.
 ## Overview
 
 CCGO provides comprehensive Linux support with:
+
 - **Multiple compilers**: GCC and Clang
 - **Multiple architectures**: x86_64, ARM64 (aarch64), ARMv7
 - **Output formats**: Static libraries (.a), Shared libraries (.so)

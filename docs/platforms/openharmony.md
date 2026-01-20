@@ -5,6 +5,7 @@ Complete guide to building C++ libraries for OpenHarmony (OHOS) with CCGO.
 ## Overview
 
 CCGO provides comprehensive OpenHarmony support with:
+
 - **Multiple architectures**: ARMv7, ARM64, x86_64
 - **Output formats**: HAR packages, Static libraries (.a), Shared libraries (.so)
 - **Build methods**: Local (DevEco Studio) or Docker (cross-platform)

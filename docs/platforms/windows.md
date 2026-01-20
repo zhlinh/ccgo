@@ -5,6 +5,7 @@ Complete guide to building C++ libraries for Windows with CCGO.
 ## Overview
 
 CCGO provides comprehensive Windows support with:
+
 - **Multiple toolchains**: MSVC (Visual Studio) and MinGW (GCC)
 - **Multiple architectures**: x86, x64, ARM64
 - **Output formats**: Static libraries (.lib), Dynamic libraries (.dll)

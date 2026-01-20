@@ -5,6 +5,7 @@ Complete guide to building C++ libraries for iOS with CCGO.
 ## Overview
 
 CCGO provides comprehensive iOS support with:
+
 - **Multiple architectures**: arm64, x86_64 (simulator)
 - **Output formats**: Static/Dynamic Framework, XCFramework
 - **Build methods**: Local (Xcode) or Docker (cross-platform)

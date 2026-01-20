@@ -5,6 +5,7 @@
 ## 概述
 
 CCGO 提供全面的 iOS 支持：
+
 - **多架构支持**：arm64、x86_64（模拟器）
 - **输出格式**：静态/动态 Framework、XCFramework
 - **构建方式**：本地构建（Xcode）或 Docker（跨平台）

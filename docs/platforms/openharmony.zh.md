@@ -5,6 +5,7 @@
 ## 概述
 
 CCGO 提供全面的 OpenHarmony 支持：
+
 - **多架构**：ARMv7、ARM64、x86_64
 - **输出格式**：HAR 包、静态库 (.a)、共享库 (.so)
 - **构建方式**：本地构建 (DevEco Studio) 或 Docker（跨平台）
