@@ -5,6 +5,7 @@ Complete guide to CCGO project organization and directory structure.
 ## Overview
 
 CCGO projects follow a standardized structure:
+
 - **Source code**: `src/` for implementation, `include/` for headers
 - **Tests**: `tests/` for unit tests
 - **Benchmarks**: `benches/` for performance tests
