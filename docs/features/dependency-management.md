@@ -5,6 +5,7 @@ Complete guide to managing dependencies in CCGO projects.
 ## Overview
 
 CCGO provides a powerful dependency management system with:
+
 - **Multiple sources**: Git repositories, local paths, registries (future)
 - **Version control**: Semantic versioning with flexible constraints
 - **Lock files**: Reproducible builds with CCGO.lock

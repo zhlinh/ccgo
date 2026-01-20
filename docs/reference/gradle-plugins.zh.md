@@ -12,6 +12,7 @@ CCGO 提供一套发布到 Maven Central 的 Gradle 约定插件：
 - **集成**: 对原生 C++ 构建的一流支持
 
 **可用插件：**
+
 - `android.library` - Android 库配置
 - `android.library.native.python` - 带基于 Python 的原生构建的 Android 库（ccgo）
 - `android.library.native.cmake` - 带基于 CMake 的原生构建的 Android 库

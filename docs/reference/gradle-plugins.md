@@ -12,6 +12,7 @@ CCGO provides a suite of Gradle convention plugins published to Maven Central:
 - **Integration**: First-class support for native C++ builds
 
 **Available Plugins:**
+
 - `android.library` - Android library configuration
 - `android.library.native.python` - Android library with Python-based native builds (ccgo)
 - `android.library.native.cmake` - Android library with CMake-based native builds
