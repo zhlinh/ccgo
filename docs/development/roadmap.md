@@ -266,7 +266,7 @@ Have ideas for CCGO's future? We'd love to hear from you!
 
 - [GitHub Discussions](https://github.com/zhlinh/ccgo/discussions) - Feature requests and ideas
 - [GitHub Issues](https://github.com/zhlinh/ccgo/issues) - Bug reports and tasks
-- Email: ccgo@mojeter.com
+- Email: zhlinhng@gmail.com
 
 ---
 

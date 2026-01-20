@@ -266,7 +266,7 @@
 
 - [GitHub Discussions](https://github.com/zhlinh/ccgo/discussions) - 功能请求和想法
 - [GitHub Issues](https://github.com/zhlinh/ccgo/issues) - 错误报告和任务
-- 邮箱：ccgo@mojeter.com
+- 邮箱：zhlinhng@gmail.com
 
 ---
 
