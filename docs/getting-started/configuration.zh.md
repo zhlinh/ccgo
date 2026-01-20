@@ -5,6 +5,7 @@
 ## 概述
 
 CCGO 使用基于文件的配置系统：
+
 - **CCGO.toml**：主项目配置
 - **build_config.py**：特定于构建的设置（自动生成）
 - **CMakeLists.txt**：CMake 集成

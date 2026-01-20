@@ -5,6 +5,7 @@ Complete guide to configuring CCGO projects through CCGO.toml and other configur
 ## Overview
 
 CCGO uses a file-based configuration system with:
+
 - **CCGO.toml**: Main project configuration
 - **build_config.py**: Build-specific settings (generated)
 - **CMakeLists.txt**: CMake integration
