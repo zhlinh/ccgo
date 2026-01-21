@@ -806,9 +806,9 @@ Uses topological sort (depth-first search):
 
 ## See Also
 
-- [Dependency Management](dependency-management.md) - Overall dependency system
+- [Dependency Management](features/dependency-management.md) - Overall dependency system
 - [Version Conflict Resolution](version-conflict-resolution.md) - Handle version conflicts
-- [Monorepo Guide](monorepo-guide.md) - Best practices for monorepos
+- [Project Structure](getting-started/project-structure.md) - Project organization
 
 ## Changelog
 

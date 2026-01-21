@@ -822,7 +822,7 @@ Use this checklist to track your migration progress:
 - [CCGO CLI Reference](../reference/cli.md)
 - [CCGO.toml Configuration](../reference/config.md)
 - [CMake Integration Guide](cmake-integration.md)
-- [CCGO Dependency Management](../guides/dependencies.md)
+- [CCGO Dependency Management](../features/dependency-management.md)
 
 **Community Support**:
 - [CCGO GitHub Discussions](https://github.com/zhlinh/ccgo/discussions)

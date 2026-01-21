@@ -412,9 +412,9 @@ fn resolve_conflict(requirements: Vec<VersionReq>) -> Result<Version> {
 
 ## See Also
 
-- [Dependency Management](dependency-management.md) - Overall dependency system
+- [Dependency Management](features/dependency-management.md) - Overall dependency system
 - [Semantic Versioning](https://semver.org/) - SemVer specification
-- [Dependency Graph](dependency-graph.md) - Dependency graph visualization
+- [Dependency Resolution](dependency-resolution.md) - Transitive dependency handling
 
 ## Changelog
 

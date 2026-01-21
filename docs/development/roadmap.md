@@ -123,7 +123,7 @@
 - [x] Lockfile generation ✅
 - [x] Dependency override/patches ✅
 - [ ] Dependency vendoring improvements
-- [x] Transitive dependency resolution ✅ ([docs](dependency-resolution.md))
+- [x] Transitive dependency resolution ✅ ([docs](../dependency-resolution.md))
 - [ ] Version conflict resolution strategies
 - [ ] Workspace dependencies (monorepo support)
 
@@ -230,7 +230,7 @@
 - [x] Max depth protection (50 levels)
 - [x] Integration with `ccgo install` command
 - [x] Comprehensive test suite (10 tests: 7 resolver + 3 graph)
-- [x] Full documentation ([docs/dependency-resolution.md](dependency-resolution.md))
+- [x] Full documentation ([docs/dependency-resolution.md](../dependency-resolution.md))
 
 ### Rust CLI Migration (Partial)
 - [x] Project architecture redesign

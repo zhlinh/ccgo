@@ -889,6 +889,6 @@ CCGO 在解析时验证 `CCGO.toml`。常见错误：
 ## 另请参阅
 
 - [CLI 参考](cli.zh.md) - CCGO 命令行界面
-- [入门指南](../guides/getting-started.zh.md) - 快速入门指南
-- [工作区指南](../guides/workspaces.zh.md) - 使用工作区
-- [依赖指南](../guides/dependencies.zh.md) - 管理依赖
+- [快速入门](../getting-started/quickstart.zh.md) - 快速入门指南
+- [项目结构](../getting-started/project-structure.zh.md) - 项目组织结构
+- [依赖管理](../features/dependency-management.zh.md) - 管理依赖

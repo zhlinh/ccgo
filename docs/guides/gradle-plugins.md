@@ -1113,7 +1113,7 @@ gpg --full-generate-key
 - [CCGO CLI Reference](../reference/cli.md)
 - [CCGO.toml Configuration](../reference/config.md)
 - [CMake Integration Guide](cmake-integration.md)
-- [Publishing Guide](../guides/publishing.md)
+- [Publishing](../features/publishing.md)
 - [Plugin Source Code](https://github.com/zhlinh/ccgo-gradle-plugins)
 
 ---

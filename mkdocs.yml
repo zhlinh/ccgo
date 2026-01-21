@@ -10,14 +10,14 @@ theme:
   favicon: assets/favicon.svg
   palette:
     - scheme: default
-      primary: deep purple
-      accent: purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: deep purple
-      accent: purple
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -30,6 +30,9 @@ theme:
     - search.highlight
     - content.code.copy
     - content.code.annotate
+
+extra_css:
+  - stylesheets/extra.css
 
 plugins:
   - search
@@ -100,6 +103,9 @@ markdown_extensions:
   - toc:
       permalink: true
       toc_depth: 3
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
 
 extra:
   version:

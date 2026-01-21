@@ -559,4 +559,4 @@ conventional-changelog -p angular -i CHANGELOG.md -s -r 0
 - [贡献指南](contributing.zh.md)
 - [版本管理](../features/version-management.zh.md)
 - [Git 集成](../features/git-integration.zh.md)
-- [CI/CD 设置](contributing.zh.md#cicd-集成)
+- [CI/CD 设置](contributing.zh.md)

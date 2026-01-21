@@ -458,8 +458,8 @@ ccgo vendor --verify  # Checks checksums
 ## See Also
 
 - [Dependency Resolution](dependency-resolution.md) - Transitive dependency handling
-- [Lockfile Format](../reference/lockfile-format.md) - CCGO.lock specification
-- [Install Command](../cli/install.md) - Dependency installation
+- [CCGO.toml Reference](reference/ccgo-toml.md) - Configuration file specification
+- [CLI Reference](reference/cli.md) - Command line interface
 
 ## Changelog
 

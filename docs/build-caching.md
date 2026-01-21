@@ -417,9 +417,9 @@ redis_url = "redis://localhost:6379"
 
 ## See Also
 
-- [Build Performance Optimization](build-optimization.md)
+- [Build System](features/build-system.md) - General build system overview
 - [Incremental Builds](incremental-builds.md)
-- [CMake Configuration](../reference/cmake-configuration.md)
+- [CMake Integration](reference/cmake.md)
 
 ## Changelog
 

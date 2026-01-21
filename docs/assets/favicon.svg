@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <!-- Background -->
-  <rect width="64" height="64" fill="#673ab7" rx="8"/>
+  <rect width="64" height="64" fill="#E5B441" rx="8"/>
 
   <!-- Stylized C++ -->
   <g fill="white">

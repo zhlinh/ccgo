@@ -889,6 +889,6 @@ CCGO validates `CCGO.toml` when parsing. Common errors:
 ## See Also
 
 - [CLI Reference](cli.md) - CCGO command-line interface
-- [Getting Started](../guides/getting-started.md) - Quick start guide
-- [Workspace Guide](../guides/workspaces.md) - Using workspaces
-- [Dependencies Guide](../guides/dependencies.md) - Managing dependencies
+- [Quick Start](../getting-started/quickstart.md) - Quick start guide
+- [Project Structure](../getting-started/project-structure.md) - Project organization
+- [Dependency Management](../features/dependency-management.md) - Managing dependencies

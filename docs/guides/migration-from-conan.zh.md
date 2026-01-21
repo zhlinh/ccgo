@@ -822,7 +822,7 @@ mypackage = { git = "https://github.com/user/mypackage-fork", branch = "custom-f
 - [CCGO CLI 参考](../reference/cli.md)
 - [CCGO.toml 配置](../reference/config.zh.md)
 - [CMake 集成指南](cmake-integration.zh.md)
-- [CCGO 依赖管理](../guides/dependencies.zh.md)
+- [CCGO 依赖管理](../features/dependency-management.zh.md)
 
 **社区支持**：
 - [CCGO GitHub Discussions](https://github.com/zhlinh/ccgo/discussions)

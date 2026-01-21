@@ -388,7 +388,7 @@ Planned features for future releases:
 ## See Also
 
 - [Build Caching](build-caching.md) - Improve build times with caching
-- [Build Optimization](build-optimization.md) - General optimization tips
+- [Build System](features/build-system.md) - General build system overview
 - [Incremental Builds](incremental-builds.md) - Faster rebuild strategies
 
 ## Changelog

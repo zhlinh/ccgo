@@ -559,4 +559,4 @@ conventional-changelog -p angular -i CHANGELOG.md -s -r 0
 - [Contributing Guide](contributing.md)
 - [Version Management](../features/version-management.md)
 - [Git Integration](../features/git-integration.md)
-- [CI/CD Setup](contributing.md#cicd-integration)
+- [CI/CD Setup](contributing.md)

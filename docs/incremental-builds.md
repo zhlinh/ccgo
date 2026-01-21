@@ -505,7 +505,7 @@ Planned features for future releases:
 
 - [Build Caching](build-caching.md) - Compiler cache for faster builds
 - [Build Analytics](build-analytics.md) - Performance metrics and tracking
-- [Build Optimization](build-optimization.md) - General optimization tips
+- [Build System](features/build-system.md) - General build system overview
 
 ## Changelog
 
