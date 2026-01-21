@@ -15,7 +15,7 @@
 | Template System | 100% | Copier-based project generation |
 | CMake Integration | 100% | Centralized build scripts |
 | Gradle Plugins | 100% | Android/KMP convention plugins |
-| Documentation | 75% | MkDocs with i18n (this document!) |
+| Documentation | 95% | MkDocs with i18n (this document!) |
 
 **Supported Platforms**: Android, iOS, macOS, Windows, Linux, OpenHarmony, watchOS, tvOS, Kotlin Multiplatform
 
@@ -48,16 +48,16 @@
 **Rationale**: Rust provides better performance, type safety, and easier distribution (single binary).
 
 ### 2. Documentation Completion
-**Status**: 75% Complete | **Target**: v3.1.0 (Q1 2026)
+**Status**: 95% Complete | **Target**: v3.1.0 (Q1 2026)
 
 - [x] MkDocs setup with i18n ✅
 - [x] Home page and getting started ✅
 - [ ] Complete platform guides (Android, iOS, macOS, etc.)
 - [x] CLI reference documentation ✅
 - [x] CCGO.toml configuration reference ✅
-- [ ] CMake integration guide
-- [ ] Gradle plugins reference
-- [ ] Migration guides (from Conan, vcpkg, etc.)
+- [x] CMake integration guide ✅
+- [x] Gradle plugins reference ✅
+- [x] Migration guides (from Conan, Python to Rust) ✅
 
 **Rationale**: Good documentation is critical for user adoption and reducing support burden.
 

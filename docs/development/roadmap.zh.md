@@ -15,7 +15,7 @@
 | 模板系统 | 100% | 基于 Copier 的项目生成 |
 | CMake 集成 | 100% | 集中化构建脚本 |
 | Gradle 插件 | 100% | Android/KMP 约定插件 |
-| 文档 | 75% | 带 i18n 的 MkDocs（本文档！）|
+| 文档 | 95% | 带 i18n 的 MkDocs（本文档！）|
 
 **支持平台**：Android、iOS、macOS、Windows、Linux、OpenHarmony、watchOS、tvOS、Kotlin 多平台
 
@@ -48,16 +48,16 @@
 **理由**：Rust 提供更好的性能、类型安全和更简单的分发（单一二进制）。
 
 ### 2. 文档完善
-**状态**：75% 完成 | **目标**：v3.1.0（2026 年 Q1）
+**状态**：95% 完成 | **目标**：v3.1.0（2026 年 Q1）
 
 - [x] 带 i18n 的 MkDocs 设置 ✅
 - [x] 首页和快速入门 ✅
 - [ ] 完整的平台指南（Android、iOS、macOS 等）
 - [x] CLI 参考文档 ✅
 - [x] CCGO.toml 配置参考 ✅
-- [ ] CMake 集成指南
-- [ ] Gradle 插件参考
-- [ ] 迁移指南（从 Conan、vcpkg 等）
+- [x] CMake 集成指南 ✅
+- [x] Gradle 插件参考 ✅
+- [x] 迁移指南（从 Conan、Python 到 Rust）✅
 
 **理由**：良好的文档对用户采用和减少支持负担至关重要。
 
