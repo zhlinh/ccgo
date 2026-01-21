@@ -1,45 +1,50 @@
-# CLI 参考
+# CLI 命令参考
 
-CCGO 的完整命令行参考。
+所有 CCGO 命令的完整命令行参考。
+
+## 概述
+
+CCGO 为 C++ 跨平台开发提供了全面的 CLI 工具，具有快速启动时间和零 Python 依赖（Rust 实现）。
 
 ## 全局选项
 
-这些选项适用于所有命令：
+适用于所有命令：
 
 ```bash
-ccgo [全局选项] <命令> [命令选项]
+ccgo [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS]
 ```
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `-h, --help` | 打印帮助信息 |
 | `-V, --version` | 打印版本信息 |
-| `--verbose` | 启用详细输出 |
-| `--quiet` | 抑制非错误输出 |
-| `--color <WHEN>` | 控制彩色输出：auto, always, never |
+| `-v, --verbose` | 启用详细输出 |
+| `--no-color` | 禁用彩色终端输出 |
 
 ## 命令概览
 
-| 命令 | 描述 |
-|------|------|
-| [new](#new) | 创建新项目 |
-| [init](#init) | 在现有项目中初始化 CCGO |
-| [build](#build) | 为目标平台构建 |
-| [test](#test) | 运行测试 |
-| [bench](#bench) | 运行基准测试 |
-| [doc](#doc) | 生成文档 |
-| [install](#install) | 安装依赖 |
-| [update](#update) | 更新依赖 |
-| [vendor](#vendor) | 本地 vendor 依赖 |
-| [add](#add) | 添加依赖 |
-| [remove](#remove) | 删除依赖 |
-| [publish](#publish) | 发布库 |
-| [check](#check) | 检查平台要求 |
-| [clean](#clean) | 清理构建产物 |
-| [tag](#tag) | 创建版本标签 |
-| [package](#package) | 打包源码分发 |
-| [run](#run) | 构建并运行示例/二进制 |
-| [ci](#ci) | 运行 CI 构建流水线 |
+| 分类 | 命令 | 描述 |
+|----------|---------|-------------|
+| **项目** | [new](#new) | 创建新项目 |
+| | [init](#init) | 在现有项目中初始化 CCGO |
+| **构建** | [build](#build) | 为目标平台构建 |
+| | [run](#run) | 构建并运行示例/二进制文件 |
+| | [test](#test) | 运行 GoogleTest 单元测试 |
+| | [bench](#bench) | 运行 Google Benchmark 基准测试 |
+| | [doc](#doc) | 生成 Doxygen 文档 |
+| **依赖** | [install](#install) | 从 CCGO.toml 安装依赖 |
+| | [add](#add) | 添加依赖 |
+| | [remove](#remove) | 移除依赖 |
+| | [update](#update) | 更新依赖到最新兼容版本 |
+| | [vendor](#vendor) | 将依赖复制到 vendor/ 目录以供离线构建 |
+| | [tree](#tree) | 显示依赖树 |
+| **发现** | [search](#search) | 搜索包 |
+| | [collection](#collection) | 管理包集合 |
+| **发布** | [publish](#publish) | 发布到包管理器 |
+| | [package](#package) | 打包 SDK 以供分发 |
+| **维护** | [check](#check) | 检查平台要求 |
+| | [clean](#clean) | 清理构建产物 |
+| | [tag](#tag) | 创建版本标签 |
 
 ---
 
@@ -48,25 +53,25 @@ ccgo [全局选项] <命令> [命令选项]
 从模板创建新的 CCGO 项目。
 
 ```bash
-ccgo new [选项] <名称>
+ccgo new [OPTIONS] <NAME>
 ```
 
 ### 参数
 
-- `<名称>` - 项目名称（必填）
+- `<NAME>` - 项目名称（必需）
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--template <URL>` | 自定义 Copier 模板 URL |
-| `--defaults` | 使用默认值，不提示 |
+| `--defaults` | 使用默认值，不进行交互提示 |
 | `--vcs-ref <REF>` | 模板 git 引用（分支/标签）|
 
 ### 示例
 
 ```bash
-# 使用交互式提示创建新项目
+# 使用交互提示创建新项目
 ccgo new myproject
 
 # 使用默认值创建
@@ -86,15 +91,15 @@ ccgo new myproject --vcs-ref v2.0.0
 在现有项目中初始化 CCGO。
 
 ```bash
-ccgo init [选项]
+ccgo init [OPTIONS]
 ```
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--template <URL>` | 自定义 Copier 模板 URL |
-| `--defaults` | 使用默认值，不提示 |
+| `--defaults` | 使用默认值，不进行交互提示 |
 | `--force` | 覆盖现有文件 |
 
 ### 示例
@@ -111,58 +116,169 @@ ccgo init --force
 
 ## build
 
-为指定平台构建项目。
+为特定平台构建 C++ 库。
 
 ```bash
-ccgo build [选项] [平台]
+ccgo build [OPTIONS] <TARGET>
 ```
 
 ### 参数
 
-- `[平台]` - 目标平台：android, ios, macos, windows, linux, ohos, watchos, tvos, kmp
+- `<TARGET>` - 构建目标（必需）
+
+**可用目标：**
+
+| 目标 | 描述 |
+|--------|-------------|
+| `all` | 所有支持的平台 |
+| `apple` | 所有苹果平台（iOS、macOS、watchOS、tvOS）|
+| `android` | Android（基于 NDK）|
+| `ios` | iOS（arm64、模拟器）|
+| `macos` | macOS（x86_64、arm64 通用二进制）|
+| `windows` | Windows（MSVC/MinGW）|
+| `linux` | Linux（GCC/Clang）|
+| `ohos` | OpenHarmony（基于 Hvigor）|
+| `watchos` | Apple Watch |
+| `tvos` | Apple TV |
+| `kmp` | Kotlin 多平台 |
+| `conan` | Conan 包 |
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
-| `--arch <ARCH>` | 目标架构，逗号分隔 |
-| `--link-type <TYPE>` | 链接类型：static, shared, both（默认：both）|
-| `--toolchain <TOOL>` | 工具链：msvc, mingw, auto（仅 Windows）|
-| `--docker` | 使用 Docker 构建 |
-| `--ide-project` | 生成 IDE 项目文件 |
-| `--release` | 以 release 模式构建 |
-| `--debug` | 以 debug 模式构建（默认）|
-| `--clean` | 构建前清理 |
+|--------|-------------|
+| `--arch <ARCH>` | 目标架构（逗号分隔）|
+| `--link-type <TYPE>` | `static`、`shared` 或 `both`（默认：`both`）|
+| `--docker` | 使用 Docker 容器构建 |
+| `--auto-docker` | 当本地构建不可用时自动检测并使用 Docker |
+| `-j, --jobs <N>` | 并行构建作业数 |
+| `--ide-project` | 生成 IDE 项目文件（Xcode、Visual Studio 等）|
+| `--release` | 以发布模式构建（默认：调试）|
+| `--native-only` | 仅构建本地库，跳过 AAR/HAR 打包 |
+| `--toolchain <TOOL>` | Windows 工具链：`msvc`、`mingw`、`auto`（默认：`auto`）|
+| `--dev` | 开发模式（在 Docker 中使用 GitHub 上的预构建 ccgo）|
+| `-F, --features <FEATURES>` | 启用特性（逗号分隔）|
+| `--no-default-features` | 禁用默认特性 |
+| `--all-features` | 启用所有可用特性 |
 
 ### 平台特定架构
 
-**Android**: armeabi-v7a, arm64-v8a, x86, x86_64
-**iOS**: armv7, arm64, x86_64 (sim), arm64 (sim)
-**macOS**: x86_64, arm64
-**Windows**: x86, x86_64
-**Linux**: x86_64, aarch64
-**OpenHarmony**: armeabi-v7a, arm64-v8a, x86_64
+**Android：**
+- `armeabi-v7a` - ARM 32 位
+- `arm64-v8a` - ARM 64 位（默认）
+- `x86` - Intel 32 位（模拟器）
+- `x86_64` - Intel 64 位（模拟器）
+
+**iOS：**
+- `arm64` - iPhone/iPad（默认）
+- `simulator` - 模拟器（自动检测主机架构）
+
+**macOS：**
+- `x86_64` - Intel Mac
+- `arm64` - Apple Silicon
+- 默认创建通用二进制（两种架构）
+
+**Windows：**
+- `x86_64` - 64 位（默认）
+
+**Linux：**
+- `x86_64` - 64 位（默认）
+- `aarch64` - ARM 64 位
+
+**OpenHarmony：**
+- `armeabi-v7a` - ARM 32 位
+- `arm64-v8a` - ARM 64 位（默认）
+- `x86_64` - Intel 64 位
+
+### 特性系统
+
+使用特性控制条件编译：
+
+```bash
+# 启用特定特性
+ccgo build android --features networking,ssl
+
+# 禁用默认特性并仅启用特定特性
+ccgo build android --features minimal --no-default-features
+
+# 启用所有特性
+ccgo build android --all-features
+```
+
+特性在 `CCGO.toml` 中定义：
+
+```toml
+[features]
+default = ["networking"]
+networking = []
+ssl = ["networking"]
+advanced = ["networking", "ssl"]
+```
+
+### Docker 构建
+
+使用 Docker 从任何操作系统构建任何平台：
+
+```bash
+# 显式使用 Docker
+ccgo build linux --docker
+ccgo build windows --docker
+ccgo build android --docker
+
+# 在需要时自动检测（例如，从 macOS 构建 Linux）
+ccgo build linux --auto-docker
+```
+
+**优势：**
+- 通用交叉编译
+- 无需本地工具链安装
+- 一致的构建环境
+- Docker Hub 上的预构建镜像
 
 ### 示例
 
 ```bash
-# 为当前平台构建
-ccgo build
-
-# 构建多架构 Android
+# 使用特定架构构建 Android
 ccgo build android --arch arm64-v8a,armeabi-v7a
 
-# 以 release 模式构建 iOS
+# 以发布模式构建 iOS
 ccgo build ios --release
 
-# 使用 Docker 构建 Windows（MSVC）
-ccgo build windows --toolchain msvc --docker
+# 为所有苹果平台构建
+ccgo build apple --release
+
+# 仅使用 MSVC 工具链构建 Windows
+ccgo build windows --toolchain msvc
+
+# 使用 Docker 构建 Linux（从 macOS/Windows）
+ccgo build linux --docker
+
+# 使用并行作业构建
+ccgo build android -j 8
 
 # 构建并生成 Xcode 项目
 ccgo build ios --ide-project
 
-# 清理构建
-ccgo build linux --clean
+# 使用特定特性构建
+ccgo build android --features networking,ssl --release
+
+# 构建所有平台
+ccgo build all --release
+```
+
+### 构建输出
+
+构建输出到 `target/<platform>/`，采用统一的归档结构：
+
+```
+target/android/
+└── mylib_Android_SDK-1.0.0.zip
+    ├── lib/
+    │   ├── static/arm64-v8a/libmylib.a
+    │   └── shared/arm64-v8a/libmylib.so
+    ├── haars/mylib.aar
+    ├── include/mylib/
+    └── build_info.json
 ```
 
 ---
@@ -172,17 +288,17 @@ ccgo build linux --clean
 运行项目测试。
 
 ```bash
-ccgo test [选项] [平台]
+ccgo test [OPTIONS] [PLATFORM]
 ```
 
 ### 参数
 
-- `[平台]` - 测试平台（默认：当前）
+- `[PLATFORM]` - 测试平台（默认：当前）
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--filter <PATTERN>` | 运行匹配模式的测试 |
 | `--verbose` | 详细测试输出 |
 | `--no-fail-fast` | 失败后继续运行测试 |
@@ -207,19 +323,19 @@ ccgo test --verbose
 运行项目基准测试。
 
 ```bash
-ccgo bench [选项] [平台]
+ccgo bench [OPTIONS] [PLATFORM]
 ```
 
 ### 参数
 
-- `[平台]` - 基准测试平台（默认：当前）
+- `[PLATFORM]` - 基准测试平台（默认：当前）
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--filter <PATTERN>` | 运行匹配模式的基准测试 |
-| `--baseline <NAME>` | 保存/对比基线 |
+| `--baseline <NAME>` | 保存/比较基线 |
 
 ### 示例
 
@@ -233,7 +349,7 @@ ccgo bench --filter bench_name
 # 保存基线
 ccgo bench --baseline main
 
-# 对比基线
+# 与基线比较
 ccgo bench --baseline main
 ```
 
@@ -244,16 +360,16 @@ ccgo bench --baseline main
 生成项目文档。
 
 ```bash
-ccgo doc [选项]
+ccgo doc [OPTIONS]
 ```
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--open` | 在浏览器中打开文档 |
-| `--no-deps` | 不包括依赖 |
-| `--format <FMT>` | 输出格式：html, markdown |
+| `--no-deps` | 不包含依赖 |
+| `--format <FMT>` | 输出格式：html、markdown |
 
 ### 示例
 
@@ -272,13 +388,13 @@ ccgo doc --format markdown
 安装项目依赖。
 
 ```bash
-ccgo install [选项]
+ccgo install [OPTIONS]
 ```
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--locked` | 使用 CCGO.lock 中的精确版本 |
 | `--offline` | 仅使用 vendored 依赖 |
 
@@ -302,17 +418,17 @@ ccgo install --offline
 将依赖更新到最新兼容版本。
 
 ```bash
-ccgo update [选项] [依赖]
+ccgo update [OPTIONS] [DEPENDENCY]
 ```
 
 ### 参数
 
-- `[依赖]` - 要更新的特定依赖（可选）
+- `[DEPENDENCY]` - 要更新的特定依赖（可选）
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--dry-run` | 显示将要更新的内容 |
 
 ### 示例
@@ -324,7 +440,7 @@ ccgo update
 # 更新特定依赖
 ccgo update spdlog
 
-# 试运行
+# 预演
 ccgo update --dry-run
 ```
 
@@ -332,23 +448,269 @@ ccgo update --dry-run
 
 ## vendor
 
-将所有依赖复制到 vendor/ 目录。
+将所有依赖复制到 vendor/ 目录以供离线构建。
 
 ```bash
-ccgo vendor [选项]
+ccgo vendor [OPTIONS]
 ```
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--no-delete` | 不删除现有 vendor 目录 |
 
 ### 示例
 
 ```bash
-# Vendor 依赖
+# Vendor 所有依赖
 ccgo vendor
+
+# 保留现有 vendor 目录
+ccgo vendor --no-delete
+```
+
+---
+
+## tree
+
+显示项目依赖树及各种可视化选项。
+
+```bash
+ccgo tree [OPTIONS] [PACKAGE]
+```
+
+### 参数
+
+- `[PACKAGE]` - 显示特定包的依赖（可选）
+
+### 选项
+
+| 选项 | 描述 |
+|--------|-------------|
+| `-d, --depth <DEPTH>` | 显示的最大深度（默认：无限制）|
+| `--no-dedupe` | 不去重复的依赖 |
+| `-l, --locked` | 从锁文件显示依赖版本 |
+| `-f, --format <FORMAT>` | 输出格式：text、json、dot（默认：text）|
+| `--duplicates` | 仅显示重复的依赖 |
+| `-i, --invert <PACKAGE>` | 显示依赖此包的包 |
+| `--conflicts` | 高亮版本冲突 |
+
+### 输出格式
+
+**Text**（默认）：
+- 使用框绘字符的树状可视化
+- 显示依赖层次结构
+- 用 `(*)` 标记重复项
+
+**JSON**：
+- 包含版本和源信息的结构化数据
+- 包含冲突检测结果
+- 适合程序化处理
+
+**DOT**（Graphviz）：
+- 图形可视化格式
+- 以红色高亮冲突
+- 可使用 `dot` 命令渲染
+
+### 示例
+
+```bash
+# 显示完整依赖树
+ccgo tree
+
+# 限制深度为 2 级
+ccgo tree --depth 2
+
+# 显示特定包的依赖
+ccgo tree spdlog
+
+# 显示所有出现（不去重）
+ccgo tree --no-dedupe
+
+# 输出为 JSON
+ccgo tree --format json
+
+# 生成 Graphviz 图表
+ccgo tree --format dot > deps.dot
+dot -Tpng deps.dot -o deps.png
+
+# 显示反向依赖
+ccgo tree --invert fmt
+
+# 高亮版本冲突
+ccgo tree --conflicts
+
+# 仅显示重复的依赖
+ccgo tree --duplicates
+
+# 使用 CCGO.toml.lock 中的锁定版本
+ccgo tree --locked
+```
+
+---
+
+## search
+
+在已订阅的集合中搜索包。
+
+```bash
+ccgo search <QUERY> [OPTIONS]
+```
+
+### 参数
+
+- `<QUERY>` - 搜索关键词或模式（必需）
+
+### 选项
+
+| 选项 | 描述 |
+|--------|-------------|
+| `-c, --collection <NAME>` | 仅在特定集合中搜索 |
+| `-d, --details` | 显示详细的包信息 |
+| `--limit <N>` | 限制结果数量（默认：20）|
+
+### 示例
+
+```bash
+# 在所有集合中搜索包
+ccgo search json
+
+# 在特定集合中搜索
+ccgo search logging --collection official
+
+# 显示详细信息
+ccgo search crypto --details
+
+# 限制结果为 50
+ccgo search lib --limit 50
+
+# 组合选项
+ccgo search network --collection community --details --limit 10
+```
+
+### 搜索结果
+
+结果包括：
+- 包名和版本
+- 摘要描述
+- 源集合
+- 仓库 URL（使用 --details）
+- 支持的平台（使用 --details）
+- 许可证信息（使用 --details）
+- 关键词（使用 --details）
+
+---
+
+## collection
+
+管理用于发现的包集合。
+
+```bash
+ccgo collection <SUBCOMMAND> [OPTIONS]
+```
+
+### 子命令
+
+| 子命令 | 描述 |
+|------------|-------------|
+| `add <URL>` | 添加新集合 |
+| `list` | 列出所有已订阅的集合 |
+| `remove <NAME>` | 移除集合 |
+| `refresh [NAME]` | 刷新集合 |
+
+### collection add
+
+添加新的包集合。
+
+```bash
+ccgo collection add <URL>
+```
+
+**支持的 URL 方案：**
+- `file://` - 本地文件路径
+- `http://` - HTTP URL
+- `https://` - HTTPS URL
+
+**参数：**
+- `<URL>` - 集合 URL（必需）
+
+**示例：**
+```bash
+# 添加官方集合
+ccgo collection add https://ccgo.dev/collections/official.json
+
+# 添加社区集合
+ccgo collection add https://ccgo.dev/collections/community.json
+
+# 添加本地集合
+ccgo collection add file:///path/to/my-collection.json
+
+# 从 HTTP 添加
+ccgo collection add http://example.com/packages.json
+```
+
+### collection list
+
+列出所有已订阅的集合。
+
+```bash
+ccgo collection list [OPTIONS]
+```
+
+**选项：**
+
+| 选项 | 描述 |
+|--------|-------------|
+| `-d, --details` | 显示详细信息 |
+
+**示例：**
+```bash
+# 列出集合
+ccgo collection list
+
+# 显示详细信息
+ccgo collection list --details
+```
+
+### collection remove
+
+移除已订阅的集合。
+
+```bash
+ccgo collection remove <NAME_OR_URL>
+```
+
+**参数：**
+- `<NAME_OR_URL>` - 集合名称或 URL（必需）
+
+**示例：**
+```bash
+# 按名称移除
+ccgo collection remove official
+
+# 按 URL 移除
+ccgo collection remove https://ccgo.dev/collections/community.json
+```
+
+### collection refresh
+
+刷新集合数据。
+
+```bash
+ccgo collection refresh [NAME]
+```
+
+**参数：**
+- `[NAME]` - 要刷新的集合名称（可选，默认：全部）
+
+**示例：**
+```bash
+# 刷新所有集合
+ccgo collection refresh
+
+# 刷新特定集合
+ccgo collection refresh official
 ```
 
 ---
@@ -358,12 +720,12 @@ ccgo vendor
 向 CCGO.toml 添加依赖。
 
 ```bash
-ccgo add [选项] <依赖>
+ccgo add [OPTIONS] <DEPENDENCY>
 ```
 
 ### 参数
 
-- `<依赖>` - 依赖规范
+- `<DEPENDENCY>` - 依赖规范
 
 ### 依赖格式
 
@@ -381,17 +743,17 @@ ccgo add fmt@10.1.1
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--git <URL>` | Git 仓库 URL |
 | `--tag <TAG>` | Git 标签 |
 | `--branch <BRANCH>` | Git 分支 |
-| `--rev <REV>` | Git 修订版 |
+| `--rev <REV>` | Git 修订版本 |
 | `--path <PATH>` | 本地路径 |
 
 ### 示例
 
 ```bash
-# 从 Git 添加（带标签）
+# 从 Git 使用标签添加
 ccgo add spdlog --git https://github.com/gabime/spdlog.git --tag v1.12.0
 
 # 从本地路径添加
@@ -402,20 +764,20 @@ ccgo add mylib --path ../mylib
 
 ## remove
 
-从 CCGO.toml 删除依赖。
+从 CCGO.toml 移除依赖。
 
 ```bash
-ccgo remove <依赖>
+ccgo remove <DEPENDENCY>
 ```
 
 ### 参数
 
-- `<依赖>` - 依赖名称
+- `<DEPENDENCY>` - 依赖名称
 
 ### 示例
 
 ```bash
-# 删除依赖
+# 移除依赖
 ccgo remove spdlog
 ```
 
@@ -423,24 +785,24 @@ ccgo remove spdlog
 
 ## publish
 
-将库发布到注册表。
+发布库到注册表。
 
 ```bash
-ccgo publish [选项] <平台>
+ccgo publish [OPTIONS] <PLATFORM>
 ```
 
 ### 参数
 
-- `<平台>` - 发布平台：android, ios, macos, apple, ohos, conan, kmp
+- `<PLATFORM>` - 要发布的平台：android、ios、macos、apple、ohos、conan、kmp
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
-| `--registry <TYPE>` | 注册表：local, official, private |
+|--------|-------------|
+| `--registry <TYPE>` | 注册表：local、official、private |
 | `--url <URL>` | 自定义注册表 URL（仅 private）|
 | `--skip-build` | 使用现有构建产物 |
-| `--manager <MGR>` | 包管理器（apple）：cocoapods, spm, all |
+| `--manager <MGR>` | 包管理器（apple）：cocoapods、spm、all |
 | `--push` | 推送 git 标签（仅 SPM）|
 | `--remote-name <NAME>` | Git 远程名称（默认：origin）|
 
@@ -467,21 +829,21 @@ ccgo publish android --registry private --url https://maven.example.com
 
 ## check
 
-检查是否满足平台要求。
+检查平台要求是否满足。
 
 ```bash
-ccgo check [选项] [平台]
+ccgo check [OPTIONS] [PLATFORM]
 ```
 
 ### 参数
 
-- `[平台]` - 要检查的平台（默认：全部）
+- `[PLATFORM]` - 要检查的平台（默认：全部）
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
-| `--verbose` | 显示详细检查结果 |
+|--------|-------------|
+| `--verbose` | 显示详细的检查结果 |
 
 ### 示例
 
@@ -500,13 +862,13 @@ ccgo check android --verbose
 清理构建产物。
 
 ```bash
-ccgo clean [选项]
+ccgo clean [OPTIONS]
 ```
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `--dry-run` | 显示将要删除的内容 |
 | `-y, --yes` | 跳过确认提示 |
 
@@ -527,17 +889,17 @@ ccgo clean -y
 从 CCGO.toml 创建版本标签。
 
 ```bash
-ccgo tag [选项] [版本]
+ccgo tag [OPTIONS] [VERSION]
 ```
 
 ### 参数
 
-- `[版本]` - 版本标签（默认：来自 CCGO.toml）
+- `[VERSION]` - 版本标签（默认：从 CCGO.toml）
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
+|--------|-------------|
 | `-m, --message <MSG>` | 标签消息 |
 | `--push` | 推送标签到远程 |
 
@@ -558,23 +920,23 @@ ccgo tag --push
 
 ## package
 
-打包源码以供分发。
+打包源代码以供分发。
 
 ```bash
-ccgo package [选项]
+ccgo package [OPTIONS]
 ```
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
-| `--format <FMT>` | 包格式：tar.gz, zip（默认：tar.gz）|
+|--------|-------------|
+| `--format <FMT>` | 包格式：tar.gz、zip（默认：tar.gz）|
 | `--output <PATH>` | 输出路径 |
 
 ### 示例
 
 ```bash
-# 创建源码包
+# 创建源代码包
 ccgo package
 
 # 创建 ZIP 包
@@ -588,23 +950,23 @@ ccgo package --output /path/to/output
 
 ## run
 
-构建并运行示例或二进制。
+构建并运行示例或二进制文件。
 
 ```bash
-ccgo run [选项] <目标>
+ccgo run [OPTIONS] <TARGET>
 ```
 
 ### 参数
 
-- `<目标>` - 示例或二进制名称
+- `<TARGET>` - 示例或二进制文件名称
 
 ### 选项
 
 | 选项 | 描述 |
-|------|------|
-| `--example` | 作为示例运行（如果 TARGET 在 examples/ 中，则为默认）|
-| `--bin` | 作为二进制运行 |
-| `--release` | 以 release 模式构建 |
+|--------|-------------|
+| `--example` | 作为示例运行（如果 TARGET 在 examples/ 中则为默认）|
+| `--bin` | 作为二进制文件运行 |
+| `--release` | 以发布模式构建 |
 | `-- <ARGS>` | 传递给程序的参数 |
 
 ### 示例
@@ -613,51 +975,21 @@ ccgo run [选项] <目标>
 # 运行示例
 ccgo run my_example
 
-# 带参数运行
+# 使用参数运行
 ccgo run my_example -- --arg1 value1
 
-# 以 release 模式运行
+# 以发布模式运行
 ccgo run my_example --release
-```
-
----
-
-## ci
-
-运行 CI 构建流水线。
-
-```bash
-ccgo ci [选项]
-```
-
-读取 `CI_BUILD_*` 环境变量以确定构建什么。
-
-### 环境变量
-
-- `CI_BUILD_ANDROID` - 如果设置，构建 Android
-- `CI_BUILD_IOS` - 如果设置，构建 iOS
-- `CI_BUILD_MACOS` - 如果设置，构建 macOS
-- `CI_BUILD_WINDOWS` - 如果设置，构建 Windows
-- `CI_BUILD_LINUX` - 如果设置，构建 Linux
-- `CI_BUILD_OHOS` - 如果设置，构建 OpenHarmony
-
-### 示例
-
-```bash
-# 基于环境运行 CI 构建
-export CI_BUILD_ANDROID=1
-export CI_BUILD_IOS=1
-ccgo ci
 ```
 
 ---
 
 ## 环境变量
 
-CCGO 遵守以下环境变量：
+CCGO 支持以下环境变量：
 
 | 变量 | 描述 |
-|------|------|
+|----------|-------------|
 | `CCGO_HOME` | CCGO 主目录（默认：~/.ccgo）|
 | `ANDROID_HOME` | Android SDK 路径 |
 | `ANDROID_NDK` | Android NDK 路径 |
@@ -670,7 +1002,7 @@ CCGO 遵守以下环境变量：
 ## 退出代码
 
 | 代码 | 含义 |
-|------|------|
+|------|---------|
 | 0 | 成功 |
 | 1 | 一般错误 |
 | 2 | 配置错误 |
@@ -684,7 +1016,7 @@ CCGO 遵守以下环境变量：
 
 ```bash
 # 获取任何命令的帮助
-ccgo <命令> --help
+ccgo <command> --help
 
 # 示例
 ccgo build --help
@@ -692,6 +1024,6 @@ ccgo publish --help
 ```
 
 更多信息，请参阅：
-- [CCGO.toml 参考](ccgo-toml.md)
-- [构建系统](../features/build-system.md)
-- [依赖管理](../features/dependency-management.md)
+- [CCGO.toml 参考](ccgo-toml.zh.md)
+- [构建系统](../features/build-system.zh.md)
+- [依赖管理](../features/dependency-management.zh.md)
