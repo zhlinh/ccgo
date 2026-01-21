@@ -1,21 +1,21 @@
 # CCGO Roadmap
 
-> Version: v3.0.10 | Updated: 2026-01-21
+> Version: v3.0.11 | Updated: 2026-01-21
 
 ## Project Status Overview
 
 | Module | Progress | Status |
 |--------|----------|--------|
 | Python CLI | 100% | Feature complete, maintenance mode |
-| Rust CLI | 85% | Core features migrated, in active development |
+| Rust CLI | 100% | Feature complete, zero Python dependencies ✅ |
 | Cross-Platform Builds | 100% | 8 platforms supported |
 | Docker Builds | 100% | Universal cross-compilation |
-| Dependency Management | 95% | Git, path, registry sources with lockfile |
+| Dependency Management | 100% | Git, path, patches, lockfile, transitive resolution ✅ |
 | Publishing System | 100% | Maven, CocoaPods, SPM, OHPM, Conan |
 | Template System | 100% | Copier-based project generation |
 | CMake Integration | 100% | Centralized build scripts |
 | Gradle Plugins | 100% | Android/KMP convention plugins |
-| Documentation | 95% | MkDocs with i18n (this document!) |
+| Documentation | 100% | MkDocs with i18n (this document!) |
 
 **Supported Platforms**: Android, iOS, macOS, Windows, Linux, OpenHarmony, watchOS, tvOS, Kotlin Multiplatform
 
@@ -33,26 +33,27 @@
 ## P0 - Critical (Current Release v3.1) 🔥
 
 ### 1. Rust CLI Feature Parity
-**Status**: 85% Complete | **Target**: v3.1.0 (Q1 2026)
+**Status**: 100% Complete ✅ | **Target**: v3.1.0 (Q1 2026)
 
 - [x] Core build commands (build, test, bench, doc) ✅
 - [x] Dependency management (install with lockfile) ✅
 - [x] Project creation (new, init) ✅
 - [x] Version management (tag, package) ✅
-- [ ] Vendor command implementation
-- [ ] Update command for dependency updates
-- [ ] Run command for examples/binaries
-- [ ] CI command orchestration
-- [ ] Complete migration from Python to Rust
+- [x] Vendor command implementation ✅
+- [x] Update command for dependency updates ✅
+- [x] Run command for examples/binaries ✅
+- [x] CI command orchestration (via command composition) ✅
+- [x] Complete migration from Python to Rust ✅
+- [x] Zero Python dependencies (direct Copier invocation) ✅
 
 **Rationale**: Rust provides better performance, type safety, and easier distribution (single binary).
 
 ### 2. Documentation Completion
-**Status**: 95% Complete | **Target**: v3.1.0 (Q1 2026)
+**Status**: 100% Complete | **Target**: v3.1.0 (Q1 2026) ✅
 
 - [x] MkDocs setup with i18n ✅
 - [x] Home page and getting started ✅
-- [ ] Complete platform guides (Android, iOS, macOS, etc.)
+- [x] Complete platform guides (Android, iOS, macOS, Linux, Windows, OpenHarmony, KMP) ✅
 - [x] CLI reference documentation ✅
 - [x] CCGO.toml configuration reference ✅
 - [x] CMake integration guide ✅
@@ -62,13 +63,16 @@
 **Rationale**: Good documentation is critical for user adoption and reducing support burden.
 
 ### 3. Error Handling Enhancement
-**Status**: 50% Complete | **Target**: v3.1.0 (Q1 2026)
+**Status**: 100% Complete | **Target**: v3.1.0 (Q1 2026) ✅
 
 - [x] Unified error types in Rust CLI ✅
-- [ ] User-friendly error messages with actionable hints
-- [ ] Graceful degradation when tools missing
-- [ ] Configuration validation with helpful suggestions
-- [ ] Better diagnostics for build failures
+- [x] Custom error types with contextual hints ✅
+- [x] User-friendly error messages with actionable hints ✅
+- [x] Graceful degradation when tools missing ✅
+- [x] Comprehensive configuration validation ✅
+- [x] Tool detection module with requirement levels ✅
+- [x] Integration into build/publish commands ✅
+- [x] Build failure diagnostics with common solutions ✅
 
 ---
 
@@ -112,14 +116,14 @@
 **Rationale**: Faster builds = happier developers.
 
 ### 7. Advanced Dependency Features
-**Status**: 30% Complete | **Target**: v3.3.0 (Q2 2026)
+**Status**: 62.5% Complete | **Target**: v3.3.0 (Q2 2026)
 
 - [x] Git dependencies with revision pinning ✅
 - [x] Path dependencies ✅
 - [x] Lockfile generation ✅
-- [ ] Dependency override/patches
+- [x] Dependency override/patches ✅
 - [ ] Dependency vendoring improvements
-- [ ] Transitive dependency resolution
+- [x] Transitive dependency resolution ✅ ([docs](dependency-resolution.md))
 - [ ] Version conflict resolution strategies
 - [ ] Workspace dependencies (monorepo support)
 
@@ -216,6 +220,17 @@
 ---
 
 ## Recently Completed (v3.0) ✅
+
+### Transitive Dependency Resolution (v3.0.11)
+- [x] Dependency graph with cycle detection (DFS algorithm)
+- [x] Topological sorting for correct build order (Kahn's algorithm)
+- [x] Dependency tree visualization with shared dependency detection
+- [x] Version conflict warnings
+- [x] Recursive CCGO.toml resolution with path handling
+- [x] Max depth protection (50 levels)
+- [x] Integration with `ccgo install` command
+- [x] Comprehensive test suite (10 tests: 7 resolver + 3 graph)
+- [x] Full documentation ([docs/dependency-resolution.md](dependency-resolution.md))
 
 ### Rust CLI Migration (Partial)
 - [x] Project architecture redesign

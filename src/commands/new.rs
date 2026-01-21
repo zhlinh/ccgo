@@ -1,9 +1,12 @@
 //! New project command implementation
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::Args;
 
-use crate::exec::python::PythonRunner;
+use crate::exec::subprocess::{command_exists, run_command};
+
+/// Default CCGO template from GitHub
+const DEFAULT_TEMPLATE: &str = "https://github.com/zhlinh/ccgo-template";
 
 /// Create a new library project
 #[derive(Args, Debug)]
@@ -15,11 +18,11 @@ pub struct NewCommand {
     #[arg(long)]
     pub defaults: bool,
 
-    /// Custom template URL
+    /// Custom template URL or path
     #[arg(long)]
     pub template: Option<String>,
 
-    /// Use latest template version
+    /// Use latest template version (HEAD)
     #[arg(long)]
     pub use_latest: bool,
 }
@@ -27,24 +30,65 @@ pub struct NewCommand {
 impl NewCommand {
     /// Execute the new command
     pub fn execute(self, verbose: bool) -> Result<()> {
-        let mut args = vec!["new".to_string(), self.name.clone()];
+        // Check if copier is installed
+        if !command_exists("copier") {
+            bail!(
+                "Copier not found. Please install it:\n\n\
+                 pip install copier\n\
+                 # or\n\
+                 pipx install copier"
+            );
+        }
 
+        // Determine template source
+        let template_src = self.template.as_deref().unwrap_or(DEFAULT_TEMPLATE);
+
+        // Build copier arguments
+        let mut args = vec!["copy".to_string()];
+
+        // Add flags
         if self.defaults {
             args.push("--defaults".to_string());
         }
 
-        if let Some(template) = &self.template {
-            args.push("--template".to_string());
-            args.push(template.clone());
+        // Use --trust flag for template extensions
+        args.push("--trust".to_string());
+
+        // Pass project name to template
+        args.push("-d".to_string());
+        args.push(format!("cpy_project_name={}", self.name));
+
+        // Add version reference
+        if !self.use_latest {
+            // Use stable HEAD by default
+            args.push("--vcs-ref".to_string());
+            args.push("HEAD".to_string());
         }
 
-        if self.use_latest {
-            args.push("--use-latest".to_string());
+        // Add template source and destination
+        args.push(template_src.to_string());
+        args.push(self.name.clone());
+
+        if verbose {
+            eprintln!(
+                "Creating new project '{}' from template: {}",
+                self.name, template_src
+            );
+            eprintln!("Running: copier {}", args.join(" "));
         }
 
-        let runner = PythonRunner::new()?;
-        let result = runner.run_ccgo(&args, verbose)?;
+        // Execute copier
+        let result = run_command("copier", &args, true, None)
+            .context("Failed to execute copier")?;
 
-        std::process::exit(result.exit_code);
+        if !result.success {
+            bail!("Project creation failed with exit code: {}", result.exit_code);
+        }
+
+        if verbose {
+            eprintln!("✅ Project '{}' created successfully!", self.name);
+        }
+
+        Ok(())
     }
 }

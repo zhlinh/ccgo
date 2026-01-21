@@ -54,6 +54,8 @@ pub struct CMakeConfig {
     verbose: bool,
     /// Compile definitions to add
     compile_definitions: Vec<String>,
+    /// Compiler cache configuration
+    compiler_cache: Option<super::cache::CacheConfig>,
 }
 
 impl CMakeConfig {
@@ -154,6 +156,12 @@ impl CMakeConfig {
         self
     }
 
+    /// Set compiler cache configuration (ccache, sccache)
+    pub fn compiler_cache(mut self, cache: super::cache::CacheConfig) -> Self {
+        self.compiler_cache = Some(cache);
+        self
+    }
+
     /// Find CMake executable
     fn find_cmake() -> Result<PathBuf> {
         which::which("cmake").context("CMake not found. Please install CMake and add it to PATH.")
@@ -203,6 +211,19 @@ impl CMakeConfig {
         // Cache variables with type
         for (name, value, var_type) in &self.cache_variables {
             cmd.arg(format!("-D{}:{}={}", name, var_type, value));
+        }
+
+        // Compiler cache (ccache/sccache)
+        if let Some(cache) = &self.compiler_cache {
+            if cache.is_enabled() {
+                // Print cache info
+                println!("   🚀 Using {} for compilation caching", cache.cache_type().name());
+
+                // Add CMake compiler launcher variables
+                for (name, value) in cache.cmake_variables() {
+                    cmd.arg(format!("-D{}={}", name, value));
+                }
+            }
         }
 
         // Add compile definitions (for features)

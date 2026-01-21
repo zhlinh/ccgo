@@ -489,18 +489,165 @@ ccgo build android --test
 
 ## Advanced Usage
 
-### Dependency Overrides
+### Dependency Patches
 
-Override dependency source:
+Patches allow you to override dependency sources, similar to Cargo's `[patch]` feature. This is useful for:
+- Testing bug fixes before they're merged upstream
+- Using a fork with custom changes
+- Applying local patches to third-party dependencies
+- Working around version conflicts
+
+#### Basic Patch Syntax
+
+Patches are defined in the `[patch]` section of CCGO.toml:
+
+```toml
+[dependencies]
+mylib = { git = "https://github.com/user/mylib.git", tag = "v1.0.0" }
+
+# Patch a dependency with a fork
+[patch."https://github.com/user/mylib.git"]
+fmt = { git = "https://github.com/me/fmt-fork.git", branch = "bugfix" }
+```
+
+#### Registry Patches (Future)
+
+For dependencies from a package registry:
+
+```toml
+[dependencies]
+mylib = "1.0.0"
+
+# Patch registry dependency
+[patch.crates-io]
+fmt = { git = "https://github.com/fmtlib/fmt.git", tag = "10.2.1" }
+```
+
+#### Source-Specific Patches
+
+Override dependencies from specific sources:
 
 ```toml
 [dependencies]
 libA = { git = "https://github.com/user/libA.git", tag = "v1.0.0" }
+libB = { git = "https://github.com/user/libB.git", tag = "v2.0.0" }
 
-# Override libA's dependency on libB
+# Patch libA's dependency on common-utils
 [patch."https://github.com/user/libA.git"]
-libB = { git = "https://github.com/me/libB-fork.git", tag = "v2.0-custom" }
+common-utils = { git = "https://github.com/me/common-utils-fork.git", tag = "v1.5-custom" }
+
+# Patch libB's dependency on common-utils (different patch)
+[patch."https://github.com/user/libB.git"]
+common-utils = { git = "https://github.com/me/common-utils.git", rev = "abc123" }
 ```
+
+**Priority:** Source-specific patches take precedence over registry patches.
+
+#### Local Path Patches
+
+Use local versions for development:
+
+```toml
+[dependencies]
+myapp = { git = "https://github.com/user/myapp.git", tag = "v1.0.0" }
+
+# Use local version of fmt for testing
+[patch."https://github.com/user/myapp.git"]
+fmt = { path = "../fmt-local" }
+```
+
+#### Git Patch Options
+
+All git options are supported in patches:
+
+```toml
+[patch.crates-io]
+# Specific branch
+spdlog = { git = "https://github.com/gabime/spdlog.git", branch = "v1.x" }
+
+# Specific tag
+fmt = { git = "https://github.com/fmtlib/fmt.git", tag = "10.2.1" }
+
+# Exact revision
+json = { git = "https://github.com/nlohmann/json.git", rev = "9cca280a" }
+```
+
+#### Patch Resolution Rules
+
+1. **Source matching**: Patches are matched against the original dependency source
+2. **Priority order**: Source-specific patches > Registry patches
+3. **Lockfile records**: Patches are tracked in CCGO.lock with original and replacement sources
+4. **Locked mode**: In `ccgo install --locked`, locked revisions are respected
+
+#### Example: Testing Upstream Fix
+
+```toml
+[dependencies]
+mylib = { git = "https://github.com/upstream/mylib.git", tag = "v1.0.0" }
+
+# Test a pending PR before it's merged
+[patch."https://github.com/upstream/mylib.git"]
+problematic-dep = {
+    git = "https://github.com/contributor/problematic-dep.git",
+    branch = "fix-issue-123"
+}
+```
+
+Then install:
+```bash
+ccgo install
+```
+
+Output shows patch is applied:
+```
+📦 Installing mylib...
+   Source: https://github.com/upstream/mylib.git
+
+📦 Installing problematic-dep...
+   🔧 Applying patch for problematic-dep...
+   Original: git+https://github.com/original/problematic-dep.git
+   Patched:  git+https://github.com/contributor/problematic-dep.git
+```
+
+#### Example: Local Development Workflow
+
+```toml
+[dependencies]
+production-lib = { git = "https://github.com/company/lib.git", tag = "v2.0.0" }
+
+# Override with local development version
+[patch."https://github.com/company/lib.git"]
+utils = { path = "../utils-dev" }
+logger = { path = "../logger-dev" }
+```
+
+This allows you to develop multiple dependencies simultaneously without modifying the main dependency definitions.
+
+#### Lockfile Format
+
+When patches are applied, CCGO.lock records both sources:
+
+```toml
+[[package]]
+name = "fmt"
+version = "10.2.1"
+source = "git+https://github.com/me/fmt-fork.git#abc123"
+git.revision = "abc123"
+git.branch = "bugfix"
+patch.patched_source = "git+https://github.com/fmtlib/fmt.git"
+patch.replacement_source = "git+https://github.com/me/fmt-fork.git"
+patch.is_path_patch = false
+```
+
+#### Removing Patches
+
+To stop using a patch, simply remove it from CCGO.toml and re-run:
+
+```bash
+ccgo install --force
+```
+
+This will reinstall dependencies using their original sources.
 
 ### Private Git Repositories
 

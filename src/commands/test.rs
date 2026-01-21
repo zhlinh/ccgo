@@ -60,6 +60,7 @@ impl TestCommand {
             features: vec![],
             use_default_features: true,
             all_features: false,
+            cache: Some("auto".to_string()),
         };
 
         let ctx = BuildContext::new(project_root, config, options);

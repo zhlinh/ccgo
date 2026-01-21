@@ -207,6 +207,11 @@ impl LinuxBuilder {
             }
         }
 
+        // Add compiler cache if available
+        if let Some(cache) = ctx.compiler_cache() {
+            cmake = cmake.compiler_cache(cache);
+        }
+
         cmake.configure_build_install()?;
 
         // For static builds, merge all module libraries into a single library

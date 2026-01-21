@@ -89,6 +89,24 @@ pub struct LockedPackage {
     /// Installation timestamp
     #[serde(skip_serializing_if = "Option::is_none")]
     pub installed_at: Option<String>,
+
+    /// Patch information if this package was patched
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch: Option<PatchInfo>,
+}
+
+/// Information about a patched dependency
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatchInfo {
+    /// Source of the patch (e.g., "crates-io" or the original repository URL)
+    pub patched_source: String,
+
+    /// The actual source used after patching
+    pub replacement_source: String,
+
+    /// Whether this is a path-based patch
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_path_patch: bool,
 }
 
 /// Git-specific locked information
@@ -218,6 +236,14 @@ impl Lockfile {
                 }
                 if git.dirty {
                     content.push_str("git.dirty = true\n");
+                }
+            }
+
+            if let Some(ref patch) = package.patch {
+                content.push_str(&format!("patch.patched_source = \"{}\"\n", patch.patched_source));
+                content.push_str(&format!("patch.replacement_source = \"{}\"\n", patch.replacement_source));
+                if patch.is_path_patch {
+                    content.push_str("patch.is_path_patch = true\n");
                 }
             }
 
@@ -366,6 +392,7 @@ mod tests {
                 dirty: false,
             }),
             installed_at: Some("2024-01-01T00:00:00Z".to_string()),
+            patch: None,
         });
 
         // Save to temp file
@@ -391,11 +418,11 @@ mod tests {
             dependencies: vec![],
             git: None,
             installed_at: None,
+            patch: None,
         });
 
-        assert!(lockfile.has_package("test"));
-        assert!(!lockfile.has_package("other"));
         assert!(lockfile.get_package("test").is_some());
+        assert!(lockfile.get_package("other").is_none());
     }
 
     #[test]
@@ -408,6 +435,7 @@ mod tests {
             dependencies: vec![],
             git: None,
             installed_at: None,
+            patch: None,
         };
         let (src_type, url) = git_pkg.parse_source();
         assert_eq!(src_type, SourceType::Git);
@@ -421,6 +449,7 @@ mod tests {
             dependencies: vec![],
             git: None,
             installed_at: None,
+            patch: None,
         };
         let (src_type, path) = path_pkg.parse_source();
         assert_eq!(src_type, SourceType::Path);

@@ -168,6 +168,13 @@ pub struct BuildCommand {
     /// Enable all available features
     #[arg(long)]
     pub all_features: bool,
+
+    /// Compiler cache to use (ccache, sccache, auto, none)
+    ///
+    /// Default: auto - automatically detect and use available cache
+    /// Use 'none' to disable caching
+    #[arg(long, default_value = "auto")]
+    pub cache: String,
 }
 
 impl BuildCommand {
@@ -267,6 +274,7 @@ impl BuildCommand {
             features: self.features.clone(),
             use_default_features: !self.no_default_features,
             all_features: self.all_features,
+            cache: Some(self.cache.clone()),
         };
 
         // Create build context

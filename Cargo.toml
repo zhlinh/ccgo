@@ -47,6 +47,12 @@ rayon = "1.10"
 # Date/time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# Cryptographic hashing for incremental builds
+sha2 = "0.10"
+
+# Semantic versioning for dependency resolution
+semver = "1.0"
+
 # HTTP client for fetching remote collections (using rustls to avoid OpenSSL dependency)
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 

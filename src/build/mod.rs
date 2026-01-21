@@ -17,14 +17,20 @@
 //! - `platforms` - Platform-specific builders (linux, macos, windows, ios, android, ohos, etc.)
 //! - `toolchains` - Toolchain detection (gcc, clang, xcode, ndk, msvc, mingw, etc.)
 //! - `cmake` - CMake configuration and execution
+//! - `cache` - Compiler cache support (ccache, sccache)
+//! - `analytics` - Build performance metrics and analytics
+//! - `incremental` - Incremental build support with smart rebuild detection
 //! - `docker` - Docker-based cross-platform builds
 //! - `archive` - ZIP archive creation with build_info.json
 
+pub mod analytics;
 pub mod archive;
+pub mod cache;
 pub mod cmake;
 pub mod cmake_templates;
 pub mod docker;
 pub mod elf;
+pub mod incremental;
 pub mod platforms;
 pub mod toolchains;
 
@@ -70,6 +76,8 @@ pub struct BuildOptions {
     pub use_default_features: bool,
     /// Enable all available features
     pub all_features: bool,
+    /// Compiler cache type (ccache, sccache, auto, none)
+    pub cache: Option<String>,
 }
 
 impl Default for BuildOptions {
@@ -90,6 +98,7 @@ impl Default for BuildOptions {
             features: Vec::new(),
             use_default_features: true,
             all_features: false,
+            cache: None,
         }
     }
 }
@@ -324,6 +333,64 @@ impl BuildContext {
         }
 
         None
+    }
+
+    /// Get compiler cache configuration based on build options
+    ///
+    /// Returns None if caching is disabled or not available
+    pub fn compiler_cache(&self) -> Option<cache::CacheConfig> {
+        let cache_option = self.options.cache.as_ref()?;
+
+        match cache_option.as_str() {
+            "none" | "disabled" | "off" => None,
+            "auto" => cache::CacheConfig::auto().ok(),
+            "ccache" => cache::CacheConfig::with_type(cache::CacheType::CCache).ok(),
+            "sccache" => cache::CacheConfig::with_type(cache::CacheType::SCache).ok(),
+            _ => {
+                eprintln!("⚠️  Unknown cache type '{}', using auto-detection", cache_option);
+                cache::CacheConfig::auto().ok()
+            }
+        }
+    }
+
+    /// Get CCGO.toml configuration hash
+    pub fn config_hash(&self) -> Result<String> {
+        let config_path = self.project_root.join("CCGO.toml");
+        incremental::BuildState::hash_config(&config_path)
+    }
+
+    /// Get build options hash
+    pub fn options_hash(&self) -> String {
+        // Create a canonical string representation of build options
+        let options_str = format!(
+            "target={:?},arch={:?},link={:?},release={},jobs={:?},features={:?},cache={:?}",
+            self.options.target,
+            self.options.architectures,
+            self.options.link_type,
+            self.options.release,
+            self.options.jobs,
+            self.options.features,
+            self.options.cache
+        );
+        incremental::BuildState::hash_options(&options_str)
+    }
+
+    /// Create incremental build analyzer for a specific link type
+    pub fn create_incremental_analyzer(
+        &self,
+        link_type: &str,
+    ) -> Result<incremental::IncrementalAnalyzer> {
+        let config_hash = self.config_hash()?;
+        let options_hash = self.options_hash();
+
+        incremental::IncrementalAnalyzer::new(
+            &self.cmake_build_dir,
+            self.lib_name().to_string(),
+            self.options.target.to_string(),
+            link_type.to_string(),
+            config_hash,
+            options_hash,
+        )
     }
 }
 

@@ -12,6 +12,7 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{CcgoConfig, DependencyConfig};
+use crate::dependency::resolver::resolve_dependencies;
 use crate::lockfile::{Lockfile, LockedPackage, LockedGitInfo, LOCKFILE_NAME};
 
 /// Install project dependencies from CCGO.toml
@@ -152,6 +153,53 @@ impl InstallCommand {
             println!("  - {}", dep.name);
         }
 
+        // Resolve transitive dependencies
+        let dependency_graph = match resolve_dependencies(dependencies, &project_dir, &ccgo_home) {
+            Ok(graph) => {
+                // Show dependency tree
+                println!("\nDependency tree:");
+                println!("{}", graph.format_tree(2));
+
+                // Show statistics
+                let stats = graph.stats();
+                println!(
+                    "{} unique dependencies found, {} total ({} shared)",
+                    stats.unique_count,
+                    stats.total_count,
+                    stats.shared_count
+                );
+
+                graph
+            }
+            Err(e) => {
+                eprintln!("\n⚠️  Warning: Failed to resolve transitive dependencies: {}", e);
+                eprintln!("   Continuing with direct dependencies only...");
+                // Continue with just the direct dependencies
+                crate::dependency::graph::DependencyGraph::new()
+            }
+        };
+
+        // Determine installation order using topological sort
+        let install_order = if dependency_graph.nodes().is_empty() {
+            // No transitive dependencies, use direct order
+            deps_to_install.iter().map(|d| d.name.clone()).collect()
+        } else {
+            match dependency_graph.topological_sort() {
+                Ok(order) => {
+                    println!("\n📦 Installing in dependency order:");
+                    for (i, dep_name) in order.iter().enumerate() {
+                        println!("  {}. {}", i + 1, dep_name);
+                    }
+                    order
+                }
+                Err(e) => {
+                    eprintln!("\n⚠️  Warning: Failed to determine build order: {}", e);
+                    eprintln!("   Installing in declaration order...");
+                    deps_to_install.iter().map(|d| d.name.clone()).collect()
+                }
+            }
+        };
+
         // Install each dependency
         println!("\n{}", "=".repeat(80));
         println!("Installing Dependencies");
@@ -161,7 +209,31 @@ impl InstallCommand {
         let mut failed_count = 0;
         let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
 
-        for dep in deps_to_install {
+        // Create a map for quick lookup of dependency configs
+        let dep_map: std::collections::HashMap<String, &DependencyConfig> =
+            dependencies.iter().map(|d| (d.name.clone(), d)).collect();
+
+        // Get dependencies from the graph if available, otherwise use original list
+        let deps_to_process: Vec<&DependencyConfig> = if !dependency_graph.nodes().is_empty() {
+            // Install in topological order
+            install_order
+                .iter()
+                .filter_map(|name| {
+                    // Get from dependency graph first (includes transitive deps)
+                    if let Some(node) = dependency_graph.get_node(name) {
+                        Some(&node.config)
+                    } else {
+                        // Fall back to direct dependencies
+                        dep_map.get(name).copied()
+                    }
+                })
+                .collect()
+        } else {
+            // No graph, use original order
+            deps_to_install
+        };
+
+        for dep in deps_to_process {
             // Get locked info if available
             let locked_pkg = lockfile.get_package(&dep.name).cloned();
 
@@ -218,6 +290,39 @@ impl InstallCommand {
 
         let install_path = deps_dir.join(&dep.name);
 
+        // Check vendor/ directory first for offline builds
+        let vendor_dir = project_dir.join("vendor");
+        let vendor_path = vendor_dir.join(&dep.name);
+        if vendor_path.exists() && !self.force {
+            println!("   📦 Found in vendor/ directory (offline mode)");
+            println!("   Source: {}", vendor_path.display());
+
+            // Remove existing installation if present
+            if install_path.exists() {
+                if install_path.is_symlink() {
+                    fs::remove_file(&install_path)?;
+                } else {
+                    fs::remove_dir_all(&install_path)?;
+                }
+            }
+
+            // Create symlink or copy from vendor
+            Self::create_symlink_or_copy(&vendor_path, &install_path, self.copy)?;
+            println!("   ✓ Installed from vendor to {}", install_path.display());
+
+            // Return a locked package entry for vendored dependency
+            return Ok(LockedPackage {
+                name: dep.name.clone(),
+                version: dep.version.clone(),
+                source: format!("vendor+{}", dep.name),
+                checksum: None,
+                dependencies: vec![],
+                git: None,
+                installed_at: Some(chrono::Local::now().to_rfc3339()),
+                patch: None,
+            });
+        }
+
         // Check if already installed and matches lockfile
         if install_path.exists() && !self.force {
             if let Some(locked_pkg) = locked {
@@ -234,6 +339,7 @@ impl InstallCommand {
                 dependencies: vec![],
                 git: None,
                 installed_at: Some(chrono::Local::now().to_rfc3339()),
+                patch: None,
             });
         }
 
@@ -247,17 +353,79 @@ impl InstallCommand {
             }
         }
 
-        // Handle based on source type
-        if let Some(ref path) = dep.path {
-            // Local path dependency
-            self.install_from_local_path(&dep.name, &dep.version, path, project_dir, &install_path)
-        } else if let Some(ref git_url) = dep.git {
-            // Git dependency - use locked revision if available
+        // Load config to check for patches
+        let config = CcgoConfig::load().context("Failed to load CCGO.toml")?;
+
+        // Check if there's a patch for this dependency
+        let original_source = Self::build_source_string(dep);
+        let patch_info = if let Some(patch) = config.patch.find_patch(&dep.name, Some(&original_source)) {
+            println!("   🔧 Applying patch for {}...", dep.name);
+
+            let patched_source = if let Some(ref git) = patch.git {
+                format!("git+{}", git)
+            } else if let Some(ref path) = patch.path {
+                format!("path+{}", path)
+            } else {
+                original_source.clone()
+            };
+
+            println!("   Original: {}", original_source);
+            println!("   Patched:  {}", patched_source);
+
+            Some((patch, patched_source))
+        } else {
+            None
+        };
+
+        // Determine effective source for installation
+        let (effective_path, effective_git, effective_branch, effective_rev) = if let Some((patch, _)) = &patch_info {
+            // Use patched source
+            let rev = if !self.locked {
+                // In non-locked mode, use patch's rev if specified
+                patch.rev.clone()
+            } else {
+                // In locked mode, prefer locked revision
+                locked.and_then(|l| l.git_revision()).map(|s| s.to_string())
+            };
+
+            (
+                patch.path.as_ref().map(|s| s.as_str()),
+                patch.git.as_ref().map(|s| s.as_str()),
+                patch.branch.as_deref().or(patch.tag.as_deref()),
+                rev,
+            )
+        } else {
+            // Use original source
             let locked_rev = locked.and_then(|l| l.git_revision()).map(|s| s.to_string());
-            self.install_from_git(&dep.name, &dep.version, git_url, dep.branch.as_deref(), locked_rev.as_deref(), &install_path, ccgo_home)
+            (
+                dep.path.as_ref().map(|s| s.as_str()),
+                dep.git.as_ref().map(|s| s.as_str()),
+                dep.branch.as_deref(),
+                locked_rev,
+            )
+        };
+
+        // Install based on effective source type
+        let mut locked_pkg = if let Some(path) = effective_path {
+            // Local path dependency
+            self.install_from_local_path(&dep.name, &dep.version, path, project_dir, &install_path)?
+        } else if let Some(git_url) = effective_git {
+            // Git dependency
+            self.install_from_git(&dep.name, &dep.version, git_url, effective_branch, effective_rev.as_deref(), &install_path, ccgo_home)?
         } else {
             bail!("No valid source found for dependency '{}'", dep.name);
+        };
+
+        // Add patch information to locked package if patched
+        if let Some((_, patched_source)) = patch_info {
+            locked_pkg.patch = Some(crate::lockfile::PatchInfo {
+                patched_source: original_source,
+                replacement_source: patched_source.clone(),
+                is_path_patch: effective_path.is_some(),
+            });
         }
+
+        Ok(locked_pkg)
     }
 
     /// Build source string from dependency config
@@ -321,6 +489,7 @@ impl InstallCommand {
             dependencies: vec![],
             git: git_info,
             installed_at: Some(chrono::Local::now().to_rfc3339()),
+            patch: None,
         })
     }
 
@@ -427,6 +596,7 @@ impl InstallCommand {
                 dirty: git_info.and_then(|g| g.dirty).unwrap_or(false),
             }),
             installed_at: Some(chrono::Local::now().to_rfc3339()),
+            patch: None,
         })
     }
 

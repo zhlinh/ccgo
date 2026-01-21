@@ -14,10 +14,13 @@ mod cli;
 mod collection;
 mod commands;
 mod config;
+mod dependency;
+mod error;
 mod exec;
 mod lockfile;
 mod utils;
 mod version;
+mod workspace;
 
 use anyhow::Result;
 use clap::Parser;

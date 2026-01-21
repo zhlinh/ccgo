@@ -4,11 +4,12 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::commands::{
-    add::AddCommand, bench::BenchCommand, build::BuildCommand, check::CheckCommand,
-    clean::CleanCommand, collection::CollectionCommand, doc::DocCommand, init::InitCommand,
-    install::InstallCommand, new::NewCommand, package::PackageCommand, publish::PublishCommand,
-    remove::RemoveCommand, run::RunCommand, search::SearchCommand, tag::TagCommand,
-    test::TestCommand, tree::TreeCommand, update::UpdateCommand, vendor::VendorCommand,
+    add::AddCommand, analytics::AnalyticsCommand, bench::BenchCommand, build::BuildCommand,
+    check::CheckCommand, clean::CleanCommand, collection::CollectionCommand, doc::DocCommand,
+    init::InitCommand, install::InstallCommand, new::NewCommand, package::PackageCommand,
+    publish::PublishCommand, remove::RemoveCommand, run::RunCommand, search::SearchCommand,
+    tag::TagCommand, test::TestCommand, tree::TreeCommand, update::UpdateCommand,
+    vendor::VendorCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -93,6 +94,9 @@ pub enum Commands {
 
     /// Vendor dependencies to local directory for offline builds
     Vendor(VendorCommand),
+
+    /// View build performance analytics
+    Analytics(AnalyticsCommand),
 }
 
 impl Cli {
@@ -126,6 +130,7 @@ impl Cli {
             Commands::Collection(cmd) => cmd.execute(self.verbose),
             Commands::Search(cmd) => cmd.execute(self.verbose),
             Commands::Vendor(cmd) => cmd.execute(self.verbose),
+            Commands::Analytics(cmd) => cmd.execute(self.verbose),
         }
     }
 }

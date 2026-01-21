@@ -74,6 +74,102 @@ pub struct CcgoConfig {
     /// Example programs
     #[serde(default, rename = "example")]
     pub examples: Vec<ExampleConfig>,
+
+    /// Dependency patches configuration
+    /// Allows overriding dependency sources for specific crates
+    #[serde(default)]
+    pub patch: PatchConfig,
+}
+
+/// Patch configuration from [patch] section
+///
+/// Allows overriding dependency sources for specific packages.
+/// Similar to Cargo's [patch] feature for dependency override.
+///
+/// # Example
+///
+/// ```toml
+/// [patch.crates-io]
+/// fmt = { git = "https://github.com/myorg/fmt.git", branch = "custom-fix" }
+///
+/// [patch."https://github.com/spdlog/spdlog"]
+/// spdlog = { path = "../spdlog-local" }
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PatchConfig {
+    /// Patches for registry dependencies (future: when we have package registry)
+    #[serde(default, rename = "crates-io")]
+    pub crates_io: HashMap<String, PatchDependency>,
+
+    /// Patches for git repositories (keyed by repository URL)
+    #[serde(flatten)]
+    pub sources: HashMap<String, HashMap<String, PatchDependency>>,
+}
+
+/// A patched dependency specification
+#[derive(Debug, Clone, Deserialize)]
+pub struct PatchDependency {
+    /// Git repository URL (alternative source)
+    pub git: Option<String>,
+
+    /// Git branch name
+    pub branch: Option<String>,
+
+    /// Git tag
+    pub tag: Option<String>,
+
+    /// Git revision (commit hash)
+    pub rev: Option<String>,
+
+    /// Local path (alternative source)
+    pub path: Option<String>,
+
+    /// Version requirement (for verification)
+    #[serde(default)]
+    pub version: String,
+}
+
+impl PatchConfig {
+    /// Find a patch for a specific dependency
+    ///
+    /// Returns the patch specification if a patch is defined for this dependency,
+    /// considering both registry patches and source-specific patches.
+    pub fn find_patch(&self, dep_name: &str, dep_source: Option<&str>) -> Option<&PatchDependency> {
+        // First check source-specific patches if a source is provided
+        if let Some(source) = dep_source {
+            // Check if we have patches for this specific source
+            if let Some(source_patches) = self.sources.get(source) {
+                if let Some(patch) = source_patches.get(dep_name) {
+                    return Some(patch);
+                }
+            }
+        }
+
+        // Fall back to registry patches (crates-io)
+        self.crates_io.get(dep_name)
+    }
+
+    /// Check if any patches are defined
+    pub fn has_patches(&self) -> bool {
+        !self.crates_io.is_empty() || !self.sources.is_empty()
+    }
+
+    /// Get all patched dependency names
+    pub fn patched_dependencies(&self) -> Vec<&str> {
+        let mut deps = Vec::new();
+
+        // Collect from crates-io
+        deps.extend(self.crates_io.keys().map(|s| s.as_str()));
+
+        // Collect from source-specific patches
+        for source_patches in self.sources.values() {
+            deps.extend(source_patches.keys().map(|s| s.as_str()));
+        }
+
+        deps.sort();
+        deps.dedup();
+        deps
+    }
 }
 
 /// Workspace configuration from [workspace] section
@@ -1125,5 +1221,72 @@ parallel = true
 
         let result = CcgoConfig::parse(toml);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_patch_config() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[[dependencies]]
+name = "fmt"
+version = "^10.0"
+git = "https://github.com/fmtlib/fmt.git"
+
+[patch.crates-io]
+fmt = { git = "https://github.com/myorg/fmt.git", branch = "custom-fix" }
+
+[patch."https://github.com/spdlog/spdlog"]
+spdlog = { path = "../spdlog-local" }
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        // Check patches parsed correctly
+        assert!(config.patch.has_patches());
+        assert_eq!(config.patch.patched_dependencies(), vec!["fmt", "spdlog"]);
+
+        // Check crates-io patch
+        let fmt_patch = config.patch.find_patch("fmt", None).unwrap();
+        assert_eq!(fmt_patch.git.as_ref().unwrap(), "https://github.com/myorg/fmt.git");
+        assert_eq!(fmt_patch.branch.as_ref().unwrap(), "custom-fix");
+
+        // Check source-specific patch
+        let spdlog_patch = config
+            .patch
+            .find_patch("spdlog", Some("https://github.com/spdlog/spdlog"))
+            .unwrap();
+        assert_eq!(spdlog_patch.path.as_ref().unwrap(), "../spdlog-local");
+    }
+
+    #[test]
+    fn test_patch_priority() {
+        // Source-specific patches should take priority over registry patches
+        let toml = r#"
+[package]
+name = "mylib"
+version = "1.0.0"
+
+[patch.crates-io]
+fmt = { git = "https://github.com/fallback/fmt.git" }
+
+[patch."https://github.com/fmtlib/fmt.git"]
+fmt = { path = "../fmt-local" }
+"#;
+
+        let config = CcgoConfig::parse(toml).unwrap();
+
+        // When querying with source, should get source-specific patch
+        let fmt_with_source = config
+            .patch
+            .find_patch("fmt", Some("https://github.com/fmtlib/fmt.git"))
+            .unwrap();
+        assert!(fmt_with_source.path.is_some());
+
+        // When querying without source, should get registry patch
+        let fmt_without_source = config.patch.find_patch("fmt", None).unwrap();
+        assert!(fmt_without_source.git.is_some());
     }
 }
