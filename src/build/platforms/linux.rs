@@ -224,6 +224,102 @@ impl LinuxBuilder {
         Ok(build_dir)
     }
 
+    /// Generate IDE project files for Linux
+    pub fn generate_ide_project(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        use std::process::Command;
+
+        let build_dir = ctx.cmake_build_dir.join("ide_project");
+
+        // Clean build directory
+        if build_dir.exists() {
+            std::fs::remove_dir_all(&build_dir)
+                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        }
+
+        // Create build directory
+        std::fs::create_dir_all(&build_dir)
+            .with_context(|| format!("Failed to create {}", build_dir.display()))?;
+
+        eprintln!(
+            "Generating IDE project for Linux in {}...",
+            build_dir.display()
+        );
+
+        // Configure with CMake using CodeLite generator
+        // Also generate compile_commands.json for IDEs like VS Code, CLion
+        let mut cmake_cmd = Command::new("cmake");
+        cmake_cmd
+            .arg("-S")
+            .arg(&ctx.project_root)
+            .arg("-B")
+            .arg(&build_dir)
+            .arg("-G")
+            .arg("CodeLite - Unix Makefiles")
+            .arg("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
+
+        // Add CCGO_CMAKE_DIR if available
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake_cmd.arg(format!("-DCCGO_CMAKE_DIR={}", cmake_dir.display()));
+        }
+
+        // Add lib name
+        cmake_cmd.arg(format!("-DCCGO_LIB_NAME={}", ctx.lib_name()));
+
+        if ctx.options.verbose {
+            eprintln!("CMake configure: {:?}", cmake_cmd);
+        }
+
+        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        if !status.success() {
+            bail!("CMake configure failed");
+        }
+
+        // Find and report project file
+        let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
+        let compile_commands = build_dir.join("compile_commands.json");
+
+        if workspace_file.exists() {
+            eprintln!(
+                "\n✓ CodeLite workspace generated: {}",
+                workspace_file.display()
+            );
+        }
+
+        if compile_commands.exists() {
+            eprintln!(
+                "✓ compile_commands.json generated: {}",
+                compile_commands.display()
+            );
+            eprintln!("   (Use with VS Code C/C++ extension, CLion, or other LSP-compatible editors)");
+
+            // Optionally symlink compile_commands.json to project root for VS Code
+            let root_compile_commands = ctx.project_root.join("compile_commands.json");
+            if !root_compile_commands.exists() {
+                #[cfg(unix)]
+                {
+                    let _ = std::os::unix::fs::symlink(&compile_commands, &root_compile_commands);
+                    eprintln!("   Symlinked to project root for VS Code");
+                }
+            }
+        }
+
+        if !workspace_file.exists() && !compile_commands.exists() {
+            eprintln!(
+                "\n✓ IDE project files generated in: {}",
+                build_dir.display()
+            );
+        }
+
+        // Return a placeholder result for IDE generation
+        Ok(BuildResult {
+            sdk_archive: build_dir,
+            symbols_archive: None,
+            aar_archive: None,
+            duration_secs: 0.0,
+            architectures: vec![],
+        })
+    }
+
     /// Find library directory in build output
     /// Prioritizes out/ directory where CCGO cmake puts the merged library
     fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
@@ -292,6 +388,11 @@ impl PlatformBuilder for LinuxBuilder {
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        // Check for IDE project generation mode
+        if ctx.options.ide_project {
+            return self.generate_ide_project(ctx);
+        }
+
         let start = Instant::now();
 
         // Validate prerequisites first

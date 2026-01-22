@@ -453,6 +453,119 @@ impl WindowsBuilder {
         Ok(())
     }
 
+    /// Generate Visual Studio IDE project for Windows
+    pub fn generate_ide_project(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        use std::process::Command;
+
+        let build_dir = ctx.cmake_build_dir.join("ide_project");
+
+        // Clean build directory
+        if build_dir.exists() {
+            std::fs::remove_dir_all(&build_dir)
+                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        }
+
+        // Create build directory
+        std::fs::create_dir_all(&build_dir)
+            .with_context(|| format!("Failed to create {}", build_dir.display()))?;
+
+        // Determine generator based on available toolchain
+        let (generator, toolchain_name) = if is_msvc_available() {
+            ("Visual Studio 17 2022", "MSVC")
+        } else if is_mingw_available() {
+            // MinGW can use CodeLite or just Unix Makefiles with compile_commands.json
+            ("CodeLite - MinGW Makefiles", "MinGW")
+        } else {
+            bail!(
+                "No Windows toolchain found for IDE project generation.\n\
+                 - For Visual Studio: Install Visual Studio with C++ tools\n\
+                 - For MinGW: Install MinGW-w64"
+            );
+        };
+
+        eprintln!(
+            "Generating {} project for Windows in {}...",
+            toolchain_name,
+            build_dir.display()
+        );
+
+        // Configure with CMake
+        let mut cmake_cmd = Command::new("cmake");
+        cmake_cmd
+            .arg("-S")
+            .arg(&ctx.project_root)
+            .arg("-B")
+            .arg(&build_dir)
+            .arg("-G")
+            .arg(generator)
+            .arg("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
+
+        // Add CCGO_CMAKE_DIR if available
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake_cmd.arg(format!("-DCCGO_CMAKE_DIR={}", cmake_dir.display()));
+        }
+
+        // Add lib name
+        cmake_cmd.arg(format!("-DCCGO_LIB_NAME={}", ctx.lib_name()));
+
+        if ctx.options.verbose {
+            eprintln!("CMake configure: {:?}", cmake_cmd);
+        }
+
+        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        if !status.success() {
+            bail!("CMake configure failed");
+        }
+
+        // Find and report project file
+        let sln_file = build_dir.join(format!("{}.sln", ctx.lib_name()));
+        let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
+
+        if sln_file.exists() {
+            eprintln!(
+                "\n✓ Visual Studio solution generated: {}",
+                sln_file.display()
+            );
+
+            // Try to open the solution on Windows
+            #[cfg(target_os = "windows")]
+            {
+                let _ = Command::new("cmd")
+                    .args(["/C", "start", ""])
+                    .arg(&sln_file)
+                    .status();
+            }
+        } else if workspace_file.exists() {
+            eprintln!(
+                "\n✓ CodeLite workspace generated: {}",
+                workspace_file.display()
+            );
+        } else {
+            eprintln!(
+                "\n✓ IDE project files generated in: {}",
+                build_dir.display()
+            );
+        }
+
+        // Report compile_commands.json for IDEs that use it
+        let compile_commands = build_dir.join("compile_commands.json");
+        if compile_commands.exists() {
+            eprintln!(
+                "   compile_commands.json: {}",
+                compile_commands.display()
+            );
+        }
+
+        // Return a placeholder result for IDE generation
+        Ok(BuildResult {
+            sdk_archive: build_dir,
+            symbols_archive: None,
+            aar_archive: None,
+            duration_secs: 0.0,
+            architectures: vec![],
+        })
+    }
+
     /// Strip shared libraries (MinGW only)
     fn strip_libraries(
         &self,
@@ -537,6 +650,11 @@ impl PlatformBuilder for WindowsBuilder {
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        // Check for IDE project generation mode
+        if ctx.options.ide_project {
+            return self.generate_ide_project(ctx);
+        }
+
         let start = Instant::now();
 
         // Validate prerequisites first

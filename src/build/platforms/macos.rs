@@ -345,6 +345,91 @@ impl MacosBuilder {
         None
     }
 
+    /// Generate Xcode IDE project for macOS
+    pub fn generate_ide_project(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        use std::process::Command;
+
+        let build_dir = ctx.cmake_build_dir.join("ide_project");
+
+        // Clean build directory
+        if build_dir.exists() {
+            std::fs::remove_dir_all(&build_dir)
+                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        }
+
+        // Create build directory
+        std::fs::create_dir_all(&build_dir)
+            .with_context(|| format!("Failed to create {}", build_dir.display()))?;
+
+        eprintln!(
+            "Generating Xcode project for macOS in {}...",
+            build_dir.display()
+        );
+
+        // Detect Xcode toolchain
+        let xcode = XcodeToolchain::detect()?;
+        let cmake_vars = xcode.cmake_variables_for_platform(ApplePlatform::MacOS)?;
+
+        // Configure with CMake using Xcode generator
+        let mut cmake_cmd = Command::new("cmake");
+        cmake_cmd
+            .arg("-S")
+            .arg(&ctx.project_root)
+            .arg("-B")
+            .arg(&build_dir)
+            .arg("-G")
+            .arg("Xcode")
+            .arg("-DCMAKE_SYSTEM_NAME=Darwin");
+
+        // Add CCGO_CMAKE_DIR if available
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake_cmd.arg(format!("-DCCGO_CMAKE_DIR={}", cmake_dir.display()));
+        }
+
+        // Add SDK-related variables
+        for (name, value) in cmake_vars {
+            cmake_cmd.arg(format!("-D{}={}", name, value));
+        }
+
+        // Add lib name
+        cmake_cmd.arg(format!("-DCCGO_LIB_NAME={}", ctx.lib_name()));
+
+        if ctx.options.verbose {
+            eprintln!("CMake configure: {:?}", cmake_cmd);
+        }
+
+        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        if !status.success() {
+            bail!("CMake configure failed");
+        }
+
+        // Find and report project file
+        let project_file = build_dir.join(format!("{}.xcodeproj", ctx.lib_name()));
+        if project_file.exists() {
+            eprintln!("\n✓ Xcode project generated: {}", project_file.display());
+
+            // Try to open the project
+            #[cfg(target_os = "macos")]
+            {
+                let _ = Command::new("open").arg(&project_file).status();
+            }
+        } else {
+            eprintln!(
+                "\n✓ IDE project files generated in: {}",
+                build_dir.display()
+            );
+        }
+
+        // Return a placeholder result for IDE generation
+        Ok(BuildResult {
+            sdk_archive: build_dir,
+            symbols_archive: None,
+            aar_archive: None,
+            duration_secs: 0.0,
+            architectures: vec![],
+        })
+    }
+
     /// Create XCFramework from universal library
     fn create_xcframework(
         &self,
@@ -448,6 +533,11 @@ impl PlatformBuilder for MacosBuilder {
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        // Check for IDE project generation mode
+        if ctx.options.ide_project {
+            return self.generate_ide_project(ctx);
+        }
+
         let start = Instant::now();
 
         // Create a mutable copy for building

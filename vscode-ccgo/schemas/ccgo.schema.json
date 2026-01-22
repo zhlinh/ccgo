@@ -1,0 +1,530 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CCGO Configuration",
+  "description": "Schema for CCGO.toml project configuration files",
+  "type": "object",
+  "properties": {
+    "package": {
+      "type": "object",
+      "description": "Package metadata",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Package name (lowercase, alphanumeric, underscores)",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "version": {
+          "type": "string",
+          "description": "Semantic version (e.g., 1.0.0)",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Brief package description"
+        },
+        "authors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of authors"
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX license identifier",
+          "examples": ["MIT", "Apache-2.0", "GPL-3.0"]
+        },
+        "readme": {
+          "type": "string",
+          "description": "Path to README file"
+        },
+        "homepage": {
+          "type": "string",
+          "format": "uri",
+          "description": "Project homepage URL"
+        },
+        "repository": {
+          "type": "string",
+          "format": "uri",
+          "description": "Source repository URL"
+        },
+        "documentation": {
+          "type": "string",
+          "format": "uri",
+          "description": "Documentation URL"
+        },
+        "keywords": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Search keywords"
+        },
+        "categories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Package categories"
+        },
+        "publish_suffix": {
+          "type": "string",
+          "description": "Suffix added to package name when publishing"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "description": "Build configuration",
+      "properties": {
+        "cmake_minimum_version": {
+          "type": "string",
+          "description": "Minimum CMake version required",
+          "default": "3.18",
+          "pattern": "^\\d+\\.\\d+(\\.\\d+)?$"
+        },
+        "cpp_standard": {
+          "type": ["integer", "string"],
+          "description": "C++ standard version",
+          "enum": [11, 14, 17, 20, 23, "11", "14", "17", "20", "23"],
+          "default": 17
+        },
+        "c_standard": {
+          "type": ["integer", "string"],
+          "description": "C standard version",
+          "enum": [99, 11, 17, 23, "99", "11", "17", "23"],
+          "default": 11
+        },
+        "default_link_type": {
+          "type": "string",
+          "enum": ["static", "shared", "both"],
+          "description": "Default library link type",
+          "default": "both"
+        },
+        "symbol_visibility": {
+          "type": "string",
+          "enum": ["hidden", "default", "protected"],
+          "description": "Default symbol visibility",
+          "default": "hidden"
+        },
+        "default_features": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Features enabled by default"
+        },
+        "modules": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of source modules to build"
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "description": "Project dependencies",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Dependency name"
+          },
+          "version": {
+            "type": "string",
+            "description": "Version requirement"
+          },
+          "git": {
+            "type": "string",
+            "format": "uri",
+            "description": "Git repository URL"
+          },
+          "branch": {
+            "type": "string",
+            "description": "Git branch name"
+          },
+          "tag": {
+            "type": "string",
+            "description": "Git tag"
+          },
+          "rev": {
+            "type": "string",
+            "description": "Git commit revision"
+          },
+          "path": {
+            "type": "string",
+            "description": "Local path to dependency"
+          },
+          "optional": {
+            "type": "boolean",
+            "description": "Whether dependency is optional",
+            "default": false
+          },
+          "features": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Features to enable for this dependency"
+          },
+          "default_features": {
+            "type": "boolean",
+            "description": "Whether to use default features",
+            "default": true
+          }
+        }
+      }
+    },
+    "features": {
+      "type": "array",
+      "description": "Optional feature definitions",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Feature name"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Dependencies enabled by this feature"
+          },
+          "defines": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Preprocessor definitions for this feature"
+          }
+        }
+      }
+    },
+    "patches": {
+      "type": "array",
+      "description": "Dependency patches",
+      "items": {
+        "type": "object",
+        "required": ["name", "patch"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of dependency to patch"
+          },
+          "patch": {
+            "type": "string",
+            "description": "Path to patch file"
+          }
+        }
+      }
+    },
+    "platforms": {
+      "type": "object",
+      "description": "Platform-specific configuration",
+      "properties": {
+        "android": { "$ref": "#/definitions/androidPlatform" },
+        "ios": { "$ref": "#/definitions/applePlatform" },
+        "macos": { "$ref": "#/definitions/applePlatform" },
+        "watchos": { "$ref": "#/definitions/applePlatform" },
+        "tvos": { "$ref": "#/definitions/applePlatform" },
+        "linux": { "$ref": "#/definitions/genericPlatform" },
+        "windows": { "$ref": "#/definitions/windowsPlatform" },
+        "ohos": { "$ref": "#/definitions/ohosPlatform" },
+        "kmp": { "$ref": "#/definitions/kmpPlatform" }
+      }
+    },
+    "publish": {
+      "type": "object",
+      "description": "Publishing configuration",
+      "properties": {
+        "maven": { "$ref": "#/definitions/mavenPublish" },
+        "cocoapods": { "$ref": "#/definitions/cocoapodsPublish" },
+        "spm": { "$ref": "#/definitions/spmPublish" },
+        "ohpm": { "$ref": "#/definitions/ohpmPublish" },
+        "conan": { "$ref": "#/definitions/conanPublish" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "description": "Workspace configuration for monorepos",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Glob patterns for workspace members"
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Glob patterns to exclude from workspace"
+        },
+        "default_members": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Default members to build when none specified"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "genericPlatform": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable this platform",
+          "default": true
+        },
+        "architectures": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Target architectures"
+        },
+        "cmake_toolchain": {
+          "type": "string",
+          "description": "Path to CMake toolchain file"
+        },
+        "cmake_extra_args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional CMake arguments"
+        },
+        "defines": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Preprocessor definitions"
+        },
+        "compiler_flags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional compiler flags"
+        },
+        "linker_flags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional linker flags"
+        }
+      }
+    },
+    "androidPlatform": {
+      "allOf": [
+        { "$ref": "#/definitions/genericPlatform" },
+        {
+          "properties": {
+            "architectures": {
+              "items": {
+                "enum": ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]
+              },
+              "default": ["arm64-v8a", "x86_64"]
+            },
+            "min_sdk": {
+              "type": "integer",
+              "description": "Minimum Android SDK version",
+              "default": 21
+            },
+            "target_sdk": {
+              "type": "integer",
+              "description": "Target Android SDK version",
+              "default": 34
+            },
+            "compile_sdk": {
+              "type": "integer",
+              "description": "Compile Android SDK version",
+              "default": 34
+            },
+            "ndk_version": {
+              "type": "string",
+              "description": "Android NDK version"
+            }
+          }
+        }
+      ]
+    },
+    "applePlatform": {
+      "allOf": [
+        { "$ref": "#/definitions/genericPlatform" },
+        {
+          "properties": {
+            "architectures": {
+              "items": {
+                "enum": ["arm64", "x86_64", "armv7", "armv7s", "arm64_32"]
+              }
+            },
+            "deployment_target": {
+              "type": "string",
+              "description": "Minimum deployment target version",
+              "pattern": "^\\d+\\.\\d+$"
+            },
+            "min_version": {
+              "type": "string",
+              "description": "Minimum OS version (alias for deployment_target)",
+              "pattern": "^\\d+\\.\\d+$"
+            }
+          }
+        }
+      ]
+    },
+    "windowsPlatform": {
+      "allOf": [
+        { "$ref": "#/definitions/genericPlatform" },
+        {
+          "properties": {
+            "architectures": {
+              "items": {
+                "enum": ["x86_64", "x86", "arm64"]
+              },
+              "default": ["x86_64"]
+            },
+            "toolchain": {
+              "type": "string",
+              "enum": ["auto", "msvc", "mingw"],
+              "description": "Windows toolchain to use",
+              "default": "auto"
+            }
+          }
+        }
+      ]
+    },
+    "ohosPlatform": {
+      "allOf": [
+        { "$ref": "#/definitions/genericPlatform" },
+        {
+          "properties": {
+            "architectures": {
+              "items": {
+                "enum": ["armeabi-v7a", "arm64-v8a", "x86_64"]
+              },
+              "default": ["arm64-v8a"]
+            },
+            "min_sdk": {
+              "type": "integer",
+              "description": "Minimum OpenHarmony API level",
+              "default": 9
+            }
+          }
+        }
+      ]
+    },
+    "kmpPlatform": {
+      "type": "object",
+      "description": "Kotlin Multiplatform configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "enum": ["androidNativeArm64", "androidNativeX64", "iosArm64", "iosX64", "iosSimulatorArm64", "macosArm64", "macosX64", "linuxX64", "mingwX64"]
+          },
+          "description": "KMP native targets"
+        }
+      }
+    },
+    "mavenPublish": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "description": "Maven group ID"
+        },
+        "artifact_id": {
+          "type": "string",
+          "description": "Maven artifact ID"
+        },
+        "packaging": {
+          "type": "string",
+          "enum": ["aar", "jar"],
+          "default": "aar"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Maven repository URL"
+        },
+        "username": {
+          "type": "string",
+          "description": "Maven repository username"
+        },
+        "password": {
+          "type": "string",
+          "description": "Maven repository password"
+        }
+      }
+    },
+    "cocoapodsPublish": {
+      "type": "object",
+      "properties": {
+        "spec_repo": {
+          "type": "string",
+          "description": "CocoaPods spec repository name"
+        },
+        "swift_version": {
+          "type": "string",
+          "description": "Swift version for the pod"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "enum": ["ios", "macos", "watchos", "tvos"]
+          },
+          "description": "Supported platforms"
+        },
+        "ios_deployment_target": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$"
+        },
+        "macos_deployment_target": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$"
+        },
+        "watchos_deployment_target": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$"
+        },
+        "tvos_deployment_target": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+$"
+        }
+      }
+    },
+    "spmPublish": {
+      "type": "object",
+      "properties": {
+        "platforms": {
+          "type": "array",
+          "items": {
+            "enum": ["ios", "macos", "watchos", "tvos"]
+          }
+        },
+        "ios_deployment_target": {
+          "type": "string"
+        },
+        "macos_deployment_target": {
+          "type": "string"
+        }
+      }
+    },
+    "ohpmPublish": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "OHPM registry URL"
+        }
+      }
+    },
+    "conanPublish": {
+      "type": "object",
+      "properties": {
+        "remote": {
+          "type": "string",
+          "description": "Conan remote name"
+        },
+        "channel": {
+          "type": "string",
+          "description": "Conan channel",
+          "default": "stable"
+        },
+        "user": {
+          "type": "string",
+          "description": "Conan user"
+        }
+      }
+    }
+  }
+}
