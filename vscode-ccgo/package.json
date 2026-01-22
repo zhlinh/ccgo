@@ -1,0 +1,245 @@
+{
+  "name": "ccgo",
+  "displayName": "CCGO - C++ Cross-Platform Build System",
+  "description": "Syntax highlighting, validation, build tasks, and dependency management for CCGO projects",
+  "version": "0.1.0",
+  "publisher": "ccgo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zhlinh/ccgo"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters",
+    "Other"
+  ],
+  "keywords": [
+    "ccgo",
+    "c++",
+    "cpp",
+    "cross-platform",
+    "build",
+    "cmake",
+    "android",
+    "ios",
+    "macos",
+    "linux",
+    "windows"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/CCGO.toml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ccgo-toml",
+        "aliases": [
+          "CCGO Configuration",
+          "ccgo-toml"
+        ],
+        "filenames": [
+          "CCGO.toml"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ccgo-toml",
+        "scopeName": "source.ccgo-toml",
+        "path": "./syntaxes/ccgo-toml.tmLanguage.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "CCGO.toml",
+        "url": "./schemas/ccgo.schema.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ccgo.build",
+        "title": "CCGO: Build Project",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "ccgo.buildPlatform",
+        "title": "CCGO: Build for Platform...",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "ccgo.refreshDependencies",
+        "title": "CCGO: Refresh Dependencies",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ccgo.install",
+        "title": "CCGO: Install Dependencies",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ccgo.test",
+        "title": "CCGO: Run Tests",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "ccgo.clean",
+        "title": "CCGO: Clean Build Artifacts",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ccgo.generateIdeProject",
+        "title": "CCGO: Generate IDE Project",
+        "icon": "$(file-code)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "ccgoDependencies",
+          "name": "CCGO Dependencies",
+          "when": "ccgo.projectDetected",
+          "icon": "$(package)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "ccgoDependencies",
+        "contents": "No CCGO.toml found in workspace.\n[Create CCGO Project](command:ccgo.newProject)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ccgo.refreshDependencies",
+          "when": "view == ccgoDependencies",
+          "group": "navigation"
+        },
+        {
+          "command": "ccgo.install",
+          "when": "view == ccgoDependencies",
+          "group": "navigation"
+        }
+      ]
+    },
+    "taskDefinitions": [
+      {
+        "type": "ccgo",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "The CCGO command to run",
+            "enum": [
+              "build",
+              "test",
+              "bench",
+              "clean",
+              "install",
+              "doc"
+            ]
+          },
+          "platform": {
+            "type": "string",
+            "description": "Target platform for build command",
+            "enum": [
+              "android",
+              "ios",
+              "macos",
+              "linux",
+              "windows",
+              "ohos",
+              "kmp"
+            ]
+          },
+          "architectures": {
+            "type": "array",
+            "description": "Target architectures",
+            "items": {
+              "type": "string"
+            }
+          },
+          "release": {
+            "type": "boolean",
+            "description": "Build in release mode"
+          },
+          "linkType": {
+            "type": "string",
+            "enum": [
+              "static",
+              "shared",
+              "both"
+            ],
+            "description": "Library link type"
+          }
+        }
+      }
+    ],
+    "configuration": {
+      "title": "CCGO",
+      "properties": {
+        "ccgo.executablePath": {
+          "type": "string",
+          "default": "ccgo",
+          "description": "Path to the CCGO executable"
+        },
+        "ccgo.defaultPlatform": {
+          "type": "string",
+          "enum": [
+            "android",
+            "ios",
+            "macos",
+            "linux",
+            "windows",
+            "ohos",
+            "kmp"
+          ],
+          "default": null,
+          "description": "Default platform for builds"
+        },
+        "ccgo.autoRefreshDependencies": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically refresh dependency tree when CCGO.toml changes"
+        }
+      }
+    },
+    "snippets": [
+      {
+        "language": "ccgo-toml",
+        "path": "./snippets/ccgo.code-snippets"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.0.0"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5"
+  }
+}

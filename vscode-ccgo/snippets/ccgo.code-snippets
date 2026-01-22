@@ -1,0 +1,213 @@
+{
+  "Package Section": {
+    "prefix": ["package", "[package]"],
+    "body": [
+      "[package]",
+      "name = \"${1:my_project}\"",
+      "version = \"${2:0.1.0}\"",
+      "description = \"${3:A cross-platform C++ library}\"",
+      "authors = [\"${4:Your Name <email@example.com>}\"]",
+      "license = \"${5|MIT,Apache-2.0,GPL-3.0|}\"",
+      "$0"
+    ],
+    "description": "Create a [package] section"
+  },
+  "Build Section": {
+    "prefix": ["build", "[build]"],
+    "body": [
+      "[build]",
+      "cmake_minimum_version = \"${1:3.18}\"",
+      "cpp_standard = ${2|17,14,20,23|}",
+      "default_link_type = \"${3|both,static,shared|}\"",
+      "symbol_visibility = \"${4|hidden,default|}\"",
+      "$0"
+    ],
+    "description": "Create a [build] section"
+  },
+  "Git Dependency": {
+    "prefix": ["dep-git", "dependency-git"],
+    "body": [
+      "[[dependencies]]",
+      "name = \"${1:dependency_name}\"",
+      "git = \"${2:https://github.com/user/repo.git}\"",
+      "tag = \"${3:v1.0.0}\"",
+      "$0"
+    ],
+    "description": "Add a git dependency"
+  },
+  "Path Dependency": {
+    "prefix": ["dep-path", "dependency-path"],
+    "body": [
+      "[[dependencies]]",
+      "name = \"${1:dependency_name}\"",
+      "path = \"${2:../path/to/dependency}\"",
+      "$0"
+    ],
+    "description": "Add a path dependency"
+  },
+  "Version Dependency": {
+    "prefix": ["dep", "dependency"],
+    "body": [
+      "[[dependencies]]",
+      "name = \"${1:dependency_name}\"",
+      "version = \"${2:^1.0.0}\"",
+      "$0"
+    ],
+    "description": "Add a versioned dependency"
+  },
+  "Android Platform": {
+    "prefix": ["android", "platform-android"],
+    "body": [
+      "[platforms.android]",
+      "enabled = true",
+      "architectures = [\"arm64-v8a\", \"x86_64\"]",
+      "min_sdk = ${1:21}",
+      "target_sdk = ${2:34}",
+      "$0"
+    ],
+    "description": "Configure Android platform"
+  },
+  "iOS Platform": {
+    "prefix": ["ios", "platform-ios"],
+    "body": [
+      "[platforms.ios]",
+      "enabled = true",
+      "architectures = [\"arm64\"]",
+      "deployment_target = \"${1:12.0}\"",
+      "$0"
+    ],
+    "description": "Configure iOS platform"
+  },
+  "macOS Platform": {
+    "prefix": ["macos", "platform-macos"],
+    "body": [
+      "[platforms.macos]",
+      "enabled = true",
+      "architectures = [\"x86_64\", \"arm64\"]",
+      "deployment_target = \"${1:10.15}\"",
+      "$0"
+    ],
+    "description": "Configure macOS platform"
+  },
+  "Linux Platform": {
+    "prefix": ["linux", "platform-linux"],
+    "body": [
+      "[platforms.linux]",
+      "enabled = true",
+      "architectures = [\"x86_64\"]",
+      "$0"
+    ],
+    "description": "Configure Linux platform"
+  },
+  "Windows Platform": {
+    "prefix": ["windows", "platform-windows"],
+    "body": [
+      "[platforms.windows]",
+      "enabled = true",
+      "architectures = [\"x86_64\"]",
+      "toolchain = \"${1|auto,msvc,mingw|}\"",
+      "$0"
+    ],
+    "description": "Configure Windows platform"
+  },
+  "OpenHarmony Platform": {
+    "prefix": ["ohos", "platform-ohos", "openharmony"],
+    "body": [
+      "[platforms.ohos]",
+      "enabled = true",
+      "architectures = [\"arm64-v8a\"]",
+      "min_sdk = ${1:9}",
+      "$0"
+    ],
+    "description": "Configure OpenHarmony platform"
+  },
+  "Maven Publish": {
+    "prefix": ["publish-maven", "maven"],
+    "body": [
+      "[publish.maven]",
+      "group_id = \"${1:com.example}\"",
+      "artifact_id = \"${2:my_library}\"",
+      "packaging = \"${3|aar,jar|}\"",
+      "$0"
+    ],
+    "description": "Configure Maven publishing"
+  },
+  "CocoaPods Publish": {
+    "prefix": ["publish-cocoapods", "cocoapods"],
+    "body": [
+      "[publish.cocoapods]",
+      "spec_repo = \"${1:trunk}\"",
+      "swift_version = \"${2:5.0}\"",
+      "platforms = [\"ios\", \"macos\"]",
+      "ios_deployment_target = \"${3:12.0}\"",
+      "macos_deployment_target = \"${4:10.15}\"",
+      "$0"
+    ],
+    "description": "Configure CocoaPods publishing"
+  },
+  "Feature Definition": {
+    "prefix": ["feature"],
+    "body": [
+      "[[features]]",
+      "name = \"${1:feature_name}\"",
+      "dependencies = [\"${2:dep_name}\"]",
+      "defines = [\"${3:ENABLE_FEATURE}\"]",
+      "$0"
+    ],
+    "description": "Define an optional feature"
+  },
+  "Workspace Section": {
+    "prefix": ["workspace", "[workspace]"],
+    "body": [
+      "[workspace]",
+      "members = [",
+      "    \"${1:*/}\",",
+      "]",
+      "$0"
+    ],
+    "description": "Configure workspace for monorepo"
+  },
+  "Full CCGO.toml Template": {
+    "prefix": ["ccgo-full", "template"],
+    "body": [
+      "[package]",
+      "name = \"${1:my_project}\"",
+      "version = \"${2:0.1.0}\"",
+      "description = \"${3:A cross-platform C++ library}\"",
+      "authors = [\"${4:Your Name}\"]",
+      "license = \"MIT\"",
+      "",
+      "[build]",
+      "cmake_minimum_version = \"3.18\"",
+      "cpp_standard = 17",
+      "default_link_type = \"both\"",
+      "",
+      "# [[dependencies]]",
+      "# name = \"example\"",
+      "# version = \"^1.0.0\"",
+      "",
+      "[platforms.android]",
+      "enabled = true",
+      "architectures = [\"arm64-v8a\", \"x86_64\"]",
+      "min_sdk = 21",
+      "",
+      "[platforms.ios]",
+      "enabled = true",
+      "architectures = [\"arm64\"]",
+      "deployment_target = \"12.0\"",
+      "",
+      "[platforms.macos]",
+      "enabled = true",
+      "architectures = [\"x86_64\", \"arm64\"]",
+      "deployment_target = \"10.15\"",
+      "",
+      "[platforms.linux]",
+      "enabled = true",
+      "",
+      "[platforms.windows]",
+      "enabled = true",
+      "$0"
+    ],
+    "description": "Full CCGO.toml project template"
+  }
+}

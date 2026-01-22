@@ -1,0 +1,268 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "CCGO Configuration",
+  "scopeName": "source.ccgo-toml",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#key-value" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.ccgo-toml",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "section": {
+      "patterns": [
+        {
+          "comment": "Double bracket section (array table) - dependencies, features",
+          "name": "meta.section.array.ccgo-toml",
+          "match": "^\\s*(\\[\\[)(dependencies|features|patches)(\\]\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "2": { "name": "entity.name.section.ccgo-toml support.type.property-name.ccgo-toml" },
+            "3": { "name": "punctuation.definition.section.end.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Package section",
+          "name": "meta.section.package.ccgo-toml",
+          "match": "^\\s*(\\[)(package)(\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "2": { "name": "entity.name.section.ccgo-toml keyword.control.ccgo-toml" },
+            "3": { "name": "punctuation.definition.section.end.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Build section",
+          "name": "meta.section.build.ccgo-toml",
+          "match": "^\\s*(\\[)(build)(\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "2": { "name": "entity.name.section.ccgo-toml keyword.control.ccgo-toml" },
+            "3": { "name": "punctuation.definition.section.end.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Platform-specific sections",
+          "name": "meta.section.platform.ccgo-toml",
+          "match": "^\\s*(\\[)(platforms)\\.(android|ios|macos|linux|windows|ohos|watchos|tvos|kmp)(\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "2": { "name": "entity.name.section.ccgo-toml" },
+            "3": { "name": "constant.language.platform.ccgo-toml" },
+            "4": { "name": "punctuation.definition.section.end.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Publish sections",
+          "name": "meta.section.publish.ccgo-toml",
+          "match": "^\\s*(\\[)(publish)\\.(maven|cocoapods|spm|ohpm|conan)(\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "2": { "name": "entity.name.section.ccgo-toml" },
+            "3": { "name": "constant.language.registry.ccgo-toml" },
+            "4": { "name": "punctuation.definition.section.end.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Workspace section",
+          "name": "meta.section.workspace.ccgo-toml",
+          "match": "^\\s*(\\[)(workspace)(\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "2": { "name": "entity.name.section.ccgo-toml keyword.control.ccgo-toml" },
+            "3": { "name": "punctuation.definition.section.end.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Generic section fallback",
+          "name": "meta.section.ccgo-toml",
+          "match": "^\\s*(\\[)(\\[?)([^\\]]+)(\\]?)(\\])",
+          "captures": {
+            "1": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "2": { "name": "punctuation.definition.section.begin.ccgo-toml" },
+            "3": { "name": "entity.name.section.ccgo-toml" },
+            "4": { "name": "punctuation.definition.section.end.ccgo-toml" },
+            "5": { "name": "punctuation.definition.section.end.ccgo-toml" }
+          }
+        }
+      ]
+    },
+    "key-value": {
+      "patterns": [
+        {
+          "comment": "Package keys",
+          "match": "^\\s*(name|version|description|authors|license|readme|homepage|repository|documentation|keywords|categories|publish_suffix)\\s*(=)",
+          "captures": {
+            "1": { "name": "support.type.property-name.package.ccgo-toml" },
+            "2": { "name": "keyword.operator.assignment.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Build keys",
+          "match": "^\\s*(cmake_minimum_version|cpp_standard|c_standard|default_link_type|symbol_visibility|default_features|modules)\\s*(=)",
+          "captures": {
+            "1": { "name": "support.type.property-name.build.ccgo-toml" },
+            "2": { "name": "keyword.operator.assignment.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Dependency keys",
+          "match": "^\\s*(name|version|git|branch|tag|rev|path|optional|features|default_features|patch)\\s*(=)",
+          "captures": {
+            "1": { "name": "support.type.property-name.dependency.ccgo-toml" },
+            "2": { "name": "keyword.operator.assignment.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Platform keys",
+          "match": "^\\s*(enabled|architectures|min_sdk|target_sdk|compile_sdk|ndk_version|min_version|deployment_target|cmake_toolchain|cmake_extra_args|defines|compiler_flags|linker_flags)\\s*(=)",
+          "captures": {
+            "1": { "name": "support.type.property-name.platform.ccgo-toml" },
+            "2": { "name": "keyword.operator.assignment.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Publish keys",
+          "match": "^\\s*(group_id|artifact_id|packaging|url|username|password|spec_repo|swift_version|platforms|ios_deployment_target|macos_deployment_target|watchos_deployment_target|tvos_deployment_target|remote|channel|user)\\s*(=)",
+          "captures": {
+            "1": { "name": "support.type.property-name.publish.ccgo-toml" },
+            "2": { "name": "keyword.operator.assignment.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Workspace keys",
+          "match": "^\\s*(members|exclude|default_members)\\s*(=)",
+          "captures": {
+            "1": { "name": "support.type.property-name.workspace.ccgo-toml" },
+            "2": { "name": "keyword.operator.assignment.ccgo-toml" }
+          }
+        },
+        {
+          "comment": "Generic key fallback",
+          "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_-]*)\\s*(=)",
+          "captures": {
+            "1": { "name": "variable.other.key.ccgo-toml" },
+            "2": { "name": "keyword.operator.assignment.ccgo-toml" }
+          }
+        },
+        { "include": "#value" }
+      ]
+    },
+    "value": {
+      "patterns": [
+        { "include": "#string" },
+        { "include": "#number" },
+        { "include": "#boolean" },
+        { "include": "#array" },
+        { "include": "#inline-table" }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "comment": "Triple-quoted string (multiline)",
+          "name": "string.quoted.triple.ccgo-toml",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            { "include": "#escape-sequence" }
+          ]
+        },
+        {
+          "comment": "Double-quoted string",
+          "name": "string.quoted.double.ccgo-toml",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "include": "#escape-sequence" },
+            { "include": "#version-string" },
+            { "include": "#url-string" }
+          ]
+        },
+        {
+          "comment": "Single-quoted string (literal)",
+          "name": "string.quoted.single.ccgo-toml",
+          "begin": "'",
+          "end": "'"
+        }
+      ]
+    },
+    "escape-sequence": {
+      "name": "constant.character.escape.ccgo-toml",
+      "match": "\\\\[btnfr\"\\\\]|\\\\u[0-9A-Fa-f]{4}|\\\\U[0-9A-Fa-f]{8}"
+    },
+    "version-string": {
+      "comment": "Semantic version pattern",
+      "name": "constant.numeric.version.ccgo-toml",
+      "match": "\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?(\\+[a-zA-Z0-9.]+)?"
+    },
+    "url-string": {
+      "comment": "URL pattern",
+      "name": "markup.underline.link.ccgo-toml",
+      "match": "https?://[^\\s\"']+"
+    },
+    "number": {
+      "patterns": [
+        {
+          "comment": "Float",
+          "name": "constant.numeric.float.ccgo-toml",
+          "match": "[+-]?\\d+\\.\\d+([eE][+-]?\\d+)?"
+        },
+        {
+          "comment": "Integer",
+          "name": "constant.numeric.integer.ccgo-toml",
+          "match": "[+-]?\\d+"
+        }
+      ]
+    },
+    "boolean": {
+      "name": "constant.language.boolean.ccgo-toml",
+      "match": "\\b(true|false)\\b"
+    },
+    "array": {
+      "name": "meta.array.ccgo-toml",
+      "begin": "\\[",
+      "end": "\\]",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.array.begin.ccgo-toml" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.array.end.ccgo-toml" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#value" },
+        {
+          "name": "punctuation.separator.array.ccgo-toml",
+          "match": ","
+        }
+      ]
+    },
+    "inline-table": {
+      "name": "meta.inline-table.ccgo-toml",
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.table.begin.ccgo-toml" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.table.end.ccgo-toml" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#key-value" },
+        {
+          "name": "punctuation.separator.table.ccgo-toml",
+          "match": ","
+        }
+      ]
+    }
+  }
+}
