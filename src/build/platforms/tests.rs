@@ -69,6 +69,13 @@ impl TestsBuilder {
             flags.push("-DENABLE_BITCODE=0".to_string());
         }
 
+        // Add compiler cache if available
+        if let Some(cache) = ctx.compiler_cache() {
+            for (name, value) in cache.cmake_variables() {
+                flags.push(format!("-D{}={}", name, value));
+            }
+        }
+
         Ok(flags)
     }
 

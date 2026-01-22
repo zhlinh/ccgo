@@ -78,6 +78,8 @@ pub struct BuildOptions {
     pub all_features: bool,
     /// Compiler cache type (ccache, sccache, auto, none)
     pub cache: Option<String>,
+    /// Show build analytics summary
+    pub analytics: bool,
 }
 
 impl Default for BuildOptions {
@@ -99,6 +101,7 @@ impl Default for BuildOptions {
             use_default_features: true,
             all_features: false,
             cache: None,
+            analytics: false,
         }
     }
 }

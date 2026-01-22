@@ -142,6 +142,11 @@ impl CacheConfig {
         self.cache_type != CacheType::None
     }
 
+    /// Get the tool name (for analytics)
+    pub fn tool_name(&self) -> &str {
+        self.cache_type.name()
+    }
+
     /// Get cache statistics (if supported)
     pub fn get_stats(&self) -> Result<String> {
         let path = self.executable_path.as_ref()

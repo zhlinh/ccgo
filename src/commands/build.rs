@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 use clap::{Args, ValueEnum};
 
+use crate::build::analytics::{
+    get_cache_stats, count_files, get_artifact_size, BuildAnalytics, CacheStats, FileStats,
+};
 use crate::build::archive::{create_build_info_full, print_build_info_json};
 use crate::build::platforms::{build_all, build_apple, get_builder};
 use crate::build::{BuildContext, BuildOptions, BuildResult};
@@ -184,6 +187,13 @@ pub struct BuildCommand {
     /// Use 'none' to disable caching
     #[arg(long, default_value = "auto")]
     pub cache: String,
+
+    /// Show build analytics summary after build
+    ///
+    /// Displays timing breakdown, cache statistics, and file metrics.
+    /// Analytics data is saved to ~/.ccgo/analytics/ for historical tracking.
+    #[arg(long)]
+    pub analytics: bool,
 }
 
 impl BuildCommand {
@@ -299,6 +309,7 @@ impl BuildCommand {
             use_default_features: !self.no_default_features,
             all_features: self.all_features,
             cache: Some(self.cache.clone()),
+            analytics: self.analytics,
         };
 
         // Create build context
@@ -329,15 +340,28 @@ impl BuildCommand {
                     }
                 }
                 _ => {
-                    // Save project_root before ctx is moved
+                    // Save context info before ctx is moved
                     let docker_project_root = ctx.project_root.clone();
+                    let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
+                    let jobs = ctx.jobs();
+                    let analytics = self.analytics;
 
                     // Create Docker builder and execute
                     let docker_builder = DockerBuilder::new(ctx)?;
                     let result = docker_builder.execute()?;
 
                     // Print results summary (same as non-Docker builds)
-                    Self::print_results(&package.name, &package.version, &self.target.to_string(), &docker_project_root, &[result], verbose);
+                    Self::print_results(
+                        &package.name,
+                        &package.version,
+                        &self.target.to_string(),
+                        &docker_project_root,
+                        &[result],
+                        verbose,
+                        analytics,
+                        cache_tool.as_deref(),
+                        jobs,
+                    );
                     return Ok(());
                 }
             }
@@ -355,6 +379,10 @@ impl BuildCommand {
             );
         }
 
+        // Get cache info before build for analytics
+        let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
+        let jobs = ctx.jobs();
+
         // Execute the build based on target
         let results = match self.target {
             BuildTarget::All => build_all(&ctx)?,
@@ -367,7 +395,17 @@ impl BuildCommand {
         };
 
         // Print results summary
-        Self::print_results(&package.name, &package.version, &self.target.to_string(), &ctx.project_root, &results, verbose);
+        Self::print_results(
+            &package.name,
+            &package.version,
+            &self.target.to_string(),
+            &ctx.project_root,
+            &results,
+            verbose,
+            self.analytics,
+            cache_tool.as_deref(),
+            jobs,
+        );
 
         Ok(())
     }
@@ -497,10 +535,15 @@ impl BuildCommand {
             use_default_features: !self.no_default_features,
             all_features: self.all_features,
             cache: Some(self.cache.clone()),
+            analytics: self.analytics,
         };
 
         // Create build context with member's path
         let ctx = BuildContext::new(member_path.clone(), config.clone(), options);
+
+        // Get cache info for analytics
+        let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
+        let jobs = ctx.jobs();
 
         // Execute the build
         let results = if use_docker {
@@ -542,13 +585,26 @@ impl BuildCommand {
             &member_path,
             &results,
             verbose,
+            self.analytics,
+            cache_tool.as_deref(),
+            jobs,
         );
 
         Ok(results)
     }
 
     /// Print build results summary
-    fn print_results(lib_name: &str, version: &str, platform: &str, project_root: &Path, results: &[BuildResult], verbose: bool) {
+    fn print_results(
+        lib_name: &str,
+        version: &str,
+        platform: &str,
+        project_root: &Path,
+        results: &[BuildResult],
+        verbose: bool,
+        show_analytics: bool,
+        cache_tool: Option<&str>,
+        jobs: usize,
+    ) {
         let total_duration: f64 = results.iter().map(|r| r.duration_secs).sum();
 
         if results.is_empty() {
@@ -611,6 +667,106 @@ impl BuildCommand {
                 eprintln!("\n      {} contents:", archive_type);
                 if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
                     eprintln!("      Warning: Failed to print {} contents: {}", archive_type, e);
+                }
+            }
+        }
+
+        // Show analytics summary if requested
+        if show_analytics {
+            Self::collect_and_display_analytics(
+                lib_name,
+                platform,
+                project_root,
+                results,
+                cache_tool,
+                jobs,
+            );
+        }
+    }
+
+    /// Collect and display build analytics
+    fn collect_and_display_analytics(
+        lib_name: &str,
+        platform: &str,
+        project_root: &Path,
+        results: &[BuildResult],
+        cache_tool: Option<&str>,
+        jobs: usize,
+    ) {
+        let total_duration: f64 = results.iter().map(|r| r.duration_secs).sum();
+        let all_archs: Vec<String> = results
+            .iter()
+            .flat_map(|r| r.architectures.clone())
+            .collect();
+
+        // Collect file statistics
+        let src_dir = project_root.join("src");
+        let (source_files, header_files) = count_files(&src_dir).unwrap_or((0, 0));
+
+        // Get artifact size (use first result's SDK archive)
+        let artifact_size = results
+            .first()
+            .map(|r| get_artifact_size(&r.sdk_archive).unwrap_or(0))
+            .unwrap_or(0);
+
+        let file_stats = FileStats {
+            source_files,
+            header_files,
+            total_lines: 0, // Would need to count lines
+            artifact_size_bytes: artifact_size,
+        };
+
+        // Get cache statistics
+        let cache_stats = cache_tool
+            .and_then(|tool| get_cache_stats(Some(tool)))
+            .unwrap_or(CacheStats {
+                tool: cache_tool.map(|s| s.to_string()),
+                hits: 0,
+                misses: 0,
+                hit_rate: 0.0,
+            });
+
+        // Create analytics record
+        let analytics = BuildAnalytics {
+            project: lib_name.to_string(),
+            platform: platform.to_string(),
+            timestamp: chrono::Local::now().to_rfc3339(),
+            total_duration_secs: total_duration,
+            phases: Vec::new(), // Phase timing would require deeper integration
+            cache_stats,
+            file_stats,
+            parallel_jobs: jobs,
+            peak_memory_mb: None,
+            success: true,
+            error_count: 0,
+            warning_count: 0,
+        };
+
+        // Save analytics to history
+        if let Err(e) = analytics.save() {
+            eprintln!("\n⚠️  Failed to save build analytics: {}", e);
+        }
+
+        // Display analytics summary
+        analytics.print_summary();
+
+        // Show historical comparison if available
+        if let Ok(Some(avg)) = BuildAnalytics::average_build_time(lib_name) {
+            let diff = total_duration - avg;
+            let pct = (diff / avg) * 100.0;
+            if diff.abs() > 0.5 {
+                if diff > 0.0 {
+                    eprintln!(
+                        "📊 This build was {:.1}s ({:.1}%) slower than average ({:.2}s)",
+                        diff, pct, avg
+                    );
+                } else {
+                    eprintln!(
+                        "📊 This build was {:.1}s ({:.1}%) faster than average ({:.2}s)",
+                        diff.abs(),
+                        pct.abs(),
+                        avg
+                    );
                 }
             }
         }

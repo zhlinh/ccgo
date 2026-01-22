@@ -111,6 +111,11 @@ impl AndroidBuilder {
             }
         }
 
+        // Add compiler cache if available
+        if let Some(cache) = ctx.compiler_cache() {
+            cmake = cmake.compiler_cache(cache);
+        }
+
         cmake.configure_build_install()?;
 
         // Return build_dir since CCGO cmake installs to build_dir/out/

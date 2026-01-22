@@ -112,6 +112,7 @@ impl BenchCommand {
             use_default_features: true,
             all_features: false,
             cache: Some("auto".to_string()),
+            analytics: false,
         };
 
         let ctx = BuildContext::new(project_root.clone(), config, options);

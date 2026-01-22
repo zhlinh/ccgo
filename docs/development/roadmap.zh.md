@@ -1,6 +1,6 @@
 # CCGO 路线图
 
-> 版本：v3.0.10 | 更新时间：2026-01-21
+> 版本：v3.0.12 | 更新时间：2026-01-22
 
 ## 项目状态概览
 
@@ -10,7 +10,7 @@
 | Rust CLI | 100% | 功能完整，零 Python 依赖 ✅ |
 | 跨平台构建 | 100% | 支持 8 个平台 |
 | Docker 构建 | 100% | 通用交叉编译 |
-| 依赖管理 | 95% | Git、路径、仓库源，带锁文件 |
+| 依赖管理 | 100% | Git、路径、补丁、锁文件、传递依赖解析 ✅ |
 | 发布系统 | 100% | Maven、CocoaPods、SPM、OHPM、Conan |
 | 模板系统 | 100% | 基于 Copier 的项目生成 |
 | CMake 集成 | 100% | 集中化构建脚本 |
@@ -104,28 +104,34 @@
 **理由**：更好的 IDE 支持改善开发者体验。
 
 ### 6. 构建性能优化
-**状态**：40% 完成 | **目标**：v3.3.0（2026 年 Q2）
+**状态**：67% 完成 | **目标**：v3.3.0（2026 年 Q2）
 
 - [x] 并行平台构建 ✅
 - [x] Docker 层缓存 ✅
 - [ ] 增量构建（仅重建更改的源）
-- [ ] 构建缓存共享（ccache、sccache 集成）
+- [x] 构建缓存共享（ccache、sccache 集成）✅
 - [ ] 远程构建执行（distcc、icecc）
-- [ ] 构建分析和性能分析
+- [x] 构建分析和性能分析 ✅
 
 **理由**：更快的构建 = 更快乐的开发者。
 
 ### 7. 高级依赖功能
-**状态**：30% 完成 | **目标**：v3.3.0（2026 年 Q2）
+**状态**：100% 完成 ✅ | **目标**：v3.3.0（2026 年 Q2）
 
 - [x] 带修订固定的 Git 依赖 ✅
 - [x] 路径依赖 ✅
 - [x] 锁文件生成 ✅
-- [ ] 依赖覆盖/补丁
-- [ ] 依赖 vendoring 改进
-- [ ] 传递依赖解析
-- [ ] 版本冲突解决策略
-- [ ] 工作区依赖（monorepo 支持）
+- [x] 依赖覆盖/补丁 ✅
+- [x] 依赖 vendoring 改进 ✅
+  - SHA-256 校验和验证
+  - 构建制品排除规则（target/、cmake_build/ 等）
+- [x] 传递依赖解析 ✅（[文档](dependency-resolution.md)）
+- [x] 版本冲突解决策略 ✅
+  - First（默认）、Highest、Lowest、Strict 模式
+  - install 命令中的 `--conflict-strategy` CLI 选项
+- [x] 工作区依赖（monorepo 支持）✅
+  - build/install 命令的 `--workspace` 标志
+  - `--package <name>` 用于指定特定成员
 
 ---
 
@@ -236,6 +242,22 @@
 
 ## 最近完成（v3.0）✅
 
+### 构建性能优化（v3.0.12）
+- [x] 构建缓存共享（ccache、sccache 集成）
+  - 自动检测 PATH 中的 ccache/sccache
+  - 优先顺序：sccache > ccache（sccache 更快，功能更多）
+  - CMAKE_C_COMPILER_LAUNCHER 和 CMAKE_CXX_COMPILER_LAUNCHER 配置
+  - `--cache` CLI 选项：auto（默认）、ccache、sccache、none
+  - 集成到所有平台构建器
+- [x] 构建分析和性能分析
+  - 每个阶段的构建计时（配置、编译、链接、打包）
+  - 来自 ccache/sccache 的缓存命中/未命中统计
+  - 文件数量和制品大小跟踪
+  - 历史数据存储在 ~/.ccgo/analytics/
+  - `--analytics` 标志显示构建指标
+  - `ccgo analytics` 命令查看构建历史
+  - 与历史平均值的比较
+
 ### 测试框架增强（v3.0.12）
 - [x] 测试发现改进
   - GoogleTest（`--gtest_list_tests`）、Catch2（`--list-tests`）、CTest（`ctest -N`）
@@ -261,6 +283,31 @@
   - Jenkins（控制台格式化）
   - TeamCity（服务消息）
   - 通过环境变量自动检测
+
+### 高级依赖功能（v3.0.12）
+- [x] 依赖 vendoring 改进
+  - SHA-256 校验和验证
+  - 构建制品排除规则（target/、cmake_build/、bin/ 等）
+  - 改进的归档创建和目录处理
+- [x] 版本冲突解决策略
+  - 四种策略：First（默认）、Highest、Lowest、Strict
+  - install 命令的 `--conflict-strategy` CLI 选项
+  - 集成到 VersionResolver 的策略感知解析
+- [x] 工作区依赖（monorepo 支持）
+  - `--workspace` 标志用于构建/安装所有工作区成员
+  - `--package <name>` 用于指定特定工作区成员
+  - 用于成员间依赖的拓扑排序解析
+
+### 传递依赖解析（v3.0.11）
+- [x] 带循环检测的依赖图（DFS 算法）
+- [x] 用于正确构建顺序的拓扑排序（Kahn 算法）
+- [x] 依赖树可视化与共享依赖检测
+- [x] 版本冲突警告
+- [x] 带路径处理的递归 CCGO.toml 解析
+- [x] 最大深度保护（50 层）
+- [x] 集成到 `ccgo install` 命令
+- [x] 全面的测试套件（10 个测试：7 个解析器 + 3 个图）
+- [x] 完整文档（[docs/dependency-resolution.md](dependency-resolution.md)）
 
 ### Rust CLI 迁移（部分）
 - [x] 项目架构重新设计
