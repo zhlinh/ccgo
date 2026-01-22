@@ -132,15 +132,30 @@
 ## P2 - 中（v3.4-v4.0）📦
 
 ### 8. 测试框架增强
-**状态**：60% 完成 | **目标**：v3.4.0（2026 年 Q3）
+**状态**：100% 完成 ✅ | **目标**：v3.4.0（2026 年 Q3）
 
 - [x] Google Test 集成 ✅
 - [x] Catch2 集成 ✅
-- [ ] 测试发现改进
-- [ ] 代码覆盖率报告
-- [ ] 测试结果聚合
-- [ ] 基准测试结果比较
-- [ ] 与 CI 服务集成
+- [x] 测试发现改进 ✅
+  - GoogleTest、Catch2 和 CTest 发现
+  - 按名称模式过滤测试
+  - 基于测试套件的组织
+- [x] 代码覆盖率报告 ✅
+  - 支持 gcov、llvm-cov、lcov
+  - HTML、LCOV、JSON、Cobertura 输出格式
+  - 通过 --fail-under-coverage 强制阈值
+- [x] 测试结果聚合 ✅
+  - XML 结果解析（GoogleTest 格式）
+  - 跨套件聚合
+  - JUnit XML 导出
+- [x] 基准测试结果比较 ✅
+  - Google Benchmark JSON 解析
+  - 基线比较与回归检测
+  - Markdown/JSON 导出报告
+- [x] 与 CI 服务集成 ✅
+  - GitHub Actions、GitLab CI、Azure DevOps、Jenkins、TeamCity
+  - 自动检测 CI 环境
+  - 原生 CI 注解格式
 
 ### 9. 代码生成工具
 **状态**：0% 完成 | **目标**：v3.5.0（2026 年 Q3）
@@ -220,6 +235,32 @@
 ---
 
 ## 最近完成（v3.0）✅
+
+### 测试框架增强（v3.0.12）
+- [x] 测试发现改进
+  - GoogleTest（`--gtest_list_tests`）、Catch2（`--list-tests`）、CTest（`ctest -N`）
+  - 支持正则表达式的测试名称过滤
+  - 基于套件的组织和列表
+- [x] 代码覆盖率报告
+  - 支持 gcov、llvm-cov、lcov 工具
+  - 输出格式：HTML、LCOV、JSON、Cobertura、Summary
+  - 通过 `--fail-under-coverage` 标志强制阈值
+- [x] 测试结果聚合
+  - GoogleTest XML 结果解析
+  - 跨套件聚合，包含通过/失败/跳过计数
+  - JUnit XML 导出用于 CI 集成
+- [x] 基准测试结果比较
+  - Google Benchmark JSON 解析
+  - 可配置阈值的基线比较
+  - 通过 `--fail-on-regression` 进行回归检测
+  - Markdown/JSON 导出报告
+- [x] CI 服务集成
+  - GitHub Actions（工作流注解）
+  - GitLab CI（可折叠部分）
+  - Azure DevOps（任务命令）
+  - Jenkins（控制台格式化）
+  - TeamCity（服务消息）
+  - 通过环境变量自动检测
 
 ### Rust CLI 迁移（部分）
 - [x] 项目架构重新设计

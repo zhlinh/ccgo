@@ -18,6 +18,7 @@ mod dependency;
 mod error;
 mod exec;
 mod lockfile;
+mod testing;
 mod utils;
 mod version;
 mod workspace;
