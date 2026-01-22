@@ -99,6 +99,9 @@ impl AddCommand {
                 clean_cache: false,
                 copy: false,
                 locked: false,
+                conflict_strategy: crate::commands::install::ConflictStrategy::default(),
+                workspace: false,
+                package: None,
             };
 
             if let Err(e) = install_cmd.execute(_verbose) {

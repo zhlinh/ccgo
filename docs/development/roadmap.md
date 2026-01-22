@@ -1,6 +1,6 @@
 # CCGO Roadmap
 
-> Version: v3.0.11 | Updated: 2026-01-21
+> Version: v3.0.12 | Updated: 2026-01-22
 
 ## Project Status Overview
 
@@ -91,56 +91,81 @@
 **Rationale**: Enable easier dependency sharing within organizations and community.
 
 ### 5. IDE Integration
-**Status**: 10% Complete | **Target**: v3.2.0 (Q2 2026)
+**Status**: 80% Complete | **Target**: v3.2.0 (Q2 2026)
 
-- [ ] VS Code extension
-  - Syntax highlighting for CCGO.toml
-  - Build tasks integration
-  - Dependency tree visualization
+- [x] VS Code extension (`vscode-ccgo/`) ✅
+  - Syntax highlighting for CCGO.toml (TextMate grammar)
+  - JSON Schema validation with error hints
+  - Build tasks integration (all platforms, debug/release)
+  - Dependency tree visualization (via `ccgo tree --format json`)
+  - Code snippets for common patterns
 - [ ] CLion/Android Studio plugin
-- [ ] Xcode project generation improvements
-- [ ] Visual Studio project generation
+- [x] Xcode project generation (`ccgo build ios/macos --ide-project`) ✅
+- [x] Visual Studio project generation (`ccgo build windows --ide-project`) ✅
+- [x] Linux IDE project generation (`ccgo build linux --ide-project`) ✅
+  - CodeLite workspace + compile_commands.json for VS Code/clangd
 
 **Rationale**: Better IDE support improves developer experience.
 
 ### 6. Build Performance Optimization
-**Status**: 40% Complete | **Target**: v3.3.0 (Q2 2026)
+**Status**: 67% Complete | **Target**: v3.3.0 (Q2 2026)
 
 - [x] Parallel platform builds ✅
 - [x] Docker layer caching ✅
 - [ ] Incremental builds (only rebuild changed sources)
-- [ ] Build cache sharing (ccache, sccache integration)
+- [x] Build cache sharing (ccache, sccache integration) ✅
 - [ ] Remote build execution (distcc, icecc)
-- [ ] Build analytics and profiling
+- [x] Build analytics and profiling ✅
 
 **Rationale**: Faster builds = happier developers.
 
 ### 7. Advanced Dependency Features
-**Status**: 62.5% Complete | **Target**: v3.3.0 (Q2 2026)
+**Status**: 100% Complete ✅ | **Target**: v3.3.0 (Q2 2026)
 
 - [x] Git dependencies with revision pinning ✅
 - [x] Path dependencies ✅
 - [x] Lockfile generation ✅
 - [x] Dependency override/patches ✅
-- [ ] Dependency vendoring improvements
-- [x] Transitive dependency resolution ✅ ([docs](../dependency-resolution.md))
-- [ ] Version conflict resolution strategies
-- [ ] Workspace dependencies (monorepo support)
+- [x] Dependency vendoring improvements ✅
+  - SHA-256 checksum verification for vendored archives
+  - Build artifact exclusion rules (target/, cmake_build/, etc.)
+- [x] Transitive dependency resolution ✅ ([docs](dependency-resolution.md))
+- [x] Version conflict resolution strategies ✅
+  - First (default), Highest, Lowest, Strict modes
+  - `--conflict-strategy` CLI option in install command
+- [x] Workspace dependencies (monorepo support) ✅
+  - `--workspace` flag for build/install commands
+  - `--package <name>` for targeting specific members
 
 ---
 
 ## P2 - Medium (v3.4-v4.0) 📦
 
 ### 8. Testing Framework Enhancement
-**Status**: 60% Complete | **Target**: v3.4.0 (Q3 2026)
+**Status**: 100% Complete ✅ | **Target**: v3.4.0 (Q3 2026)
 
 - [x] Google Test integration ✅
 - [x] Catch2 integration ✅
-- [ ] Test discovery improvements
-- [ ] Code coverage reporting
-- [ ] Test result aggregation
-- [ ] Benchmark result comparison
-- [ ] Integration with CI services
+- [x] Test discovery improvements ✅
+  - GoogleTest, Catch2, and CTest discovery
+  - Test filtering by name pattern
+  - Suite-based organization
+- [x] Code coverage reporting ✅
+  - gcov, llvm-cov, lcov support
+  - HTML, LCOV, JSON, Cobertura output formats
+  - Threshold enforcement with --fail-under-coverage
+- [x] Test result aggregation ✅
+  - XML result parsing (GoogleTest format)
+  - Cross-suite aggregation
+  - JUnit XML export
+- [x] Benchmark result comparison ✅
+  - Google Benchmark JSON parsing
+  - Baseline comparison with regression detection
+  - Markdown/JSON export for reports
+- [x] Integration with CI services ✅
+  - GitHub Actions, GitLab CI, Azure DevOps, Jenkins, TeamCity
+  - Auto-detection of CI environment
+  - Native CI annotation formats
 
 ### 9. Code Generation Tools
 **Status**: 0% Complete | **Target**: v3.5.0 (Q3 2026)
@@ -221,6 +246,75 @@
 
 ## Recently Completed (v3.0) ✅
 
+### IDE Integration (v3.0.12)
+- [x] VS Code extension (`vscode-ccgo/`)
+  - TextMate grammar for CCGO.toml syntax highlighting
+  - JSON Schema validation with real-time error hints
+  - Build task provider for all platforms (debug/release)
+  - Dependency tree view using `ccgo tree --format json`
+  - Code snippets for package, build, dependencies, platforms, publish sections
+- [x] Platform IDE project generation (`--ide-project` flag)
+  - iOS/macOS: Xcode project generation (CMake -G "Xcode")
+  - Windows: Visual Studio 2022 project (CMake -G "Visual Studio 17 2022")
+  - Windows (MinGW): CodeLite project (CMake -G "CodeLite - MinGW Makefiles")
+  - Linux: CodeLite workspace + compile_commands.json for clangd/VS Code
+
+### Build Performance Optimization (v3.0.12)
+- [x] Build cache sharing (ccache, sccache integration)
+  - Automatic detection of ccache/sccache in PATH
+  - Preference order: sccache > ccache (sccache is faster, more features)
+  - CMAKE_C_COMPILER_LAUNCHER and CMAKE_CXX_COMPILER_LAUNCHER configuration
+  - `--cache` CLI option: auto (default), ccache, sccache, none
+  - Integrated into all platform builders
+- [x] Build analytics and profiling
+  - Build timing per phase (configure, compile, link, package)
+  - Cache hit/miss statistics from ccache/sccache
+  - File count and artifact size tracking
+  - Historical data storage at ~/.ccgo/analytics/
+  - `--analytics` flag to display build metrics
+  - `ccgo analytics` command for viewing build history
+  - Comparison with historical averages
+
+### Testing Framework Enhancement (v3.0.12)
+- [x] Test discovery improvements
+  - GoogleTest (`--gtest_list_tests`), Catch2 (`--list-tests`), CTest (`ctest -N`)
+  - Test filtering by name pattern with regex support
+  - Suite-based organization and listing
+- [x] Code coverage reporting
+  - Support for gcov, llvm-cov, lcov tools
+  - Output formats: HTML, LCOV, JSON, Cobertura, Summary
+  - Threshold enforcement with `--fail-under-coverage` flag
+- [x] Test result aggregation
+  - GoogleTest XML result parsing
+  - Cross-suite aggregation with pass/fail/skip counts
+  - JUnit XML export for CI integration
+- [x] Benchmark result comparison
+  - Google Benchmark JSON parsing
+  - Baseline comparison with configurable threshold
+  - Regression detection with `--fail-on-regression`
+  - Markdown/JSON export for reports
+- [x] CI service integration
+  - GitHub Actions (workflow annotations)
+  - GitLab CI (collapsible sections)
+  - Azure DevOps (task commands)
+  - Jenkins (console formatting)
+  - TeamCity (service messages)
+  - Auto-detection via environment variables
+
+### Advanced Dependency Features (v3.0.12)
+- [x] Dependency vendoring improvements
+  - SHA-256 checksum verification for vendored archives
+  - Build artifact exclusion rules (target/, cmake_build/, bin/, etc.)
+  - Improved archive creation with proper directory handling
+- [x] Version conflict resolution strategies
+  - Four strategies: First (default), Highest, Lowest, Strict
+  - `--conflict-strategy` CLI option for install command
+  - Integrated into VersionResolver with strategy-aware resolution
+- [x] Workspace dependencies (monorepo support)
+  - `--workspace` flag for building/installing all workspace members
+  - `--package <name>` for targeting specific workspace members
+  - Topological order resolution for inter-member dependencies
+
 ### Transitive Dependency Resolution (v3.0.11)
 - [x] Dependency graph with cycle detection (DFS algorithm)
 - [x] Topological sorting for correct build order (Kahn's algorithm)
@@ -230,7 +324,7 @@
 - [x] Max depth protection (50 levels)
 - [x] Integration with `ccgo install` command
 - [x] Comprehensive test suite (10 tests: 7 resolver + 3 graph)
-- [x] Full documentation ([docs/dependency-resolution.md](../dependency-resolution.md))
+- [x] Full documentation ([docs/dependency-resolution.md](dependency-resolution.md))
 
 ### Rust CLI Migration (Partial)
 - [x] Project architecture redesign

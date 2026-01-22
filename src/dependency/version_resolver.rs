@@ -9,6 +9,20 @@ use std::fmt;
 use anyhow::{Context, Result};
 use semver::{Version, VersionReq};
 
+/// Version conflict resolution strategy
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ConflictStrategy {
+    /// Use the first version encountered (default)
+    #[default]
+    First,
+    /// Use the highest compatible version
+    Highest,
+    /// Use the lowest compatible version
+    Lowest,
+    /// Fail on any version conflict
+    Strict,
+}
+
 /// Version requirement types
 #[derive(Debug, Clone)]
 pub enum VersionRequirement {
@@ -145,6 +159,11 @@ impl VersionConflict {
 
     /// Try to resolve the conflict by finding a compatible version
     pub fn resolve(&self) -> Result<Version> {
+        self.resolve_with_strategy(ConflictStrategy::default())
+    }
+
+    /// Resolve the conflict using a specific strategy
+    pub fn resolve_with_strategy(&self, strategy: ConflictStrategy) -> Result<Version> {
         if self.requirements.is_empty() {
             anyhow::bail!("No requirements to resolve for '{}'", self.package);
         }
@@ -155,39 +174,52 @@ impl VersionConflict {
             return self.extract_version_from_requirement(req);
         }
 
-        // Multiple requirements - find highest compatible version
-        let mut compatible_version: Option<Version> = None;
-
-        // Start with the first requirement's version
-        if let Ok(v) = self.extract_version_from_requirement(&self.requirements[0].1) {
-            compatible_version = Some(v);
+        // Check for strict mode first
+        if strategy == ConflictStrategy::Strict && self.is_conflicting() {
+            anyhow::bail!(
+                "Version conflict for '{}' (strict mode enabled):\n{}",
+                self.package,
+                self.format_requirements()
+            );
         }
 
-        // Try to find a version that satisfies all requirements
-        for (_, req) in &self.requirements[1..] {
-            if let Some(ref current) = compatible_version {
-                if !req.matches(current) {
-                    // Current version doesn't match, try to find one that does
-                    if let Some(new_version) = self.requirements[0].1.try_find_compatible_version(req) {
-                        compatible_version = Some(new_version);
-                    } else {
-                        anyhow::bail!(
-                            "Cannot resolve version conflict for '{}': incompatible requirements\n{}",
-                            self.package,
-                            self.format_requirements()
-                        );
-                    }
-                }
+        // Collect all concrete versions from requirements
+        let mut versions: Vec<Version> = Vec::new();
+        for (_, req) in &self.requirements {
+            if let Ok(v) = self.extract_version_from_requirement(req) {
+                versions.push(v);
             }
         }
 
-        compatible_version.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Cannot resolve version conflict for '{}': no compatible version found\n{}",
+        if versions.is_empty() {
+            anyhow::bail!(
+                "Cannot resolve version conflict for '{}': no concrete versions found\n{}",
                 self.package,
                 self.format_requirements()
-            )
-        })
+            );
+        }
+
+        // Apply strategy
+        match strategy {
+            ConflictStrategy::First => {
+                // Use the first version encountered
+                Ok(versions[0].clone())
+            }
+            ConflictStrategy::Highest => {
+                // Sort and use highest version
+                versions.sort();
+                Ok(versions.last().unwrap().clone())
+            }
+            ConflictStrategy::Lowest => {
+                // Sort and use lowest version
+                versions.sort();
+                Ok(versions.first().unwrap().clone())
+            }
+            ConflictStrategy::Strict => {
+                // Already checked for conflicts above, use first version
+                Ok(versions[0].clone())
+            }
+        }
     }
 
     /// Extract a concrete version from a requirement
@@ -235,6 +267,8 @@ impl VersionConflict {
 pub struct VersionResolver {
     /// Map of package name to conflict info
     conflicts: HashMap<String, VersionConflict>,
+    /// Conflict resolution strategy
+    strategy: ConflictStrategy,
 }
 
 impl VersionResolver {
@@ -242,7 +276,26 @@ impl VersionResolver {
     pub fn new() -> Self {
         Self {
             conflicts: HashMap::new(),
+            strategy: ConflictStrategy::default(),
         }
+    }
+
+    /// Create a new version resolver with a specific strategy
+    pub fn with_strategy(strategy: ConflictStrategy) -> Self {
+        Self {
+            conflicts: HashMap::new(),
+            strategy,
+        }
+    }
+
+    /// Set the conflict resolution strategy
+    pub fn set_strategy(&mut self, strategy: ConflictStrategy) {
+        self.strategy = strategy;
+    }
+
+    /// Get the current conflict resolution strategy
+    pub fn strategy(&self) -> ConflictStrategy {
+        self.strategy
     }
 
     /// Record a dependency requirement
@@ -280,7 +333,7 @@ impl VersionResolver {
         let mut resolved = HashMap::new();
 
         for (package, conflict) in &self.conflicts {
-            let version = conflict.resolve().with_context(|| {
+            let version = conflict.resolve_with_strategy(self.strategy).with_context(|| {
                 format!("Failed to resolve version conflict for '{}'", package)
             })?;
 
@@ -293,9 +346,24 @@ impl VersionResolver {
     /// Get resolved version for a specific package
     pub fn resolve_package(&self, package: &str) -> Result<Version> {
         if let Some(conflict) = self.conflicts.get(package) {
-            conflict.resolve()
+            conflict.resolve_with_strategy(self.strategy)
         } else {
             anyhow::bail!("No requirements recorded for package '{}'", package);
+        }
+    }
+
+    /// Check if in strict mode
+    pub fn is_strict(&self) -> bool {
+        self.strategy == ConflictStrategy::Strict
+    }
+
+    /// Get the strategy name for display
+    pub fn strategy_name(&self) -> &'static str {
+        match self.strategy {
+            ConflictStrategy::First => "first",
+            ConflictStrategy::Highest => "highest",
+            ConflictStrategy::Lowest => "lowest",
+            ConflictStrategy::Strict => "strict",
         }
     }
 
@@ -449,8 +517,100 @@ mod tests {
 
         assert!(resolver.has_conflicts());
 
-        // Should fail to resolve
+        // Should succeed with "first" strategy (uses first version)
+        let result = resolver.resolve_package("fmt");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Version::new(1, 0, 0));
+    }
+
+    #[test]
+    fn test_conflict_strategy_first() {
+        let mut resolver = VersionResolver::with_strategy(ConflictStrategy::First);
+
+        resolver
+            .add_requirement("fmt".to_string(), "dep1".to_string(), "1.0.0".to_string())
+            .unwrap();
+        resolver
+            .add_requirement("fmt".to_string(), "dep2".to_string(), "2.0.0".to_string())
+            .unwrap();
+
+        let version = resolver.resolve_package("fmt").unwrap();
+        assert_eq!(version, Version::new(1, 0, 0)); // First version
+    }
+
+    #[test]
+    fn test_conflict_strategy_highest() {
+        let mut resolver = VersionResolver::with_strategy(ConflictStrategy::Highest);
+
+        resolver
+            .add_requirement("fmt".to_string(), "dep1".to_string(), "1.0.0".to_string())
+            .unwrap();
+        resolver
+            .add_requirement("fmt".to_string(), "dep2".to_string(), "2.0.0".to_string())
+            .unwrap();
+
+        let version = resolver.resolve_package("fmt").unwrap();
+        assert_eq!(version, Version::new(2, 0, 0)); // Highest version
+    }
+
+    #[test]
+    fn test_conflict_strategy_lowest() {
+        let mut resolver = VersionResolver::with_strategy(ConflictStrategy::Lowest);
+
+        resolver
+            .add_requirement("fmt".to_string(), "dep1".to_string(), "3.0.0".to_string())
+            .unwrap();
+        resolver
+            .add_requirement("fmt".to_string(), "dep2".to_string(), "2.0.0".to_string())
+            .unwrap();
+        resolver
+            .add_requirement("fmt".to_string(), "dep3".to_string(), "1.0.0".to_string())
+            .unwrap();
+
+        let version = resolver.resolve_package("fmt").unwrap();
+        assert_eq!(version, Version::new(1, 0, 0)); // Lowest version
+    }
+
+    #[test]
+    fn test_conflict_strategy_strict() {
+        let mut resolver = VersionResolver::with_strategy(ConflictStrategy::Strict);
+
+        resolver
+            .add_requirement("fmt".to_string(), "dep1".to_string(), "1.0.0".to_string())
+            .unwrap();
+        resolver
+            .add_requirement("fmt".to_string(), "dep2".to_string(), "2.0.0".to_string())
+            .unwrap();
+
+        // Should fail in strict mode
         let result = resolver.resolve_package("fmt");
         assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("strict mode"));
+    }
+
+    #[test]
+    fn test_conflict_strategy_strict_no_conflict() {
+        let mut resolver = VersionResolver::with_strategy(ConflictStrategy::Strict);
+
+        resolver
+            .add_requirement("fmt".to_string(), "dep1".to_string(), "^1.0.0".to_string())
+            .unwrap();
+        resolver
+            .add_requirement("fmt".to_string(), "dep2".to_string(), "1.2.0".to_string())
+            .unwrap();
+
+        // Should succeed when versions are compatible
+        let result = resolver.resolve_package("fmt");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_set_strategy() {
+        let mut resolver = VersionResolver::new();
+        assert_eq!(resolver.strategy(), ConflictStrategy::First);
+
+        resolver.set_strategy(ConflictStrategy::Highest);
+        assert_eq!(resolver.strategy(), ConflictStrategy::Highest);
+        assert_eq!(resolver.strategy_name(), "highest");
     }
 }

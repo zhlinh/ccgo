@@ -9,4 +9,4 @@ pub mod version_resolver;
 
 pub use graph::{DependencyGraph, DependencyNode};
 pub use resolver::DependencyResolver;
-pub use version_resolver::{VersionConflict, VersionRequirement, VersionResolver};
+pub use version_resolver::{ConflictStrategy, VersionConflict, VersionRequirement, VersionResolver};

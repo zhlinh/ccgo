@@ -1,6 +1,6 @@
 //! Build command implementation
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use clap::{Args, ValueEnum};
@@ -9,6 +9,7 @@ use crate::build::archive::{create_build_info_full, print_build_info_json};
 use crate::build::platforms::{build_all, build_apple, get_builder};
 use crate::build::{BuildContext, BuildOptions, BuildResult};
 use crate::config::CcgoConfig;
+use crate::workspace::{find_workspace_root, Workspace};
 
 /// Target platform for building
 #[derive(Debug, Clone, PartialEq, Eq, Hash, ValueEnum)]
@@ -117,6 +118,14 @@ pub struct BuildCommand {
     #[arg(long, value_enum, default_value_t = LinkType::Both)]
     pub link_type: LinkType,
 
+    /// Build all workspace members
+    #[arg(long)]
+    pub workspace: bool,
+
+    /// Build only the specified package (in a workspace)
+    #[arg(long, short = 'p')]
+    pub package: Option<String>,
+
     /// Build using Docker container
     #[arg(long)]
     pub docker: bool,
@@ -222,11 +231,26 @@ impl BuildCommand {
 
     /// Execute the build command
     pub fn execute(self, verbose: bool) -> Result<()> {
+        let current_dir = std::env::current_dir()?;
+
+        // Check for workspace context
+        if self.workspace || self.package.is_some() {
+            return self.execute_workspace_build(&current_dir, verbose);
+        }
+
+        // Check if we're in a workspace root but --workspace not specified
+        if Workspace::is_workspace(&current_dir) {
+            eprintln!(
+                "ℹ️  In workspace root. Use --workspace to build all members, \
+                 or --package <name> to build a specific member."
+            );
+        }
+
         // Load project configuration
         let config = CcgoConfig::load()?;
 
         // Get project root (where CCGO.toml is located)
-        let project_root = std::env::current_dir()?;
+        let project_root = current_dir;
 
         // Get package info (required for builds)
         let package = config.require_package()?;
@@ -346,6 +370,181 @@ impl BuildCommand {
         Self::print_results(&package.name, &package.version, &self.target.to_string(), &ctx.project_root, &results, verbose);
 
         Ok(())
+    }
+
+    /// Execute build for workspace members
+    fn execute_workspace_build(&self, current_dir: &Path, verbose: bool) -> Result<()> {
+        // Find workspace root
+        let workspace_root = find_workspace_root(current_dir)?
+            .ok_or_else(|| anyhow::anyhow!(
+                "Not in a workspace. Use --workspace or --package only within a workspace."
+            ))?;
+
+        // Load workspace
+        let workspace = Workspace::load(&workspace_root)?;
+
+        if verbose {
+            workspace.print_summary();
+        }
+
+        // Determine which members to build
+        let members_to_build = if let Some(ref package_name) = self.package {
+            // Build specific package
+            let member = workspace.get_member(package_name)
+                .ok_or_else(|| anyhow::anyhow!(
+                    "Package '{}' not found in workspace. Available: {}",
+                    package_name,
+                    workspace.members.names().join(", ")
+                ))?;
+            vec![member]
+        } else {
+            // Build default members (or all if no default_members specified)
+            workspace.default_members()
+        };
+
+        if members_to_build.is_empty() {
+            bail!("No workspace members to build");
+        }
+
+        eprintln!("\n{}", "=".repeat(80));
+        eprintln!("CCGO Workspace Build - Building {} member(s)", members_to_build.len());
+        eprintln!("{}", "=".repeat(80));
+
+        let mut all_results: Vec<(String, Vec<BuildResult>)> = Vec::new();
+        let mut failed_members: Vec<String> = Vec::new();
+
+        for member in members_to_build {
+            eprintln!("\n📦 Building {} ({})...", member.name, member.version);
+            eprintln!("{}", "-".repeat(60));
+
+            // Execute build in member's directory
+            match self.build_member(&workspace_root, member, verbose) {
+                Ok(results) => {
+                    all_results.push((member.name.clone(), results));
+                }
+                Err(e) => {
+                    eprintln!("   ✗ Failed to build {}: {}", member.name, e);
+                    failed_members.push(member.name.clone());
+                }
+            }
+        }
+
+        // Print summary
+        eprintln!("\n{}", "=".repeat(80));
+        eprintln!("Workspace Build Summary");
+        eprintln!("{}", "=".repeat(80));
+
+        let success_count = all_results.len();
+        let fail_count = failed_members.len();
+
+        eprintln!("\n✓ Successfully built: {}", success_count);
+        for (name, results) in &all_results {
+            let total_duration: f64 = results.iter().map(|r| r.duration_secs).sum();
+            eprintln!("  - {} ({:.2}s)", name, total_duration);
+        }
+
+        if !failed_members.is_empty() {
+            eprintln!("\n✗ Failed: {}", fail_count);
+            for name in &failed_members {
+                eprintln!("  - {}", name);
+            }
+            bail!("{} workspace member(s) failed to build", fail_count);
+        }
+
+        Ok(())
+    }
+
+    /// Build a single workspace member
+    fn build_member(
+        &self,
+        workspace_root: &Path,
+        member: &crate::workspace::WorkspaceMember,
+        verbose: bool,
+    ) -> Result<Vec<BuildResult>> {
+        // Construct member's directory path
+        let member_path = workspace_root.join(&member.name);
+
+        // Load member's configuration
+        let config_path = member_path.join("CCGO.toml");
+        let config = CcgoConfig::load_from(&config_path)?;
+
+        // Get package info
+        let package = config.require_package()?;
+
+        // Parse architectures
+        let architectures = self.arch.clone()
+            .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        // Check if we should use Docker
+        let use_docker = self.should_use_docker(&self.target);
+
+        // Create build options
+        let options = BuildOptions {
+            target: self.target.clone(),
+            architectures,
+            link_type: self.link_type.clone(),
+            use_docker,
+            auto_docker: self.auto_docker,
+            jobs: self.jobs,
+            ide_project: self.ide_project,
+            release: self.release,
+            native_only: self.native_only,
+            toolchain: self.toolchain.clone(),
+            verbose,
+            dev: self.dev,
+            features: self.features.clone(),
+            use_default_features: !self.no_default_features,
+            all_features: self.all_features,
+            cache: Some(self.cache.clone()),
+        };
+
+        // Create build context with member's path
+        let ctx = BuildContext::new(member_path.clone(), config.clone(), options);
+
+        // Execute the build
+        let results = if use_docker {
+            use crate::build::docker::DockerBuilder;
+
+            match self.target {
+                BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
+                    // Fall through to native build for meta-targets
+                    match self.target {
+                        BuildTarget::All => build_all(&ctx)?,
+                        BuildTarget::Apple => build_apple(&ctx)?,
+                        _ => {
+                            let builder = get_builder(&self.target)?;
+                            vec![builder.build(&ctx)?]
+                        }
+                    }
+                }
+                _ => {
+                    let docker_builder = DockerBuilder::new(ctx)?;
+                    vec![docker_builder.execute()?]
+                }
+            }
+        } else {
+            match self.target {
+                BuildTarget::All => build_all(&ctx)?,
+                BuildTarget::Apple => build_apple(&ctx)?,
+                _ => {
+                    let builder = get_builder(&self.target)?;
+                    vec![builder.build(&ctx)?]
+                }
+            }
+        };
+
+        // Print results for this member
+        Self::print_results(
+            &package.name,
+            &package.version,
+            &self.target.to_string(),
+            &member_path,
+            &results,
+            verbose,
+        );
+
+        Ok(results)
     }
 
     /// Print build results summary

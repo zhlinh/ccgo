@@ -3,13 +3,14 @@
 //! This module provides functionality to resolve transitive dependencies
 //! by recursively reading CCGO.toml files from dependencies.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 use crate::config::{CcgoConfig, DependencyConfig};
 use crate::dependency::graph::{DependencyGraph, DependencyNode};
+use crate::dependency::version_resolver::{ConflictStrategy, VersionRequirement, VersionResolver};
 
 /// Maximum recursion depth to prevent infinite loops
 const MAX_DEPTH: usize = 50;
@@ -27,6 +28,9 @@ pub struct DependencyResolver {
 
     /// Global CCGO cache directory
     ccgo_home: PathBuf,
+
+    /// Version conflict resolver
+    version_resolver: VersionResolver,
 }
 
 impl DependencyResolver {
@@ -37,12 +41,30 @@ impl DependencyResolver {
             visited: HashMap::new(),
             project_root,
             ccgo_home,
+            version_resolver: VersionResolver::new(),
         }
+    }
+
+    /// Create a new dependency resolver with a specific conflict strategy
+    pub fn with_strategy(project_root: PathBuf, ccgo_home: PathBuf, strategy: ConflictStrategy) -> Self {
+        Self {
+            graph: DependencyGraph::new(),
+            visited: HashMap::new(),
+            project_root,
+            ccgo_home,
+            version_resolver: VersionResolver::with_strategy(strategy),
+        }
+    }
+
+    /// Set the conflict resolution strategy
+    pub fn set_strategy(&mut self, strategy: ConflictStrategy) {
+        self.version_resolver.set_strategy(strategy);
     }
 
     /// Resolve all transitive dependencies starting from the given dependencies
     pub fn resolve(&mut self, dependencies: &[DependencyConfig]) -> Result<DependencyGraph> {
         println!("\n📊 Resolving dependency graph...");
+        println!("   Strategy: {}", self.version_resolver.strategy_name());
 
         // Mark root dependencies
         for dep in dependencies {
@@ -63,6 +85,34 @@ impl DependencyResolver {
             );
         }
 
+        // Check for version conflicts
+        if self.version_resolver.has_conflicts() {
+            self.version_resolver.print_conflicts();
+
+            // In strict mode, fail on conflicts
+            if self.version_resolver.is_strict() {
+                anyhow::bail!(
+                    "Version conflicts detected (strict mode enabled). \
+                     Use --conflict-strategy=first|highest|lowest to resolve automatically."
+                );
+            }
+
+            // Try to resolve using current strategy
+            match self.version_resolver.resolve_all() {
+                Ok(resolved) => {
+                    println!("\n   ✓ Resolved {} version conflicts using '{}' strategy",
+                             resolved.len(),
+                             self.version_resolver.strategy_name());
+                    for (pkg, version) in &resolved {
+                        println!("      {} → {}", pkg, version);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\n   ⚠️  Failed to resolve some conflicts: {}", e);
+                }
+            }
+        }
+
         println!("   ✓ Dependency graph resolved");
 
         Ok(self.graph.clone())
@@ -81,18 +131,33 @@ impl DependencyResolver {
 
         // Check if already processed
         if let Some(existing_version) = self.visited.get(&dep.name) {
-            // Already processed, check version compatibility
+            // Already processed, check version compatibility using VersionResolver
             if !existing_version.is_empty() && !dep.version.is_empty() {
                 if existing_version != &dep.version {
-                    eprintln!(
-                        "   ⚠️  Version conflict for '{}': have {}, need {}",
-                        dep.name, existing_version, dep.version
-                    );
-                    // For now, use the first version encountered
-                    // TODO: Implement smart version resolution
+                    // Try to parse versions and check compatibility
+                    let existing_req = VersionRequirement::parse(existing_version);
+                    let new_req = VersionRequirement::parse(&dep.version);
+
+                    if let (Ok(existing), Ok(new)) = (existing_req, new_req) {
+                        if !existing.is_compatible_with(&new) {
+                            eprintln!(
+                                "   ⚠️  Version conflict for '{}': have {}, need {}",
+                                dep.name, existing_version, dep.version
+                            );
+                        }
+                    }
                 }
             }
             return Ok(());
+        }
+
+        // Record requirement for version conflict resolution
+        if !dep.version.is_empty() {
+            let _ = self.version_resolver.add_requirement(
+                dep.name.clone(),
+                "root".to_string(),
+                dep.version.clone(),
+            );
         }
 
         // Mark as visited with current version
@@ -214,6 +279,16 @@ impl DependencyResolver {
     pub fn graph(&self) -> &DependencyGraph {
         &self.graph
     }
+
+    /// Get the version resolver for conflict analysis
+    pub fn version_resolver(&self) -> &VersionResolver {
+        &self.version_resolver
+    }
+
+    /// Check if there are any version conflicts
+    pub fn has_version_conflicts(&self) -> bool {
+        self.version_resolver.has_conflicts()
+    }
 }
 
 /// Resolve dependencies and return the dependency graph
@@ -222,7 +297,26 @@ pub fn resolve_dependencies(
     project_root: &Path,
     ccgo_home: &Path,
 ) -> Result<DependencyGraph> {
-    let mut resolver = DependencyResolver::new(project_root.to_path_buf(), ccgo_home.to_path_buf());
+    resolve_dependencies_with_strategy(
+        dependencies,
+        project_root,
+        ccgo_home,
+        ConflictStrategy::default(),
+    )
+}
+
+/// Resolve dependencies with a specific conflict strategy
+pub fn resolve_dependencies_with_strategy(
+    dependencies: &[DependencyConfig],
+    project_root: &Path,
+    ccgo_home: &Path,
+    strategy: ConflictStrategy,
+) -> Result<DependencyGraph> {
+    let mut resolver = DependencyResolver::with_strategy(
+        project_root.to_path_buf(),
+        ccgo_home.to_path_buf(),
+        strategy,
+    );
     resolver.resolve(dependencies)
 }
 

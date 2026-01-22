@@ -4,11 +4,14 @@
 //! This ensures reproducible builds without network access.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use walkdir::WalkDir;
 
 use crate::config::CcgoConfig;
 use crate::lockfile::{Lockfile, LockedPackage, LOCKFILE_NAME};
@@ -18,6 +21,22 @@ pub const VENDOR_DIR: &str = "vendor";
 
 /// Vendor metadata filename
 pub const VENDOR_TOML: &str = ".vendor.toml";
+
+/// Directories to exclude when vendoring
+const EXCLUDE_DIRS: &[&str] = &[
+    ".git",
+    ".svn",
+    ".hg",
+    "target",
+    "build",
+    "cmake_build",
+    ".ccgo",
+    "node_modules",
+    "__pycache__",
+    ".cache",
+    "vendor",
+    "bin",
+];
 
 /// Vendor all dependencies to project local directory
 #[derive(Args, Debug)]
@@ -349,12 +368,15 @@ impl VendorCommand {
             }
         }
 
+        // Calculate checksum of vendored content
+        let checksum = Self::calculate_directory_checksum(&target_dir)?;
+
         Ok(VendoredPackage {
             name: locked_pkg.name.clone(),
             version: locked_pkg.version.clone(),
             source: locked_pkg.source.clone(),
             vendored_at: Some(chrono::Local::now().to_rfc3339()),
-            checksum: None, // TODO: implement checksum
+            checksum: Some(checksum),
         })
     }
 
@@ -441,7 +463,7 @@ impl VendorCommand {
         Ok(())
     }
 
-    /// Recursively copy directory
+    /// Recursively copy directory, excluding build artifacts
     fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
         fs::create_dir_all(dst)?;
 
@@ -449,6 +471,12 @@ impl VendorCommand {
             let entry = entry?;
             let src_path = entry.path();
             let dst_path = dst.join(entry.file_name());
+            let name = entry.file_name().to_string_lossy().to_string();
+
+            // Skip excluded directories
+            if src_path.is_dir() && Self::should_exclude(&name) {
+                continue;
+            }
 
             if src_path.is_dir() {
                 Self::copy_dir_recursive(&src_path, &dst_path)?;
@@ -458,6 +486,53 @@ impl VendorCommand {
         }
 
         Ok(())
+    }
+
+    /// Check if a directory should be excluded from vendoring
+    fn should_exclude(name: &str) -> bool {
+        EXCLUDE_DIRS.contains(&name) || name.starts_with('.')
+    }
+
+    /// Calculate SHA-256 checksum of a directory
+    fn calculate_directory_checksum(dir: &Path) -> Result<String> {
+        let mut hasher = Sha256::new();
+        let mut files: Vec<PathBuf> = Vec::new();
+
+        // Collect all files (sorted for deterministic hashing)
+        for entry in WalkDir::new(dir)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy();
+                !Self::should_exclude(&name)
+            })
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                files.push(entry.path().to_path_buf());
+            }
+        }
+
+        // Sort files for deterministic order
+        files.sort();
+
+        // Hash each file's relative path and content
+        for file_path in files {
+            // Hash relative path
+            let relative_path = file_path.strip_prefix(dir).unwrap_or(&file_path);
+            hasher.update(relative_path.to_string_lossy().as_bytes());
+
+            // Hash file content
+            let mut file = fs::File::open(&file_path)
+                .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
+            let mut buffer = Vec::new();
+            file.read_to_end(&mut buffer)
+                .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+            hasher.update(&buffer);
+        }
+
+        let result = hasher.finalize();
+        Ok(format!("sha256:{:x}", result))
     }
 
     /// Clean up unused vendored dependencies
@@ -508,6 +583,7 @@ impl VendorCommand {
 
         let mut missing = Vec::new();
         let mut outdated = Vec::new();
+        let mut corrupted = Vec::new();
 
         for locked_pkg in &lockfile.packages {
             let pkg_dir = vendor_dir.join(&locked_pkg.name);
@@ -518,8 +594,24 @@ impl VendorCommand {
             }
 
             if let Some(vendored) = vendor_config.get_package(&locked_pkg.name) {
+                // Check source match
                 if vendored.source != locked_pkg.source {
                     outdated.push(locked_pkg.name.clone());
+                    continue;
+                }
+
+                // Verify checksum if available
+                if let Some(ref expected_checksum) = vendored.checksum {
+                    match Self::calculate_directory_checksum(&pkg_dir) {
+                        Ok(actual_checksum) => {
+                            if &actual_checksum != expected_checksum {
+                                corrupted.push(locked_pkg.name.clone());
+                            }
+                        }
+                        Err(_) => {
+                            corrupted.push(locked_pkg.name.clone());
+                        }
+                    }
                 }
             } else {
                 // In vendor dir but not in config
@@ -527,7 +619,7 @@ impl VendorCommand {
             }
         }
 
-        if missing.is_empty() && outdated.is_empty() {
+        if missing.is_empty() && outdated.is_empty() && corrupted.is_empty() {
             println!("\n✓ Vendor directory is up-to-date");
             println!("  {} packages verified", lockfile.packages.len());
             Ok(())
@@ -538,6 +630,9 @@ impl VendorCommand {
             }
             if !outdated.is_empty() {
                 println!("   Outdated: {}", outdated.join(", "));
+            }
+            if !corrupted.is_empty() {
+                println!("   Corrupted: {}", corrupted.join(", "));
             }
             println!("\n   Run 'ccgo vendor --sync' to fix");
             bail!("Vendor verification failed");

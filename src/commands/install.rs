@@ -12,8 +12,35 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{CcgoConfig, DependencyConfig};
-use crate::dependency::resolver::resolve_dependencies;
+use crate::dependency::resolver::resolve_dependencies_with_strategy;
+use crate::dependency::version_resolver::ConflictStrategy as VersionConflictStrategy;
 use crate::lockfile::{Lockfile, LockedPackage, LockedGitInfo, LOCKFILE_NAME};
+use crate::workspace::{find_workspace_root, Workspace};
+
+/// Version conflict resolution strategy (CLI wrapper)
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum ConflictStrategy {
+    /// Use the first version encountered (default)
+    #[default]
+    First,
+    /// Use the highest compatible version
+    Highest,
+    /// Use the lowest compatible version
+    Lowest,
+    /// Fail on any version conflict
+    Strict,
+}
+
+impl From<ConflictStrategy> for VersionConflictStrategy {
+    fn from(s: ConflictStrategy) -> Self {
+        match s {
+            ConflictStrategy::First => VersionConflictStrategy::First,
+            ConflictStrategy::Highest => VersionConflictStrategy::Highest,
+            ConflictStrategy::Lowest => VersionConflictStrategy::Lowest,
+            ConflictStrategy::Strict => VersionConflictStrategy::Strict,
+        }
+    }
+}
 
 /// Install project dependencies from CCGO.toml
 #[derive(Args, Debug)]
@@ -40,6 +67,18 @@ pub struct InstallCommand {
     /// Require CCGO.lock and use exact versions from it
     #[arg(long)]
     pub locked: bool,
+
+    /// Version conflict resolution strategy
+    #[arg(long, value_enum, default_value = "first")]
+    pub conflict_strategy: ConflictStrategy,
+
+    /// Install dependencies for all workspace members
+    #[arg(long)]
+    pub workspace: bool,
+
+    /// Install dependencies for a specific package (in a workspace)
+    #[arg(long, short = 'p')]
+    pub package: Option<String>,
 }
 
 /// Git repository information (internal use)
@@ -57,12 +96,27 @@ struct GitInfo {
 
 impl InstallCommand {
     /// Execute the install command
-    pub fn execute(self, _verbose: bool) -> Result<()> {
+    pub fn execute(self, verbose: bool) -> Result<()> {
+        let current_dir = std::env::current_dir().context("Failed to get current directory")?;
+
+        // Check for workspace context
+        if self.workspace || self.package.is_some() {
+            return self.execute_workspace_install(&current_dir, verbose);
+        }
+
+        // Check if we're in a workspace root but --workspace not specified
+        if Workspace::is_workspace(&current_dir) {
+            eprintln!(
+                "ℹ️  In workspace root. Use --workspace to install for all members, \
+                 or --package <name> for a specific member."
+            );
+        }
+
         println!("{}", "=".repeat(80));
         println!("CCGO Install - Install Project Dependencies");
         println!("{}", "=".repeat(80));
 
-        let project_dir = std::env::current_dir().context("Failed to get current directory")?;
+        let project_dir = current_dir;
         let ccgo_home = Self::get_ccgo_home();
 
         println!("\nProject directory: {}", project_dir.display());
@@ -153,8 +207,9 @@ impl InstallCommand {
             println!("  - {}", dep.name);
         }
 
-        // Resolve transitive dependencies
-        let dependency_graph = match resolve_dependencies(dependencies, &project_dir, &ccgo_home) {
+        // Resolve transitive dependencies with conflict strategy
+        let strategy: VersionConflictStrategy = self.conflict_strategy.into();
+        let dependency_graph = match resolve_dependencies_with_strategy(dependencies, &project_dir, &ccgo_home, strategy) {
             Ok(graph) => {
                 // Show dependency tree
                 println!("\nDependency tree:");
@@ -740,6 +795,194 @@ impl InstallCommand {
         }
 
         Ok(())
+    }
+
+    /// Execute install for workspace members
+    fn execute_workspace_install(&self, current_dir: &Path, verbose: bool) -> Result<()> {
+        // Find workspace root
+        let workspace_root = find_workspace_root(current_dir)?
+            .ok_or_else(|| anyhow::anyhow!(
+                "Not in a workspace. Use --workspace or --package only within a workspace."
+            ))?;
+
+        // Load workspace
+        let workspace = Workspace::load(&workspace_root)?;
+
+        if verbose {
+            workspace.print_summary();
+        }
+
+        // Determine which members to install for
+        let members_to_install = if let Some(ref package_name) = self.package {
+            // Install for specific package
+            let member = workspace.get_member(package_name)
+                .ok_or_else(|| anyhow::anyhow!(
+                    "Package '{}' not found in workspace. Available: {}",
+                    package_name,
+                    workspace.members.names().join(", ")
+                ))?;
+            vec![member]
+        } else {
+            // Install for default members (or all if no default_members specified)
+            workspace.default_members()
+        };
+
+        if members_to_install.is_empty() {
+            bail!("No workspace members to install for");
+        }
+
+        println!("{}", "=".repeat(80));
+        println!("CCGO Workspace Install - Installing dependencies for {} member(s)", members_to_install.len());
+        println!("{}", "=".repeat(80));
+
+        let ccgo_home = Self::get_ccgo_home();
+
+        // Clean global cache if requested (once for all members)
+        if self.clean_cache && ccgo_home.exists() {
+            println!("\n🗑  Cleaning global cache: {}", ccgo_home.display());
+            fs::remove_dir_all(&ccgo_home).context("Failed to clean cache")?;
+        }
+
+        let mut success_count = 0;
+        let mut failed_members: Vec<String> = Vec::new();
+
+        for member in members_to_install {
+            println!("\n📦 Installing dependencies for {} ({})...", member.name, member.version);
+            println!("{}", "-".repeat(60));
+
+            // Execute install in member's directory
+            let member_path = workspace_root.join(&member.name);
+
+            match self.install_for_member(&member_path, &ccgo_home, verbose) {
+                Ok(count) => {
+                    success_count += count;
+                    println!("   ✓ Installed {} dependencies for {}", count, member.name);
+                }
+                Err(e) => {
+                    eprintln!("   ✗ Failed to install for {}: {}", member.name, e);
+                    failed_members.push(member.name.clone());
+                }
+            }
+        }
+
+        // Print summary
+        println!("\n{}", "=".repeat(80));
+        println!("Workspace Install Summary");
+        println!("{}", "=".repeat(80));
+
+        println!("\n✓ Total dependencies installed: {}", success_count);
+
+        if !failed_members.is_empty() {
+            println!("\n✗ Failed members: {}", failed_members.len());
+            for name in &failed_members {
+                println!("  - {}", name);
+            }
+            bail!("{} workspace member(s) failed to install", failed_members.len());
+        }
+
+        Ok(())
+    }
+
+    /// Install dependencies for a single workspace member
+    fn install_for_member(
+        &self,
+        member_path: &Path,
+        ccgo_home: &Path,
+        _verbose: bool,
+    ) -> Result<usize> {
+        // Load member's CCGO.toml
+        let config_path = member_path.join("CCGO.toml");
+        if !config_path.exists() {
+            bail!("CCGO.toml not found in {}", member_path.display());
+        }
+
+        let config = CcgoConfig::load_from(&config_path)?;
+        let dependencies = &config.dependencies;
+
+        if dependencies.is_empty() {
+            return Ok(0);
+        }
+
+        // Load existing lockfile
+        let existing_lockfile = Lockfile::load(member_path)?;
+
+        // In locked mode, lockfile is required
+        if self.locked && existing_lockfile.is_none() {
+            bail!(
+                "No {} found for {}. Run 'ccgo install' first.",
+                LOCKFILE_NAME,
+                member_path.display()
+            );
+        }
+
+        let deps_dir = member_path.join(".ccgo").join("deps");
+        fs::create_dir_all(&deps_dir).context("Failed to create .ccgo/deps directory")?;
+
+        let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
+        let mut installed_count = 0;
+
+        // Resolve transitive dependencies
+        let strategy: VersionConflictStrategy = self.conflict_strategy.into();
+        let dependency_graph = match resolve_dependencies_with_strategy(dependencies, member_path, ccgo_home, strategy) {
+            Ok(graph) => graph,
+            Err(e) => {
+                eprintln!("   ⚠️  Warning: Failed to resolve transitive dependencies: {}", e);
+                crate::dependency::graph::DependencyGraph::new()
+            }
+        };
+
+        // Determine installation order
+        let install_order = if dependency_graph.nodes().is_empty() {
+            dependencies.iter().map(|d| d.name.clone()).collect()
+        } else {
+            dependency_graph.topological_sort().unwrap_or_else(|_| {
+                dependencies.iter().map(|d| d.name.clone()).collect()
+            })
+        };
+
+        // Create a map for quick lookup
+        let dep_map: std::collections::HashMap<String, &DependencyConfig> =
+            dependencies.iter().map(|d| (d.name.clone(), d)).collect();
+
+        // Get dependencies to process
+        let deps_to_process: Vec<&DependencyConfig> = if !dependency_graph.nodes().is_empty() {
+            install_order
+                .iter()
+                .filter_map(|name| {
+                    if let Some(node) = dependency_graph.get_node(name) {
+                        Some(&node.config)
+                    } else {
+                        dep_map.get(name).copied()
+                    }
+                })
+                .collect()
+        } else {
+            dependencies.iter().collect()
+        };
+
+        for dep in deps_to_process {
+            let locked_pkg = lockfile.get_package(&dep.name).cloned();
+            let install_path = deps_dir.join(&dep.name);
+
+            match self.install_dependency(dep, member_path, ccgo_home, locked_pkg.as_ref()) {
+                Ok(locked_package) => {
+                    installed_count += 1;
+                    lockfile.upsert_package(locked_package);
+                }
+                Err(e) => {
+                    eprintln!("   ⚠️  Failed to install {}: {}", dep.name, e);
+                }
+            }
+        }
+
+        // Save lockfile
+        if installed_count > 0 {
+            lockfile.touch();
+            lockfile.save(member_path)?;
+            Self::update_gitignore(member_path)?;
+        }
+
+        Ok(installed_count)
     }
 
     /// Get CCGO home directory
