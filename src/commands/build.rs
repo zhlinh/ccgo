@@ -635,38 +635,47 @@ impl BuildCommand {
 
         // Print archive locations and contents
         for result in results {
-            eprintln!("  SDK: {}", result.sdk_archive.display());
-            if let Some(symbols) = &result.symbols_archive {
-                eprintln!("  Symbols: {}", symbols.display());
-            }
-            if let Some(aar) = &result.aar_archive {
-                eprintln!("  AAR: {}", aar.display());
-            }
+            // Check if this is an IDE project (directory) vs regular archive (zip file)
+            let is_ide_project = result.sdk_archive.is_dir();
 
-            // Print archive tree structure
-            if let Err(e) = crate::build::archive::print_zip_tree(&result.sdk_archive, "      ") {
-                eprintln!("      Warning: Failed to print archive contents: {}", e);
-            }
-
-            // Print symbols archive tree if present
-            if let Some(symbols_path) = &result.symbols_archive {
-                eprintln!("\n      Symbols archive:");
-                if let Err(e) = crate::build::archive::print_zip_tree(symbols_path, "      ") {
-                    eprintln!("      Warning: Failed to print symbols archive contents: {}", e);
+            if is_ide_project {
+                // IDE project - just show the directory path
+                eprintln!("  IDE Project: {}", result.sdk_archive.display());
+            } else {
+                // Regular build - show archive paths and contents
+                eprintln!("  SDK: {}", result.sdk_archive.display());
+                if let Some(symbols) = &result.symbols_archive {
+                    eprintln!("  Symbols: {}", symbols.display());
                 }
-            }
+                if let Some(aar) = &result.aar_archive {
+                    eprintln!("  AAR: {}", aar.display());
+                }
 
-            // Print AAR/HAR archive tree if present (Android/OHOS)
-            if let Some(archive_path) = &result.aar_archive {
-                // Detect archive type from extension
-                let archive_type = if archive_path.extension().map_or(false, |e| e == "har") {
-                    "HAR"
-                } else {
-                    "AAR"
-                };
-                eprintln!("\n      {} contents:", archive_type);
-                if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
-                    eprintln!("      Warning: Failed to print {} contents: {}", archive_type, e);
+                // Print archive tree structure
+                if let Err(e) = crate::build::archive::print_zip_tree(&result.sdk_archive, "      ") {
+                    eprintln!("      Warning: Failed to print archive contents: {}", e);
+                }
+
+                // Print symbols archive tree if present
+                if let Some(symbols_path) = &result.symbols_archive {
+                    eprintln!("\n      Symbols archive:");
+                    if let Err(e) = crate::build::archive::print_zip_tree(symbols_path, "      ") {
+                        eprintln!("      Warning: Failed to print symbols archive contents: {}", e);
+                    }
+                }
+
+                // Print AAR/HAR archive tree if present (Android/OHOS)
+                if let Some(archive_path) = &result.aar_archive {
+                    // Detect archive type from extension
+                    let archive_type = if archive_path.extension().map_or(false, |e| e == "har") {
+                        "HAR"
+                    } else {
+                        "AAR"
+                    };
+                    eprintln!("\n      {} contents:", archive_type);
+                    if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
+                        eprintln!("      Warning: Failed to print {} contents: {}", archive_type, e);
+                    }
                 }
             }
         }
