@@ -1,0 +1,165 @@
+<templateSet group="CCGO">
+    <!-- Package Section -->
+    <template name="ccgo-package"
+              value="[package]&#10;name = &quot;$NAME$&quot;&#10;version = &quot;$VERSION$&quot;&#10;description = &quot;$DESCRIPTION$&quot;&#10;authors = [&quot;$AUTHOR$&quot;]&#10;license = &quot;$LICENSE$&quot;&#10;$END$"
+              description="CCGO package section"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;my-project&quot;" alwaysStopAt="true"/>
+        <variable name="VERSION" expression="" defaultValue="&quot;0.1.0&quot;" alwaysStopAt="true"/>
+        <variable name="DESCRIPTION" expression="" defaultValue="&quot;A C++ cross-platform library&quot;" alwaysStopAt="true"/>
+        <variable name="AUTHOR" expression="" defaultValue="&quot;Your Name &lt;your@email.com&gt;&quot;" alwaysStopAt="true"/>
+        <variable name="LICENSE" expression="" defaultValue="&quot;MIT&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- Build Section -->
+    <template name="ccgo-build"
+              value="[build]&#10;cmake_minimum_version = &quot;$CMAKE_VERSION$&quot;&#10;cpp_standard = $CPP_STD$&#10;c_standard = $C_STD$&#10;shared = $SHARED$&#10;static = $STATIC$&#10;$END$"
+              description="CCGO build configuration section"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="CMAKE_VERSION" expression="" defaultValue="&quot;3.20&quot;" alwaysStopAt="true"/>
+        <variable name="CPP_STD" expression="" defaultValue="17" alwaysStopAt="true"/>
+        <variable name="C_STD" expression="" defaultValue="11" alwaysStopAt="true"/>
+        <variable name="SHARED" expression="" defaultValue="true" alwaysStopAt="true"/>
+        <variable name="STATIC" expression="" defaultValue="true" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- Dependencies Section -->
+    <template name="ccgo-deps"
+              value="[dependencies]&#10;$NAME$ = { git = &quot;$GIT_URL$&quot;, tag = &quot;$TAG$&quot; }&#10;$END$"
+              description="CCGO dependencies section with git dependency"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;my-dep&quot;" alwaysStopAt="true"/>
+        <variable name="GIT_URL" expression="" defaultValue="&quot;https://github.com/user/repo.git&quot;" alwaysStopAt="true"/>
+        <variable name="TAG" expression="" defaultValue="&quot;v1.0.0&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- Git Dependency -->
+    <template name="ccgo-dep-git"
+              value="$NAME$ = { git = &quot;$GIT_URL$&quot;, tag = &quot;$TAG$&quot; }"
+              description="Git dependency"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;dep-name&quot;" alwaysStopAt="true"/>
+        <variable name="GIT_URL" expression="" defaultValue="&quot;https://github.com/user/repo.git&quot;" alwaysStopAt="true"/>
+        <variable name="TAG" expression="" defaultValue="&quot;v1.0.0&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- Path Dependency -->
+    <template name="ccgo-dep-path"
+              value="$NAME$ = { path = &quot;$PATH$&quot; }"
+              description="Path dependency"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;dep-name&quot;" alwaysStopAt="true"/>
+        <variable name="PATH" expression="" defaultValue="&quot;../my-dep&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- Android Platform -->
+    <template name="ccgo-android"
+              value="[platforms.android]&#10;min_sdk = $MIN_SDK$&#10;target_sdk = $TARGET_SDK$&#10;architectures = [&quot;arm64-v8a&quot;, &quot;armeabi-v7a&quot;, &quot;x86_64&quot;]&#10;$END$"
+              description="Android platform configuration"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="MIN_SDK" expression="" defaultValue="21" alwaysStopAt="true"/>
+        <variable name="TARGET_SDK" expression="" defaultValue="34" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- iOS Platform -->
+    <template name="ccgo-ios"
+              value="[platforms.ios]&#10;deployment_target = &quot;$TARGET$&quot;&#10;architectures = [&quot;arm64&quot;]&#10;$END$"
+              description="iOS platform configuration"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="TARGET" expression="" defaultValue="&quot;12.0&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- macOS Platform -->
+    <template name="ccgo-macos"
+              value="[platforms.macos]&#10;deployment_target = &quot;$TARGET$&quot;&#10;architectures = [&quot;arm64&quot;, &quot;x86_64&quot;]&#10;$END$"
+              description="macOS platform configuration"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="TARGET" expression="" defaultValue="&quot;10.15&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- Maven Publishing -->
+    <template name="ccgo-maven"
+              value="[publish.maven]&#10;group_id = &quot;$GROUP$&quot;&#10;artifact_id = &quot;$ARTIFACT$&quot;&#10;repository_url = &quot;$REPO_URL$&quot;&#10;$END$"
+              description="Maven publishing configuration"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="GROUP" expression="" defaultValue="&quot;com.example&quot;" alwaysStopAt="true"/>
+        <variable name="ARTIFACT" expression="" defaultValue="&quot;my-library&quot;" alwaysStopAt="true"/>
+        <variable name="REPO_URL" expression="" defaultValue="&quot;https://maven.example.com/releases&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- CocoaPods Publishing -->
+    <template name="ccgo-cocoapods"
+              value="[publish.cocoapods]&#10;name = &quot;$NAME$&quot;&#10;homepage = &quot;$HOMEPAGE$&quot;&#10;source = &quot;$SOURCE$&quot;&#10;$END$"
+              description="CocoaPods publishing configuration"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;MyLibrary&quot;" alwaysStopAt="true"/>
+        <variable name="HOMEPAGE" expression="" defaultValue="&quot;https://github.com/user/repo&quot;" alwaysStopAt="true"/>
+        <variable name="SOURCE" expression="" defaultValue="&quot;https://github.com/user/repo.git&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+
+    <!-- Full CCGO.toml Template -->
+    <template name="ccgo-full"
+              value="[package]&#10;name = &quot;$NAME$&quot;&#10;version = &quot;$VERSION$&quot;&#10;description = &quot;$DESCRIPTION$&quot;&#10;authors = [&quot;$AUTHOR$&quot;]&#10;license = &quot;MIT&quot;&#10;&#10;[build]&#10;cmake_minimum_version = &quot;3.20&quot;&#10;cpp_standard = 17&#10;c_standard = 11&#10;shared = true&#10;static = true&#10;&#10;[dependencies]&#10;# Add your dependencies here&#10;&#10;[platforms.android]&#10;min_sdk = 21&#10;target_sdk = 34&#10;architectures = [&quot;arm64-v8a&quot;, &quot;armeabi-v7a&quot;]&#10;&#10;[platforms.ios]&#10;deployment_target = &quot;12.0&quot;&#10;architectures = [&quot;arm64&quot;]&#10;&#10;[platforms.macos]&#10;deployment_target = &quot;10.15&quot;&#10;architectures = [&quot;arm64&quot;, &quot;x86_64&quot;]&#10;$END$"
+              description="Full CCGO.toml template"
+              toReformat="false"
+              toShortenFQNames="true">
+        <variable name="NAME" expression="" defaultValue="&quot;my-project&quot;" alwaysStopAt="true"/>
+        <variable name="VERSION" expression="" defaultValue="&quot;0.1.0&quot;" alwaysStopAt="true"/>
+        <variable name="DESCRIPTION" expression="" defaultValue="&quot;A C++ cross-platform library&quot;" alwaysStopAt="true"/>
+        <variable name="AUTHOR" expression="" defaultValue="&quot;Your Name &lt;your@email.com&gt;&quot;" alwaysStopAt="true"/>
+        <context>
+            <option name="CCGO_TOML" value="true"/>
+            <option name="OTHER" value="true"/>
+        </context>
+    </template>
+</templateSet>

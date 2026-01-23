@@ -1,0 +1,29 @@
+package com.ccgo.plugin.actions
+
+import com.ccgo.plugin.CcgoProjectService
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.ui.Messages
+
+/**
+ * Action to install CCGO project dependencies.
+ */
+class CcgoInstallAction : AnAction() {
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+
+        if (!CcgoProjectService.getInstance(project).hasCcgoToml()) {
+            Messages.showErrorDialog(project, "No CCGO.toml found in project", "CCGO Install")
+            return
+        }
+
+        CcgoCommandExecutor.execute(project, listOf("install"))
+    }
+
+    override fun update(e: AnActionEvent) {
+        val project = e.project
+        e.presentation.isEnabled = project != null &&
+                CcgoProjectService.getInstance(project).hasCcgoToml()
+    }
+}
