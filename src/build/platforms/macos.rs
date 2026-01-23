@@ -366,6 +366,19 @@ impl MacosBuilder {
             build_dir.display()
         );
 
+        // Get compiler paths from Xcode using xcrun
+        let cc_output = Command::new("xcrun")
+            .args(["--find", "clang"])
+            .output()
+            .context("Failed to find clang via xcrun")?;
+        let cc = String::from_utf8_lossy(&cc_output.stdout).trim().to_string();
+
+        let cxx_output = Command::new("xcrun")
+            .args(["--find", "clang++"])
+            .output()
+            .context("Failed to find clang++ via xcrun")?;
+        let cxx = String::from_utf8_lossy(&cxx_output.stdout).trim().to_string();
+
         // Configure with CMake using Xcode generator
         // For macOS native builds, let Xcode handle SDK detection automatically
         let mut cmake_cmd = Command::new("cmake");
@@ -375,7 +388,15 @@ impl MacosBuilder {
             .arg("-B")
             .arg(&build_dir)
             .arg("-G")
-            .arg("Xcode");
+            .arg("Xcode")
+            // Explicitly specify compilers to avoid detection issues with Android SDK's cmake
+            .arg(format!("-DCMAKE_C_COMPILER={}", cc))
+            .arg(format!("-DCMAKE_CXX_COMPILER={}", cxx))
+            // Use static library for compiler testing - avoids code signing issues during detection
+            .arg("-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY")
+            // Disable code signing for the generated project
+            .arg("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO")
+            .arg("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY=");
 
         // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
