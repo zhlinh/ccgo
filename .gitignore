@@ -1,5 +1,6 @@
 # Rust build artifacts
 /target/
+build/
 **/*.rs.bk
 *.pdb
 
@@ -31,3 +32,6 @@ tarpaulin-report.html
 
 # MkDocs build output
 site/
+
+# Lint
+.linthis/

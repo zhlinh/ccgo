@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 200 200">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="#E5B441" opacity="0.1"/>
+
+  <!-- Main circle -->
+  <circle cx="100" cy="100" r="85" fill="none" stroke="#E5B441" stroke-width="8"/>
+
+  <!-- C letter paths forming a stylized C++ inspired design -->
+  <path d="M 70 60 Q 50 60 50 80 L 50 120 Q 50 140 70 140"
+        fill="none" stroke="#E5B441" stroke-width="12" stroke-linecap="round"/>
+
+  <path d="M 90 60 Q 110 60 110 80 L 110 120 Q 110 140 90 140"
+        fill="none" stroke="#E5B441" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- Plus signs (++) representing C++ -->
+  <g fill="#F0C95C">
+    <rect x="125" y="85" width="18" height="6" rx="3"/>
+    <rect x="131" y="79" width="6" height="18" rx="3"/>
+
+    <rect x="150" y="85" width="18" height="6" rx="3"/>
+    <rect x="156" y="79" width="6" height="18" rx="3"/>
+  </g>
+
+  <!-- Subtle "GO" text at bottom -->
+  <text x="100" y="170" font-family="Arial, sans-serif" font-size="24"
+        font-weight="bold" text-anchor="middle" fill="#E5B441" opacity="0.8">GO</text>
+</svg>

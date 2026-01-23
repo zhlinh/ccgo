@@ -1,6 +1,6 @@
 # CCGO Roadmap
 
-> Version: v3.0.12 | Updated: 2026-01-22
+> Version: v3.0.13 | Updated: 2026-01-23
 
 ## Project Status Overview
 
@@ -91,7 +91,7 @@
 **Rationale**: Enable easier dependency sharing within organizations and community.
 
 ### 5. IDE Integration
-**Status**: 80% Complete | **Target**: v3.2.0 (Q2 2026)
+**Status**: 100% Complete ✅ | **Target**: v3.2.0 (Q2 2026)
 
 - [x] VS Code extension (`vscode-ccgo/`) ✅
   - Syntax highlighting for CCGO.toml (TextMate grammar)
@@ -99,7 +99,13 @@
   - Build tasks integration (all platforms, debug/release)
   - Dependency tree visualization (via `ccgo tree --format json`)
   - Code snippets for common patterns
-- [ ] CLion/Android Studio plugin
+- [x] CLion/Android Studio plugin (`jetbrains-ccgo/`) ✅
+  - CCGO.toml syntax highlighting (TOML plugin integration)
+  - JSON Schema validation with real-time error hints
+  - Run configurations for all platforms and commands
+  - Dependency tree tool window
+  - Live templates for common patterns
+  - Settings UI for plugin configuration
 - [x] Xcode project generation (`ccgo build ios/macos --ide-project`) ✅
 - [x] Visual Studio project generation (`ccgo build windows --ide-project`) ✅
 - [x] Linux IDE project generation (`ccgo build linux --ide-project`) ✅
