@@ -366,11 +366,8 @@ impl MacosBuilder {
             build_dir.display()
         );
 
-        // Detect Xcode toolchain
-        let xcode = XcodeToolchain::detect()?;
-        let cmake_vars = xcode.cmake_variables_for_platform(ApplePlatform::MacOS)?;
-
         // Configure with CMake using Xcode generator
+        // For macOS native builds, let Xcode handle SDK detection automatically
         let mut cmake_cmd = Command::new("cmake");
         cmake_cmd
             .arg("-S")
@@ -378,17 +375,11 @@ impl MacosBuilder {
             .arg("-B")
             .arg(&build_dir)
             .arg("-G")
-            .arg("Xcode")
-            .arg("-DCMAKE_SYSTEM_NAME=Darwin");
+            .arg("Xcode");
 
         // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake_cmd.arg(format!("-DCCGO_CMAKE_DIR={}", cmake_dir.display()));
-        }
-
-        // Add SDK-related variables
-        for (name, value) in cmake_vars {
-            cmake_cmd.arg(format!("-D{}={}", name, value));
         }
 
         // Add lib name
