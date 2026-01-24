@@ -7,9 +7,9 @@ use crate::commands::{
     add::AddCommand, analytics::AnalyticsCommand, bench::BenchCommand, build::BuildCommand,
     check::CheckCommand, clean::CleanCommand, collection::CollectionCommand, doc::DocCommand,
     init::InitCommand, install::InstallCommand, new::NewCommand, package::PackageCommand,
-    publish::PublishCommand, remove::RemoveCommand, run::RunCommand, search::SearchCommand,
-    tag::TagCommand, test::TestCommand, tree::TreeCommand, update::UpdateCommand,
-    vendor::VendorCommand,
+    publish::PublishCommand, registry::RegistryCommand, remove::RemoveCommand, run::RunCommand,
+    search::SearchCommand, tag::TagCommand, test::TestCommand, tree::TreeCommand,
+    update::UpdateCommand, vendor::VendorCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -89,6 +89,9 @@ pub enum Commands {
     /// Manage package collections
     Collection(CollectionCommand),
 
+    /// Manage package registries (index repositories)
+    Registry(RegistryCommand),
+
     /// Search for packages
     Search(SearchCommand),
 
@@ -128,6 +131,7 @@ impl Cli {
             Commands::Update(cmd) => cmd.execute(self.verbose),
             Commands::Tree(cmd) => cmd.execute(self.verbose),
             Commands::Collection(cmd) => cmd.execute(self.verbose),
+            Commands::Registry(cmd) => cmd.execute(self.verbose),
             Commands::Search(cmd) => cmd.execute(self.verbose),
             Commands::Vendor(cmd) => cmd.execute(self.verbose),
             Commands::Analytics(cmd) => cmd.execute(self.verbose),

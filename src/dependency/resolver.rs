@@ -337,6 +337,7 @@ mod tests {
             features: vec![],
             default_features: Some(true),
             workspace: false,
+            registry: None,
         }
     }
 

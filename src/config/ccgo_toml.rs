@@ -43,6 +43,24 @@ use serde::Deserialize;
 ///
 /// This can be either a package configuration (with [package] section)
 /// or a workspace configuration (with [workspace] section), or both.
+///
+/// # Simplified Dependencies Syntax
+///
+/// CCGO supports both array-style and table-style dependency declarations:
+///
+/// ```toml
+/// # Array style (traditional)
+/// [[dependencies]]
+/// name = "fmt"
+/// version = "^10.1"
+/// git = "https://github.com/fmtlib/fmt.git"
+///
+/// # Table style (simplified, requires registry)
+/// [dependencies]
+/// fmt = "^10.1"
+/// spdlog = { version = "1.12.0", features = ["header_only"] }
+/// internal-lib = { version = "^2.0", registry = "company" }
+/// ```
 #[derive(Debug, Clone, Deserialize)]
 pub struct CcgoConfig {
     /// Package metadata (supports both [package] and [project] sections)
@@ -53,9 +71,24 @@ pub struct CcgoConfig {
     /// Workspace configuration
     pub workspace: Option<WorkspaceConfig>,
 
-    /// Project dependencies
+    /// Project dependencies (array style: [[dependencies]])
     #[serde(default)]
     pub dependencies: Vec<DependencyConfig>,
+
+    /// Simplified dependencies (table style: [dependencies])
+    /// These will be merged with array-style dependencies after parsing
+    #[serde(default, rename = "deps")]
+    pub simplified_deps: SimplifiedDependencies,
+
+    /// Package registries configuration
+    ///
+    /// ```toml
+    /// [registries]
+    /// company = "https://github.com/company/ccgo-packages.git"
+    /// private = "git@gitlab.internal:packages/ccgo-index.git"
+    /// ```
+    #[serde(default)]
+    pub registries: RegistriesConfig,
 
     /// Features configuration
     #[serde(default)]
@@ -89,6 +122,165 @@ pub struct CcgoConfig {
 /// # Example
 ///
 /// ```toml
+/// Registries configuration from [registries] section
+///
+/// Allows configuring custom package registries (Git-based index repositories).
+///
+/// # Example
+///
+/// ```toml
+/// [registries]
+/// company = "https://github.com/company/ccgo-packages.git"
+/// private = "git@gitlab.internal:packages/ccgo-index.git"
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RegistriesConfig {
+    /// Registry definitions (name -> URL)
+    #[serde(flatten)]
+    pub registries: HashMap<String, String>,
+}
+
+impl RegistriesConfig {
+    /// Check if any registries are configured
+    pub fn is_empty(&self) -> bool {
+        self.registries.is_empty()
+    }
+
+    /// Get a registry URL by name
+    pub fn get(&self, name: &str) -> Option<&String> {
+        self.registries.get(name)
+    }
+
+    /// Iterate over all registries
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.registries.iter()
+    }
+}
+
+/// Simplified dependencies from [dependencies] table
+///
+/// Supports shorthand notation for registry-based dependencies:
+///
+/// ```toml
+/// [dependencies]
+/// fmt = "^10.1"                          # version only
+/// spdlog = { version = "1.12.0" }        # explicit version
+/// json = { version = "^3.11", features = ["ordered"] }
+/// internal = { version = "^2.0", registry = "company" }
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SimplifiedDependencies {
+    /// Dependencies in table format
+    #[serde(flatten)]
+    pub deps: HashMap<String, SimplifiedDep>,
+}
+
+/// A simplified dependency specification
+///
+/// Can be either a version string or a table with version and options.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum SimplifiedDep {
+    /// Just a version string: `fmt = "^10.1"`
+    Version(String),
+
+    /// Full specification with options
+    Full(SimplifiedDepSpec),
+}
+
+/// Full simplified dependency specification
+#[derive(Debug, Clone, Deserialize)]
+pub struct SimplifiedDepSpec {
+    /// Version requirement
+    pub version: String,
+
+    /// Registry name (defaults to "ccgo-packages")
+    pub registry: Option<String>,
+
+    /// Features to enable
+    #[serde(default)]
+    pub features: Vec<String>,
+
+    /// Whether to disable default features
+    #[serde(default)]
+    pub default_features: Option<bool>,
+
+    /// Whether this dependency is optional
+    #[serde(default)]
+    pub optional: bool,
+}
+
+impl SimplifiedDep {
+    /// Get the version requirement
+    pub fn version(&self) -> &str {
+        match self {
+            SimplifiedDep::Version(v) => v,
+            SimplifiedDep::Full(spec) => &spec.version,
+        }
+    }
+
+    /// Get the registry name (None means default)
+    pub fn registry(&self) -> Option<&str> {
+        match self {
+            SimplifiedDep::Version(_) => None,
+            SimplifiedDep::Full(spec) => spec.registry.as_deref(),
+        }
+    }
+
+    /// Get features to enable
+    pub fn features(&self) -> &[String] {
+        match self {
+            SimplifiedDep::Version(_) => &[],
+            SimplifiedDep::Full(spec) => &spec.features,
+        }
+    }
+
+    /// Check if optional
+    pub fn is_optional(&self) -> bool {
+        match self {
+            SimplifiedDep::Version(_) => false,
+            SimplifiedDep::Full(spec) => spec.optional,
+        }
+    }
+
+    /// Convert to DependencyConfig (requires package resolution)
+    pub fn to_dependency_config(&self, name: &str) -> DependencyConfig {
+        DependencyConfig {
+            name: name.to_string(),
+            version: self.version().to_string(),
+            git: None,
+            branch: None,
+            path: None,
+            optional: self.is_optional(),
+            features: self.features().to_vec(),
+            default_features: match self {
+                SimplifiedDep::Version(_) => None,
+                SimplifiedDep::Full(spec) => spec.default_features,
+            },
+            workspace: false,
+            registry: match self {
+                SimplifiedDep::Version(_) => None,
+                SimplifiedDep::Full(spec) => spec.registry.clone(),
+            },
+        }
+    }
+}
+
+impl SimplifiedDependencies {
+    /// Check if there are any simplified dependencies
+    pub fn is_empty(&self) -> bool {
+        self.deps.is_empty()
+    }
+
+    /// Convert all simplified dependencies to DependencyConfig
+    pub fn to_dependency_configs(&self) -> Vec<DependencyConfig> {
+        self.deps
+            .iter()
+            .map(|(name, dep)| dep.to_dependency_config(name))
+            .collect()
+    }
+}
+
 /// [patch.crates-io]
 /// fmt = { git = "https://github.com/myorg/fmt.git", branch = "custom-fix" }
 ///
@@ -272,6 +464,7 @@ impl WorkspaceDependency {
             features: self.features.clone(),
             default_features: self.default_features,
             workspace: false,
+            registry: None,
         }
     }
 }
@@ -379,6 +572,14 @@ pub struct DependencyConfig {
     /// with the workspace dependency's features.
     #[serde(default)]
     pub workspace: bool,
+
+    /// Registry name (for packages from a specific registry)
+    ///
+    /// When specified, the package will be resolved from the named registry
+    /// instead of the default registry. Registry must be configured in
+    /// [registries] section.
+    #[serde(default)]
+    pub registry: Option<String>,
 }
 
 impl DependencyConfig {
@@ -668,12 +869,16 @@ impl CcgoConfig {
 
     /// Parse configuration from TOML string
     pub fn parse(content: &str) -> Result<Self> {
-        let config: Self = toml::from_str(content).context("Failed to parse CCGO.toml")?;
+        let mut config: Self = toml::from_str(content).context("Failed to parse CCGO.toml")?;
 
         // Validate: must have either package or workspace
         if config.package.is_none() && config.workspace.is_none() {
             bail!("CCGO.toml must contain either [package] or [workspace] section");
         }
+
+        // Merge simplified dependencies into the main dependencies list
+        // These will need to be resolved via the package registry later
+        config.merge_simplified_dependencies();
 
         // Validate dependencies (only non-workspace dependencies need version validation)
         for dep in &config.dependencies {
@@ -683,6 +888,37 @@ impl CcgoConfig {
         }
 
         Ok(config)
+    }
+
+    /// Merge simplified dependencies into the main dependencies list
+    fn merge_simplified_dependencies(&mut self) {
+        if self.simplified_deps.is_empty() {
+            return;
+        }
+
+        // Convert simplified deps to DependencyConfig
+        let simplified_configs = self.simplified_deps.to_dependency_configs();
+
+        // Check for duplicates - collect existing names first
+        let existing_names: HashSet<String> = self.dependencies
+            .iter()
+            .map(|d| d.name.clone())
+            .collect();
+
+        for config in simplified_configs {
+            if !existing_names.contains(&config.name) {
+                self.dependencies.push(config);
+            }
+        }
+    }
+
+    /// Get all registry dependencies (simplified deps that need resolution)
+    pub fn registry_dependencies(&self) -> Vec<(&str, &SimplifiedDep)> {
+        self.simplified_deps
+            .deps
+            .iter()
+            .map(|(name, dep)| (name.as_str(), dep))
+            .collect()
     }
 
     /// Find CCGO.toml by searching up from current directory
