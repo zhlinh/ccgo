@@ -15,18 +15,39 @@ Following Swift Package Manager's approach, CCGO uses Git repositories as packag
 
 ## Registry Index Format
 
-A registry is a Git repository containing JSON files that describe available packages:
+A registry is a Git repository containing JSON files that describe available packages.
+
+Following Rust's crates.io-index naming convention for optimal Git performance:
+
+| Name Length | Path Pattern | Example |
+|-------------|--------------|---------|
+| 1 char | `1/{name}.json` | `a` → `1/a.json` |
+| 2 chars | `2/{name}.json` | `cc` → `2/cc.json` |
+| 3 chars | `3/{first}/{name}.json` | `fmt` → `3/f/fmt.json` |
+| 4+ chars | `{[0:2]}/{[2:4]}/{name}.json` | `spdlog` → `sp/dl/spdlog.json` |
 
 ```
 ccgo-packages/
 ├── index.json              # Registry metadata
-├── f/
-│   └── fmt.json           # Package: fmt
-├── s/
-│   └── spdlog.json        # Package: spdlog
-└── n/
-    └── nlohmann-json.json # Package: nlohmann-json
+├── 1/
+│   └── a.json              # 1-char package
+├── 2/
+│   └── cc.json             # 2-char package
+├── 3/
+│   └── f/
+│       └── fmt.json        # 3-char package
+├── sp/
+│   └── dl/
+│       └── spdlog.json     # 4+ char package
+└── nl/
+    └── oh/
+        └── nlohmann-json.json
 ```
+
+This directory structure:
+- Avoids single directory having too many files (GitHub limits ~1000 files/dir)
+- Improves Git performance (large directories slow down clone/pull)
+- Evenly distributes packages, reducing merge conflicts
 
 ### index.json
 
@@ -284,6 +305,79 @@ When resolving a package from the registry:
 3. Exclude yanked versions
 4. Select the highest matching version
 5. Use the `git_tag` to clone the repository
+
+## Publishing to Index
+
+Use `ccgo publish index` to add your package to an index repository:
+
+```bash
+# Publish to a custom index
+ccgo publish index --index-repo https://github.com/user/my-packages.git
+
+# With custom name and push
+ccgo publish index \
+  --index-repo https://github.com/company/packages.git \
+  --index-name company \
+  --index-push
+
+# Custom commit message
+ccgo publish index \
+  --index-repo git@github.com:user/packages.git \
+  --index-message "Add mylib v2.0.0"
+
+# Generate SHA-256 checksums for each version
+ccgo publish index \
+  --index-repo https://github.com/user/packages.git \
+  --checksum \
+  --index-push
+```
+
+### What It Does
+
+1. Reads package metadata from `CCGO.toml`
+2. Discovers versions from Git tags (e.g., `v1.0.0`, `1.0.0`)
+3. Generates JSON file in correct directory structure
+4. Clones/updates the index repository
+5. Commits changes (and optionally pushes)
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--index-repo <url>` | Index repository URL (required) |
+| `--index-name <name>` | Registry name (default: custom-index) |
+| `--index-push` | Push changes to remote after commit |
+| `--index-message <msg>` | Custom commit message |
+| `--checksum` | Generate SHA-256 checksums using git archive |
+
+### Example Output
+
+```
+=== Publishing to Package Index ===
+
+📦 Package: mylib
+📝 Description: My awesome library
+🔗 Repository: https://github.com/user/mylib.git
+
+🔍 Discovering versions from Git tags...
+   Found 3 version(s):
+   - 2.0.0
+   - 1.1.0
+   - 1.0.0
+
+📂 Index repository: https://github.com/user/my-packages.git
+📥 Cloning index repository...
+✅ Written: my/li/mylib.json
+📊 Index metadata updated: 5 package(s)
+✅ Committed: Update mylib to 2.0.0
+
+✅ Package index updated successfully!
+
+📋 To use this package:
+   1. Add registry: ccgo registry add custom-index https://github.com/user/my-packages.git
+   2. Add dependency: [dependencies]
+      mylib = "^2.0.0"
+```
 
 ## Best Practices
 

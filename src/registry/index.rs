@@ -6,15 +6,28 @@
 //!
 //! # Index Structure
 //!
+//! Following Rust's crates.io-index naming convention:
+//! - 1 char names: `1/{name}.json`
+//! - 2 char names: `2/{name}.json`
+//! - 3 char names: `3/{first-char}/{name}.json`
+//! - 4+ char names: `{first-two}/{third-fourth}/{name}.json`
+//!
 //! ```text
 //! ccgo-packages/
 //! ├── index.json              # Index metadata
-//! ├── f/
-//! │   └── fmt.json            # Package metadata for 'fmt'
-//! ├── s/
-//! │   └── spdlog.json         # Package metadata for 'spdlog'
-//! └── n/
-//!     └── nlohmann-json.json  # Package metadata for 'nlohmann-json'
+//! ├── 1/
+//! │   └── a.json              # 1-char package
+//! ├── 2/
+//! │   └── cc.json             # 2-char package
+//! ├── 3/
+//! │   └── f/
+//! │       └── fmt.json        # 3-char package
+//! ├── sp/
+//! │   └── dl/
+//! │       └── spdlog.json     # 4+ char package
+//! └── nl/
+//!     └── oh/
+//!         └── nlohmann-json.json
 //! ```
 //!
 //! # Usage in CCGO.toml
@@ -225,6 +238,11 @@ impl PackageIndex {
         }
     }
 
+    /// Get the CCGO home path (public accessor)
+    pub fn ccgo_home_path(&self) -> PathBuf {
+        self.ccgo_home.clone()
+    }
+
     /// Get the index cache directory
     fn index_cache_dir(&self) -> PathBuf {
         self.ccgo_home.join("registry").join("index")
@@ -238,6 +256,33 @@ impl PackageIndex {
     /// Get the registries config file path
     fn registries_config_path(&self) -> PathBuf {
         self.ccgo_home.join("registry").join("registries.json")
+    }
+
+    /// Get the relative path for a package in the index
+    ///
+    /// Following Rust's crates.io-index naming convention:
+    /// - 1 char: `1/{name}.json`
+    /// - 2 chars: `2/{name}.json`
+    /// - 3 chars: `3/{first}/{name}.json`
+    /// - 4+ chars: `{[0:2]}/{[2:4]}/{name}.json`
+    pub fn package_index_path(package_name: &str) -> PathBuf {
+        let name = package_name.to_lowercase();
+        let len = name.len();
+
+        match len {
+            0 => PathBuf::from("_").join(format!("{}.json", name)),
+            1 => PathBuf::from("1").join(format!("{}.json", name)),
+            2 => PathBuf::from("2").join(format!("{}.json", name)),
+            3 => {
+                let first = &name[0..1];
+                PathBuf::from("3").join(first).join(format!("{}.json", name))
+            }
+            _ => {
+                let prefix1 = &name[0..2];
+                let prefix2 = &name[2..4.min(len)];
+                PathBuf::from(prefix1).join(prefix2).join(format!("{}.json", name))
+            }
+        }
     }
 
     /// Ensure the default registry is configured
@@ -414,8 +459,7 @@ impl PackageIndex {
     /// Look up a package in a registry
     pub fn lookup_package(&self, registry_name: &str, package_name: &str) -> Result<Option<PackageEntry>> {
         let cache_path = self.registry_cache_path(registry_name);
-        let first_char = package_name.chars().next().unwrap_or('_').to_lowercase().to_string();
-        let package_file = cache_path.join(&first_char).join(format!("{}.json", package_name));
+        let package_file = cache_path.join(Self::package_index_path(package_name));
 
         if !package_file.exists() {
             return Ok(None);
@@ -678,5 +722,49 @@ mod tests {
 
         assert!(entry.yanked);
         assert!(entry.yanked_reason.is_some());
+    }
+
+    #[test]
+    fn test_package_index_path_1_char() {
+        let path = PackageIndex::package_index_path("a");
+        assert_eq!(path, PathBuf::from("1/a.json"));
+    }
+
+    #[test]
+    fn test_package_index_path_2_chars() {
+        let path = PackageIndex::package_index_path("cc");
+        assert_eq!(path, PathBuf::from("2/cc.json"));
+    }
+
+    #[test]
+    fn test_package_index_path_3_chars() {
+        let path = PackageIndex::package_index_path("fmt");
+        assert_eq!(path, PathBuf::from("3/f/fmt.json"));
+
+        let path = PackageIndex::package_index_path("Abc");
+        assert_eq!(path, PathBuf::from("3/a/abc.json"));
+    }
+
+    #[test]
+    fn test_package_index_path_4_plus_chars() {
+        // 4 chars
+        let path = PackageIndex::package_index_path("abcd");
+        assert_eq!(path, PathBuf::from("ab/cd/abcd.json"));
+
+        // 5 chars
+        let path = PackageIndex::package_index_path("serde");
+        assert_eq!(path, PathBuf::from("se/rd/serde.json"));
+
+        // 5 chars
+        let path = PackageIndex::package_index_path("tokio");
+        assert_eq!(path, PathBuf::from("to/ki/tokio.json"));
+
+        // Long name
+        let path = PackageIndex::package_index_path("nlohmann-json");
+        assert_eq!(path, PathBuf::from("nl/oh/nlohmann-json.json"));
+
+        // Mixed case (should lowercase)
+        let path = PackageIndex::package_index_path("SpdLog");
+        assert_eq!(path, PathBuf::from("sp/dl/spdlog.json"));
     }
 }
