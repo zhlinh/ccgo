@@ -2,9 +2,14 @@
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, ValueEnum};
+use sha2::{Sha256, Digest};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::fs;
+
+use crate::config::CcgoConfig;
+use crate::registry::{PackageIndex, PackageEntry, VersionEntry, IndexMetadata};
 
 /// Publish target
 #[derive(Debug, Clone, ValueEnum)]
@@ -21,6 +26,8 @@ pub enum PublishTarget {
     Kmp,
     /// Documentation
     Doc,
+    /// Package index (registry)
+    Index,
 }
 
 impl std::fmt::Display for PublishTarget {
@@ -32,6 +39,7 @@ impl std::fmt::Display for PublishTarget {
             PublishTarget::Conan => write!(f, "conan"),
             PublishTarget::Kmp => write!(f, "kmp"),
             PublishTarget::Doc => write!(f, "doc"),
+            PublishTarget::Index => write!(f, "index"),
         }
     }
 }
@@ -142,6 +150,28 @@ pub struct PublishCommand {
     /// Open documentation after publish
     #[arg(long)]
     pub doc_open: bool,
+
+    // Index-specific options
+
+    /// Index repository URL or local path (for index target)
+    #[arg(long)]
+    pub index_repo: Option<String>,
+
+    /// Index registry name (for index target, default: ccgo-packages)
+    #[arg(long)]
+    pub index_name: Option<String>,
+
+    /// Push changes to remote after updating index
+    #[arg(long)]
+    pub index_push: bool,
+
+    /// Commit message for index update
+    #[arg(long)]
+    pub index_message: Option<String>,
+
+    /// Generate SHA-256 checksums for each version (uses git archive)
+    #[arg(long)]
+    pub checksum: bool,
 }
 
 impl PublishCommand {
@@ -156,6 +186,7 @@ impl PublishCommand {
             PublishTarget::Conan => self.publish_conan(verbose),
             PublishTarget::Apple => self.publish_apple(verbose),
             PublishTarget::Doc => self.publish_doc(verbose),
+            PublishTarget::Index => self.publish_index(verbose),
         }
     }
 
@@ -588,6 +619,472 @@ impl PublishCommand {
         }
 
         println!("\n✅ Documentation published successfully!");
+        Ok(())
+    }
+
+    fn publish_index(&self, verbose: bool) -> Result<()> {
+        println!("=== Publishing to Package Index ===\n");
+
+        let cwd = std::env::current_dir()
+            .context("Failed to get current directory")?;
+
+        // Find and load CCGO.toml
+        let project_dir = Self::find_project_dir(&cwd)?;
+        let config_path = project_dir.join("CCGO.toml");
+        let config = CcgoConfig::load_from_path(&config_path)
+            .context("Failed to load CCGO.toml")?;
+
+        let package = config.package.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No [package] section in CCGO.toml"))?;
+
+        println!("📦 Package: {}", package.name);
+        println!("📝 Description: {}", package.description.as_deref().unwrap_or("No description"));
+
+        // Get Git repository URL
+        let git_url = self.get_git_remote_url(&project_dir)?;
+        println!("🔗 Repository: {}", git_url);
+
+        // Discover versions from Git tags
+        println!("\n🔍 Discovering versions from Git tags...");
+        if self.checksum {
+            println!("   (computing SHA-256 checksums)");
+        }
+        let versions = self.discover_git_versions(&project_dir, self.checksum, verbose)?;
+
+        if versions.is_empty() {
+            bail!("No version tags found. Create tags with: git tag v1.0.0");
+        }
+
+        println!("   Found {} version(s):", versions.len());
+        for v in versions.iter().take(5) {
+            println!("   - {}", v.version);
+        }
+        if versions.len() > 5 {
+            println!("   ... and {} more", versions.len() - 5);
+        }
+
+        // Create package entry
+        let package_entry = PackageEntry {
+            name: package.name.clone(),
+            description: package.description.clone().unwrap_or_default(),
+            repository: git_url.clone(),
+            homepage: package.repository.clone(), // Use repository as homepage
+            license: package.license.clone(),
+            keywords: Vec::new(), // PackageConfig doesn't have keywords
+            platforms: self.get_supported_platforms(&config),
+            versions,
+        };
+
+        // Determine index repository
+        let index_repo = if let Some(repo) = &self.index_repo {
+            repo.clone()
+        } else {
+            // Use default or ask user
+            bail!("Please specify --index-repo <url> for the index repository");
+        };
+
+        let index_name = self.index_name.clone()
+            .unwrap_or_else(|| "custom-index".to_string());
+
+        println!("\n📂 Index repository: {}", index_repo);
+
+        // Clone or update index repository
+        let index_path = self.prepare_index_repo(&index_repo, &index_name, verbose)?;
+
+        // Write package JSON
+        let package_rel_path = PackageIndex::package_index_path(&package.name);
+        let package_file = index_path.join(&package_rel_path);
+
+        // Create parent directories
+        if let Some(parent) = package_file.parent() {
+            fs::create_dir_all(parent)
+                .context("Failed to create package directory")?;
+        }
+
+        // Write package entry
+        let json = serde_json::to_string_pretty(&package_entry)
+            .context("Failed to serialize package entry")?;
+        fs::write(&package_file, &json)
+            .context("Failed to write package file")?;
+
+        println!("✅ Written: {}", package_rel_path.display());
+
+        // Update index.json metadata
+        self.update_index_metadata(&index_path)?;
+
+        // Commit changes
+        let commit_message = self.index_message.clone()
+            .unwrap_or_else(|| format!("Update {} to {}",
+                package.name,
+                package_entry.versions.first().map(|v| v.version.as_str()).unwrap_or("unknown")));
+
+        self.commit_index_changes(&index_path, &commit_message, verbose)?;
+
+        // Push if requested
+        if self.index_push {
+            println!("\n📤 Pushing to remote...");
+            self.push_index_changes(&index_path, verbose)?;
+            println!("✅ Pushed successfully!");
+        } else {
+            println!("\n💡 Changes committed locally. Use --index-push to push to remote.");
+        }
+
+        println!("\n✅ Package index updated successfully!");
+        println!("\n📋 To use this package:");
+        println!("   1. Add registry: ccgo registry add {} {}", index_name, index_repo);
+        println!("   2. Add dependency: [dependencies]");
+        println!("      {} = \"^{}\"", package.name,
+            package_entry.versions.first().map(|v| v.version.as_str()).unwrap_or("1.0.0"));
+
+        Ok(())
+    }
+
+    fn get_git_remote_url(&self, project_dir: &Path) -> Result<String> {
+        let output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["remote", "get-url", "origin"])
+            .output()
+            .context("Failed to get git remote URL")?;
+
+        if !output.status.success() {
+            bail!("No git remote 'origin' found");
+        }
+
+        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+        // Normalize URL (convert SSH to HTTPS for public repos)
+        if url.starts_with("git@github.com:") {
+            let path = url.trim_start_matches("git@github.com:");
+            Ok(format!("https://github.com/{}", path))
+        } else {
+            Ok(url)
+        }
+    }
+
+    fn discover_git_versions(&self, project_dir: &Path, compute_checksum: bool, verbose: bool) -> Result<Vec<VersionEntry>> {
+        let output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["tag", "-l", "--sort=-v:refname"])
+            .output()
+            .context("Failed to list git tags")?;
+
+        if !output.status.success() {
+            bail!("Failed to list git tags");
+        }
+
+        let tags_str = String::from_utf8_lossy(&output.stdout);
+        let mut versions = Vec::new();
+
+        for line in tags_str.lines() {
+            let tag = line.trim();
+            if tag.is_empty() {
+                continue;
+            }
+
+            // Parse version from tag (strip 'v' prefix if present)
+            let version = if tag.starts_with('v') || tag.starts_with('V') {
+                &tag[1..]
+            } else {
+                tag
+            };
+
+            // Validate it looks like a semver
+            if crate::registry::SemVer::parse(version).is_some() {
+                // Compute checksum if requested
+                let checksum = if compute_checksum {
+                    if verbose {
+                        println!("   Computing checksum for {}...", tag);
+                    }
+                    self.compute_tag_checksum(project_dir, tag).ok()
+                } else {
+                    None
+                };
+
+                versions.push(VersionEntry {
+                    version: version.to_string(),
+                    tag: tag.to_string(),
+                    checksum,
+                    released_at: self.get_tag_date(project_dir, tag).ok(),
+                    yanked: false,
+                    yanked_reason: None,
+                });
+            }
+        }
+
+        Ok(versions)
+    }
+
+    /// Compute SHA-256 checksum for a git tag using git archive
+    fn compute_tag_checksum(&self, project_dir: &Path, tag: &str) -> Result<String> {
+        // Use git archive to create a reproducible tarball and compute its hash
+        let mut child = Command::new("git")
+            .current_dir(project_dir)
+            .args(["archive", "--format=tar.gz", tag])
+            .stdout(Stdio::piped())
+            .spawn()
+            .context("Failed to run git archive")?;
+
+        let stdout = child.stdout.take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to capture git archive output"))?;
+
+        // Compute SHA-256 hash
+        let mut hasher = Sha256::new();
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut buffer = [0u8; 8192];
+
+        loop {
+            let bytes_read = reader.read(&mut buffer)
+                .context("Failed to read git archive output")?;
+            if bytes_read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..bytes_read]);
+        }
+
+        let status = child.wait()
+            .context("Failed to wait for git archive")?;
+
+        if !status.success() {
+            bail!("git archive failed for tag {}", tag);
+        }
+
+        let hash = hasher.finalize();
+        Ok(format!("sha256:{:x}", hash))
+    }
+
+    fn get_tag_date(&self, project_dir: &Path, tag: &str) -> Result<String> {
+        let output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["log", "-1", "--format=%aI", tag])
+            .output()
+            .context("Failed to get tag date")?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            bail!("Failed to get tag date")
+        }
+    }
+
+    fn get_supported_platforms(&self, config: &CcgoConfig) -> Vec<String> {
+        // Derive platforms from which platform configs are present
+        let mut platforms = Vec::new();
+
+        if let Some(ref platform_configs) = config.platforms {
+            if platform_configs.android.is_some() {
+                platforms.push("android".to_string());
+            }
+            if platform_configs.ios.is_some() {
+                platforms.push("ios".to_string());
+            }
+            if platform_configs.macos.is_some() {
+                platforms.push("macos".to_string());
+            }
+            if platform_configs.windows.is_some() {
+                platforms.push("windows".to_string());
+            }
+            if platform_configs.linux.is_some() {
+                platforms.push("linux".to_string());
+            }
+            if platform_configs.ohos.is_some() {
+                platforms.push("ohos".to_string());
+            }
+        }
+
+        // Default to common platforms if none specified
+        if platforms.is_empty() {
+            platforms = vec![
+                "android".to_string(),
+                "ios".to_string(),
+                "macos".to_string(),
+                "linux".to_string(),
+                "windows".to_string(),
+            ];
+        }
+
+        platforms
+    }
+
+    fn prepare_index_repo(&self, repo_url: &str, name: &str, verbose: bool) -> Result<PathBuf> {
+        let ccgo_home = PackageIndex::new().ccgo_home_path();
+        let index_work_dir = ccgo_home.join("registry").join("publish").join(name);
+
+        if index_work_dir.exists() {
+            // Pull latest changes
+            println!("📥 Updating existing index clone...");
+            let mut cmd = Command::new("git");
+            cmd.current_dir(&index_work_dir);
+            cmd.args(["pull", "--rebase"]);
+
+            if !verbose {
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+            }
+
+            let status = cmd.status()
+                .context("Failed to pull index repository")?;
+
+            if !status.success() {
+                // Try fresh clone if pull fails
+                println!("⚠️  Pull failed, re-cloning...");
+                fs::remove_dir_all(&index_work_dir)?;
+                return self.prepare_index_repo(repo_url, name, verbose);
+            }
+        } else {
+            // Clone the repository
+            println!("📥 Cloning index repository...");
+            fs::create_dir_all(index_work_dir.parent().unwrap())?;
+
+            let mut cmd = Command::new("git");
+            cmd.args(["clone", "--depth", "1", repo_url, index_work_dir.to_str().unwrap()]);
+
+            if !verbose {
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+            }
+
+            let status = cmd.status()
+                .context("Failed to clone index repository")?;
+
+            if !status.success() {
+                // Maybe it's a new repo, try to initialize
+                println!("📝 Initializing new index repository...");
+                fs::create_dir_all(&index_work_dir)?;
+
+                Command::new("git")
+                    .current_dir(&index_work_dir)
+                    .args(["init"])
+                    .status()
+                    .context("Failed to init git repository")?;
+
+                Command::new("git")
+                    .current_dir(&index_work_dir)
+                    .args(["remote", "add", "origin", repo_url])
+                    .status()
+                    .context("Failed to add git remote")?;
+
+                // Create initial index.json
+                let metadata = IndexMetadata {
+                    version: 1,
+                    name: name.to_string(),
+                    description: format!("{} package index", name),
+                    homepage: None,
+                    package_count: 0,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                };
+                let json = serde_json::to_string_pretty(&metadata)?;
+                fs::write(index_work_dir.join("index.json"), json)?;
+            }
+        }
+
+        Ok(index_work_dir)
+    }
+
+    fn update_index_metadata(&self, index_path: &Path) -> Result<()> {
+        let metadata_path = index_path.join("index.json");
+
+        let mut metadata: IndexMetadata = if metadata_path.exists() {
+            let content = fs::read_to_string(&metadata_path)?;
+            serde_json::from_str(&content).unwrap_or_else(|_| IndexMetadata {
+                version: 1,
+                name: "ccgo-packages".to_string(),
+                description: "Package index".to_string(),
+                homepage: None,
+                package_count: 0,
+                updated_at: String::new(),
+            })
+        } else {
+            IndexMetadata {
+                version: 1,
+                name: self.index_name.clone().unwrap_or_else(|| "ccgo-packages".to_string()),
+                description: "Package index".to_string(),
+                homepage: None,
+                package_count: 0,
+                updated_at: String::new(),
+            }
+        };
+
+        // Count packages
+        let mut count = 0;
+        for entry in walkdir::WalkDir::new(index_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.path().extension().and_then(|s| s.to_str()) == Some("json")
+                && entry.file_name() != "index.json"
+            {
+                count += 1;
+            }
+        }
+
+        metadata.package_count = count;
+        metadata.updated_at = chrono::Utc::now().to_rfc3339();
+
+        let json = serde_json::to_string_pretty(&metadata)?;
+        fs::write(metadata_path, json)?;
+
+        println!("📊 Index metadata updated: {} package(s)", count);
+
+        Ok(())
+    }
+
+    fn commit_index_changes(&self, index_path: &Path, message: &str, verbose: bool) -> Result<()> {
+        // Add all changes
+        let mut cmd = Command::new("git");
+        cmd.current_dir(index_path);
+        cmd.args(["add", "-A"]);
+
+        if !verbose {
+            cmd.stdout(std::process::Stdio::null());
+        }
+
+        cmd.status().context("Failed to stage changes")?;
+
+        // Check if there are changes to commit
+        let output = Command::new("git")
+            .current_dir(index_path)
+            .args(["status", "--porcelain"])
+            .output()
+            .context("Failed to check git status")?;
+
+        if output.stdout.is_empty() {
+            println!("ℹ️  No changes to commit");
+            return Ok(());
+        }
+
+        // Commit
+        let mut cmd = Command::new("git");
+        cmd.current_dir(index_path);
+        cmd.args(["commit", "-m", message]);
+
+        if !verbose {
+            cmd.stdout(std::process::Stdio::null());
+        }
+
+        let status = cmd.status().context("Failed to commit changes")?;
+
+        if status.success() {
+            println!("✅ Committed: {}", message);
+        }
+
+        Ok(())
+    }
+
+    fn push_index_changes(&self, index_path: &Path, verbose: bool) -> Result<()> {
+        let mut cmd = Command::new("git");
+        cmd.current_dir(index_path);
+        cmd.args(["push", "origin", "HEAD"]);
+
+        if !verbose {
+            cmd.stderr(std::process::Stdio::null());
+        }
+
+        let status = cmd.status().context("Failed to push changes")?;
+
+        if !status.success() {
+            bail!("Failed to push to remote");
+        }
+
         Ok(())
     }
 
