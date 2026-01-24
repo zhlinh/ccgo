@@ -1,16 +1,18 @@
-//! Search command - Search for packages in collections
+//! Search command - Search for packages in collections and registries
 //!
 //! Usage:
-//!   ccgo search <keyword>                    # Search all collections
+//!   ccgo search <keyword>                    # Search all sources
 //!   ccgo search <keyword> --collection <name> # Search specific collection
+//!   ccgo search <keyword> --registry <name>   # Search specific registry
 //!   ccgo search <keyword> --details           # Show detailed information
 
 use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::collection::CollectionManager;
+use crate::registry::PackageIndex;
 
-/// Search for packages in collections
+/// Search for packages in collections and registries
 #[derive(Args, Debug)]
 pub struct SearchCommand {
     /// Search keyword or pattern
@@ -20,6 +22,10 @@ pub struct SearchCommand {
     #[arg(long, short = 'c')]
     pub collection: Option<String>,
 
+    /// Search only in specific registry
+    #[arg(long, short = 'r')]
+    pub registry: Option<String>,
+
     /// Show detailed package information
     #[arg(long, short = 'd')]
     pub details: bool,
@@ -27,6 +33,14 @@ pub struct SearchCommand {
     /// Limit number of results
     #[arg(long, default_value = "20")]
     pub limit: usize,
+
+    /// Search collections only (skip registries)
+    #[arg(long)]
+    pub collections_only: bool,
+
+    /// Search registries only (skip collections)
+    #[arg(long)]
+    pub registries_only: bool,
 }
 
 impl SearchCommand {
@@ -36,52 +50,148 @@ impl SearchCommand {
         println!("CCGO Search - Package Discovery");
         println!("{}", "=".repeat(80));
 
-        let manager = CollectionManager::new();
+        let mut total_results = 0;
+        let mut displayed = 0;
 
-        // Check if any collections are subscribed
-        let collections = manager.load_index().context("Failed to load collections")?;
-        if collections.is_empty() {
-            println!("\n⚠️  No collections subscribed yet");
-            println!("\n💡 Add a collection first:");
-            println!("   ccgo collection add <url>");
-            println!("\n   Example:");
-            println!("   ccgo collection add file:///path/to/collection.json");
-            return Ok(());
+        // Search registries (unless collections_only)
+        if !self.collections_only {
+            let registry_count = self.search_registries(&mut total_results, &mut displayed)?;
+            if registry_count > 0 {
+                println!();
+            }
         }
 
-        // Perform search
+        // Search collections (unless registries_only)
+        if !self.registries_only {
+            self.search_collections(&mut total_results, &mut displayed)?;
+        }
+
+        // Summary
+        if total_results == 0 {
+            println!("\n✗ No packages found matching '{}'", self.query);
+            println!("\n💡 Try:");
+            println!("   - Different search terms");
+            println!("   - Update registries: ccgo registry update");
+            println!("   - Refresh collections: ccgo collection refresh");
+        } else {
+            println!("\n💡 Add a package with:");
+            println!("   ccgo add <name> --git <repository-url>");
+            println!("   ccgo add github:user/repo --latest");
+            println!("   # or in CCGO.toml: fmt = \"^10.1\"");
+        }
+
+        Ok(())
+    }
+
+    /// Search in registries
+    fn search_registries(&self, total: &mut usize, displayed: &mut usize) -> Result<usize> {
+        let mut index = PackageIndex::new();
+        index.ensure_default_registry();
+
+        let registries = index.list_registries();
+        if registries.is_empty() {
+            return Ok(0);
+        }
+
+        let results = if let Some(ref reg) = self.registry {
+            let packages = index.search_packages(reg, &self.query).unwrap_or_default();
+            packages
+                .into_iter()
+                .map(|p| (reg.clone(), p))
+                .collect::<Vec<_>>()
+        } else {
+            index.search_all(&self.query).unwrap_or_default()
+        };
+
+        if results.is_empty() {
+            return Ok(0);
+        }
+
+        *total += results.len();
+
         println!(
-            "\n🔍 Searching for '{}' in {}{}...",
-            self.query,
-            if let Some(ref coll) = self.collection {
-                format!("collection '{}'", coll)
-            } else {
-                format!("{} collection(s)", collections.len())
-            },
-            ""
+            "\n📦 Registry results ({}):\n",
+            results.len()
         );
+
+        let remaining_limit = self.limit.saturating_sub(*displayed);
+        for (idx, (registry_name, package)) in results.iter().take(remaining_limit).enumerate() {
+            let latest_version = package
+                .versions
+                .iter()
+                .filter(|v| !v.yanked)
+                .max_by(|a, b| {
+                    let ver_a = crate::registry::SemVer::parse(&a.version);
+                    let ver_b = crate::registry::SemVer::parse(&b.version);
+                    match (ver_a, ver_b) {
+                        (Some(a), Some(b)) => a.cmp(&b),
+                        _ => a.version.cmp(&b.version),
+                    }
+                })
+                .map(|v| v.version.as_str())
+                .unwrap_or("?");
+
+            println!("{}. {} v{}", *displayed + idx + 1, package.name, latest_version);
+            println!("   {}", package.description);
+
+            if self.details {
+                println!("   Repository: {}", package.repository);
+                println!("   Registry: {}", registry_name);
+                if !package.platforms.is_empty() {
+                    println!("   Platforms: {}", package.platforms.join(", "));
+                }
+                if let Some(ref license) = package.license {
+                    println!("   License: {}", license);
+                }
+                if !package.keywords.is_empty() {
+                    println!("   Keywords: {}", package.keywords.join(", "));
+                }
+            } else {
+                println!("   Registry: {}", registry_name);
+            }
+            println!();
+        }
+
+        let count = std::cmp::min(results.len(), remaining_limit);
+        *displayed += count;
+
+        if results.len() > remaining_limit {
+            println!(
+                "   ... and {} more registry results",
+                results.len() - remaining_limit
+            );
+        }
+
+        Ok(results.len())
+    }
+
+    /// Search in collections
+    fn search_collections(&self, total: &mut usize, displayed: &mut usize) -> Result<()> {
+        let manager = CollectionManager::new();
+
+        let collections = manager.load_index().unwrap_or_default();
+        if collections.is_empty() {
+            return Ok(());
+        }
 
         let results = manager
             .search(&self.query, self.collection.as_deref())
-            .context("Failed to search packages")?;
+            .unwrap_or_default();
 
         if results.is_empty() {
-            println!("\n✗ No packages found matching '{}'", self.query);
-            println!("\n💡 Try:");
-            println!("   - Using different keywords");
-            println!("   - Refreshing collections: ccgo collection refresh");
-            println!("   - Adding more collections: ccgo collection add <url>");
             return Ok(());
         }
 
-        // Display results
-        let total = results.len();
-        let display_count = std::cmp::min(total, self.limit);
+        *total += results.len();
 
-        println!("\nFound {} package(s):\n", total);
+        println!(
+            "\n📚 Collection results ({}):\n",
+            results.len()
+        );
 
-        for (idx, (collection_name, package)) in results.iter().take(display_count).enumerate() {
-            println!("{}. {} v{}", idx + 1, package.name, package.version);
+        let remaining_limit = self.limit.saturating_sub(*displayed);
+        for (idx, (collection_name, package)) in results.iter().take(remaining_limit).enumerate() {
+            println!("{}. {} v{}", *displayed + idx + 1, package.name, package.version);
             println!("   {}", package.summary);
 
             if self.details {
@@ -99,21 +209,17 @@ impl SearchCommand {
             } else {
                 println!("   Collection: {}", collection_name);
             }
-
             println!();
         }
 
-        if total > display_count {
+        *displayed += std::cmp::min(results.len(), remaining_limit);
+
+        if results.len() > remaining_limit {
             println!(
-                "... and {} more. Use --limit {} to see all results",
-                total - display_count,
-                total
+                "   ... and {} more collection results",
+                results.len() - remaining_limit
             );
         }
-
-        println!("💡 Add a package with:");
-        println!("   ccgo add <name> --git <repository-url>");
-        println!("   ccgo add <name> --version <version>");
 
         Ok(())
     }
@@ -128,8 +234,11 @@ mod tests {
         let cmd = SearchCommand {
             query: "json".to_string(),
             collection: None,
+            registry: None,
             details: false,
             limit: 20,
+            collections_only: false,
+            registries_only: false,
         };
 
         assert_eq!(cmd.query, "json");

@@ -971,6 +971,7 @@ mod tests {
             features: vec![],
             default_features: None,
             workspace: false,
+            registry: None,
         };
 
         assert_eq!(cmd.format_source(&dep), "  (path: ../mylib)");
@@ -990,6 +991,7 @@ mod tests {
             features: vec![],
             default_features: None,
             workspace: false,
+            registry: None,
         };
 
         assert_eq!(
@@ -1010,6 +1012,7 @@ mod tests {
             features: vec![],
             default_features: None,
             workspace: false,
+            registry: None,
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1031,6 +1034,7 @@ mod tests {
             features: vec![],
             default_features: None,
             workspace: false,
+            registry: None,
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1055,6 +1059,7 @@ mod tests {
             features: vec![],
             default_features: None,
             workspace: false,
+            registry: None,
         };
 
         let source = DepSourceInfo::from(&dep);

@@ -79,14 +79,32 @@
 ## P1 - High (v3.2-v3.3) 🚀
 
 ### 4. Package Registry Support
-**Status**: 0% Complete | **Target**: v3.2.0 (Q2 2026)
+**Status**: 80% Complete | **Target**: v3.2.0 (Q2 2026)
 
-- [ ] ccgo-registry server implementation
-- [ ] Package publishing to ccgo-registry
-- [ ] Package discovery and search
-- [ ] Semantic versioning resolution
-- [ ] Private registry support
-- [ ] Integration with existing registries (Conan Center, vcpkg)
+**Phase 1 - Git-based Enhancement (v3.1.1)** ✅
+- [x] Git URL shorthand syntax (`github:user/repo`, `gh:`, `gl:`, `bb:`) ✅
+- [x] Automatic version discovery from Git tags (`--latest` flag) ✅
+- [x] Bare `owner/repo` syntax (assumes GitHub) ✅
+- [x] Pre-release version support (`--prerelease` flag) ✅
+
+**Phase 2 - Lightweight Index (v3.2.0)** ✅
+- [x] Index repository format design ✅
+- [x] Index parsing and caching ✅
+- [x] Simplified version syntax (`fmt = "^10.1"`) ✅
+- [x] Private index support (`[registries]` section) ✅
+- [x] Package search via index (`ccgo search`, `ccgo registry search`) ✅
+- [x] Registry management commands (`ccgo registry add/list/remove/update/info`) ✅
+
+**Phase 3 - Publishing Tools (v3.2.1)**
+- [ ] `ccgo publish index` command
+- [ ] Auto-generate package metadata JSON
+- [ ] Version verification and checksum
+
+**Design Decision**: Following SPM's Git-based approach instead of central registry server.
+- No server maintenance required
+- Leverages existing Git infrastructure
+- Natural support for private packages
+- Index repository is just a Git repo (like crates.io-index)
 
 **Rationale**: Enable easier dependency sharing within organizations and community.
 
