@@ -108,6 +108,9 @@ function M.select_architecture(platform, callback)
     return
   end
 
+  -- "all" means all architectures as comma-separated list
+  local all_archs = table.concat(architectures, ",")
+
   -- Add "all" option
   local items = { "all" }
   for _, arch in ipairs(architectures) do
@@ -148,7 +151,8 @@ function M.select_architecture(platform, callback)
           local selection = action_state.get_selected_entry()
           if selection and callback then
             local arch = selection.value
-            callback(arch == "all" and nil or arch)
+            -- "all" means all architectures as comma-separated list
+            callback(arch == "all" and all_archs or arch)
           end
         end)
         return true
@@ -159,7 +163,8 @@ function M.select_architecture(platform, callback)
       prompt = "Select Architecture:",
     }, function(choice)
       if choice and callback then
-        callback(choice == "all" and nil or choice)
+        -- "all" means all architectures as comma-separated list
+        callback(choice == "all" and all_archs or choice)
       end
     end)
   end

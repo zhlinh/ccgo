@@ -58,15 +58,28 @@ local function detect_platform()
   return "linux"
 end
 
--- Find CCGO.toml in current directory or parents
+-- Find CCGO.toml in current file's directory or parents
 function M.find_ccgo_toml()
-  local path = vim.fn.getcwd()
-  while path ~= "/" do
+  -- Start from current buffer's file directory, fall back to cwd
+  local bufname = vim.api.nvim_buf_get_name(0)
+  local path
+  if bufname and bufname ~= "" then
+    path = vim.fn.fnamemodify(bufname, ":p:h")
+  else
+    path = vim.fn.getcwd()
+  end
+
+  -- Search upward for CCGO.toml
+  while path and path ~= "" and path ~= "/" do
     local toml_path = path .. "/CCGO.toml"
     if vim.fn.filereadable(toml_path) == 1 then
       return toml_path, path
     end
-    path = vim.fn.fnamemodify(path, ":h")
+    local parent = vim.fn.fnamemodify(path, ":h")
+    if parent == path then
+      break
+    end
+    path = parent
   end
   return nil, nil
 end

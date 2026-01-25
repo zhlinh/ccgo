@@ -24,9 +24,16 @@ local function execute(cmd, args, opts)
   local cmd_str = table.concat(full_cmd, " ")
 
   if config.use_terminal then
-    -- Run in terminal
-    vim.cmd("split | terminal cd " .. vim.fn.shellescape(root) .. " && " .. cmd_str)
-    vim.cmd("startinsert")
+    -- Run in terminal with auto-scroll
+    vim.cmd("botright split | terminal cd " .. vim.fn.shellescape(root) .. " && " .. cmd_str)
+    -- Configure terminal window
+    vim.wo.number = false
+    vim.wo.relativenumber = false
+    -- Jump to bottom and enter insert mode (terminal follows cursor in insert mode)
+    vim.defer_fn(function()
+      vim.cmd("normal! G")
+      vim.cmd("startinsert")
+    end, 100)
   else
     -- Run in background with job control
     local output = {}
@@ -216,12 +223,18 @@ function M.build_interactive()
   end)
 end
 
+-- Helper: safely create command (delete if exists first)
+local function create_command(name, fn, opts)
+  pcall(vim.api.nvim_del_user_command, name)
+  vim.api.nvim_create_user_command(name, fn, opts)
+end
+
 -- Setup user commands
 function M.setup(cfg)
   config = cfg
 
-  -- :ccgoBuild [platform] [--arch=<arch>] [--release] [--ide-project]
-  vim.api.nvim_create_user_command("ccgoBuild", function(opts)
+  -- :CcgoBuild [platform] [--arch=<arch>] [--release] [--ide-project]
+  create_command("CcgoBuild", function(opts)
     local args = opts.fargs
     local platform = args[1]
     local build_opts = {}
@@ -250,15 +263,15 @@ function M.setup(cfg)
     desc = "Build CCGO project for a platform",
   })
 
-  -- :ccgoBuildInteractive
-  vim.api.nvim_create_user_command("ccgoBuildInteractive", function()
+  -- :CcgoBuildInteractive
+  create_command("CcgoBuildInteractive", function()
     M.build_interactive()
   end, {
     desc = "Build CCGO project with interactive platform selection",
   })
 
-  -- :ccgoTest [--filter=<pattern>]
-  vim.api.nvim_create_user_command("ccgoTest", function(opts)
+  -- :CcgoTest [--filter=<pattern>]
+  create_command("CcgoTest", function(opts)
     local test_opts = {}
     for _, arg in ipairs(opts.fargs) do
       if arg:match("^--filter=") then
@@ -271,15 +284,15 @@ function M.setup(cfg)
     desc = "Run CCGO tests",
   })
 
-  -- :ccgoBench
-  vim.api.nvim_create_user_command("ccgoBench", function()
+  -- :CcgoBench
+  create_command("CcgoBench", function()
     M.bench()
   end, {
     desc = "Run CCGO benchmarks",
   })
 
-  -- :ccgoInstall [--frozen]
-  vim.api.nvim_create_user_command("ccgoInstall", function(opts)
+  -- :CcgoInstall [--frozen]
+  create_command("CcgoInstall", function(opts)
     local install_opts = {}
     for _, arg in ipairs(opts.fargs) do
       if arg == "--frozen" then
@@ -292,15 +305,15 @@ function M.setup(cfg)
     desc = "Install CCGO dependencies",
   })
 
-  -- :ccgoClean
-  vim.api.nvim_create_user_command("ccgoClean", function()
+  -- :CcgoClean
+  create_command("CcgoClean", function()
     M.clean()
   end, {
     desc = "Clean CCGO build artifacts",
   })
 
-  -- :ccgoDoc [--open]
-  vim.api.nvim_create_user_command("ccgoDoc", function(opts)
+  -- :CcgoDoc [--open]
+  create_command("CcgoDoc", function(opts)
     local doc_opts = {}
     for _, arg in ipairs(opts.fargs) do
       if arg == "--open" then
@@ -313,25 +326,25 @@ function M.setup(cfg)
     desc = "Generate CCGO documentation",
   })
 
-  -- :ccgoCheck
-  vim.api.nvim_create_user_command("ccgoCheck", function()
+  -- :CcgoCheck
+  create_command("CcgoCheck", function()
     M.check()
   end, {
     desc = "Check CCGO environment",
   })
 
-  -- :ccgoTree
-  vim.api.nvim_create_user_command("ccgoTree", function()
+  -- :CcgoTree
+  create_command("CcgoTree", function()
     require("ccgo.tree").show()
   end, {
     desc = "Show CCGO dependency tree",
   })
 
-  -- :ccgoPublish <target>
-  vim.api.nvim_create_user_command("ccgoPublish", function(opts)
+  -- :CcgoPublish <target>
+  create_command("CcgoPublish", function(opts)
     local target = opts.fargs[1]
     if not target then
-      vim.notify("Usage: :ccgoPublish <target>", vim.log.levels.WARN, { title = "CCGO" })
+      vim.notify("Usage: :CcgoPublish <target>", vim.log.levels.WARN, { title = "CCGO" })
       return
     end
     M.publish(target)
@@ -343,16 +356,16 @@ function M.setup(cfg)
     desc = "Publish CCGO package",
   })
 
-  -- :ccgoTag [version]
-  vim.api.nvim_create_user_command("ccgoTag", function(opts)
+  -- :CcgoTag [version]
+  create_command("CcgoTag", function(opts)
     M.tag(opts.fargs[1])
   end, {
     nargs = "?",
     desc = "Create git tag for CCGO project",
   })
 
-  -- :ccgoPackage
-  vim.api.nvim_create_user_command("ccgoPackage", function()
+  -- :CcgoPackage
+  create_command("CcgoPackage", function()
     M.package()
   end, {
     desc = "Package CCGO project",

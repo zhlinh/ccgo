@@ -10,12 +10,12 @@ Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C+
   - Code completion and hover documentation
 
 - **Build Commands**
-  - `:ccgoBuild [platform]` - Build for a platform
-  - `:ccgoBuildInteractive` - Interactive platform/architecture selection
-  - `:ccgoTest` - Run tests
-  - `:ccgoBench` - Run benchmarks
-  - `:ccgoInstall` - Install dependencies
-  - `:ccgoClean` - Clean build artifacts
+  - `:CcgoBuild [platform]` - Build for a platform
+  - `:CcgoBuildInteractive` - Interactive platform/architecture selection
+  - `:CcgoTest` - Run tests
+  - `:CcgoBench` - Run benchmarks
+  - `:CcgoInstall` - Install dependencies
+  - `:CcgoClean` - Clean build artifacts
 
 - **Telescope Integration**
   - Platform picker with icons
@@ -176,19 +176,19 @@ require("ccgo").setup({
 
 | Command | Description |
 |---------|-------------|
-| `:ccgoBuild [platform]` | Build for a platform (interactive if no platform) |
-| `:ccgoBuildInteractive` | Build with interactive platform/arch selection |
-| `:ccgoTest [--filter=pattern]` | Run tests |
-| `:ccgoBench` | Run benchmarks |
-| `:ccgoInstall [--frozen]` | Install dependencies |
-| `:ccgoClean` | Clean build artifacts |
-| `:ccgoDoc [--open]` | Generate documentation |
-| `:ccgoCheck` | Check environment |
-| `:ccgoTree` | Show dependency tree |
-| `:ccgoPublish <target>` | Publish package |
-| `:ccgoTag [version]` | Create git tag |
-| `:ccgoPackage` | Package project |
-| `:ccgoInfo` | Show plugin info |
+| `:CcgoBuild [platform]` | Build for a platform (interactive if no platform) |
+| `:CcgoBuildInteractive` | Build with interactive platform/arch selection |
+| `:CcgoTest [--filter=pattern]` | Run tests |
+| `:CcgoBench` | Run benchmarks |
+| `:CcgoInstall [--frozen]` | Install dependencies |
+| `:CcgoClean` | Clean build artifacts |
+| `:CcgoDoc [--open]` | Generate documentation |
+| `:CcgoCheck` | Check environment |
+| `:CcgoTree` | Show dependency tree |
+| `:CcgoPublish <target>` | Publish package |
+| `:CcgoTag [version]` | Create git tag |
+| `:CcgoPackage` | Package project |
+| `:CcgoInfo` | Show plugin info |
 
 ## LSP Setup (Taplo)
 
@@ -262,18 +262,18 @@ vim.api.nvim_create_autocmd("BufEnter", {
   pattern = "CCGO.toml",
   callback = function()
     local opts = { buffer = true, silent = true }
-    vim.keymap.set("n", "<leader>cb", "<cmd>ccgoBuildInteractive<cr>", opts)
-    vim.keymap.set("n", "<leader>ct", "<cmd>ccgoTest<cr>", opts)
-    vim.keymap.set("n", "<leader>ci", "<cmd>ccgoInstall<cr>", opts)
-    vim.keymap.set("n", "<leader>cc", "<cmd>ccgoClean<cr>", opts)
-    vim.keymap.set("n", "<leader>cd", "<cmd>ccgoTree<cr>", opts)
+    vim.keymap.set("n", "<leader>cb", "<cmd>CcgoBuildInteractive<cr>", opts)
+    vim.keymap.set("n", "<leader>ct", "<cmd>CcgoTest<cr>", opts)
+    vim.keymap.set("n", "<leader>ci", "<cmd>CcgoInstall<cr>", opts)
+    vim.keymap.set("n", "<leader>cc", "<cmd>CcgoClean<cr>", opts)
+    vim.keymap.set("n", "<leader>cd", "<cmd>CcgoTree<cr>", opts)
   end,
 })
 ```
 
 ## Dependency Tree
 
-The `:ccgoTree` command opens a sidebar with your project's dependencies:
+The `:CcgoTree` command opens a sidebar with your project's dependencies:
 
 ```
 📦 CCGO Dependencies
