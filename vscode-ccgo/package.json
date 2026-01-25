@@ -89,14 +89,49 @@
         "icon": "$(beaker)"
       },
       {
+        "command": "ccgo.bench",
+        "title": "CCGO: Run Benchmarks",
+        "icon": "$(dashboard)"
+      },
+      {
         "command": "ccgo.clean",
         "title": "CCGO: Clean Build Artifacts",
         "icon": "$(trash)"
       },
       {
+        "command": "ccgo.doc",
+        "title": "CCGO: Generate Documentation",
+        "icon": "$(book)"
+      },
+      {
+        "command": "ccgo.check",
+        "title": "CCGO: Check Environment",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "ccgo.publish",
+        "title": "CCGO: Publish Package...",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "ccgo.tag",
+        "title": "CCGO: Create Version Tag",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "ccgo.package",
+        "title": "CCGO: Package SDK",
+        "icon": "$(package)"
+      },
+      {
         "command": "ccgo.generateIdeProject",
         "title": "CCGO: Generate IDE Project",
         "icon": "$(file-code)"
+      },
+      {
+        "command": "ccgo.tree",
+        "title": "CCGO: Show Dependency Tree",
+        "icon": "$(list-tree)"
       }
     ],
     "views": {

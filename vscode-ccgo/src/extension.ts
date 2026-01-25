@@ -34,8 +34,15 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('ccgo.refreshDependencies', () => dependencyTreeProvider?.refresh()),
         vscode.commands.registerCommand('ccgo.install', () => runCcgoCommand('install')),
         vscode.commands.registerCommand('ccgo.test', () => runCcgoCommand('test')),
+        vscode.commands.registerCommand('ccgo.bench', () => runCcgoCommand('bench')),
         vscode.commands.registerCommand('ccgo.clean', () => runCcgoCommand('clean', ['-y'])),
-        vscode.commands.registerCommand('ccgo.generateIdeProject', () => generateIdeProject())
+        vscode.commands.registerCommand('ccgo.doc', () => docCommand()),
+        vscode.commands.registerCommand('ccgo.check', () => runCcgoCommand('check')),
+        vscode.commands.registerCommand('ccgo.publish', () => publishCommand()),
+        vscode.commands.registerCommand('ccgo.tag', () => tagCommand()),
+        vscode.commands.registerCommand('ccgo.package', () => runCcgoCommand('package')),
+        vscode.commands.registerCommand('ccgo.generateIdeProject', () => generateIdeProject()),
+        vscode.commands.registerCommand('ccgo.tree', () => treeCommand())
     );
 
     // Watch CCGO.toml for changes
@@ -131,4 +138,63 @@ async function generateIdeProject() {
     if (platform) {
         runCcgoCommand('build', [platform, '--ide-project']);
     }
+}
+
+async function docCommand() {
+    const options = await vscode.window.showQuickPick([
+        { label: 'Generate Only', description: 'Generate documentation without opening' },
+        { label: 'Generate and Open', description: 'Generate and open in browser', picked: true }
+    ], {
+        placeHolder: 'Select documentation option',
+        title: 'Generate Documentation'
+    });
+
+    if (options) {
+        if (options.label === 'Generate and Open') {
+            runCcgoCommand('doc', ['--open']);
+        } else {
+            runCcgoCommand('doc');
+        }
+    }
+}
+
+async function publishCommand() {
+    const targets = [
+        { label: 'android', description: 'Publish to Maven repository' },
+        { label: 'ios', description: 'Publish iOS framework' },
+        { label: 'macos', description: 'Publish macOS framework' },
+        { label: 'ohos', description: 'Publish to OHPM repository' },
+        { label: 'maven', description: 'Publish to Maven' },
+        { label: 'cocoapods', description: 'Publish to CocoaPods' },
+        { label: 'spm', description: 'Publish to Swift Package Manager' },
+        { label: 'index', description: 'Publish to package index' }
+    ];
+
+    const target = await vscode.window.showQuickPick(targets, {
+        placeHolder: 'Select publish target',
+        title: 'Publish Package'
+    });
+
+    if (target) {
+        runCcgoCommand('publish', [target.label]);
+    }
+}
+
+async function tagCommand() {
+    const version = await vscode.window.showInputBox({
+        prompt: 'Enter version tag (leave empty to use version from CCGO.toml)',
+        placeHolder: 'e.g., 1.0.0 or v1.0.0'
+    });
+
+    if (version !== undefined) {
+        if (version) {
+            runCcgoCommand('tag', [version]);
+        } else {
+            runCcgoCommand('tag');
+        }
+    }
+}
+
+async function treeCommand() {
+    runCcgoCommand('tree');
 }
