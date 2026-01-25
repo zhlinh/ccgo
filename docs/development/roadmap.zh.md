@@ -91,15 +91,31 @@
 **理由**：在组织和社区内更轻松地共享依赖。
 
 ### 5. IDE 集成
-**状态**：10% 完成 | **目标**：v3.2.0（2026 年 Q2）
+**状态**：100% 完成 ✅ | **目标**：v3.2.0（2026 年 Q2）
 
-- [ ] VS Code 扩展
-  - CCGO.toml 语法高亮
-  - 构建任务集成
-  - 依赖树可视化
-- [ ] CLion/Android Studio 插件
-- [ ] Xcode 项目生成改进
-- [ ] Visual Studio 项目生成
+- [x] VS Code 扩展 (`vscode-ccgo/`) ✅
+  - CCGO.toml 语法高亮（TextMate 语法）
+  - JSON Schema 验证与错误提示
+  - 构建任务集成（所有平台，debug/release）
+  - 依赖树可视化（通过 `ccgo tree --format json`）
+  - 常用模式的代码片段
+- [x] CLion/Android Studio 插件 (`jetbrains-ccgo/`) ✅
+  - CCGO.toml 语法高亮（TOML 插件集成）
+  - JSON Schema 实时验证与错误提示
+  - 所有平台和命令的运行配置
+  - 依赖树工具窗口
+  - 常用模式的实时模板
+  - 插件配置设置界面
+- [x] Neovim 插件 (`nvim-ccgo/`) ✅
+  - Taplo LSP 集成与 CCGO schema
+  - 带 Telescope 集成的构建命令
+  - 依赖树侧边栏查看器
+  - LuaSnip 代码片段（14+ 模板）
+  - 平台/架构选择器
+- [x] Xcode 项目生成 (`ccgo build ios/macos --ide-project`) ✅
+- [x] Visual Studio 项目生成 (`ccgo build windows --ide-project`) ✅
+- [x] Linux IDE 项目生成 (`ccgo build linux --ide-project`) ✅
+  - CodeLite 工作区 + compile_commands.json 用于 VS Code/clangd
 
 **理由**：更好的 IDE 支持改善开发者体验。
 

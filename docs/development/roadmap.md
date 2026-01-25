@@ -125,6 +125,12 @@
   - Dependency tree tool window
   - Live templates for common patterns
   - Settings UI for plugin configuration
+- [x] Neovim plugin (`nvim-ccgo/`) ✅
+  - Taplo LSP integration with CCGO schema
+  - Build commands with Telescope integration
+  - Dependency tree viewer sidebar
+  - LuaSnip snippets (14+ templates)
+  - Platform/architecture pickers
 - [x] Xcode project generation (`ccgo build ios/macos --ide-project`) ✅
 - [x] Visual Studio project generation (`ccgo build windows --ide-project`) ✅
 - [x] Linux IDE project generation (`ccgo build linux --ide-project`) ✅
