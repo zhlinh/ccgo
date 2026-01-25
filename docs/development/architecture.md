@@ -8,7 +8,7 @@ CCGO is designed as a modular, extensible cross-platform build system composed o
 
 ```
 CCGO Ecosystem
-├── ccgo (Python/Rust CLI)      # Command-line interface and build orchestration
+├── ccgo (Rust CLI)              # Command-line interface and build orchestration
 ├── ccgo-template                # Copier-based project templates
 ├── ccgo-gradle-plugins          # Gradle convention plugins
 └── ccgo-now (Example)           # Reference implementation
@@ -73,73 +73,64 @@ graph TB
 
 ### Command Pattern
 
-```python
-# CLI Structure (Python)
-ccgo/
-├── main.py                    # Entry point
-├── cli.py                     # Root command parser
-├── commands/                  # Command modules
-│   ├── __init__.py
-│   ├── new.py                # Project creation
-│   ├── init.py               # Project initialization
-│   ├── build.py              # Build orchestration
-│   ├── test.py               # Test execution
-│   ├── bench.py              # Benchmarking
-│   ├── doc.py                # Documentation
-│   ├── publish.py            # Publishing
-│   ├── check.py              # Environment check
-│   ├── clean.py              # Cleanup
-│   ├── tag.py                # Git tagging
-│   ├── package.py            # Packaging
-│   ├── install.py            # Dependency installation
-│   └── help.py               # Help system
-├── build_scripts/            # Platform build scripts
-│   ├── build_android.py
-│   ├── build_ios.py
-│   ├── build_macos.py
-│   ├── build_windows.py
-│   ├── build_linux.py
-│   ├── build_ohos.py
-│   ├── build_tvos.py
-│   ├── build_watchos.py
-│   ├── build_kmp.py
-│   ├── build_conan.py
-│   ├── build_utils.py
-│   ├── dependency_manager.py
-│   └── cmake/                # CMake templates
-└── utils/                    # Utilities
-    ├── context/              # CLI context
-    └── cmd/                  # Command execution
-```
-
-### Rust CLI Architecture (New)
+The CCGO CLI is built in Rust using the `clap` crate for command-line parsing. It follows a modular command pattern:
 
 ```rust
 // CLI Structure (Rust)
-ccgo-rs/
-├── src/
-│   ├── main.rs               # Entry point
-│   ├── cli.rs                # CLI definition (clap)
-│   ├── commands/             # Command implementations
-│   │   ├── mod.rs
-│   │   ├── new.rs
-│   │   ├── build.rs
-│   │   ├── test.rs
-│   │   ├── publish.rs
-│   │   └── ...
-│   ├── config/               # Configuration
-│   │   ├── mod.rs
-│   │   └── ccgo_toml.rs
-│   ├── exec/                 # Process execution
-│   │   ├── mod.rs
-│   │   ├── subprocess.rs
-│   │   └── python.rs
-│   └── utils/                # Utilities
-│       ├── mod.rs
-│       ├── paths.rs
-│       ├── terminal.rs
-│       └── git_version.rs
-└── Cargo.toml
+src/
+├── main.rs                   # Entry point
+├── cli.rs                    # CLI definition (clap derive)
+├── commands/                 # Command implementations
+│   ├── mod.rs               # Command module exports
+│   ├── new.rs               # Project creation (ccgo new)
+│   ├── init.rs              # Project initialization (ccgo init)
+│   ├── build.rs             # Build orchestration (ccgo build)
+│   ├── test.rs              # Test execution (ccgo test)
+│   ├── bench.rs             # Benchmarking (ccgo bench)
+│   ├── doc.rs               # Documentation (ccgo doc)
+│   ├── publish.rs           # Publishing (ccgo publish)
+│   ├── check.rs             # Environment check (ccgo check)
+│   ├── clean.rs             # Cleanup (ccgo clean)
+│   ├── tag.rs               # Git tagging (ccgo tag)
+│   ├── package.rs           # Packaging (ccgo package)
+│   ├── install.rs           # Dependency installation (ccgo install)
+│   ├── add.rs               # Add dependency (ccgo add)
+│   ├── remove.rs            # Remove dependency (ccgo remove)
+│   ├── tree.rs              # Dependency tree (ccgo tree)
+│   ├── search.rs            # Package search (ccgo search)
+│   ├── registry.rs          # Registry management (ccgo registry)
+│   ├── update.rs            # Update dependencies (ccgo update)
+│   ├── vendor.rs            # Vendor dependencies (ccgo vendor)
+│   ├── run.rs               # Run examples (ccgo run)
+│   └── analytics.rs         # Build analytics (ccgo analytics)
+├── config/                   # Configuration parsing
+│   ├── mod.rs               # Config module exports
+│   └── ccgo_toml.rs         # CCGO.toml parsing
+├── builders/                 # Platform builders
+│   ├── mod.rs               # Builder traits and common code
+│   ├── android.rs           # Android builder
+│   ├── ios.rs               # iOS builder
+│   ├── macos.rs             # macOS builder
+│   ├── windows.rs           # Windows builder
+│   ├── linux.rs             # Linux builder
+│   ├── ohos.rs              # OpenHarmony builder
+│   ├── tvos.rs              # tvOS builder
+│   ├── watchos.rs           # watchOS builder
+│   └── kmp.rs               # Kotlin Multiplatform builder
+├── registry/                 # Package registry
+│   ├── mod.rs               # Registry module exports
+│   ├── index.rs             # Index parsing and caching
+│   ├── resolver.rs          # Version resolution
+│   └── graph.rs             # Dependency graph
+├── exec/                     # Process execution
+│   ├── mod.rs               # Execution utilities
+│   └── subprocess.rs        # Subprocess management
+└── utils/                    # Utilities
+    ├── mod.rs               # Utility exports
+    ├── paths.rs             # Path utilities
+    ├── terminal.rs          # Terminal output (colors, progress)
+    ├── git.rs               # Git operations
+    └── cmake.rs             # CMake integration
 ```
 
 ### Command Execution Flow
@@ -148,26 +139,70 @@ ccgo-rs/
 1. User Input
    └─> ccgo build android --arch arm64-v8a
 
-2. CLI Parsing (cli.py / cli.rs)
-   └─> Route to commands/build.py::Build class
+2. CLI Parsing (cli.rs with clap)
+   └─> Match Commands::Build variant
+   └─> Dispatch to commands/build.rs
 
-3. Command Execution (build.py)
-   ├─> Parse arguments
-   ├─> Load build_config.py from project
-   ├─> Import build_scripts/build_android.py
-   └─> Execute build_android.main()
+3. Command Execution (build.rs)
+   ├─> Parse BuildArgs from clap
+   ├─> Load CCGO.toml configuration
+   ├─> Select appropriate platform builder
+   └─> Execute builder.build()
 
-4. Platform Build Script (build_android.py)
+4. Platform Builder (builders/android.rs)
    ├─> Validate environment (NDK, SDK)
    ├─> Configure CMake with toolchain
-   ├─> Generate CMakeLists.txt from templates
+   ├─> Set CCGO_CMAKE_DIR for CMake utilities
    ├─> Execute CMake configuration
-   ├─> Execute CMake build
+   ├─> Execute CMake build (with cache support)
    └─> Package artifacts (SO, AAR)
 
 5. Output
-   └─> target/android/arm64-v8a/libproject.so
-       target/android/project.aar
+   └─> cmake_build/Android/arm64-v8a/libproject.so
+       cmake_build/Android/Android.out/project.aar
+```
+
+### Command Implementation Example
+
+```rust
+// commands/build.rs
+use clap::Args;
+use anyhow::Result;
+use crate::builders::{AndroidBuilder, IosBuilder, Platform};
+use crate::config::CcgoConfig;
+
+#[derive(Args)]
+pub struct BuildArgs {
+    /// Target platform
+    pub platform: String,
+
+    /// Target architectures
+    #[arg(long, value_delimiter = ',')]
+    pub arch: Option<Vec<String>>,
+
+    /// Build type (debug/release)
+    #[arg(long, default_value = "release")]
+    pub build_type: String,
+
+    /// Enable build cache (ccache/sccache)
+    #[arg(long, default_value = "auto")]
+    pub cache: String,
+}
+
+impl BuildArgs {
+    pub fn execute(&self) -> Result<()> {
+        let config = CcgoConfig::load()?;
+
+        match self.platform.as_str() {
+            "android" => AndroidBuilder::new(&config, self).build()?,
+            "ios" => IosBuilder::new(&config, self).build()?,
+            // ... other platforms
+            _ => anyhow::bail!("Unknown platform: {}", self.platform),
+        }
+
+        Ok(())
+    }
+}
 ```
 
 ## Template Architecture
@@ -279,72 +314,151 @@ Build Process Flow
 
 ### Platform Adapters
 
-Each platform has a dedicated build script:
+Each platform has a dedicated builder implementing the `PlatformBuilder` trait:
 
-```python
-# build_android.py
-class AndroidBuilder:
-    def __init__(self, config):
-        self.config = config
-        self.ndk_path = self._find_ndk()
-        self.sdk_path = self._find_sdk()
+```rust
+// builders/mod.rs
+pub trait PlatformBuilder {
+    fn new(config: &CcgoConfig, args: &BuildArgs) -> Result<Self> where Self: Sized;
+    fn validate_environment(&self) -> Result<()>;
+    fn configure_cmake(&self) -> Result<Vec<String>>;
+    fn build(&self) -> Result<()>;
+    fn package(&self) -> Result<PathBuf>;
+}
 
-    def configure(self):
-        """Configure CMake with Android toolchain"""
-        toolchain = os.path.join(
-            self.ndk_path,
-            "build/cmake/android.toolchain.cmake"
-        )
-        cmake_args = [
-            f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
-            f"-DANDROID_ABI={self.config.arch}",
-            f"-DANDROID_PLATFORM=android-{self.config.min_sdk}",
-            f"-DCCGO_CMAKE_DIR={self.ccgo_cmake_dir}",
-        ]
-        return cmake_args
+// builders/android.rs
+pub struct AndroidBuilder {
+    config: CcgoConfig,
+    ndk_path: PathBuf,
+    sdk_path: PathBuf,
+    architectures: Vec<String>,
+    build_type: BuildType,
+    cache_type: CacheType,
+}
 
-    def build(self):
-        """Execute CMake build"""
-        # Generate build files
-        run_cmd(["cmake", *self.configure(), ".."])
+impl PlatformBuilder for AndroidBuilder {
+    fn new(config: &CcgoConfig, args: &BuildArgs) -> Result<Self> {
+        let ndk_path = Self::find_ndk()?;
+        let sdk_path = Self::find_sdk()?;
+        Ok(Self {
+            config: config.clone(),
+            ndk_path,
+            sdk_path,
+            architectures: args.arch.clone().unwrap_or_default(),
+            build_type: args.build_type.parse()?,
+            cache_type: args.cache.parse()?,
+        })
+    }
 
-        # Build
-        run_cmd(["cmake", "--build", ".", "--config", "Release"])
+    fn configure_cmake(&self) -> Result<Vec<String>> {
+        let toolchain = self.ndk_path
+            .join("build/cmake/android.toolchain.cmake");
 
-    def package(self):
-        """Package AAR and SO files"""
-        # Collect SO files
-        # Generate AAR
-        # Create archives
+        Ok(vec![
+            format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()),
+            format!("-DANDROID_ABI={}", self.current_arch),
+            format!("-DANDROID_PLATFORM=android-{}", self.config.android.min_sdk),
+            format!("-DCCGO_CMAKE_DIR={}", self.ccgo_cmake_dir().display()),
+            self.cache_type.cmake_args(),
+        ])
+    }
+
+    fn build(&self) -> Result<()> {
+        self.validate_environment()?;
+
+        for arch in &self.architectures {
+            let build_dir = self.build_dir(arch);
+            std::fs::create_dir_all(&build_dir)?;
+
+            // Configure
+            let cmake_args = self.configure_cmake()?;
+            Command::new("cmake")
+                .current_dir(&build_dir)
+                .args(&cmake_args)
+                .arg("..")
+                .status()?;
+
+            // Build
+            Command::new("cmake")
+                .current_dir(&build_dir)
+                .args(["--build", ".", "--config", self.build_type.as_str()])
+                .status()?;
+        }
+
+        self.package()?;
+        Ok(())
+    }
+}
 ```
 
 ### Dependency Management
 
-```python
-# dependency_manager.py
-class DependencyManager:
-    def __init__(self, project_dir):
-        self.ccgo_toml = self._load_ccgo_toml(project_dir)
-        self.dependencies = self.ccgo_toml.get("dependencies", {})
+```rust
+// registry/resolver.rs
+pub struct DependencyResolver {
+    registries: Vec<Registry>,
+    cache_dir: PathBuf,
+}
 
-    def resolve(self, platform):
-        """Resolve dependencies for platform"""
-        resolved = []
+impl DependencyResolver {
+    pub fn new() -> Result<Self> {
+        let registries = Registry::load_all()?;
+        let cache_dir = ccgo_home_path().join("deps");
+        Ok(Self { registries, cache_dir })
+    }
 
-        for name, spec in self.dependencies.items():
-            dep = self._resolve_single(name, spec, platform)
-            resolved.append(dep)
+    pub fn resolve(&self, config: &CcgoConfig) -> Result<Vec<ResolvedDep>> {
+        let mut resolved = Vec::new();
+        let mut graph = DependencyGraph::new();
 
-        return resolved
+        for dep in &config.dependencies {
+            let resolved_dep = self.resolve_single(dep)?;
+            graph.add_dependency(&resolved_dep)?;
+            resolved.push(resolved_dep);
+        }
 
-    def _resolve_single(self, name, spec, platform):
-        """Resolve single dependency"""
-        if "git" in spec:
-            return self._resolve_git(name, spec)
-        elif "path" in spec:
-            return self._resolve_path(name, spec)
-        elif "version" in spec:
-            return self._resolve_version(name, spec, platform)
+        // Check for cycles
+        graph.detect_cycles()?;
+
+        // Topological sort for correct build order
+        Ok(graph.topological_sort()?)
+    }
+
+    fn resolve_single(&self, dep: &DependencyConfig) -> Result<ResolvedDep> {
+        match dep {
+            DependencyConfig::Git { git, branch, tag, .. } => {
+                self.resolve_git(git, branch.as_ref().or(tag.as_ref()))
+            }
+            DependencyConfig::Path { path, .. } => {
+                self.resolve_path(path)
+            }
+            DependencyConfig::Registry { version, registry, .. } => {
+                self.resolve_registry(dep.name(), version, registry.as_deref())
+            }
+        }
+    }
+
+    fn resolve_registry(
+        &self,
+        name: &str,
+        version: &str,
+        registry: Option<&str>,
+    ) -> Result<ResolvedDep> {
+        let registry = self.find_registry(registry)?;
+        let package = registry.lookup_package(name)?;
+        let matched_version = package.resolve_version(version)?;
+
+        Ok(ResolvedDep {
+            name: name.to_string(),
+            version: matched_version.version.clone(),
+            source: Source::Git {
+                url: package.repository.clone(),
+                reference: matched_version.git_tag.clone(),
+            },
+            checksum: matched_version.checksum.clone(),
+        })
+    }
+}
 ```
 
 ## Gradle Plugin Architecture
@@ -446,38 +560,50 @@ COPY --from=builder /workspace/target/android /output
 
 ### Build Orchestration
 
-```python
-# build_docker.py
-class DockerBuilder:
-    def __init__(self, platform, config):
-        self.platform = platform
-        self.config = config
-        self.image_name = f"ccgo-builder-{platform}"
+```rust
+// builders/docker.rs
+pub struct DockerBuilder {
+    platform: Platform,
+    config: CcgoConfig,
+    image_name: String,
+}
 
-    def build_image(self):
-        """Build or pull Docker image"""
-        if self._image_exists():
-            return
+impl DockerBuilder {
+    pub fn new(platform: Platform, config: &CcgoConfig) -> Self {
+        let image_name = format!("ccgo-builder-{}", platform.as_str());
+        Self {
+            platform,
+            config: config.clone(),
+            image_name,
+        }
+    }
 
-        dockerfile = self._get_dockerfile()
-        run_cmd([
-            "docker", "build",
-            "-f", dockerfile,
-            "-t", self.image_name,
-            "."
-        ])
+    pub fn build_image(&self) -> Result<()> {
+        if self.image_exists()? {
+            return Ok(());
+        }
 
-    def build_in_container(self):
-        """Execute build inside container"""
-        run_cmd([
-            "docker", "run",
-            "--rm",
-            "-v", f"{self.project_dir}:/workspace",
-            "-w", "/workspace",
-            self.image_name,
-            "ccgo", "build", self.platform,
-            *self.config.extra_args
-        ])
+        let dockerfile = self.get_dockerfile()?;
+        Command::new("docker")
+            .args(["build", "-f", &dockerfile, "-t", &self.image_name, "."])
+            .status()?;
+        Ok(())
+    }
+
+    pub fn build_in_container(&self, project_dir: &Path) -> Result<()> {
+        let mount = format!("{}:/workspace", project_dir.display());
+        Command::new("docker")
+            .args([
+                "run", "--rm",
+                "-v", &mount,
+                "-w", "/workspace",
+                &self.image_name,
+                "ccgo", "build", self.platform.as_str(),
+            ])
+            .status()?;
+        Ok(())
+    }
+}
 ```
 
 ## Version Management Architecture
@@ -539,47 +665,80 @@ Unified Archive Format
 
 ### Custom Commands
 
-```python
-# ccgo/commands/custom.py
-from utils.context import CliCommand
+New commands can be added by implementing a command module and registering it in the CLI:
 
-class Custom(CliCommand):
-    @staticmethod
-    def description():
-        return "Custom command description"
+```rust
+// commands/custom.rs
+use clap::Args;
+use anyhow::Result;
 
-    @staticmethod
-    def cli():
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--option", help="Custom option")
-        return parser
+#[derive(Args)]
+pub struct CustomArgs {
+    /// Custom option
+    #[arg(long)]
+    pub option: Option<String>,
+}
 
-    @staticmethod
-    def exec(context, args):
-        # Custom command implementation
-        print(f"Executing custom command with {args.option}")
-        return CliResult.success()
+impl CustomArgs {
+    pub fn execute(&self) -> Result<()> {
+        println!("Executing custom command with {:?}", self.option);
+        // Custom command implementation
+        Ok(())
+    }
+}
+
+// cli.rs - Register the command
+#[derive(Subcommand)]
+pub enum Commands {
+    // ... existing commands
+    /// Custom command description
+    Custom(CustomArgs),
+}
 ```
 
 ### Custom Platforms
 
-```python
-# build_scripts/build_custom.py
-def main(build_config):
-    """Custom platform build script"""
+New platforms can be added by implementing the `PlatformBuilder` trait:
 
-    # Configuration
-    cmake_args = [
-        "-DCMAKE_SYSTEM_NAME=Custom",
-        "-DCMAKE_C_COMPILER=custom-gcc",
-        "-DCMAKE_CXX_COMPILER=custom-g++",
-    ]
+```rust
+// builders/custom.rs
+pub struct CustomBuilder {
+    config: CcgoConfig,
+    build_args: BuildArgs,
+}
 
-    # Build
-    run_cmake_build(build_config, cmake_args)
+impl PlatformBuilder for CustomBuilder {
+    fn new(config: &CcgoConfig, args: &BuildArgs) -> Result<Self> {
+        Ok(Self {
+            config: config.clone(),
+            build_args: args.clone(),
+        })
+    }
 
-    # Package
-    package_artifacts(build_config)
+    fn validate_environment(&self) -> Result<()> {
+        // Check for custom toolchain
+        which::which("custom-gcc")?;
+        which::which("custom-g++")?;
+        Ok(())
+    }
+
+    fn configure_cmake(&self) -> Result<Vec<String>> {
+        Ok(vec![
+            "-DCMAKE_SYSTEM_NAME=Custom".to_string(),
+            "-DCMAKE_C_COMPILER=custom-gcc".to_string(),
+            "-DCMAKE_CXX_COMPILER=custom-g++".to_string(),
+            format!("-DCCGO_CMAKE_DIR={}", self.ccgo_cmake_dir().display()),
+        ])
+    }
+
+    fn build(&self) -> Result<()> {
+        self.validate_environment()?;
+        // Run CMake configure and build
+        self.run_cmake_build()?;
+        self.package()?;
+        Ok(())
+    }
+}
 ```
 
 ### Custom Templates
@@ -600,61 +759,155 @@ custom_config:
 
 ### Build Caching
 
-```python
-# Incremental builds
-class BuildCache:
-    def __init__(self, cache_dir):
-        self.cache_dir = cache_dir
-        self.manifest = self._load_manifest()
+CCGO integrates with ccache and sccache for compiler caching:
 
-    def is_cached(self, source_files):
-        """Check if build is cached"""
-        current_hash = self._compute_hash(source_files)
-        cached_hash = self.manifest.get("hash")
-        return current_hash == cached_hash
+```rust
+// builders/cache.rs
+pub enum CacheType {
+    Auto,    // Auto-detect (prefer sccache > ccache)
+    Ccache,
+    Sccache,
+    None,
+}
 
-    def save(self, source_files, artifacts):
-        """Save build to cache"""
-        self.manifest["hash"] = self._compute_hash(source_files)
-        self.manifest["artifacts"] = artifacts
-        self._save_manifest()
+impl CacheType {
+    pub fn detect() -> Self {
+        if which::which("sccache").is_ok() {
+            CacheType::Sccache
+        } else if which::which("ccache").is_ok() {
+            CacheType::Ccache
+        } else {
+            CacheType::None
+        }
+    }
+
+    pub fn cmake_args(&self) -> Vec<String> {
+        match self {
+            CacheType::Sccache => vec![
+                "-DCMAKE_C_COMPILER_LAUNCHER=sccache".to_string(),
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=sccache".to_string(),
+            ],
+            CacheType::Ccache => vec![
+                "-DCMAKE_C_COMPILER_LAUNCHER=ccache".to_string(),
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache".to_string(),
+            ],
+            _ => vec![],
+        }
+    }
+}
 ```
 
 ### Parallel Builds
 
-```python
-# Multi-threaded CMake builds
-def build_all_architectures(architectures):
-    with ThreadPoolExecutor(max_workers=len(architectures)) as executor:
-        futures = []
-        for arch in architectures:
-            future = executor.submit(build_architecture, arch)
-            futures.append(future)
+Multi-architecture builds are executed in parallel using Rayon:
 
-        for future in as_completed(futures):
-            result = future.result()
-            print(f"Build completed: {result}")
+```rust
+// builders/mod.rs
+use rayon::prelude::*;
+
+pub fn build_all_architectures(
+    builder: &impl PlatformBuilder,
+    architectures: &[String],
+) -> Result<Vec<BuildResult>> {
+    architectures
+        .par_iter()
+        .map(|arch| {
+            println!("Building for {}", arch);
+            builder.build_arch(arch)
+        })
+        .collect()
+}
+
+// Example: Building Android for multiple architectures
+pub fn build_android_parallel(config: &CcgoConfig, args: &BuildArgs) -> Result<()> {
+    let architectures = args.arch.clone()
+        .unwrap_or_else(|| vec![
+            "armeabi-v7a".to_string(),
+            "arm64-v8a".to_string(),
+            "x86_64".to_string(),
+        ]);
+
+    let builder = AndroidBuilder::new(config, args)?;
+    let results = build_all_architectures(&builder, &architectures)?;
+
+    for result in results {
+        println!("Completed: {} in {:?}", result.arch, result.duration);
+    }
+
+    Ok(())
+}
 ```
 
 ## Testing Architecture
 
 ### Unit Tests
 
-```python
-# tests/test_build_android.py
-import unittest
-from build_scripts.build_android import AndroidBuilder
+```rust
+// tests/builders/android_test.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::CcgoConfig;
+    use crate::builders::android::AndroidBuilder;
 
-class TestAndroidBuilder(unittest.TestCase):
-    def test_configure(self):
-        builder = AndroidBuilder(mock_config)
-        args = builder.configure()
-        self.assertIn("-DANDROID_ABI=arm64-v8a", args)
+    #[test]
+    fn test_configure_cmake() {
+        let config = CcgoConfig::mock();
+        let args = BuildArgs {
+            arch: Some(vec!["arm64-v8a".to_string()]),
+            build_type: "release".to_string(),
+            ..Default::default()
+        };
 
-    def test_ndk_detection(self):
-        builder = AndroidBuilder(mock_config)
-        ndk_path = builder._find_ndk()
-        self.assertTrue(os.path.exists(ndk_path))
+        let builder = AndroidBuilder::new(&config, &args).unwrap();
+        let cmake_args = builder.configure_cmake().unwrap();
+
+        assert!(cmake_args.iter().any(|a| a.contains("ANDROID_ABI=arm64-v8a")));
+        assert!(cmake_args.iter().any(|a| a.contains("android.toolchain.cmake")));
+    }
+
+    #[test]
+    fn test_ndk_detection() {
+        // Skip if NDK not installed
+        if std::env::var("ANDROID_NDK_HOME").is_err() {
+            return;
+        }
+
+        let ndk_path = AndroidBuilder::find_ndk().unwrap();
+        assert!(ndk_path.exists());
+        assert!(ndk_path.join("build/cmake/android.toolchain.cmake").exists());
+    }
+}
+
+// tests/registry/resolver_test.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_resolution() {
+        let resolver = DependencyResolver::new().unwrap();
+        let dep = DependencyConfig::Registry {
+            name: "fmt".to_string(),
+            version: "^10.0".to_string(),
+            registry: None,
+        };
+
+        let resolved = resolver.resolve_single(&dep).unwrap();
+        assert!(resolved.version.starts_with("10."));
+    }
+
+    #[test]
+    fn test_cycle_detection() {
+        let mut graph = DependencyGraph::new();
+        graph.add_edge("a", "b").unwrap();
+        graph.add_edge("b", "c").unwrap();
+        graph.add_edge("c", "a").unwrap();
+
+        let result = graph.detect_cycles();
+        assert!(result.is_err());
+    }
+}
 ```
 
 ### Integration Tests

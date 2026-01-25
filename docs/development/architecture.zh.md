@@ -8,7 +8,7 @@ CCGO 设计为模块化、可扩展的跨平台构建系统，由四个主要组
 
 ```
 CCGO 生态系统
-├── ccgo (Python/Rust CLI)      # 命令行界面和构建编排
+├── ccgo (Rust CLI)              # 命令行界面和构建编排
 ├── ccgo-template                # 基于 Copier 的项目模板
 ├── ccgo-gradle-plugins          # Gradle 约定插件
 └── ccgo-now (示例)              # 参考实现
@@ -73,73 +73,64 @@ graph TB
 
 ### 命令模式
 
-```python
-# CLI 结构（Python）
-ccgo/
-├── main.py                    # 入口点
-├── cli.py                     # 根命令解析器
-├── commands/                  # 命令模块
-│   ├── __init__.py
-│   ├── new.py                # 项目创建
-│   ├── init.py               # 项目初始化
-│   ├── build.py              # 构建编排
-│   ├── test.py               # 测试执行
-│   ├── bench.py              # 基准测试
-│   ├── doc.py                # 文档生成
-│   ├── publish.py            # 发布
-│   ├── check.py              # 环境检查
-│   ├── clean.py              # 清理
-│   ├── tag.py                # Git 标签
-│   ├── package.py            # 打包
-│   ├── install.py            # 依赖安装
-│   └── help.py               # 帮助系统
-├── build_scripts/            # 平台构建脚本
-│   ├── build_android.py
-│   ├── build_ios.py
-│   ├── build_macos.py
-│   ├── build_windows.py
-│   ├── build_linux.py
-│   ├── build_ohos.py
-│   ├── build_tvos.py
-│   ├── build_watchos.py
-│   ├── build_kmp.py
-│   ├── build_conan.py
-│   ├── build_utils.py
-│   ├── dependency_manager.py
-│   └── cmake/                # CMake 模板
-└── utils/                    # 实用工具
-    ├── context/              # CLI 上下文
-    └── cmd/                  # 命令执行
-```
-
-### Rust CLI 架构（新）
+CCGO CLI 使用 Rust 和 `clap` crate 构建，用于命令行解析。它遵循模块化的命令模式：
 
 ```rust
 // CLI 结构（Rust）
-ccgo-rs/
-├── src/
-│   ├── main.rs               # 入口点
-│   ├── cli.rs                # CLI 定义（clap）
-│   ├── commands/             # 命令实现
-│   │   ├── mod.rs
-│   │   ├── new.rs
-│   │   ├── build.rs
-│   │   ├── test.rs
-│   │   ├── publish.rs
-│   │   └── ...
-│   ├── config/               # 配置
-│   │   ├── mod.rs
-│   │   └── ccgo_toml.rs
-│   ├── exec/                 # 进程执行
-│   │   ├── mod.rs
-│   │   ├── subprocess.rs
-│   │   └── python.rs
-│   └── utils/                # 实用工具
-│       ├── mod.rs
-│       ├── paths.rs
-│       ├── terminal.rs
-│       └── git_version.rs
-└── Cargo.toml
+src/
+├── main.rs                   # 入口点
+├── cli.rs                    # CLI 定义（clap derive）
+├── commands/                 # 命令实现
+│   ├── mod.rs               # 命令模块导出
+│   ├── new.rs               # 项目创建（ccgo new）
+│   ├── init.rs              # 项目初始化（ccgo init）
+│   ├── build.rs             # 构建编排（ccgo build）
+│   ├── test.rs              # 测试执行（ccgo test）
+│   ├── bench.rs             # 基准测试（ccgo bench）
+│   ├── doc.rs               # 文档生成（ccgo doc）
+│   ├── publish.rs           # 发布（ccgo publish）
+│   ├── check.rs             # 环境检查（ccgo check）
+│   ├── clean.rs             # 清理（ccgo clean）
+│   ├── tag.rs               # Git 标签（ccgo tag）
+│   ├── package.rs           # 打包（ccgo package）
+│   ├── install.rs           # 依赖安装（ccgo install）
+│   ├── add.rs               # 添加依赖（ccgo add）
+│   ├── remove.rs            # 移除依赖（ccgo remove）
+│   ├── tree.rs              # 依赖树（ccgo tree）
+│   ├── search.rs            # 包搜索（ccgo search）
+│   ├── registry.rs          # 注册表管理（ccgo registry）
+│   ├── update.rs            # 更新依赖（ccgo update）
+│   ├── vendor.rs            # 依赖打包（ccgo vendor）
+│   ├── run.rs               # 运行示例（ccgo run）
+│   └── analytics.rs         # 构建分析（ccgo analytics）
+├── config/                   # 配置解析
+│   ├── mod.rs               # 配置模块导出
+│   └── ccgo_toml.rs         # CCGO.toml 解析
+├── builders/                 # 平台构建器
+│   ├── mod.rs               # 构建器 trait 和通用代码
+│   ├── android.rs           # Android 构建器
+│   ├── ios.rs               # iOS 构建器
+│   ├── macos.rs             # macOS 构建器
+│   ├── windows.rs           # Windows 构建器
+│   ├── linux.rs             # Linux 构建器
+│   ├── ohos.rs              # OpenHarmony 构建器
+│   ├── tvos.rs              # tvOS 构建器
+│   ├── watchos.rs           # watchOS 构建器
+│   └── kmp.rs               # Kotlin Multiplatform 构建器
+├── registry/                 # 包注册表
+│   ├── mod.rs               # 注册表模块导出
+│   ├── index.rs             # 索引解析和缓存
+│   ├── resolver.rs          # 版本解析
+│   └── graph.rs             # 依赖图
+├── exec/                     # 进程执行
+│   ├── mod.rs               # 执行工具
+│   └── subprocess.rs        # 子进程管理
+└── utils/                    # 实用工具
+    ├── mod.rs               # 工具导出
+    ├── paths.rs             # 路径工具
+    ├── terminal.rs          # 终端输出（颜色、进度）
+    ├── git.rs               # Git 操作
+    └── cmake.rs             # CMake 集成
 ```
 
 ### 命令执行流程
@@ -148,26 +139,70 @@ ccgo-rs/
 1. 用户输入
    └─> ccgo build android --arch arm64-v8a
 
-2. CLI 解析（cli.py / cli.rs）
-   └─> 路由到 commands/build.py::Build 类
+2. CLI 解析（cli.rs 使用 clap）
+   └─> 匹配 Commands::Build 变体
+   └─> 调度到 commands/build.rs
 
-3. 命令执行（build.py）
-   ├─> 解析参数
-   ├─> 从项目加载 build_config.py
-   ├─> 导入 build_scripts/build_android.py
-   └─> 执行 build_android.main()
+3. 命令执行（build.rs）
+   ├─> 从 clap 解析 BuildArgs
+   ├─> 加载 CCGO.toml 配置
+   ├─> 选择适当的平台构建器
+   └─> 执行 builder.build()
 
-4. 平台构建脚本（build_android.py）
+4. 平台构建器（builders/android.rs）
    ├─> 验证环境（NDK、SDK）
    ├─> 使用工具链配置 CMake
-   ├─> 从模板生成 CMakeLists.txt
+   ├─> 设置 CCGO_CMAKE_DIR 用于 CMake 工具
    ├─> 执行 CMake 配置
-   ├─> 执行 CMake 构建
+   ├─> 执行 CMake 构建（支持缓存）
    └─> 打包产物（SO、AAR）
 
 5. 输出
-   └─> target/android/arm64-v8a/libproject.so
-       target/android/project.aar
+   └─> cmake_build/Android/arm64-v8a/libproject.so
+       cmake_build/Android/Android.out/project.aar
+```
+
+### 命令实现示例
+
+```rust
+// commands/build.rs
+use clap::Args;
+use anyhow::Result;
+use crate::builders::{AndroidBuilder, IosBuilder, Platform};
+use crate::config::CcgoConfig;
+
+#[derive(Args)]
+pub struct BuildArgs {
+    /// 目标平台
+    pub platform: String,
+
+    /// 目标架构
+    #[arg(long, value_delimiter = ',')]
+    pub arch: Option<Vec<String>>,
+
+    /// 构建类型（debug/release）
+    #[arg(long, default_value = "release")]
+    pub build_type: String,
+
+    /// 启用构建缓存（ccache/sccache）
+    #[arg(long, default_value = "auto")]
+    pub cache: String,
+}
+
+impl BuildArgs {
+    pub fn execute(&self) -> Result<()> {
+        let config = CcgoConfig::load()?;
+
+        match self.platform.as_str() {
+            "android" => AndroidBuilder::new(&config, self).build()?,
+            "ios" => IosBuilder::new(&config, self).build()?,
+            // ... 其他平台
+            _ => anyhow::bail!("未知平台：{}", self.platform),
+        }
+
+        Ok(())
+    }
+}
 ```
 
 ## 模板架构
@@ -279,72 +314,151 @@ class CurrentYearExtension(Extension):
 
 ### 平台适配器
 
-每个平台都有专用的构建脚本：
+每个平台都有专用的构建器，实现 `PlatformBuilder` trait：
 
-```python
-# build_android.py
-class AndroidBuilder:
-    def __init__(self, config):
-        self.config = config
-        self.ndk_path = self._find_ndk()
-        self.sdk_path = self._find_sdk()
+```rust
+// builders/mod.rs
+pub trait PlatformBuilder {
+    fn new(config: &CcgoConfig, args: &BuildArgs) -> Result<Self> where Self: Sized;
+    fn validate_environment(&self) -> Result<()>;
+    fn configure_cmake(&self) -> Result<Vec<String>>;
+    fn build(&self) -> Result<()>;
+    fn package(&self) -> Result<PathBuf>;
+}
 
-    def configure(self):
-        """使用 Android 工具链配置 CMake"""
-        toolchain = os.path.join(
-            self.ndk_path,
-            "build/cmake/android.toolchain.cmake"
-        )
-        cmake_args = [
-            f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
-            f"-DANDROID_ABI={self.config.arch}",
-            f"-DANDROID_PLATFORM=android-{self.config.min_sdk}",
-            f"-DCCGO_CMAKE_DIR={self.ccgo_cmake_dir}",
-        ]
-        return cmake_args
+// builders/android.rs
+pub struct AndroidBuilder {
+    config: CcgoConfig,
+    ndk_path: PathBuf,
+    sdk_path: PathBuf,
+    architectures: Vec<String>,
+    build_type: BuildType,
+    cache_type: CacheType,
+}
 
-    def build(self):
-        """执行 CMake 构建"""
-        # 生成构建文件
-        run_cmd(["cmake", *self.configure(), ".."])
+impl PlatformBuilder for AndroidBuilder {
+    fn new(config: &CcgoConfig, args: &BuildArgs) -> Result<Self> {
+        let ndk_path = Self::find_ndk()?;
+        let sdk_path = Self::find_sdk()?;
+        Ok(Self {
+            config: config.clone(),
+            ndk_path,
+            sdk_path,
+            architectures: args.arch.clone().unwrap_or_default(),
+            build_type: args.build_type.parse()?,
+            cache_type: args.cache.parse()?,
+        })
+    }
 
-        # 构建
-        run_cmd(["cmake", "--build", ".", "--config", "Release"])
+    fn configure_cmake(&self) -> Result<Vec<String>> {
+        let toolchain = self.ndk_path
+            .join("build/cmake/android.toolchain.cmake");
 
-    def package(self):
-        """打包 AAR 和 SO 文件"""
-        # 收集 SO 文件
-        # 生成 AAR
-        # 创建归档
+        Ok(vec![
+            format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()),
+            format!("-DANDROID_ABI={}", self.current_arch),
+            format!("-DANDROID_PLATFORM=android-{}", self.config.android.min_sdk),
+            format!("-DCCGO_CMAKE_DIR={}", self.ccgo_cmake_dir().display()),
+            self.cache_type.cmake_args(),
+        ])
+    }
+
+    fn build(&self) -> Result<()> {
+        self.validate_environment()?;
+
+        for arch in &self.architectures {
+            let build_dir = self.build_dir(arch);
+            std::fs::create_dir_all(&build_dir)?;
+
+            // 配置
+            let cmake_args = self.configure_cmake()?;
+            Command::new("cmake")
+                .current_dir(&build_dir)
+                .args(&cmake_args)
+                .arg("..")
+                .status()?;
+
+            // 构建
+            Command::new("cmake")
+                .current_dir(&build_dir)
+                .args(["--build", ".", "--config", self.build_type.as_str()])
+                .status()?;
+        }
+
+        self.package()?;
+        Ok(())
+    }
+}
 ```
 
 ### 依赖管理
 
-```python
-# dependency_manager.py
-class DependencyManager:
-    def __init__(self, project_dir):
-        self.ccgo_toml = self._load_ccgo_toml(project_dir)
-        self.dependencies = self.ccgo_toml.get("dependencies", {})
+```rust
+// registry/resolver.rs
+pub struct DependencyResolver {
+    registries: Vec<Registry>,
+    cache_dir: PathBuf,
+}
 
-    def resolve(self, platform):
-        """解析平台的依赖"""
-        resolved = []
+impl DependencyResolver {
+    pub fn new() -> Result<Self> {
+        let registries = Registry::load_all()?;
+        let cache_dir = ccgo_home_path().join("deps");
+        Ok(Self { registries, cache_dir })
+    }
 
-        for name, spec in self.dependencies.items():
-            dep = self._resolve_single(name, spec, platform)
-            resolved.append(dep)
+    pub fn resolve(&self, config: &CcgoConfig) -> Result<Vec<ResolvedDep>> {
+        let mut resolved = Vec::new();
+        let mut graph = DependencyGraph::new();
 
-        return resolved
+        for dep in &config.dependencies {
+            let resolved_dep = self.resolve_single(dep)?;
+            graph.add_dependency(&resolved_dep)?;
+            resolved.push(resolved_dep);
+        }
 
-    def _resolve_single(self, name, spec, platform):
-        """解析单个依赖"""
-        if "git" in spec:
-            return self._resolve_git(name, spec)
-        elif "path" in spec:
-            return self._resolve_path(name, spec)
-        elif "version" in spec:
-            return self._resolve_version(name, spec, platform)
+        // 检测循环
+        graph.detect_cycles()?;
+
+        // 拓扑排序以确保正确的构建顺序
+        Ok(graph.topological_sort()?)
+    }
+
+    fn resolve_single(&self, dep: &DependencyConfig) -> Result<ResolvedDep> {
+        match dep {
+            DependencyConfig::Git { git, branch, tag, .. } => {
+                self.resolve_git(git, branch.as_ref().or(tag.as_ref()))
+            }
+            DependencyConfig::Path { path, .. } => {
+                self.resolve_path(path)
+            }
+            DependencyConfig::Registry { version, registry, .. } => {
+                self.resolve_registry(dep.name(), version, registry.as_deref())
+            }
+        }
+    }
+
+    fn resolve_registry(
+        &self,
+        name: &str,
+        version: &str,
+        registry: Option<&str>,
+    ) -> Result<ResolvedDep> {
+        let registry = self.find_registry(registry)?;
+        let package = registry.lookup_package(name)?;
+        let matched_version = package.resolve_version(version)?;
+
+        Ok(ResolvedDep {
+            name: name.to_string(),
+            version: matched_version.version.clone(),
+            source: Source::Git {
+                url: package.repository.clone(),
+                reference: matched_version.git_tag.clone(),
+            },
+            checksum: matched_version.checksum.clone(),
+        })
+    }
+}
 ```
 
 ## Gradle 插件架构
@@ -446,38 +560,50 @@ COPY --from=builder /workspace/target/android /output
 
 ### 构建编排
 
-```python
-# build_docker.py
-class DockerBuilder:
-    def __init__(self, platform, config):
-        self.platform = platform
-        self.config = config
-        self.image_name = f"ccgo-builder-{platform}"
+```rust
+// builders/docker.rs
+pub struct DockerBuilder {
+    platform: Platform,
+    config: CcgoConfig,
+    image_name: String,
+}
 
-    def build_image(self):
-        """构建或拉取 Docker 镜像"""
-        if self._image_exists():
-            return
+impl DockerBuilder {
+    pub fn new(platform: Platform, config: &CcgoConfig) -> Self {
+        let image_name = format!("ccgo-builder-{}", platform.as_str());
+        Self {
+            platform,
+            config: config.clone(),
+            image_name,
+        }
+    }
 
-        dockerfile = self._get_dockerfile()
-        run_cmd([
-            "docker", "build",
-            "-f", dockerfile,
-            "-t", self.image_name,
-            "."
-        ])
+    pub fn build_image(&self) -> Result<()> {
+        if self.image_exists()? {
+            return Ok(());
+        }
 
-    def build_in_container(self):
-        """在容器内执行构建"""
-        run_cmd([
-            "docker", "run",
-            "--rm",
-            "-v", f"{self.project_dir}:/workspace",
-            "-w", "/workspace",
-            self.image_name,
-            "ccgo", "build", self.platform,
-            *self.config.extra_args
-        ])
+        let dockerfile = self.get_dockerfile()?;
+        Command::new("docker")
+            .args(["build", "-f", &dockerfile, "-t", &self.image_name, "."])
+            .status()?;
+        Ok(())
+    }
+
+    pub fn build_in_container(&self, project_dir: &Path) -> Result<()> {
+        let mount = format!("{}:/workspace", project_dir.display());
+        Command::new("docker")
+            .args([
+                "run", "--rm",
+                "-v", &mount,
+                "-w", "/workspace",
+                &self.image_name,
+                "ccgo", "build", self.platform.as_str(),
+            ])
+            .status()?;
+        Ok(())
+    }
+}
 ```
 
 ## 版本管理架构
@@ -539,47 +665,80 @@ CCGO.toml (version = "1.2.3")
 
 ### 自定义命令
 
-```python
-# ccgo/commands/custom.py
-from utils.context import CliCommand
+可以通过实现命令模块并在 CLI 中注册来添加新命令：
 
-class Custom(CliCommand):
-    @staticmethod
-    def description():
-        return "自定义命令描述"
+```rust
+// commands/custom.rs
+use clap::Args;
+use anyhow::Result;
 
-    @staticmethod
-    def cli():
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--option", help="自定义选项")
-        return parser
+#[derive(Args)]
+pub struct CustomArgs {
+    /// 自定义选项
+    #[arg(long)]
+    pub option: Option<String>,
+}
 
-    @staticmethod
-    def exec(context, args):
-        # 自定义命令实现
-        print(f"使用 {args.option} 执行自定义命令")
-        return CliResult.success()
+impl CustomArgs {
+    pub fn execute(&self) -> Result<()> {
+        println!("使用 {:?} 执行自定义命令", self.option);
+        // 自定义命令实现
+        Ok(())
+    }
+}
+
+// cli.rs - 注册命令
+#[derive(Subcommand)]
+pub enum Commands {
+    // ... 现有命令
+    /// 自定义命令描述
+    Custom(CustomArgs),
+}
 ```
 
 ### 自定义平台
 
-```python
-# build_scripts/build_custom.py
-def main(build_config):
-    """自定义平台构建脚本"""
+可以通过实现 `PlatformBuilder` trait 来添加新平台：
 
-    # 配置
-    cmake_args = [
-        "-DCMAKE_SYSTEM_NAME=Custom",
-        "-DCMAKE_C_COMPILER=custom-gcc",
-        "-DCMAKE_CXX_COMPILER=custom-g++",
-    ]
+```rust
+// builders/custom.rs
+pub struct CustomBuilder {
+    config: CcgoConfig,
+    build_args: BuildArgs,
+}
 
-    # 构建
-    run_cmake_build(build_config, cmake_args)
+impl PlatformBuilder for CustomBuilder {
+    fn new(config: &CcgoConfig, args: &BuildArgs) -> Result<Self> {
+        Ok(Self {
+            config: config.clone(),
+            build_args: args.clone(),
+        })
+    }
 
-    # 打包
-    package_artifacts(build_config)
+    fn validate_environment(&self) -> Result<()> {
+        // 检查自定义工具链
+        which::which("custom-gcc")?;
+        which::which("custom-g++")?;
+        Ok(())
+    }
+
+    fn configure_cmake(&self) -> Result<Vec<String>> {
+        Ok(vec![
+            "-DCMAKE_SYSTEM_NAME=Custom".to_string(),
+            "-DCMAKE_C_COMPILER=custom-gcc".to_string(),
+            "-DCMAKE_CXX_COMPILER=custom-g++".to_string(),
+            format!("-DCCGO_CMAKE_DIR={}", self.ccgo_cmake_dir().display()),
+        ])
+    }
+
+    fn build(&self) -> Result<()> {
+        self.validate_environment()?;
+        // 运行 CMake 配置和构建
+        self.run_cmake_build()?;
+        self.package()?;
+        Ok(())
+    }
+}
 ```
 
 ### 自定义模板
@@ -600,61 +759,155 @@ custom_config:
 
 ### 构建缓存
 
-```python
-# 增量构建
-class BuildCache:
-    def __init__(self, cache_dir):
-        self.cache_dir = cache_dir
-        self.manifest = self._load_manifest()
+CCGO 集成了 ccache 和 sccache 用于编译器缓存：
 
-    def is_cached(self, source_files):
-        """检查构建是否已缓存"""
-        current_hash = self._compute_hash(source_files)
-        cached_hash = self.manifest.get("hash")
-        return current_hash == cached_hash
+```rust
+// builders/cache.rs
+pub enum CacheType {
+    Auto,    // 自动检测（优先 sccache > ccache）
+    Ccache,
+    Sccache,
+    None,
+}
 
-    def save(self, source_files, artifacts):
-        """保存构建到缓存"""
-        self.manifest["hash"] = self._compute_hash(source_files)
-        self.manifest["artifacts"] = artifacts
-        self._save_manifest()
+impl CacheType {
+    pub fn detect() -> Self {
+        if which::which("sccache").is_ok() {
+            CacheType::Sccache
+        } else if which::which("ccache").is_ok() {
+            CacheType::Ccache
+        } else {
+            CacheType::None
+        }
+    }
+
+    pub fn cmake_args(&self) -> Vec<String> {
+        match self {
+            CacheType::Sccache => vec![
+                "-DCMAKE_C_COMPILER_LAUNCHER=sccache".to_string(),
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=sccache".to_string(),
+            ],
+            CacheType::Ccache => vec![
+                "-DCMAKE_C_COMPILER_LAUNCHER=ccache".to_string(),
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache".to_string(),
+            ],
+            _ => vec![],
+        }
+    }
+}
 ```
 
 ### 并行构建
 
-```python
-# 多线程 CMake 构建
-def build_all_architectures(architectures):
-    with ThreadPoolExecutor(max_workers=len(architectures)) as executor:
-        futures = []
-        for arch in architectures:
-            future = executor.submit(build_architecture, arch)
-            futures.append(future)
+多架构构建使用 Rayon 并行执行：
 
-        for future in as_completed(futures):
-            result = future.result()
-            print(f"构建完成：{result}")
+```rust
+// builders/mod.rs
+use rayon::prelude::*;
+
+pub fn build_all_architectures(
+    builder: &impl PlatformBuilder,
+    architectures: &[String],
+) -> Result<Vec<BuildResult>> {
+    architectures
+        .par_iter()
+        .map(|arch| {
+            println!("正在构建 {}", arch);
+            builder.build_arch(arch)
+        })
+        .collect()
+}
+
+// 示例：为多架构并行构建 Android
+pub fn build_android_parallel(config: &CcgoConfig, args: &BuildArgs) -> Result<()> {
+    let architectures = args.arch.clone()
+        .unwrap_or_else(|| vec![
+            "armeabi-v7a".to_string(),
+            "arm64-v8a".to_string(),
+            "x86_64".to_string(),
+        ]);
+
+    let builder = AndroidBuilder::new(config, args)?;
+    let results = build_all_architectures(&builder, &architectures)?;
+
+    for result in results {
+        println!("完成：{} 耗时 {:?}", result.arch, result.duration);
+    }
+
+    Ok(())
+}
 ```
 
 ## 测试架构
 
 ### 单元测试
 
-```python
-# tests/test_build_android.py
-import unittest
-from build_scripts.build_android import AndroidBuilder
+```rust
+// tests/builders/android_test.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::CcgoConfig;
+    use crate::builders::android::AndroidBuilder;
 
-class TestAndroidBuilder(unittest.TestCase):
-    def test_configure(self):
-        builder = AndroidBuilder(mock_config)
-        args = builder.configure()
-        self.assertIn("-DANDROID_ABI=arm64-v8a", args)
+    #[test]
+    fn test_configure_cmake() {
+        let config = CcgoConfig::mock();
+        let args = BuildArgs {
+            arch: Some(vec!["arm64-v8a".to_string()]),
+            build_type: "release".to_string(),
+            ..Default::default()
+        };
 
-    def test_ndk_detection(self):
-        builder = AndroidBuilder(mock_config)
-        ndk_path = builder._find_ndk()
-        self.assertTrue(os.path.exists(ndk_path))
+        let builder = AndroidBuilder::new(&config, &args).unwrap();
+        let cmake_args = builder.configure_cmake().unwrap();
+
+        assert!(cmake_args.iter().any(|a| a.contains("ANDROID_ABI=arm64-v8a")));
+        assert!(cmake_args.iter().any(|a| a.contains("android.toolchain.cmake")));
+    }
+
+    #[test]
+    fn test_ndk_detection() {
+        // 如果未安装 NDK 则跳过
+        if std::env::var("ANDROID_NDK_HOME").is_err() {
+            return;
+        }
+
+        let ndk_path = AndroidBuilder::find_ndk().unwrap();
+        assert!(ndk_path.exists());
+        assert!(ndk_path.join("build/cmake/android.toolchain.cmake").exists());
+    }
+}
+
+// tests/registry/resolver_test.rs
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_resolution() {
+        let resolver = DependencyResolver::new().unwrap();
+        let dep = DependencyConfig::Registry {
+            name: "fmt".to_string(),
+            version: "^10.0".to_string(),
+            registry: None,
+        };
+
+        let resolved = resolver.resolve_single(&dep).unwrap();
+        assert!(resolved.version.starts_with("10."));
+    }
+
+    #[test]
+    fn test_cycle_detection() {
+        let mut graph = DependencyGraph::new();
+        graph.add_edge("a", "b").unwrap();
+        graph.add_edge("b", "c").unwrap();
+        graph.add_edge("c", "a").unwrap();
+
+        let result = graph.detect_cycles();
+        assert!(result.is_err());
+    }
+}
 ```
 
 ### 集成测试
