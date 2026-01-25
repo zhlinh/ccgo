@@ -66,7 +66,7 @@ return {
     require("ccgo").setup({
       executable = "ccgo",
       use_terminal = true,
-      notifications = true,
+      notifications = false,
     })
   end,
 }
@@ -131,7 +131,7 @@ return {
     require("ccgo").setup({
       executable = "ccgo",
       use_terminal = true,
-      notifications = true,
+      notifications = false,
     })
   end,
 }
@@ -179,7 +179,7 @@ require("ccgo").setup({
   auto_refresh = true,
 
   -- Show notifications for build results
-  notifications = true,
+  notifications = false,
 
   -- Run commands in terminal (true) or background (false)
   use_terminal = true,
