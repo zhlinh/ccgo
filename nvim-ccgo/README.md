@@ -41,50 +41,86 @@ Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C+
 
 ## Installation
 
-### [lazy.nvim](https://github.com/folke/lazy.nvim)
+> **Note**: nvim-ccgo is a subdirectory of the [ccgo](https://github.com/zhlinh/ccgo) repository, not a standalone repo.
 
-#### Option 1: From GitHub (subdirectory of ccgo repo)
+### Local Development / Testing
 
-Since nvim-ccgo is a subdirectory of the ccgo repository, you need to add the subdirectory to runtimepath:
+For local development or testing, point directly to the nvim-ccgo directory on your machine.
+
+#### lazy.nvim
+
+Create `~/.config/nvim/lua/plugins/ccgo.lua`:
 
 ```lua
--- ~/.config/nvim/lua/plugins/ccgo.lua
 return {
-  "zhlinh/ccgo",
+  dir = "/path/to/ccgo/nvim-ccgo",  -- Replace with your actual path
+  name = "nvim-ccgo",
   dependencies = {
     "nvim-telescope/telescope.nvim", -- optional, for platform picker
     "L3MON4D3/LuaSnip", -- optional, for snippets
   },
-  config = function(plugin)
-    -- Add nvim-ccgo subdirectory to runtimepath
-    vim.opt.rtp:append(plugin.dir .. "/nvim-ccgo")
+  config = function()
     require("ccgo").setup({
-      -- Path to ccgo executable (default: "ccgo")
       executable = "ccgo",
-      -- Default platform (auto-detected if nil)
-      default_platform = nil,
-      -- Auto-refresh dependencies when CCGO.toml changes
-      auto_refresh = true,
-      -- Show notifications for build results
-      notifications = true,
-      -- Run commands in terminal (true) or background (false)
       use_terminal = true,
+      notifications = true,
     })
   end,
 }
 ```
 
-#### Option 2: From local path
+Example paths:
+- macOS/Linux: `dir = "~/Projects/ccgo/nvim-ccgo"`
+- Windows: `dir = "C:/Users/you/Projects/ccgo/nvim-ccgo"`
 
-If you have the plugin locally, use `dir` to point directly to the nvim-ccgo directory:
+#### packer.nvim
 
 ```lua
--- ~/.config/nvim/lua/plugins/ccgo.lua
+use {
+  "/path/to/ccgo/nvim-ccgo",
+  config = function()
+    require("ccgo").setup()
+  end,
+}
+```
+
+### Remote Installation (from GitHub)
+
+Install from the ccgo repository on GitHub. Since nvim-ccgo is a subdirectory, you need to add it to the runtimepath.
+
+#### lazy.nvim
+
+Create `~/.config/nvim/lua/plugins/ccgo.lua`:
+
+```lua
 return {
-  dir = "/path/to/ccgo/nvim-ccgo",  -- absolute path to nvim-ccgo directory
+  "zhlinh/ccgo",
+  name = "nvim-ccgo",
   dependencies = {
-    "nvim-telescope/telescope.nvim", -- optional, for platform picker
-    "L3MON4D3/LuaSnip", -- optional, for snippets
+    "nvim-telescope/telescope.nvim", -- optional
+    "L3MON4D3/LuaSnip", -- optional
+  },
+  config = function(plugin)
+    -- Add nvim-ccgo subdirectory to runtimepath
+    vim.opt.rtp:append(plugin.dir .. "/nvim-ccgo")
+    require("ccgo").setup({
+      executable = "ccgo",
+      use_terminal = true,
+      notifications = true,
+    })
+  end,
+}
+```
+
+#### packer.nvim
+
+```lua
+use {
+  "zhlinh/ccgo",
+  rtp = "nvim-ccgo",  -- specify subdirectory
+  requires = {
+    "nvim-telescope/telescope.nvim", -- optional
+    "L3MON4D3/LuaSnip", -- optional
   },
   config = function()
     require("ccgo").setup()
@@ -92,61 +128,32 @@ return {
 }
 ```
 
-Or add to your existing plugins file (e.g., `~/.config/nvim/lua/plugins/init.lua`):
-
-```lua
--- ~/.config/nvim/lua/plugins/init.lua
-return {
-  -- ... other plugins ...
-
-  {
-    "zhlinh/ccgo",
-    config = function(plugin)
-      vim.opt.rtp:append(plugin.dir .. "/nvim-ccgo")
-      require("ccgo").setup()
-    end,
-  },
-}
-```
-
-### [packer.nvim](https://github.com/wbthomason/packer.nvim)
-
-Add to `~/.config/nvim/lua/plugins.lua` (or wherever your packer config is):
-
-```lua
--- ~/.config/nvim/lua/plugins.lua
-return require("packer").startup(function(use)
-  -- ... other plugins ...
-
-  -- From GitHub (nvim-ccgo is in ccgo repo subdirectory)
-  use {
-    "zhlinh/ccgo",
-    rtp = "nvim-ccgo",  -- specify subdirectory
-    requires = {
-      "nvim-telescope/telescope.nvim", -- optional
-      "L3MON4D3/LuaSnip", -- optional
-    },
-    config = function()
-      require("ccgo").setup()
-    end,
-  }
-
-  -- Or from local path
-  -- use {
-  --   "/path/to/ccgo/nvim-ccgo",
-  --   requires = { ... },
-  --   config = function() require("ccgo").setup() end,
-  -- }
-end)
-```
-
 ### Manual Installation
 
-Clone to your Neovim packages directory:
-
 ```bash
-git clone https://github.com/zhlinh/nvim-ccgo ~/.local/share/nvim/site/pack/plugins/start/nvim-ccgo
+# Clone the ccgo repository
+git clone https://github.com/zhlinh/ccgo ~/.local/share/nvim/site/pack/ccgo/start/ccgo
+
+# Create symlink to nvim-ccgo (or copy the directory)
+ln -s ~/.local/share/nvim/site/pack/ccgo/start/ccgo/nvim-ccgo \
+      ~/.local/share/nvim/site/pack/ccgo/start/nvim-ccgo
 ```
+
+Then add to your `init.lua`:
+
+```lua
+require("ccgo").setup()
+```
+
+### Verify Installation
+
+After installation, restart Neovim and run:
+
+```vim
+:CcgoInfo
+```
+
+You should see plugin information. If you get "Command not found", check your installation path.
 
 ## Configuration
 
