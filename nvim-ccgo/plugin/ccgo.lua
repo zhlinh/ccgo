@@ -17,14 +17,14 @@ end
 -- Full setup happens when user calls require("ccgo").setup()
 
 -- Create basic commands that trigger plugin load
-vim.api.nvim_create_user_command("CcgoSetup", function()
+vim.api.nvim_create_user_command("ccgoSetup", function()
   require("ccgo").setup()
 end, {
   desc = "Setup CCGO plugin with default configuration",
 })
 
 -- Provide info command
-vim.api.nvim_create_user_command("CcgoInfo", function()
+vim.api.nvim_create_user_command("ccgoInfo", function()
   local ccgo = require("ccgo")
   local lines = {
     "CCGO Plugin Info",
