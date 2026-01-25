@@ -33,8 +33,15 @@ A comprehensive VS Code extension for CCGO, the C++ cross-platform build system.
 - `CCGO: Build for Platform...` - Select platform and build type
 - `CCGO: Install Dependencies` - Install project dependencies
 - `CCGO: Run Tests` - Execute test suite
+- `CCGO: Run Benchmarks` - Execute benchmark suite
 - `CCGO: Clean Build Artifacts` - Remove build outputs
+- `CCGO: Generate Documentation` - Generate Doxygen documentation
+- `CCGO: Check Environment` - Check platform dependencies
+- `CCGO: Publish Package...` - Publish to repository (Maven, CocoaPods, SPM, OHPM, etc.)
+- `CCGO: Create Version Tag` - Create git tag from CCGO.toml version
+- `CCGO: Package SDK` - Package SDK for distribution
 - `CCGO: Generate IDE Project` - Create platform-specific IDE project
+- `CCGO: Show Dependency Tree` - Display dependency tree in terminal
 - `CCGO: Refresh Dependencies` - Update dependency tree view
 
 ## Requirements
