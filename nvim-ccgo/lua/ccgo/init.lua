@@ -83,8 +83,17 @@ function M.get_project_root()
   return root
 end
 
+-- Track if setup has been called
+M._setup_done = false
+
 -- Setup function
 function M.setup(opts)
+  -- Prevent double setup
+  if M._setup_done then
+    return
+  end
+  M._setup_done = true
+
   -- Merge user config with defaults
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
 
