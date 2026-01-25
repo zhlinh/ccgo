@@ -43,21 +43,21 @@ Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C+
 
 ### [lazy.nvim](https://github.com/folke/lazy.nvim)
 
-#### Option 1: From GitHub (after plugin is published)
+#### Option 1: From GitHub (subdirectory of ccgo repo)
 
-Create a new file `~/.config/nvim/lua/plugins/ccgo.lua`:
+Since nvim-ccgo is a subdirectory of the ccgo repository, you need to add the subdirectory to runtimepath:
 
 ```lua
 -- ~/.config/nvim/lua/plugins/ccgo.lua
 return {
-  "zhlinh/nvim-ccgo",
+  "zhlinh/ccgo",
   dependencies = {
     "nvim-telescope/telescope.nvim", -- optional, for platform picker
     "L3MON4D3/LuaSnip", -- optional, for snippets
   },
-  ft = "toml",  -- lazy load on TOML files
-  cmd = { "ccgoBuild", "ccgoTest", "ccgoTree" },  -- lazy load on commands
-  config = function()
+  config = function(plugin)
+    -- Add nvim-ccgo subdirectory to runtimepath
+    vim.opt.rtp:append(plugin.dir .. "/nvim-ccgo")
     require("ccgo").setup({
       -- Path to ccgo executable (default: "ccgo")
       executable = "ccgo",
@@ -76,18 +76,16 @@ return {
 
 #### Option 2: From local path
 
-If you have the plugin locally, use `dir` instead of the GitHub path:
+If you have the plugin locally, use `dir` to point directly to the nvim-ccgo directory:
 
 ```lua
 -- ~/.config/nvim/lua/plugins/ccgo.lua
 return {
-  dir = "/path/to/nvim-ccgo",  -- absolute path to the plugin directory
+  dir = "/path/to/ccgo/nvim-ccgo",  -- absolute path to nvim-ccgo directory
   dependencies = {
     "nvim-telescope/telescope.nvim", -- optional, for platform picker
     "L3MON4D3/LuaSnip", -- optional, for snippets
   },
-  ft = "toml",
-  cmd = { "ccgoBuild", "ccgoTest", "ccgoTree" },
   config = function()
     require("ccgo").setup()
   end,
@@ -102,10 +100,9 @@ return {
   -- ... other plugins ...
 
   {
-    dir = "/path/to/nvim-ccgo",  -- or "zhlinh/nvim-ccgo" when published
-    ft = "toml",
-    cmd = { "ccgoBuild", "ccgoTest", "ccgoTree" },
-    config = function()
+    "zhlinh/ccgo",
+    config = function(plugin)
+      vim.opt.rtp:append(plugin.dir .. "/nvim-ccgo")
       require("ccgo").setup()
     end,
   },
@@ -121,9 +118,10 @@ Add to `~/.config/nvim/lua/plugins.lua` (or wherever your packer config is):
 return require("packer").startup(function(use)
   -- ... other plugins ...
 
-  -- From GitHub (after plugin is published)
+  -- From GitHub (nvim-ccgo is in ccgo repo subdirectory)
   use {
-    "zhlinh/nvim-ccgo",
+    "zhlinh/ccgo",
+    rtp = "nvim-ccgo",  -- specify subdirectory
     requires = {
       "nvim-telescope/telescope.nvim", -- optional
       "L3MON4D3/LuaSnip", -- optional
@@ -135,7 +133,7 @@ return require("packer").startup(function(use)
 
   -- Or from local path
   -- use {
-  --   "/path/to/nvim-ccgo",
+  --   "/path/to/ccgo/nvim-ccgo",
   --   requires = { ... },
   --   config = function() require("ccgo").setup() end,
   -- }
