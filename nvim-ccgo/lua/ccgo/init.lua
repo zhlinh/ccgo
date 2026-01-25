@@ -12,7 +12,7 @@ M.config = {
   -- Auto-refresh dependencies when CCGO.toml changes
   auto_refresh = true,
   -- Show notifications for build results
-  notifications = true,
+  notifications = false,
   -- Run commands in terminal (true) or background (false)
   use_terminal = true,
   -- Telescope theme for pickers
