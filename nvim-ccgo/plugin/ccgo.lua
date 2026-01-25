@@ -29,13 +29,19 @@ end
 -- Create commands that auto-trigger setup (for lazy loading support)
 -- These stub commands will be replaced by the real ones after setup()
 
-vim.api.nvim_create_user_command("ccgoSetup", function()
+-- Helper: safely create command (delete if exists first)
+local function create_command(name, fn, opts)
+  pcall(vim.api.nvim_del_user_command, name)
+  vim.api.nvim_create_user_command(name, fn, opts)
+end
+
+create_command("CcgoSetup", function()
   require("ccgo").setup()
 end, {
   desc = "Setup CCGO plugin with default configuration",
 })
 
-vim.api.nvim_create_user_command("ccgoInfo", function()
+create_command("CcgoInfo", function()
   local ccgo = require("ccgo")
   local lines = {
     "CCGO Plugin Info",
@@ -52,15 +58,34 @@ end, {
 })
 
 -- Lazy-load command stubs (will trigger setup and then execute)
-vim.api.nvim_create_user_command("ccgoBuild", ensure_setup(function(opts)
-  require("ccgo.commands").build(opts.fargs[1], {})
+create_command("CcgoBuild", ensure_setup(function(opts)
+  local args = opts.fargs
+  local platform = args[1]
+  local build_opts = {}
+
+  for i = 2, #args do
+    local arg = args[i]
+    if arg:match("^--arch=") then
+      build_opts.arch = arg:gsub("^--arch=", "")
+    elseif arg == "--release" then
+      build_opts.release = true
+    elseif arg == "--ide-project" then
+      build_opts.ide_project = true
+    end
+  end
+
+  if platform then
+    require("ccgo.commands").build(platform, build_opts)
+  else
+    require("ccgo.commands").build_interactive()
+  end
 end), {
   nargs = "*",
   complete = function() return require("ccgo").platforms end,
   desc = "Build CCGO project for a platform",
 })
 
-vim.api.nvim_create_user_command("ccgoTest", ensure_setup(function(opts)
+create_command("CcgoTest", ensure_setup(function(opts)
   local test_opts = {}
   for _, arg in ipairs(opts.fargs) do
     if arg:match("^--filter=") then
@@ -73,13 +98,13 @@ end), {
   desc = "Run CCGO tests",
 })
 
-vim.api.nvim_create_user_command("ccgoTree", ensure_setup(function()
+create_command("CcgoTree", ensure_setup(function()
   require("ccgo.tree").show()
 end), {
   desc = "Show CCGO dependency tree",
 })
 
-vim.api.nvim_create_user_command("ccgoInstall", ensure_setup(function(opts)
+create_command("CcgoInstall", ensure_setup(function(opts)
   local install_opts = {}
   for _, arg in ipairs(opts.fargs) do
     if arg == "--frozen" then
@@ -92,13 +117,13 @@ end), {
   desc = "Install CCGO dependencies",
 })
 
-vim.api.nvim_create_user_command("ccgoClean", ensure_setup(function()
+create_command("CcgoClean", ensure_setup(function()
   require("ccgo.commands").clean()
 end), {
   desc = "Clean CCGO build artifacts",
 })
 
-vim.api.nvim_create_user_command("ccgoCheck", ensure_setup(function()
+create_command("CcgoCheck", ensure_setup(function()
   require("ccgo.commands").check()
 end), {
   desc = "Check CCGO environment",
