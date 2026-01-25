@@ -10,12 +10,12 @@ Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C+
   - Code completion and hover documentation
 
 - **Build Commands**
-  - `:CcgoBuild [platform]` - Build for a platform
-  - `:CcgoBuildInteractive` - Interactive platform/architecture selection
-  - `:CcgoTest` - Run tests
-  - `:CcgoBench` - Run benchmarks
-  - `:CcgoInstall` - Install dependencies
-  - `:CcgoClean` - Clean build artifacts
+  - `:ccgoBuild [platform]` - Build for a platform
+  - `:ccgoBuildInteractive` - Interactive platform/architecture selection
+  - `:ccgoTest` - Run tests
+  - `:ccgoBench` - Run benchmarks
+  - `:ccgoInstall` - Install dependencies
+  - `:ccgoClean` - Clean build artifacts
 
 - **Telescope Integration**
   - Platform picker with icons
@@ -43,6 +43,8 @@ Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C+
 
 ### [lazy.nvim](https://github.com/folke/lazy.nvim)
 
+#### Option 1: From GitHub (after plugin is published)
+
 Create a new file `~/.config/nvim/lua/plugins/ccgo.lua`:
 
 ```lua
@@ -54,7 +56,7 @@ return {
     "L3MON4D3/LuaSnip", -- optional, for snippets
   },
   ft = "toml",  -- lazy load on TOML files
-  cmd = { "CcgoBuild", "CcgoTest", "CcgoTree" },  -- lazy load on commands
+  cmd = { "ccgoBuild", "ccgoTest", "ccgoTree" },  -- lazy load on commands
   config = function()
     require("ccgo").setup({
       -- Path to ccgo executable (default: "ccgo")
@@ -72,6 +74,26 @@ return {
 }
 ```
 
+#### Option 2: From local path
+
+If you have the plugin locally, use `dir` instead of the GitHub path:
+
+```lua
+-- ~/.config/nvim/lua/plugins/ccgo.lua
+return {
+  dir = "/path/to/nvim-ccgo",  -- absolute path to the plugin directory
+  dependencies = {
+    "nvim-telescope/telescope.nvim", -- optional, for platform picker
+    "L3MON4D3/LuaSnip", -- optional, for snippets
+  },
+  ft = "toml",
+  cmd = { "ccgoBuild", "ccgoTest", "ccgoTree" },
+  config = function()
+    require("ccgo").setup()
+  end,
+}
+```
+
 Or add to your existing plugins file (e.g., `~/.config/nvim/lua/plugins/init.lua`):
 
 ```lua
@@ -80,9 +102,9 @@ return {
   -- ... other plugins ...
 
   {
-    "zhlinh/nvim-ccgo",
+    dir = "/path/to/nvim-ccgo",  -- or "zhlinh/nvim-ccgo" when published
     ft = "toml",
-    cmd = { "CcgoBuild", "CcgoTest", "CcgoTree" },
+    cmd = { "ccgoBuild", "ccgoTest", "ccgoTree" },
     config = function()
       require("ccgo").setup()
     end,
@@ -99,6 +121,7 @@ Add to `~/.config/nvim/lua/plugins.lua` (or wherever your packer config is):
 return require("packer").startup(function(use)
   -- ... other plugins ...
 
+  -- From GitHub (after plugin is published)
   use {
     "zhlinh/nvim-ccgo",
     requires = {
@@ -109,6 +132,13 @@ return require("packer").startup(function(use)
       require("ccgo").setup()
     end,
   }
+
+  -- Or from local path
+  -- use {
+  --   "/path/to/nvim-ccgo",
+  --   requires = { ... },
+  --   config = function() require("ccgo").setup() end,
+  -- }
 end)
 ```
 
@@ -148,19 +178,19 @@ require("ccgo").setup({
 
 | Command | Description |
 |---------|-------------|
-| `:CcgoBuild [platform]` | Build for a platform (interactive if no platform) |
-| `:CcgoBuildInteractive` | Build with interactive platform/arch selection |
-| `:CcgoTest [--filter=pattern]` | Run tests |
-| `:CcgoBench` | Run benchmarks |
-| `:CcgoInstall [--frozen]` | Install dependencies |
-| `:CcgoClean` | Clean build artifacts |
-| `:CcgoDoc [--open]` | Generate documentation |
-| `:CcgoCheck` | Check environment |
-| `:CcgoTree` | Show dependency tree |
-| `:CcgoPublish <target>` | Publish package |
-| `:CcgoTag [version]` | Create git tag |
-| `:CcgoPackage` | Package project |
-| `:CcgoInfo` | Show plugin info |
+| `:ccgoBuild [platform]` | Build for a platform (interactive if no platform) |
+| `:ccgoBuildInteractive` | Build with interactive platform/arch selection |
+| `:ccgoTest [--filter=pattern]` | Run tests |
+| `:ccgoBench` | Run benchmarks |
+| `:ccgoInstall [--frozen]` | Install dependencies |
+| `:ccgoClean` | Clean build artifacts |
+| `:ccgoDoc [--open]` | Generate documentation |
+| `:ccgoCheck` | Check environment |
+| `:ccgoTree` | Show dependency tree |
+| `:ccgoPublish <target>` | Publish package |
+| `:ccgoTag [version]` | Create git tag |
+| `:ccgoPackage` | Package project |
+| `:ccgoInfo` | Show plugin info |
 
 ## LSP Setup (Taplo)
 
@@ -234,18 +264,18 @@ vim.api.nvim_create_autocmd("BufEnter", {
   pattern = "CCGO.toml",
   callback = function()
     local opts = { buffer = true, silent = true }
-    vim.keymap.set("n", "<leader>cb", "<cmd>CcgoBuildInteractive<cr>", opts)
-    vim.keymap.set("n", "<leader>ct", "<cmd>CcgoTest<cr>", opts)
-    vim.keymap.set("n", "<leader>ci", "<cmd>CcgoInstall<cr>", opts)
-    vim.keymap.set("n", "<leader>cc", "<cmd>CcgoClean<cr>", opts)
-    vim.keymap.set("n", "<leader>cd", "<cmd>CcgoTree<cr>", opts)
+    vim.keymap.set("n", "<leader>cb", "<cmd>ccgoBuildInteractive<cr>", opts)
+    vim.keymap.set("n", "<leader>ct", "<cmd>ccgoTest<cr>", opts)
+    vim.keymap.set("n", "<leader>ci", "<cmd>ccgoInstall<cr>", opts)
+    vim.keymap.set("n", "<leader>cc", "<cmd>ccgoClean<cr>", opts)
+    vim.keymap.set("n", "<leader>cd", "<cmd>ccgoTree<cr>", opts)
   end,
 })
 ```
 
 ## Dependency Tree
 
-The `:CcgoTree` command opens a sidebar with your project's dependencies:
+The `:ccgoTree` command opens a sidebar with your project's dependencies:
 
 ```
 📦 CCGO Dependencies

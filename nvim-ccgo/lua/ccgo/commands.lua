@@ -220,8 +220,8 @@ end
 function M.setup(cfg)
   config = cfg
 
-  -- :CcgoBuild [platform] [--arch=<arch>] [--release] [--ide-project]
-  vim.api.nvim_create_user_command("CcgoBuild", function(opts)
+  -- :ccgoBuild [platform] [--arch=<arch>] [--release] [--ide-project]
+  vim.api.nvim_create_user_command("ccgoBuild", function(opts)
     local args = opts.fargs
     local platform = args[1]
     local build_opts = {}
@@ -250,15 +250,15 @@ function M.setup(cfg)
     desc = "Build CCGO project for a platform",
   })
 
-  -- :CcgoBuildInteractive
-  vim.api.nvim_create_user_command("CcgoBuildInteractive", function()
+  -- :ccgoBuildInteractive
+  vim.api.nvim_create_user_command("ccgoBuildInteractive", function()
     M.build_interactive()
   end, {
     desc = "Build CCGO project with interactive platform selection",
   })
 
-  -- :CcgoTest [--filter=<pattern>]
-  vim.api.nvim_create_user_command("CcgoTest", function(opts)
+  -- :ccgoTest [--filter=<pattern>]
+  vim.api.nvim_create_user_command("ccgoTest", function(opts)
     local test_opts = {}
     for _, arg in ipairs(opts.fargs) do
       if arg:match("^--filter=") then
@@ -271,15 +271,15 @@ function M.setup(cfg)
     desc = "Run CCGO tests",
   })
 
-  -- :CcgoBench
-  vim.api.nvim_create_user_command("CcgoBench", function()
+  -- :ccgoBench
+  vim.api.nvim_create_user_command("ccgoBench", function()
     M.bench()
   end, {
     desc = "Run CCGO benchmarks",
   })
 
-  -- :CcgoInstall [--frozen]
-  vim.api.nvim_create_user_command("CcgoInstall", function(opts)
+  -- :ccgoInstall [--frozen]
+  vim.api.nvim_create_user_command("ccgoInstall", function(opts)
     local install_opts = {}
     for _, arg in ipairs(opts.fargs) do
       if arg == "--frozen" then
@@ -292,15 +292,15 @@ function M.setup(cfg)
     desc = "Install CCGO dependencies",
   })
 
-  -- :CcgoClean
-  vim.api.nvim_create_user_command("CcgoClean", function()
+  -- :ccgoClean
+  vim.api.nvim_create_user_command("ccgoClean", function()
     M.clean()
   end, {
     desc = "Clean CCGO build artifacts",
   })
 
-  -- :CcgoDoc [--open]
-  vim.api.nvim_create_user_command("CcgoDoc", function(opts)
+  -- :ccgoDoc [--open]
+  vim.api.nvim_create_user_command("ccgoDoc", function(opts)
     local doc_opts = {}
     for _, arg in ipairs(opts.fargs) do
       if arg == "--open" then
@@ -313,25 +313,25 @@ function M.setup(cfg)
     desc = "Generate CCGO documentation",
   })
 
-  -- :CcgoCheck
-  vim.api.nvim_create_user_command("CcgoCheck", function()
+  -- :ccgoCheck
+  vim.api.nvim_create_user_command("ccgoCheck", function()
     M.check()
   end, {
     desc = "Check CCGO environment",
   })
 
-  -- :CcgoTree
-  vim.api.nvim_create_user_command("CcgoTree", function()
+  -- :ccgoTree
+  vim.api.nvim_create_user_command("ccgoTree", function()
     require("ccgo.tree").show()
   end, {
     desc = "Show CCGO dependency tree",
   })
 
-  -- :CcgoPublish <target>
-  vim.api.nvim_create_user_command("CcgoPublish", function(opts)
+  -- :ccgoPublish <target>
+  vim.api.nvim_create_user_command("ccgoPublish", function(opts)
     local target = opts.fargs[1]
     if not target then
-      vim.notify("Usage: :CcgoPublish <target>", vim.log.levels.WARN, { title = "CCGO" })
+      vim.notify("Usage: :ccgoPublish <target>", vim.log.levels.WARN, { title = "CCGO" })
       return
     end
     M.publish(target)
@@ -343,16 +343,16 @@ function M.setup(cfg)
     desc = "Publish CCGO package",
   })
 
-  -- :CcgoTag [version]
-  vim.api.nvim_create_user_command("CcgoTag", function(opts)
+  -- :ccgoTag [version]
+  vim.api.nvim_create_user_command("ccgoTag", function(opts)
     M.tag(opts.fargs[1])
   end, {
     nargs = "?",
     desc = "Create git tag for CCGO project",
   })
 
-  -- :CcgoPackage
-  vim.api.nvim_create_user_command("CcgoPackage", function()
+  -- :ccgoPackage
+  vim.api.nvim_create_user_command("ccgoPackage", function()
     M.package()
   end, {
     desc = "Package CCGO project",
