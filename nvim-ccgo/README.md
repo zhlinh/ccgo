@@ -43,36 +43,73 @@ Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C+
 
 ### [lazy.nvim](https://github.com/folke/lazy.nvim)
 
+Create a new file `~/.config/nvim/lua/plugins/ccgo.lua`:
+
 ```lua
-{
+-- ~/.config/nvim/lua/plugins/ccgo.lua
+return {
   "zhlinh/nvim-ccgo",
   dependencies = {
-    "nvim-telescope/telescope.nvim", -- optional
-    "L3MON4D3/LuaSnip", -- optional
+    "nvim-telescope/telescope.nvim", -- optional, for platform picker
+    "L3MON4D3/LuaSnip", -- optional, for snippets
   },
-  ft = "toml",
-  cmd = { "CcgoBuild", "CcgoTest", "CcgoTree" },
+  ft = "toml",  -- lazy load on TOML files
+  cmd = { "CcgoBuild", "CcgoTest", "CcgoTree" },  -- lazy load on commands
   config = function()
     require("ccgo").setup({
-      -- options
+      -- Path to ccgo executable (default: "ccgo")
+      executable = "ccgo",
+      -- Default platform (auto-detected if nil)
+      default_platform = nil,
+      -- Auto-refresh dependencies when CCGO.toml changes
+      auto_refresh = true,
+      -- Show notifications for build results
+      notifications = true,
+      -- Run commands in terminal (true) or background (false)
+      use_terminal = true,
     })
   end,
 }
 ```
 
-### [packer.nvim](https://github.com/wbthomason/packer.nvim)
+Or add to your existing plugins file (e.g., `~/.config/nvim/lua/plugins/init.lua`):
 
 ```lua
-use {
-  "zhlinh/nvim-ccgo",
-  requires = {
-    "nvim-telescope/telescope.nvim", -- optional
-    "L3MON4D3/LuaSnip", -- optional
+-- ~/.config/nvim/lua/plugins/init.lua
+return {
+  -- ... other plugins ...
+
+  {
+    "zhlinh/nvim-ccgo",
+    ft = "toml",
+    cmd = { "CcgoBuild", "CcgoTest", "CcgoTree" },
+    config = function()
+      require("ccgo").setup()
+    end,
   },
-  config = function()
-    require("ccgo").setup()
-  end,
 }
+```
+
+### [packer.nvim](https://github.com/wbthomason/packer.nvim)
+
+Add to `~/.config/nvim/lua/plugins.lua` (or wherever your packer config is):
+
+```lua
+-- ~/.config/nvim/lua/plugins.lua
+return require("packer").startup(function(use)
+  -- ... other plugins ...
+
+  use {
+    "zhlinh/nvim-ccgo",
+    requires = {
+      "nvim-telescope/telescope.nvim", -- optional
+      "L3MON4D3/LuaSnip", -- optional
+    },
+    config = function()
+      require("ccgo").setup()
+    end,
+  }
+end)
 ```
 
 ### Manual Installation
