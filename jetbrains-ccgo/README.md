@@ -12,8 +12,24 @@ A JetBrains IDE plugin for CCGO - the C++ cross-platform build system.
 
 ### Build Integration
 - **Run Configurations**: Create and save build configurations for different platforms
-- **Build Actions**: Quick access to build, test, clean, and other commands via Tools > CCGO
+- **Build Actions**: Quick access to build, test, bench, clean, and other commands via Tools > CCGO
 - **Terminal Integration**: Execute commands in the integrated terminal or run window
+
+### Commands
+Available from **Tools** > **CCGO**:
+- **Build...** - Build for a specific platform
+- **Run Tests** - Run project tests
+- **Run Benchmarks** - Run project benchmarks
+- **Install Dependencies** - Install project dependencies
+- **Clean** - Clean build artifacts
+- **Generate IDE Project** - Generate platform-specific IDE project
+- **Generate Documentation** - Generate Doxygen documentation
+- **Check Environment** - Check platform dependencies
+- **Publish Package...** - Publish to repository (Maven, CocoaPods, SPM, OHPM, etc.)
+- **Create Version Tag** - Create git tag from CCGO.toml version
+- **Package SDK** - Package SDK for distribution
+- **Show Dependency Tree** - Display dependency tree in terminal
+- **Refresh Dependencies** - Update dependency tree view
 
 ### Dependency Management
 - **Dependency Tree**: Visualize project dependencies in a dedicated tool window

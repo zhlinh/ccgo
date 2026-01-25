@@ -111,6 +111,12 @@
                     description="Run CCGO project tests"
                     icon="AllIcons.RunConfigurations.TestState.Run"/>
 
+            <action id="Ccgo.Bench"
+                    class="com.ccgo.plugin.actions.CcgoBenchAction"
+                    text="Run Benchmarks"
+                    description="Run CCGO project benchmarks"
+                    icon="AllIcons.Actions.ProfileCPU"/>
+
             <action id="Ccgo.Install"
                     class="com.ccgo.plugin.actions.CcgoInstallAction"
                     text="Install Dependencies"
@@ -130,6 +136,44 @@
                     text="Generate IDE Project"
                     description="Generate platform-specific IDE project"
                     icon="AllIcons.Actions.AddFile"/>
+
+            <action id="Ccgo.Doc"
+                    class="com.ccgo.plugin.actions.CcgoDocAction"
+                    text="Generate Documentation"
+                    description="Generate CCGO project documentation"
+                    icon="AllIcons.Toolwindows.Documentation"/>
+
+            <action id="Ccgo.Check"
+                    class="com.ccgo.plugin.actions.CcgoCheckAction"
+                    text="Check Environment"
+                    description="Check CCGO environment dependencies"
+                    icon="AllIcons.Actions.Checked"/>
+
+            <separator/>
+
+            <action id="Ccgo.Publish"
+                    class="com.ccgo.plugin.actions.CcgoPublishAction"
+                    text="Publish Package..."
+                    description="Publish package to repository"
+                    icon="AllIcons.Actions.Upload"/>
+
+            <action id="Ccgo.Tag"
+                    class="com.ccgo.plugin.actions.CcgoTagAction"
+                    text="Create Version Tag"
+                    description="Create git tag from CCGO.toml version"
+                    icon="AllIcons.Vcs.BranchNode"/>
+
+            <action id="Ccgo.Package"
+                    class="com.ccgo.plugin.actions.CcgoPackageAction"
+                    text="Package SDK"
+                    description="Package SDK for distribution"
+                    icon="AllIcons.FileTypes.Archive"/>
+
+            <action id="Ccgo.Tree"
+                    class="com.ccgo.plugin.actions.CcgoTreeAction"
+                    text="Show Dependency Tree"
+                    description="Show dependency tree in terminal"
+                    icon="AllIcons.Actions.ShowAsTree"/>
 
             <separator/>
 
