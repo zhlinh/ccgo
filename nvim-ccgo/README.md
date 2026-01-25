@@ -43,56 +43,16 @@ Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C+
 
 > **Note**: nvim-ccgo is a subdirectory of the [ccgo](https://github.com/zhlinh/ccgo) repository, not a standalone repo.
 
-### Local Development / Testing
-
-For local development or testing, point directly to the nvim-ccgo directory on your machine.
-
-#### lazy.nvim
-
-Create `~/.config/nvim/lua/plugins/ccgo.lua`:
-
-```lua
-return {
-  dir = "/path/to/ccgo/nvim-ccgo",  -- Replace with your actual path
-  name = "nvim-ccgo",
-  dependencies = {
-    "nvim-telescope/telescope.nvim", -- optional, for platform picker
-    "L3MON4D3/LuaSnip", -- optional, for snippets
-  },
-  config = function()
-    require("ccgo").setup({
-      executable = "ccgo",
-      use_terminal = true,
-      notifications = true,
-    })
-  end,
-}
-```
-
-Example paths:
-- macOS/Linux: `dir = "~/Projects/ccgo/nvim-ccgo"`
-- Windows: `dir = "C:/Users/you/Projects/ccgo/nvim-ccgo"`
-
-#### packer.nvim
-
-```lua
-use {
-  "/path/to/ccgo/nvim-ccgo",
-  config = function()
-    require("ccgo").setup()
-  end,
-}
-```
-
 ### Remote Installation (from GitHub)
 
 Install from the ccgo repository on GitHub. Since nvim-ccgo is a subdirectory, you need to add it to the runtimepath.
 
 #### lazy.nvim
 
-Create `~/.config/nvim/lua/plugins/ccgo.lua`:
+Create a new file `~/.config/nvim/lua/plugins/ccgo.lua`:
 
 ```lua
+-- ~/.config/nvim/lua/plugins/ccgo.lua
 return {
   "zhlinh/ccgo",
   name = "nvim-ccgo",
@@ -114,7 +74,10 @@ return {
 
 #### packer.nvim
 
+Add to `~/.config/nvim/lua/plugins.lua`:
+
 ```lua
+-- ~/.config/nvim/lua/plugins.lua
 use {
   "zhlinh/ccgo",
   rtp = "nvim-ccgo",  -- specify subdirectory
@@ -139,10 +102,57 @@ ln -s ~/.local/share/nvim/site/pack/ccgo/start/ccgo/nvim-ccgo \
       ~/.local/share/nvim/site/pack/ccgo/start/nvim-ccgo
 ```
 
-Then add to your `init.lua`:
+Then add the following line to your Neovim config file `~/.config/nvim/init.lua`:
 
 ```lua
+-- ~/.config/nvim/init.lua
+-- Add this line at the end of the file
 require("ccgo").setup()
+```
+
+### Local Development / Testing
+
+For local development or testing, point directly to the nvim-ccgo directory on your machine.
+
+#### lazy.nvim
+
+Create a new file `~/.config/nvim/lua/plugins/ccgo.lua`:
+
+```lua
+-- ~/.config/nvim/lua/plugins/ccgo.lua
+return {
+  dir = "/path/to/ccgo/nvim-ccgo",  -- Replace with your actual path
+  name = "nvim-ccgo",
+  dependencies = {
+    "nvim-telescope/telescope.nvim", -- optional, for platform picker
+    "L3MON4D3/LuaSnip", -- optional, for snippets
+  },
+  config = function()
+    require("ccgo").setup({
+      executable = "ccgo",
+      use_terminal = true,
+      notifications = true,
+    })
+  end,
+}
+```
+
+Example paths:
+- macOS/Linux: `dir = "~/Projects/ccgo/nvim-ccgo"`
+- Windows: `dir = "C:/Users/you/Projects/ccgo/nvim-ccgo"`
+
+#### packer.nvim
+
+Add to `~/.config/nvim/lua/plugins.lua`:
+
+```lua
+-- ~/.config/nvim/lua/plugins.lua
+use {
+  "/path/to/ccgo/nvim-ccgo",  -- Replace with your actual path
+  config = function()
+    require("ccgo").setup()
+  end,
+}
 ```
 
 ### Verify Installation
