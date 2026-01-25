@@ -1,0 +1,251 @@
+# nvim-ccgo
+
+Neovim plugin for [CCGO](https://github.com/zhlinh/ccgo) - the cross-platform C++ build system.
+
+## Features
+
+- **CCGO.toml Support**
+  - Syntax highlighting via Tree-sitter (TOML)
+  - Schema validation via Taplo LSP
+  - Code completion and hover documentation
+
+- **Build Commands**
+  - `:CcgoBuild [platform]` - Build for a platform
+  - `:CcgoBuildInteractive` - Interactive platform/architecture selection
+  - `:CcgoTest` - Run tests
+  - `:CcgoBench` - Run benchmarks
+  - `:CcgoInstall` - Install dependencies
+  - `:CcgoClean` - Clean build artifacts
+
+- **Telescope Integration**
+  - Platform picker with icons
+  - Architecture selector
+  - Dependency browser
+
+- **Dependency Tree Viewer**
+  - Visual tree view of project dependencies
+  - Auto-refresh on CCGO.toml changes
+
+- **LuaSnip Snippets**
+  - 14+ snippets for common patterns
+  - Package, build, dependencies, platforms, publishing
+
+## Requirements
+
+- Neovim >= 0.8
+- [CCGO CLI](https://github.com/zhlinh/ccgo) installed
+- Optional:
+  - [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig) + [taplo](https://taplo.tamasfe.dev/) for LSP
+  - [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) for pickers
+  - [LuaSnip](https://github.com/L3MON4D3/LuaSnip) for snippets
+
+## Installation
+
+### [lazy.nvim](https://github.com/folke/lazy.nvim)
+
+```lua
+{
+  "zhlinh/nvim-ccgo",
+  dependencies = {
+    "nvim-telescope/telescope.nvim", -- optional
+    "L3MON4D3/LuaSnip", -- optional
+  },
+  ft = "toml",
+  cmd = { "CcgoBuild", "CcgoTest", "CcgoTree" },
+  config = function()
+    require("ccgo").setup({
+      -- options
+    })
+  end,
+}
+```
+
+### [packer.nvim](https://github.com/wbthomason/packer.nvim)
+
+```lua
+use {
+  "zhlinh/nvim-ccgo",
+  requires = {
+    "nvim-telescope/telescope.nvim", -- optional
+    "L3MON4D3/LuaSnip", -- optional
+  },
+  config = function()
+    require("ccgo").setup()
+  end,
+}
+```
+
+### Manual Installation
+
+Clone to your Neovim packages directory:
+
+```bash
+git clone https://github.com/zhlinh/nvim-ccgo ~/.local/share/nvim/site/pack/plugins/start/nvim-ccgo
+```
+
+## Configuration
+
+```lua
+require("ccgo").setup({
+  -- Path to ccgo executable
+  executable = "ccgo",
+
+  -- Default platform (auto-detected if nil)
+  default_platform = nil,
+
+  -- Auto-refresh dependencies when CCGO.toml changes
+  auto_refresh = true,
+
+  -- Show notifications for build results
+  notifications = true,
+
+  -- Run commands in terminal (true) or background (false)
+  use_terminal = true,
+
+  -- Telescope theme for pickers
+  telescope_theme = "dropdown",
+})
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `:CcgoBuild [platform]` | Build for a platform (interactive if no platform) |
+| `:CcgoBuildInteractive` | Build with interactive platform/arch selection |
+| `:CcgoTest [--filter=pattern]` | Run tests |
+| `:CcgoBench` | Run benchmarks |
+| `:CcgoInstall [--frozen]` | Install dependencies |
+| `:CcgoClean` | Clean build artifacts |
+| `:CcgoDoc [--open]` | Generate documentation |
+| `:CcgoCheck` | Check environment |
+| `:CcgoTree` | Show dependency tree |
+| `:CcgoPublish <target>` | Publish package |
+| `:CcgoTag [version]` | Create git tag |
+| `:CcgoPackage` | Package project |
+| `:CcgoInfo` | Show plugin info |
+
+## LSP Setup (Taplo)
+
+For schema validation and completion in `CCGO.toml`, configure Taplo LSP:
+
+```lua
+-- Using nvim-lspconfig
+require("lspconfig").taplo.setup({
+  settings = vim.tbl_deep_extend(
+    "force",
+    {},
+    require("ccgo.lsp").get_taplo_settings()
+  ),
+})
+```
+
+Or add to your existing Taplo configuration:
+
+```lua
+require("lspconfig").taplo.setup({
+  settings = {
+    evenBetterToml = {
+      schema = {
+        enabled = true,
+        associations = {
+          ["CCGO.toml"] = "file://" .. vim.fn.stdpath("data") .. "/lazy/nvim-ccgo/schemas/ccgo.schema.json",
+        },
+      },
+    },
+  },
+})
+```
+
+## Snippets
+
+If you have LuaSnip installed, snippets are automatically available in TOML files:
+
+| Trigger | Description |
+|---------|-------------|
+| `package` | Package metadata section |
+| `build` | Build configuration |
+| `dep-git` | Git dependency |
+| `dep-path` | Path dependency |
+| `dep` | Registry dependency |
+| `android` | Android platform config |
+| `ios` | iOS platform config |
+| `macos` | macOS platform config |
+| `windows` | Windows platform config |
+| `linux` | Linux platform config |
+| `ohos` | OpenHarmony platform config |
+| `publish-maven` | Maven publishing config |
+| `publish-cocoapods` | CocoaPods publishing config |
+| `feature` | Feature definition |
+| `workspace` | Workspace config |
+| `registry` | Custom registry |
+| `ccgo-full` | Full CCGO.toml template |
+
+To enable snippets:
+
+```lua
+require("ccgo.snippets").setup()
+```
+
+## Keybindings
+
+The plugin doesn't set any global keybindings by default. Here's a suggested setup:
+
+```lua
+-- Only in CCGO projects
+vim.api.nvim_create_autocmd("BufEnter", {
+  pattern = "CCGO.toml",
+  callback = function()
+    local opts = { buffer = true, silent = true }
+    vim.keymap.set("n", "<leader>cb", "<cmd>CcgoBuildInteractive<cr>", opts)
+    vim.keymap.set("n", "<leader>ct", "<cmd>CcgoTest<cr>", opts)
+    vim.keymap.set("n", "<leader>ci", "<cmd>CcgoInstall<cr>", opts)
+    vim.keymap.set("n", "<leader>cc", "<cmd>CcgoClean<cr>", opts)
+    vim.keymap.set("n", "<leader>cd", "<cmd>CcgoTree<cr>", opts)
+  end,
+})
+```
+
+## Dependency Tree
+
+The `:CcgoTree` command opens a sidebar with your project's dependencies:
+
+```
+📦 CCGO Dependencies
+──────────────────────────────
+├─ fmt 10.2.1
+├─ spdlog 1.12.0
+│  └─ fmt 10.2.1 🔗
+└─ nlohmann-json 3.11.3
+
+Press ? for help, r to refresh, q to close
+```
+
+Keybindings in tree view:
+- `q` / `<Esc>` - Close window
+- `r` - Refresh tree
+- `?` - Show help
+
+## Telescope Extension
+
+Use Telescope to browse dependencies:
+
+```vim
+:Telescope ccgo
+```
+
+Or via Lua:
+
+```lua
+require("ccgo.telescope").show_dependencies()
+```
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Related Projects
+
+- [CCGO](https://github.com/zhlinh/ccgo) - Cross-platform C++ build system
+- [vscode-ccgo](../vscode-ccgo) - VS Code extension
+- [jetbrains-ccgo](../jetbrains-ccgo) - JetBrains IDE plugin
