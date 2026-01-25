@@ -1,25 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F0C95C"/>
+      <stop offset="100%" style="stop-color:#E5B441"/>
+    </linearGradient>
+  </defs>
+
   <!-- Background -->
-  <rect width="64" height="64" fill="#E5B441" rx="8"/>
+  <rect width="64" height="64" fill="url(#bgGradient)" rx="12"/>
 
-  <!-- Stylized C++ -->
-  <g fill="white">
-    <!-- C letters -->
-    <path d="M 18 20 Q 12 20 12 26 L 12 38 Q 12 44 18 44"
-          fill="none" stroke="white" stroke-width="4" stroke-linecap="round"/>
+  <!-- Hexagon icon centered -->
+  <g transform="translate(32, 26)">
+    <!-- Center hexagon -->
+    <polygon points="0,-16 14,-8 14,8 0,16 -14,8 -14,-8"
+             fill="white" opacity="0.95"/>
 
-    <path d="M 28 20 Q 34 20 34 26 L 34 38 Q 34 44 28 44"
-          fill="none" stroke="white" stroke-width="4" stroke-linecap="round"/>
+    <!-- Platform indicators -->
+    <polygon points="-18,-5 -18,5 -23,0" fill="white" opacity="0.6"/>
+    <polygon points="18,-5 18,5 23,0" fill="white" opacity="0.6"/>
+    <polygon points="-5,-18 5,-18 0,-23" fill="white" opacity="0.6"/>
 
-    <!-- Plus signs -->
-    <rect x="40" y="29" width="8" height="2" rx="1"/>
-    <rect x="43" y="26" width="2" height="8" rx="1"/>
+    <!-- Code brackets -->
+    <g fill="none" stroke="#E5B441" stroke-width="2" stroke-linecap="round">
+      <path d="M -4,-6 L -7,0 L -4,6"/>
+      <path d="M 4,-6 L 7,0 L 4,6"/>
+    </g>
 
-    <rect x="50" y="29" width="8" height="2" rx="1"/>
-    <rect x="53" y="26" width="2" height="8" rx="1"/>
+    <!-- Plus signs (C++) -->
+    <g fill="#E5B441">
+      <rect x="-3.5" y="-0.6" width="2.5" height="1" rx="0.2"/>
+      <rect x="-2.8" y="-1.5" width="1" height="2.5" rx="0.2"/>
+      <rect x="1" y="-0.6" width="2.5" height="1" rx="0.2"/>
+      <rect x="1.7" y="-1.5" width="1" height="2.5" rx="0.2"/>
+    </g>
   </g>
 
-  <!-- GO text -->
-  <text x="32" y="58" font-family="Arial, sans-serif" font-size="10"
-        font-weight="bold" text-anchor="middle" fill="white">GO</text>
+  <!-- CCGO text at bottom -->
+  <text x="32" y="56" font-family="'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+        font-size="10" font-weight="700" text-anchor="middle" fill="white"
+        letter-spacing="0.5">ccgo</text>
 </svg>

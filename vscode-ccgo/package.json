@@ -4,6 +4,7 @@
   "description": "Syntax highlighting, validation, build tasks, and dependency management for CCGO projects",
   "version": "0.1.0",
   "publisher": "ccgo",
+  "icon": "icons/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/zhlinh/ccgo"

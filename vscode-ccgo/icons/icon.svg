@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F0C95C"/>
+      <stop offset="100%" style="stop-color:#E5B441"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="128" height="128" fill="url(#bgGradient)" rx="24"/>
+
+  <!-- Hexagon icon centered -->
+  <g transform="translate(64, 52)">
+    <!-- Center hexagon -->
+    <polygon points="0,-32 28,-16 28,16 0,32 -28,16 -28,-16"
+             fill="white" opacity="0.95"/>
+
+    <!-- Platform indicators -->
+    <polygon points="-36,-10 -36,10 -46,0" fill="white" opacity="0.6"/>
+    <polygon points="36,-10 36,10 46,0" fill="white" opacity="0.6"/>
+    <polygon points="-10,-36 10,-36 0,-46" fill="white" opacity="0.6"/>
+
+    <!-- Code brackets -->
+    <g fill="none" stroke="#E5B441" stroke-width="4" stroke-linecap="round">
+      <path d="M -8,-12 L -14,0 L -8,12"/>
+      <path d="M 8,-12 L 14,0 L 8,12"/>
+    </g>
+
+    <!-- Plus signs (C++) -->
+    <g fill="#E5B441">
+      <rect x="-7" y="-1.2" width="5" height="2" rx="0.4"/>
+      <rect x="-5.6" y="-3" width="2" height="5" rx="0.4"/>
+      <rect x="2" y="-1.2" width="5" height="2" rx="0.4"/>
+      <rect x="3.4" y="-3" width="2" height="5" rx="0.4"/>
+    </g>
+  </g>
+
+  <!-- CCGO text at bottom -->
+  <text x="64" y="112" font-family="'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+        font-size="20" font-weight="700" text-anchor="middle" fill="white"
+        letter-spacing="1">ccgo</text>
+</svg>
