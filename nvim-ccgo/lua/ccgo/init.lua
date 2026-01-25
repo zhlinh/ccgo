@@ -58,14 +58,45 @@ local function detect_platform()
   return "linux"
 end
 
+-- Cache for project root (to avoid repeated searches)
+M._cached_root = nil
+
 -- Find CCGO.toml in current file's directory or parents
 function M.find_ccgo_toml()
-  -- Start from current buffer's file directory, fall back to cwd
-  local bufname = vim.api.nvim_buf_get_name(0)
+  -- Return cached result if available
+  if M._cached_root then
+    local toml_path = M._cached_root .. "/CCGO.toml"
+    if vim.fn.filereadable(toml_path) == 1 then
+      return toml_path, M._cached_root
+    end
+    M._cached_root = nil  -- Cache invalid, search again
+  end
+
   local path
-  if bufname and bufname ~= "" then
+
+  -- Try current buffer first (skip terminal and special buffers)
+  local bufname = vim.api.nvim_buf_get_name(0)
+  local buftype = vim.bo.buftype
+  if bufname and bufname ~= "" and buftype == "" and not bufname:match("^term://") then
     path = vim.fn.fnamemodify(bufname, ":p:h")
-  else
+  end
+
+  -- If no valid file buffer, try to find a recent file buffer
+  if not path then
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(buf) then
+        local name = vim.api.nvim_buf_get_name(buf)
+        local bt = vim.bo[buf].buftype
+        if name and name ~= "" and bt == "" and not name:match("^term://") then
+          path = vim.fn.fnamemodify(name, ":p:h")
+          break
+        end
+      end
+    end
+  end
+
+  -- Fall back to cwd
+  if not path then
     path = vim.fn.getcwd()
   end
 
@@ -73,6 +104,7 @@ function M.find_ccgo_toml()
   while path and path ~= "" and path ~= "/" do
     local toml_path = path .. "/CCGO.toml"
     if vim.fn.filereadable(toml_path) == 1 then
+      M._cached_root = path  -- Cache the result
       return toml_path, path
     end
     local parent = vim.fn.fnamemodify(path, ":h")
