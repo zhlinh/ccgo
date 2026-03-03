@@ -106,7 +106,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CCGO_SAVE_CMAKE_RUNTIME_OUTPUT_DIRECTORY})
 
 ## Configure include directories for the external library
 # Add default include directory (common location for headers)
-include_directories(${COMM_EXTERNAL_SOURCE_DIR}/include)
+include_directories(${CCGO_EXTERNAL_SOURCE_DIR}/include)
 
 # Add extra include directories if specified
 # Example: "googletest/include googlemock/include"
@@ -121,8 +121,8 @@ if (TEMP_INCLUDES)
        if("${TEMP_ITEM}" STREQUAL "")
            continue()
        endif()
-       include_directories(${COMM_EXTERNAL_SOURCE_DIR}/${TEMP_ITEM})
-       message(STATUS "ExternalINC include: ${COMM_EXTERNAL_SOURCE_DIR}/${TEMP_ITEM}")
+       include_directories(${CCGO_EXTERNAL_SOURCE_DIR}/${TEMP_ITEM})
+       message(STATUS "ExternalINC include: ${CCGO_EXTERNAL_SOURCE_DIR}/${TEMP_ITEM}")
    endforeach()
 else()
   message(STATUS "ExternalINC No extra include directories provided.")
@@ -131,4 +131,4 @@ endif()
 ## Add external library to the build
 # EXCLUDE_FROM_ALL prevents external library targets from appearing in "make all"
 # The library will only be built when explicitly needed by other targets
-add_subdirectory(${COMM_EXTERNAL_SOURCE_DIR} ${COMM_EXTERNAL_BUILD_DIR} EXCLUDE_FROM_ALL)
+add_subdirectory(${CCGO_EXTERNAL_SOURCE_DIR} ${CCGO_EXTERNAL_BUILD_DIR} EXCLUDE_FROM_ALL)
