@@ -676,15 +676,26 @@ else()
             list(APPEND TARGET_SRC_LINKS ${PROJECT_NAME}-${DIR})
         endforeach()
 
-        # Include Apple-specific public API headers
-        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} include/${PROJECT_NAME}/api/apple/*.h)
+        # Include Apple-specific public API headers (check apple/ first, then ios/ as fallback)
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR}
+            include/${PROJECT_NAME}/api/apple/*.h
+            include/${PROJECT_NAME}/api/ios/*.h)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(api FILES ${SELF_TEMP_SRC_FILES})
 
-        # Include Apple-specific implementation
-        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/apple/*.h src/api/apple/*.mm src/api/apple/*.m)
+        # Include Apple-specific implementation (check apple/ first, then ios/ as fallback)
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR}
+            src/api/apple/*.h src/api/apple/*.mm src/api/apple/*.m
+            src/api/ios/*.h src/api/ios/*.mm src/api/ios/*.m)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(src\\api FILES ${SELF_TEMP_SRC_FILES})
+
+        # Ensure SELF_SRC_FILES is non-empty (required for add_library)
+        if(NOT SELF_SRC_FILES)
+            set(PLACEHOLDER_FILE "${CMAKE_BINARY_DIR}/${PROJECT_NAME}_apple_placeholder.cc")
+            file(WRITE ${PLACEHOLDER_FILE} "// Auto-generated placeholder for Apple static library\n")
+            list(APPEND SELF_SRC_FILES ${PLACEHOLDER_FILE})
+        endif()
 
         # Collect third-party binaries and special linker flags
         set(TEMP_TARGET_SRC_LINKS "")
@@ -784,6 +795,25 @@ else()
 
             target_compile_options(${SHARED_TARGET} PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
             target_include_directories(${SHARED_TARGET} PRIVATE ${PROJECT_SOURCE_DIR})
+
+            # Link required Apple system frameworks (Foundation for ObjC, Security for SSL, etc.)
+            set(APPLE_FRAMEWORKS
+                "-framework Foundation"
+                "-framework CoreFoundation"
+                "-framework Security"
+                "-framework Network"
+                "-framework SystemConfiguration"
+            )
+            if(NOT IOS AND NOT TVOS AND NOT WATCHOS)
+                # macOS-only frameworks
+                list(APPEND APPLE_FRAMEWORKS
+                    "-framework Cocoa"
+                    "-framework IOKit"
+                    "-framework OpenCL"
+                    "-framework Accelerate"
+                )
+            endif()
+            target_link_libraries(${SHARED_TARGET} PRIVATE ${APPLE_FRAMEWORKS})
 
             set_property(TARGET ${SHARED_TARGET} PROPERTY LINKER_LANGUAGE "CXX")
 
