@@ -372,6 +372,7 @@ mod tests {
                 git: Some(format!("https://github.com/test/{}", name)),
                 branch: None,
                 path: None,
+                zip: None,
                 optional: false,
                 features: vec![],
                 default_features: Some(true),

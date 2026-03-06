@@ -333,6 +333,7 @@ mod tests {
             git: None,
             branch: None,
             path: Some(format!("./{}", name)),
+            zip: None,
             optional: false,
             features: vec![],
             default_features: Some(true),
