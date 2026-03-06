@@ -50,21 +50,66 @@ function(ccgo_link_dependency TARGET_NAME DEP_NAME LIB_NAME)
     # Convert to list
     string(REPLACE ";" "\\;" _dep_paths "${CCGO_DEP_PATHS}")
 
-    # Try to find the library in dependency paths
+    # Deduplication guard: if target already created, just link it
+    if(TARGET ccgo::${LIB_NAME})
+        target_link_libraries(${TARGET_NAME} PRIVATE ccgo::${LIB_NAME})
+        return()
+    endif()
+
+    # Determine platform string for package ZIP layout
+    if(NOT DEFINED CCGO_PLATFORM)
+        if(ANDROID)
+            set(CCGO_PLATFORM "android")
+        elseif(DEFINED OHOS OR "${CMAKE_SYSTEM_NAME}" STREQUAL "OHOS")
+            set(CCGO_PLATFORM "ohos")
+        elseif(APPLE)
+            if(IOS)
+                set(CCGO_PLATFORM "ios")
+            else()
+                set(CCGO_PLATFORM "macos")
+            endif()
+        elseif(WIN32)
+            set(CCGO_PLATFORM "windows")
+        else()
+            set(CCGO_PLATFORM "linux")
+        endif()
+    endif()
+
+    # Determine arch string
+    if(ANDROID)
+        set(_arch "${CMAKE_ANDROID_ARCH_ABI}")
+    else()
+        set(_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+
     set(_lib_found FALSE)
     foreach(_dep_path ${_dep_paths})
-        # Check common library locations (including both old and new cmake_build structure)
-        set(_potential_paths
-            "${_dep_path}/lib"
-            "${_dep_path}/build/lib"
-            "${_dep_path}/cmake_build/lib"
-            "${_dep_path}/cmake_build/release/lib"
-            "${_dep_path}/cmake_build/debug/lib"
-            "${_dep_path}"
-        )
+        # Platform-aware search order for package ZIP layout
+        if(CCGO_PLATFORM STREQUAL "android" OR CCGO_PLATFORM STREQUAL "ohos")
+            # Android/OHOS: shared first (.so is primary artifact)
+            set(_potential_paths
+                "${_dep_path}/lib/${CCGO_PLATFORM}/shared/${_arch}"
+                "${_dep_path}/lib/${CCGO_PLATFORM}/static/${_arch}"
+                "${_dep_path}/lib/${CCGO_PLATFORM}/${_arch}"
+                "${_dep_path}/lib"
+                "${_dep_path}/build/lib"
+                "${_dep_path}/cmake_build/release/lib"
+                "${_dep_path}"
+            )
+        else()
+            # Other platforms: static first
+            set(_potential_paths
+                "${_dep_path}/lib/${CCGO_PLATFORM}/static/${_arch}"
+                "${_dep_path}/lib/${CCGO_PLATFORM}/shared/${_arch}"
+                "${_dep_path}/lib/${CCGO_PLATFORM}/${_arch}"
+                "${_dep_path}/lib"
+                "${_dep_path}/build/lib"
+                "${_dep_path}/cmake_build/release/lib"
+                "${_dep_path}"
+            )
+        endif()
 
         foreach(_lib_path ${_potential_paths})
-            # Try different library naming conventions
             set(_lib_names
                 "lib${LIB_NAME}.a"
                 "lib${LIB_NAME}.so"
@@ -76,7 +121,16 @@ function(ccgo_link_dependency TARGET_NAME DEP_NAME LIB_NAME)
                 set(_full_path "${_lib_path}/${_lib_file}")
                 if(EXISTS "${_full_path}")
                     message(STATUS "Found CCGO dependency library: ${_full_path}")
-                    target_link_libraries(${TARGET_NAME} PRIVATE "${_full_path}")
+                    # Create IMPORTED target for deduplication
+                    if(_lib_file MATCHES "\\.a$" OR _lib_file MATCHES "\\.lib$")
+                        add_library(ccgo::${LIB_NAME} STATIC IMPORTED GLOBAL)
+                    else()
+                        add_library(ccgo::${LIB_NAME} SHARED IMPORTED GLOBAL)
+                    endif()
+                    set_target_properties(ccgo::${LIB_NAME} PROPERTIES
+                        IMPORTED_LOCATION "${_full_path}"
+                    )
+                    target_link_libraries(${TARGET_NAME} PRIVATE ccgo::${LIB_NAME})
                     set(_lib_found TRUE)
                     break()
                 endif()
