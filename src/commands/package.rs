@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use chrono::Local;
 use clap::Args;
 use console::style;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
@@ -12,18 +12,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
 use zip::{write::FileOptions, ZipArchive, ZipWriter};
-
-/// CCGO.toml project configuration
-#[derive(Debug, Deserialize)]
-struct CcgoConfig {
-    project: ProjectInfo,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProjectInfo {
-    name: String,
-    version: Option<String>,
-}
 
 /// Archive metadata
 #[derive(Debug, Serialize)]
@@ -72,9 +60,10 @@ fn find_ccgo_toml(start_dir: &Path) -> Result<PathBuf> {
 fn get_project_name(config_file: &Path) -> Result<String> {
     let content = fs::read_to_string(config_file)
         .context("Failed to read CCGO.toml")?;
-    let config: CcgoConfig = toml::from_str(&content)
+    let config: crate::config::CcgoConfig = toml::from_str(&content)
         .context("Failed to parse CCGO.toml")?;
-    Ok(config.project.name)
+    let pkg = config.package.context("CCGO.toml must have a [package] section")?;
+    Ok(pkg.name)
 }
 
 /// Get version from args, git, or CCGO.toml
@@ -105,9 +94,9 @@ fn get_version(config_file: &Path, version_arg: Option<&str>, release: bool) -> 
 
     // Try CCGO.toml
     if let Ok(content) = fs::read_to_string(config_file) {
-        if let Ok(config) = toml::from_str::<CcgoConfig>(&content) {
-            if let Some(version) = config.project.version {
-                return version;
+        if let Ok(config) = toml::from_str::<crate::config::CcgoConfig>(&content) {
+            if let Some(pkg) = config.package {
+                return pkg.version;
             }
         }
     }
@@ -226,12 +215,49 @@ fn find_platform_zips(project_dir: &Path, platform: &str, release: bool) -> Vec<
     zip_files
 }
 
+/// Generate a minimal CCGO.toml string to embed at the ZIP root.
+/// Contains [package] metadata and only zip-sourced [[dependencies]].
+fn generate_embedded_ccgo_toml(config_file: &Path) -> Result<String> {
+    let content = fs::read_to_string(config_file)
+        .context("Failed to read CCGO.toml")?;
+
+    // Use the full config parser to access dependencies
+    let config: crate::config::CcgoConfig = toml::from_str(&content)
+        .context("Failed to parse CCGO.toml")?;
+
+    let pkg = config.package.as_ref()
+        .context("CCGO.toml must have a [package] section")?;
+
+    let mut out = format!(
+        "[package]\nname = \"{}\"\nversion = \"{}\"\n",
+        pkg.name,
+        pkg.version
+    );
+
+    if let Some(ref desc) = pkg.description {
+        out.push_str(&format!("description = \"{}\"\n", desc));
+    }
+
+    // Only embed zip-sourced transitive deps (skip git/path deps)
+    for dep in &config.dependencies {
+        if let Some(ref zip) = dep.zip {
+            out.push_str(&format!(
+                "\n[[dependencies]]\nname = \"{}\"\nversion = \"{}\"\nzip = \"{}\"\n",
+                dep.name, dep.version, zip
+            ));
+        }
+    }
+
+    Ok(out)
+}
+
 /// Merge multiple ZIP files into a single unified SDK ZIP
 fn merge_zips(
     zip_files: &[PathBuf],
     output_zip_path: &Path,
     project_name: &str,
     version: &str,
+    config_file: &Path,
 ) -> Result<()> {
     println!("\n{}", "=".repeat(80));
     println!("Merging ZIP files into unified SDK");
@@ -319,6 +345,20 @@ fn merge_zips(
             let mut buffer = Vec::new();
             f.read_to_end(&mut buffer)?;
             zip.write_all(&buffer)?;
+        }
+    }
+
+    // Embed CCGO.toml at ZIP root for use as prebuilt dep
+    match generate_embedded_ccgo_toml(config_file) {
+        Ok(toml_content) => {
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("CCGO.toml", options)?;
+            zip.write_all(toml_content.as_bytes())?;
+            println!("   ✓ Embedded CCGO.toml into ZIP root");
+        }
+        Err(e) => {
+            eprintln!("   ⚠️  Could not embed CCGO.toml: {}", e);
         }
     }
 
@@ -487,7 +527,7 @@ impl PackageCommand {
             let sdk_zip_name = format!("{}_SDK-{}.zip", project_name.to_uppercase(), version_clean);
             let sdk_zip_path = output_path.join(&sdk_zip_name);
 
-            merge_zips(&all_zip_files, &sdk_zip_path, &project_name, &version)?;
+            merge_zips(&all_zip_files, &sdk_zip_path, &project_name, &version, &config_file)?;
 
             // Print summary
             println!("\n{}", "=".repeat(80));
@@ -586,5 +626,58 @@ impl PackageCommand {
         println!("   Output: {}\n", output_path.display());
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_embedded_ccgo_toml_with_zip_deps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("CCGO.toml");
+        fs::write(&config_path, r#"
+[package]
+name = "netcomm"
+version = "1.2.3"
+description = "netcomm SDK"
+
+[[dependencies]]
+name = "foundrycomm"
+version = "1.0.0"
+zip = "https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"
+
+[[dependencies]]
+name = "locallib"
+version = "0.5.0"
+git = "https://github.com/example/locallib.git"
+"#).unwrap();
+
+        let result = generate_embedded_ccgo_toml(&config_path).unwrap();
+        assert!(result.contains("[package]"));
+        assert!(result.contains("name = \"netcomm\""));
+        assert!(result.contains("version = \"1.2.3\""));
+        assert!(result.contains("description = \"netcomm SDK\""));
+        // Only zip deps included
+        assert!(result.contains("foundrycomm"));
+        assert!(result.contains("zip = \"https://cdn.example.com/foundrycomm_SDK-1.0.0.zip\""));
+        // git deps NOT included
+        assert!(!result.contains("locallib"));
+    }
+
+    #[test]
+    fn test_generate_embedded_ccgo_toml_no_deps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("CCGO.toml");
+        fs::write(&config_path, r#"
+[package]
+name = "standalone"
+version = "2.0.0"
+"#).unwrap();
+
+        let result = generate_embedded_ccgo_toml(&config_path).unwrap();
+        assert!(result.contains("name = \"standalone\""));
+        assert!(!result.contains("[[dependencies]]"));
     }
 }
