@@ -602,9 +602,10 @@ impl InstallCommand {
     fn download_zip(url: &str) -> Result<Vec<u8>> {
         let response = reqwest::blocking::get(url)
             .with_context(|| format!("Failed to download ZIP from {}", url))?;
-        let bytes = response
-            .bytes()
-            .context("Failed to read download response")?;
+        if !response.status().is_success() {
+            anyhow::bail!("HTTP {} downloading ZIP from {}", response.status(), url);
+        }
+        let bytes = response.bytes().context("Failed to read download response")?;
         Ok(bytes.to_vec())
     }
 
@@ -616,7 +617,17 @@ impl InstallCommand {
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let out_path = target_dir.join(file.name());
+            let entry_name = file.name().to_string();
+            // Reject absolute paths and entries containing ".." components
+            let relative = std::path::Path::new(&entry_name);
+            if relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|c| c == std::path::Component::ParentDir)
+            {
+                anyhow::bail!("ZIP entry contains unsafe path: {}", entry_name);
+            }
+            let out_path = target_dir.join(relative);
 
             if file.name().ends_with('/') {
                 fs::create_dir_all(&out_path)?;
@@ -1114,5 +1125,26 @@ mod tests {
         let extract_dir = tmp_dir.path().join("extracted");
         let result = InstallCommand::extract_zip(b"not a zip", &extract_dir);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_zip_rejects_path_traversal() {
+        use zip::write::SimpleFileOptions;
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let extract_dir = tmp_dir.path().join("extracted");
+
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            w.start_file("../../escape.txt", opts).unwrap();
+            w.write_all(b"should not be created").unwrap();
+            w.finish().unwrap();
+        }
+
+        let result = InstallCommand::extract_zip(&buf, &extract_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unsafe path"));
     }
 }
