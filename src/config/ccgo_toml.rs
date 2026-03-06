@@ -251,6 +251,7 @@ impl SimplifiedDep {
             git: None,
             branch: None,
             path: None,
+            zip: None,
             optional: self.is_optional(),
             features: self.features().to_vec(),
             default_features: match self {
@@ -460,6 +461,7 @@ impl WorkspaceDependency {
             git: self.git.clone(),
             branch: self.branch.clone(),
             path: self.path.clone(),
+            zip: None,
             optional: false,
             features: self.features.clone(),
             default_features: self.default_features,
@@ -551,6 +553,11 @@ pub struct DependencyConfig {
 
     /// Local path (for development)
     pub path: Option<String>,
+
+    /// ZIP archive URL or local path (for prebuilt SDK deps)
+    /// Supports https:// URLs and relative/absolute local paths.
+    /// Example: "https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"
+    pub zip: Option<String>,
 
     /// Whether this dependency is optional (only included when a feature enables it)
     #[serde(default)]
@@ -1524,5 +1531,42 @@ fmt = { path = "../fmt-local" }
         // When querying without source, should get registry patch
         let fmt_without_source = config.patch.find_patch("fmt", None).unwrap();
         assert!(fmt_without_source.git.is_some());
+    }
+
+    #[test]
+    fn test_dependency_zip_field() {
+        let toml_str = r#"
+[package]
+name = "myproject"
+version = "1.0.0"
+
+[[dependencies]]
+name = "foundrycomm"
+version = "1.0.0"
+zip = "https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"
+"#;
+        let config: CcgoConfig = toml::from_str(toml_str).unwrap();
+        let dep = &config.dependencies[0];
+        assert_eq!(dep.name, "foundrycomm");
+        assert_eq!(dep.zip.as_deref(), Some("https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"));
+        assert!(dep.git.is_none());
+        assert!(dep.path.is_none());
+    }
+
+    #[test]
+    fn test_dependency_zip_field_absent() {
+        let toml_str = r#"
+[package]
+name = "myproject"
+version = "1.0.0"
+
+[[dependencies]]
+name = "somelib"
+version = "1.0.0"
+git = "https://github.com/example/somelib.git"
+"#;
+        let config: CcgoConfig = toml::from_str(toml_str).unwrap();
+        let dep = &config.dependencies[0];
+        assert!(dep.zip.is_none());
     }
 }

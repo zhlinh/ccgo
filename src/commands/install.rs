@@ -489,6 +489,8 @@ impl InstallCommand {
             format!("git+{}", git)
         } else if let Some(ref path) = dep.path {
             format!("path+{}", path)
+        } else if let Some(ref zip) = dep.zip {
+            format!("zip+{}", zip)
         } else {
             format!("registry+{}@{}", dep.name, dep.version)
         }
