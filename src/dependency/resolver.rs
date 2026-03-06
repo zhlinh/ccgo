@@ -240,6 +240,10 @@ impl DependencyResolver {
             }
 
             Ok(dep_path)
+        } else if dep.zip.is_some() {
+            // Zip deps are installed to .ccgo/deps/{name} by ccgo install
+            // Return the expected install path as the resolved location
+            Ok(self.project_root.join(".ccgo").join("deps").join(&dep.name))
         } else {
             anyhow::bail!(
                 "Dependency '{}' has no valid source (git or path)",

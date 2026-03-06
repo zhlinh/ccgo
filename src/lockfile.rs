@@ -353,6 +353,8 @@ impl LockedPackage {
             (SourceType::Path, rest.to_string())
         } else if let Some(rest) = self.source.strip_prefix("registry+") {
             (SourceType::Registry, rest.to_string())
+        } else if let Some(rest) = self.source.strip_prefix("zip+") {
+            (SourceType::Zip, rest.to_string())
         } else {
             (SourceType::Unknown, self.source.clone())
         }
@@ -370,6 +372,7 @@ pub enum SourceType {
     Git,
     Path,
     Registry,
+    Zip,
     Unknown,
 }
 

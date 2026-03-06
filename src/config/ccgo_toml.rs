@@ -443,6 +443,9 @@ pub struct WorkspaceDependency {
     /// Local path (for development)
     pub path: Option<String>,
 
+    /// ZIP archive URL or local path (for prebuilt SDK deps)
+    pub zip: Option<String>,
+
     /// Features to enable for this dependency
     #[serde(default)]
     pub features: Vec<String>,
@@ -461,7 +464,7 @@ impl WorkspaceDependency {
             git: self.git.clone(),
             branch: self.branch.clone(),
             path: self.path.clone(),
-            zip: None,
+            zip: self.zip.clone(),
             optional: false,
             features: self.features.clone(),
             default_features: self.default_features,
