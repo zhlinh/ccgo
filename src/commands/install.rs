@@ -467,6 +467,9 @@ impl InstallCommand {
         } else if let Some(git_url) = effective_git {
             // Git dependency
             self.install_from_git(&dep.name, &dep.version, git_url, effective_branch, effective_rev.as_deref(), &install_path, ccgo_home)?
+        } else if let Some(ref zip_url) = dep.zip {
+            // ZIP archive dependency (https:// URL or local path)
+            self.install_from_zip(&dep.name, &dep.version, zip_url, project_dir, &install_path)?
         } else {
             bail!("No valid source found for dependency '{}'", dep.name);
         };
@@ -548,6 +551,85 @@ impl InstallCommand {
             installed_at: Some(chrono::Local::now().to_rfc3339()),
             patch: None,
         })
+    }
+
+    /// Install from a ZIP archive (https:// URL or local path)
+    fn install_from_zip(
+        &self,
+        dep_name: &str,
+        version: &str,
+        zip_source: &str,
+        project_dir: &Path,
+        install_path: &Path,
+    ) -> Result<LockedPackage> {
+        println!("   Source: {}", zip_source);
+
+        let zip_bytes = if zip_source.starts_with("https://") || zip_source.starts_with("http://") {
+            println!("   Downloading ZIP...");
+            Self::download_zip(zip_source)?
+        } else {
+            let local_path = if Path::new(zip_source).is_absolute() {
+                PathBuf::from(zip_source)
+            } else {
+                project_dir.join(zip_source)
+            };
+            if !local_path.exists() {
+                anyhow::bail!("ZIP file not found: {}", local_path.display());
+            }
+            println!("   Reading local ZIP: {}", local_path.display());
+            fs::read(&local_path).context("Failed to read ZIP file")?
+        };
+
+        println!("   Extracting to {}...", install_path.display());
+        fs::create_dir_all(install_path).context("Failed to create install directory")?;
+        Self::extract_zip(&zip_bytes, install_path)?;
+
+        println!("   Installed to {}", install_path.display());
+
+        Ok(LockedPackage {
+            name: dep_name.to_string(),
+            version: version.to_string(),
+            source: format!("zip+{}", zip_source),
+            checksum: None,
+            dependencies: vec![],
+            git: None,
+            installed_at: Some(chrono::Local::now().to_rfc3339()),
+            patch: None,
+        })
+    }
+
+    /// Download a ZIP from a URL, returning its bytes
+    fn download_zip(url: &str) -> Result<Vec<u8>> {
+        let response = reqwest::blocking::get(url)
+            .with_context(|| format!("Failed to download ZIP from {}", url))?;
+        let bytes = response
+            .bytes()
+            .context("Failed to read download response")?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Extract a ZIP archive (bytes) to the target directory, preserving paths
+    fn extract_zip(zip_bytes: &[u8], target_dir: &Path) -> Result<()> {
+        use std::io::Cursor;
+        let cursor = Cursor::new(zip_bytes);
+        let mut archive = zip::ZipArchive::new(cursor).context("Failed to open ZIP archive")?;
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let out_path = target_dir.join(file.name());
+
+            if file.name().ends_with('/') {
+                fs::create_dir_all(&out_path)?;
+            } else {
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut out_file = fs::File::create(&out_path)
+                    .with_context(|| format!("Failed to create file: {}", out_path.display()))?;
+                std::io::copy(&mut file, &mut out_file)?;
+            }
+        }
+        Ok(())
     }
 
     /// Get version from dependency's CCGO.toml
@@ -993,5 +1075,44 @@ impl InstallCommand {
             .and_then(|dirs| Some(dirs.home_dir().to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".ccgo")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_extract_zip_creates_files() {
+        use zip::write::SimpleFileOptions;
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let extract_dir = tmp_dir.path().join("extracted");
+
+        // Build an in-memory ZIP with two entries
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts = SimpleFileOptions::default();
+            w.start_file("include/mylib/mylib.h", opts).unwrap();
+            w.write_all(b"// header").unwrap();
+            w.start_file("CCGO.toml", opts).unwrap();
+            w.write_all(b"[package]\nname = \"mylib\"\nversion = \"1.0.0\"\n").unwrap();
+            w.finish().unwrap();
+        }
+
+        InstallCommand::extract_zip(&buf, &extract_dir).unwrap();
+
+        assert!(extract_dir.join("include/mylib/mylib.h").exists());
+        assert!(extract_dir.join("CCGO.toml").exists());
+    }
+
+    #[test]
+    fn test_extract_zip_missing_zip_returns_error() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let extract_dir = tmp_dir.path().join("extracted");
+        let result = InstallCommand::extract_zip(b"not a zip", &extract_dir);
+        assert!(result.is_err());
     }
 }
