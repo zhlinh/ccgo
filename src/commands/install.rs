@@ -444,8 +444,8 @@ impl InstallCommand {
             };
 
             (
-                patch.path.as_ref().map(|s| s.as_str()),
-                patch.git.as_ref().map(|s| s.as_str()),
+                patch.path.as_deref(),
+                patch.git.as_deref(),
                 patch.branch.as_deref().or(patch.tag.as_deref()),
                 rev,
             )
@@ -453,8 +453,8 @@ impl InstallCommand {
             // Use original source
             let locked_rev = locked.and_then(|l| l.git_revision()).map(|s| s.to_string());
             (
-                dep.path.as_ref().map(|s| s.as_str()),
-                dep.git.as_ref().map(|s| s.as_str()),
+                dep.path.as_deref(),
+                dep.git.as_deref(),
                 dep.branch.as_deref(),
                 locked_rev,
             )
@@ -468,8 +468,8 @@ impl InstallCommand {
             // Git dependency
             self.install_from_git(&dep.name, &dep.version, git_url, effective_branch, effective_rev.as_deref(), &install_path, ccgo_home)?
         } else if let Some(ref zip_url) = dep.zip {
-            // ZIP archive dependency (https:// URL or local path)
-            self.install_from_zip(&dep.name, &dep.version, zip_url, project_dir, &install_path)?
+            // Archive dependency (zip or tar.gz, https:// URL or local path)
+            self.install_from_archive(&dep.name, &dep.version, zip_url, project_dir, &install_path)?
         } else {
             bail!("No valid source found for dependency '{}'", dep.name);
         };
@@ -554,7 +554,12 @@ impl InstallCommand {
     }
 
     /// Install from a ZIP archive (https:// URL or local path)
-    fn install_from_zip(
+    /// Returns true if the source URL/path refers to a tar.gz archive
+    fn is_tar_gz(source: &str) -> bool {
+        source.ends_with(".tar.gz") || source.ends_with(".tgz")
+    }
+
+    fn install_from_archive(
         &self,
         dep_name: &str,
         version: &str,
@@ -564,8 +569,11 @@ impl InstallCommand {
     ) -> Result<LockedPackage> {
         println!("   Source: {}", zip_source);
 
-        let zip_bytes = if zip_source.starts_with("https://") || zip_source.starts_with("http://") {
-            println!("   Downloading ZIP...");
+        let is_remote = zip_source.starts_with("https://") || zip_source.starts_with("http://");
+        let fmt = if Self::is_tar_gz(zip_source) { "tar.gz" } else { "zip" };
+
+        let bytes = if is_remote {
+            println!("   Downloading {} archive...", fmt);
             Self::download_zip(zip_source)?
         } else {
             let local_path = if Path::new(zip_source).is_absolute() {
@@ -574,17 +582,21 @@ impl InstallCommand {
                 project_dir.join(zip_source)
             };
             if !local_path.exists() {
-                anyhow::bail!("ZIP file not found: {}", local_path.display());
+                anyhow::bail!("Archive file not found: {}", local_path.display());
             }
-            println!("   Reading local ZIP: {}", local_path.display());
-            fs::read(&local_path).context("Failed to read ZIP file")?
+            println!("   Reading local {}: {}", fmt, local_path.display());
+            fs::read(&local_path).context("Failed to read archive file")?
         };
 
         println!("   Extracting to {}...", install_path.display());
         fs::create_dir_all(install_path).context("Failed to create install directory")?;
-        Self::extract_zip(&zip_bytes, install_path)?;
+        if Self::is_tar_gz(zip_source) {
+            Self::extract_tar_gz(&bytes, install_path)?;
+        } else {
+            Self::extract_zip(&bytes, install_path)?;
+        }
 
-        println!("   Installed to {}", install_path.display());
+        println!("   ✓ Installed to {}", install_path.display());
 
         Ok(LockedPackage {
             name: dep_name.to_string(),
@@ -643,6 +655,45 @@ impl InstallCommand {
         Ok(())
     }
 
+    /// Extract a tar.gz archive (bytes) to the target directory, preserving paths
+    fn extract_tar_gz(bytes: &[u8], target_dir: &Path) -> Result<()> {
+        use flate2::read::GzDecoder;
+        use tar::Archive;
+
+        let decoder = GzDecoder::new(bytes);
+        let mut archive = Archive::new(decoder);
+
+        for entry in archive.entries().context("Failed to read tar.gz entries")? {
+            let mut entry = entry.context("Failed to read tar.gz entry")?;
+            let entry_path = entry.path().context("Failed to get tar.gz entry path")?;
+
+            // Reject absolute paths and entries containing ".." components
+            if entry_path.is_absolute()
+                || entry_path
+                    .components()
+                    .any(|c| c == std::path::Component::ParentDir)
+            {
+                anyhow::bail!(
+                    "tar.gz entry contains unsafe path: {}",
+                    entry_path.display()
+                );
+            }
+
+            let out_path = target_dir.join(&entry_path);
+            if entry.header().entry_type().is_dir() {
+                fs::create_dir_all(&out_path)?;
+            } else {
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                entry
+                    .unpack(&out_path)
+                    .with_context(|| format!("Failed to unpack: {}", out_path.display()))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Get version from dependency's CCGO.toml
     fn get_dep_version(dep_path: &Path) -> Option<String> {
         let ccgo_toml = dep_path.join("CCGO.toml");
@@ -655,6 +706,7 @@ impl InstallCommand {
     }
 
     /// Install from git repository
+    #[allow(clippy::too_many_arguments)]
     fn install_from_git(
         &self,
         dep_name: &str,
@@ -808,7 +860,7 @@ impl InstallCommand {
 
         // Check if inside a git repository
         let check = std::process::Command::new("git")
-            .args(&["rev-parse", "--is-inside-work-tree"])
+            .args(["rev-parse", "--is-inside-work-tree"])
             .current_dir(path)
             .output();
 
@@ -818,7 +870,7 @@ impl InstallCommand {
 
         // Get revision
         if let Ok(output) = std::process::Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .current_dir(path)
             .output()
         {
@@ -829,7 +881,7 @@ impl InstallCommand {
 
         // Get branch
         if let Ok(output) = std::process::Command::new("git")
-            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(path)
             .output()
         {
@@ -840,7 +892,7 @@ impl InstallCommand {
 
         // Get remote URL
         if let Ok(output) = std::process::Command::new("git")
-            .args(&["config", "--get", "remote.origin.url"])
+            .args(["config", "--get", "remote.origin.url"])
             .current_dir(path)
             .output()
         {
@@ -851,7 +903,7 @@ impl InstallCommand {
 
         // Check if dirty
         if let Ok(output) = std::process::Command::new("git")
-            .args(&["status", "--porcelain"])
+            .args(["status", "--porcelain"])
             .current_dir(path)
             .output()
         {
@@ -1057,7 +1109,7 @@ impl InstallCommand {
 
         for dep in deps_to_process {
             let locked_pkg = lockfile.get_package(&dep.name).cloned();
-            let install_path = deps_dir.join(&dep.name);
+            let _install_path = deps_dir.join(&dep.name);
 
             match self.install_dependency(dep, member_path, ccgo_home, locked_pkg.as_ref()) {
                 Ok(locked_package) => {
@@ -1083,7 +1135,7 @@ impl InstallCommand {
     /// Get CCGO home directory
     fn get_ccgo_home() -> PathBuf {
         directories::BaseDirs::new()
-            .and_then(|dirs| Some(dirs.home_dir().to_path_buf()))
+            .map(|dirs| dirs.home_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".ccgo")
     }
@@ -1125,6 +1177,86 @@ mod tests {
         let extract_dir = tmp_dir.path().join("extracted");
         let result = InstallCommand::extract_zip(b"not a zip", &extract_dir);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_is_tar_gz() {
+        assert!(InstallCommand::is_tar_gz("foo.tar.gz"));
+        assert!(InstallCommand::is_tar_gz("foo.tgz"));
+        assert!(InstallCommand::is_tar_gz("https://cdn.example.com/sdk-1.0.0.tar.gz"));
+        assert!(!InstallCommand::is_tar_gz("foo.zip"));
+        assert!(!InstallCommand::is_tar_gz("foo.tar"));
+    }
+
+    #[test]
+    fn test_extract_tar_gz_creates_files() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let extract_dir = tmp_dir.path().join("extracted");
+
+        // Build an in-memory tar.gz with two entries
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let enc = GzEncoder::new(&mut buf, Compression::default());
+            let mut tar = tar::Builder::new(enc);
+
+            let header_content = b"// header";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(header_content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, "include/mylib/mylib.h", header_content.as_ref())
+                .unwrap();
+
+            let toml_content = b"[package]\nname = \"mylib\"\nversion = \"1.0.0\"\n";
+            let mut header2 = tar::Header::new_gnu();
+            header2.set_size(toml_content.len() as u64);
+            header2.set_mode(0o644);
+            header2.set_cksum();
+            tar.append_data(&mut header2, "CCGO.toml", toml_content.as_ref())
+                .unwrap();
+
+            tar.finish().unwrap();
+        }
+
+        InstallCommand::extract_tar_gz(&buf, &extract_dir).unwrap();
+
+        assert!(extract_dir.join("include/mylib/mylib.h").exists());
+        assert!(extract_dir.join("CCGO.toml").exists());
+    }
+
+    #[test]
+    fn test_extract_tar_gz_rejects_path_traversal() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let extract_dir = tmp_dir.path().join("extracted");
+
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let enc = GzEncoder::new(&mut buf, Compression::default());
+            let mut tar = tar::Builder::new(enc);
+            let content = b"evil";
+            // Use append() with manually constructed header to bypass tar crate's
+            // own path validation, so we can test our extract_tar_gz guard.
+            let mut header = tar::Header::new_gnu();
+            let gnu = header.as_gnu_mut().unwrap();
+            let path = b"../../escape.txt";
+            gnu.name[..path.len()].copy_from_slice(path);
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_cksum();
+            tar.append(&header, std::io::Cursor::new(content)).unwrap();
+            tar.finish().unwrap();
+        }
+
+        let result = InstallCommand::extract_tar_gz(&buf, &extract_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unsafe path"));
     }
 
     #[test]
