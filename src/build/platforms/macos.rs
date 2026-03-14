@@ -192,10 +192,66 @@ impl MacosBuilder {
         // This is essential for KMP cinterop which expects a single complete library
         if !build_shared {
             self.merge_module_static_libs(xcode, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+            self.merge_third_party_static_libs(xcode, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
         }
 
         // Return build_dir since CCGO cmake installs to build_dir/out/
         Ok(build_dir)
+    }
+
+    /// Merge third-party static libs from cmake build root into the merged module library.
+    /// cmake installs third-party libs (e.g. libzstd.a, libboost*.a) directly into the
+    /// build_dir root. This ensures the final xcframework .a is fully self-contained.
+    fn merge_third_party_static_libs(
+        &self,
+        xcode: &XcodeToolchain,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        let out_dir = build_dir.join("out");
+        let main_lib_path = out_dir.join(format!("lib{}.a", lib_name));
+        if !main_lib_path.exists() {
+            return Ok(());
+        }
+
+        // Collect third-party .a files from build_dir root (not the placeholder main lib)
+        let placeholder_name = format!("lib{}.a", lib_name);
+        let mut third_party_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(build_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        // Skip the placeholder main lib (which is near-empty)
+                        if fname != placeholder_name {
+                            third_party_libs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        if third_party_libs.is_empty() {
+            return Ok(());
+        }
+
+        if verbose {
+            eprintln!(
+                "    Merging {} third-party libs into lib{}.a",
+                third_party_libs.len(),
+                lib_name
+            );
+        }
+
+        // Merge third-party libs into the already-merged main lib
+        let mut all_libs = vec![main_lib_path.clone()];
+        all_libs.extend(third_party_libs);
+        xcode.merge_static_libs(&all_libs, &main_lib_path)?;
+
+        Ok(())
     }
 
     /// Create universal binary from multiple architectures using lipo
@@ -637,7 +693,7 @@ impl PlatformBuilder for MacosBuilder {
         }
 
         // Add include files from project's include directory (matching pyccgo behavior)
-        let include_source = ctx.project_root.join("include");
+        let include_source = ctx.include_source_dir();
         if include_source.exists() {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;

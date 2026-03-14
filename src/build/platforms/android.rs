@@ -739,7 +739,7 @@ impl PlatformBuilder for AndroidBuilder {
 
         // Add include files from project's include directory (matching pyccgo behavior)
         // Path: include/{lib_name}/ (if source has project subdir) or include/ (if not)
-        let include_source = ctx.project_root.join("include");
+        let include_source = ctx.include_source_dir();
         if include_source.exists() {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;

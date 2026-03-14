@@ -139,6 +139,52 @@ impl WindowsBuilder {
         Ok(())
     }
 
+    /// Merge third-party static libs from cmake build root into the main lib (MinGW)
+    fn merge_third_party_static_libs_mingw(
+        &self,
+        mingw: &MingwToolchain,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        let out_dir = build_dir.join("out");
+        let main_lib_path = out_dir.join(format!("lib{}.a", lib_name));
+        if !main_lib_path.exists() {
+            return Ok(());
+        }
+
+        let placeholder_name = format!("lib{}.a", lib_name);
+        let mut third_party_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(build_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        if fname != placeholder_name {
+                            third_party_libs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        if third_party_libs.is_empty() {
+            return Ok(());
+        }
+
+        if verbose {
+            eprintln!("    Merging {} third-party libs into {}", third_party_libs.len(), placeholder_name);
+        }
+
+        let mut all_libs = vec![main_lib_path.clone()];
+        all_libs.extend(third_party_libs);
+        mingw.merge_static_libs(&all_libs, &main_lib_path)?;
+
+        Ok(())
+    }
+
     /// Detect available Windows toolchain
     fn detect_toolchain() -> Result<WindowsToolchain> {
         // Prefer MinGW for cross-platform builds
@@ -233,6 +279,7 @@ impl WindowsBuilder {
         // This is essential for KMP cinterop which expects a single complete library
         if !build_shared {
             self.merge_module_static_libs_mingw(mingw, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+            self.merge_third_party_static_libs_mingw(mingw, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
         }
 
         Ok(build_dir)
@@ -706,7 +753,7 @@ impl PlatformBuilder for WindowsBuilder {
         }
 
         // Add include files from project's include directory (matching pyccgo behavior)
-        let include_source = ctx.project_root.join("include");
+        let include_source = ctx.include_source_dir();
         if include_source.exists() {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;

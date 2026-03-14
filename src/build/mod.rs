@@ -169,6 +169,16 @@ impl BuildContext {
             .name
     }
 
+    /// Get the include source directory for SDK packaging.
+    /// Uses `[include].src` from CCGO.toml if configured; otherwise falls back to `include/`.
+    pub fn include_source_dir(&self) -> PathBuf {
+        if let Some(src) = self.config.include.as_ref().and_then(|c| c.src.as_deref()) {
+            self.project_root.join(src)
+        } else {
+            self.project_root.join("include")
+        }
+    }
+
     /// Get the version string
     pub fn version(&self) -> &str {
         &self.config.package.as_ref()

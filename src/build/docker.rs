@@ -462,7 +462,10 @@ impl DockerBuilder {
         // --dev without local source: Download pre-built from GitHub releases
         let (setup_cmd, ccgo_bin) = if use_local_source {
             // Build ccgo from local source using cargo
-            let cargo_build_cmd = "CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release --manifest-path /ccgo-src/Cargo.toml".to_string();
+            // Unset CC/CXX to avoid cross-compilers (e.g. MinGW) being used for the host ccgo binary
+            // Use 'env -u CC -u CXX' to fully unset cross-compiler env vars (e.g. MinGW)
+            // so ring/openssl build scripts use the native host compiler for the Linux ccgo binary
+            let cargo_build_cmd = "env -u CC -u CXX -u AR -u RANLIB CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release --manifest-path /ccgo-src/Cargo.toml".to_string();
             (cargo_build_cmd, "/tmp/ccgo-build/release/ccgo".to_string())
         } else if self.ctx.options.dev {
             // Download pre-built ccgo from GitHub releases

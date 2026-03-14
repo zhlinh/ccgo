@@ -61,20 +61,27 @@ impl MingwToolchain {
     pub fn detect_for_arch(arch: MingwArch) -> Result<Self> {
         let prefix = arch.triple_prefix();
 
-        // Look for the gcc compiler
+        // Look for the gcc compiler.
+        // Prefer posix threading model (provides std::mutex, std::thread) over win32.
+        let gcc_posix = format!("{}-gcc-posix", prefix);
         let gcc_name = format!("{}-gcc", prefix);
-        let gcc_path = find_executable(&gcc_name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "MinGW-w64 not found. Please install MinGW-w64 and ensure {} is in PATH.",
-                gcc_name
-            )
-        })?;
+        let gcc_path = find_executable(&gcc_posix)
+            .or_else(|| find_executable(&gcc_name))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MinGW-w64 not found. Please install MinGW-w64 and ensure {} is in PATH.",
+                    gcc_name
+                )
+            })?;
 
-        // Look for g++ compiler
+        // Look for g++ compiler. Prefer posix threading model.
+        let gxx_posix = format!("{}-g++-posix", prefix);
         let gxx_name = format!("{}-g++", prefix);
-        let gxx_path = find_executable(&gxx_name).ok_or_else(|| {
-            anyhow::anyhow!("MinGW-w64 C++ compiler not found: {}", gxx_name)
-        })?;
+        let gxx_path = find_executable(&gxx_posix)
+            .or_else(|| find_executable(&gxx_name))
+            .ok_or_else(|| {
+                anyhow::anyhow!("MinGW-w64 C++ compiler not found: {}", gxx_name)
+            })?;
 
         // Look for windres (optional)
         let windres_name = format!("{}-windres", prefix);
