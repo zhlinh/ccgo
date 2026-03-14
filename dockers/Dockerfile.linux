@@ -16,10 +16,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     pkg-config \
     libssl-dev \
+    zlib1g-dev \
     ca-certificates \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain (needed for --dev mode: building ccgo from source)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Set environment variables
 ENV LANG=C.UTF-8 \

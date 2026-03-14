@@ -390,8 +390,202 @@ fn print_zip_contents(zip_path: &Path, indent: &str) -> Result<()> {
     Ok(())
 }
 
+/// Publish packaged artifacts to a git distribution branch using a worktree.
+///
+/// Steps:
+///  1. Check that we are in a git repository.
+///  2. Create (or reset) a temporary git worktree for `branch`.
+///  3. Copy every file from `package_dir` into the worktree root.
+///  4. Commit the changes with a version-stamped message.
+///  5. Optionally push the branch to `origin`.
+///  6. Remove the worktree.
+fn publish_to_dist_branch(
+    project_dir: &Path,
+    package_dir: &Path,
+    branch: &str,
+    project_name: &str,
+    version: &str,
+    push: bool,
+) -> Result<()> {
+    println!("\n{}", "=".repeat(80));
+    println!("Publishing to dist branch: {}", branch);
+    println!("{}", "=".repeat(80));
+
+    // Verify we are inside a git repo
+    let git_check = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .context("Failed to run git")?;
+    if !git_check.status.success() {
+        return Err(anyhow!("Not inside a git repository"));
+    }
+
+    // Locate the .git directory so we can place the worktree alongside it
+    let git_dir_out = String::from_utf8_lossy(&git_check.stdout).trim().to_string();
+    // git_dir_out is relative or absolute; make it absolute
+    let git_dir = if Path::new(&git_dir_out).is_absolute() {
+        PathBuf::from(&git_dir_out)
+    } else {
+        project_dir.join(&git_dir_out)
+    };
+    let repo_root = git_dir.parent().unwrap_or(project_dir);
+
+    let worktree_path = repo_root.join(".ccgo-dist-worktree");
+
+    // Remove stale worktree if it already exists
+    if worktree_path.exists() {
+        println!("   🧹 Removing stale worktree...");
+        let _ = Command::new("git")
+            .current_dir(project_dir)
+            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+            .status();
+        if worktree_path.exists() {
+            fs::remove_dir_all(&worktree_path)?;
+        }
+    }
+
+    // Check if the branch exists (locally)
+    let branch_exists = Command::new("git")
+        .current_dir(project_dir)
+        .args(["rev-parse", "--verify", branch])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if branch_exists {
+        // Checkout existing branch into worktree
+        println!("   📂 Checking out existing branch '{}'...", branch);
+        let status = Command::new("git")
+            .current_dir(project_dir)
+            .args(["worktree", "add", worktree_path.to_str().unwrap(), branch])
+            .status()
+            .context("Failed to create git worktree")?;
+        if !status.success() {
+            return Err(anyhow!("git worktree add failed"));
+        }
+    } else {
+        // Create orphan branch in worktree (no parent commits)
+        println!("   📂 Creating new orphan branch '{}'...", branch);
+        let status = Command::new("git")
+            .current_dir(project_dir)
+            .args(["worktree", "add", "--orphan", "-b", branch, worktree_path.to_str().unwrap()])
+            .status()
+            .context("Failed to create git worktree with orphan branch")?;
+        if !status.success() {
+            return Err(anyhow!("git worktree add --orphan failed"));
+        }
+    }
+
+    // Clear the worktree (keep .git file that links back to main repo)
+    println!("   🧹 Clearing worktree...");
+    if let Ok(entries) = fs::read_dir(&worktree_path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name == ".git" {
+                continue;
+            }
+            let p = entry.path();
+            if p.is_dir() {
+                fs::remove_dir_all(&p)?;
+            } else {
+                fs::remove_file(&p)?;
+            }
+        }
+    }
+
+    // Copy all packaged files into the worktree root
+    println!("   📦 Copying artifacts...");
+    let mut copied = 0usize;
+    for entry in fs::read_dir(package_dir)
+        .context("Failed to read package directory")?
+        .flatten()
+    {
+        let src = entry.path();
+        let dst = worktree_path.join(entry.file_name());
+        fs::copy(&src, &dst)
+            .with_context(|| format!("Failed to copy {} to worktree", src.display()))?;
+        println!(
+            "   ✓ {}",
+            entry.file_name().to_string_lossy()
+        );
+        copied += 1;
+    }
+
+    if copied == 0 {
+        // Clean up and bail
+        let _ = Command::new("git")
+            .current_dir(project_dir)
+            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+            .status();
+        return Err(anyhow!("No artifacts found in package directory"));
+    }
+
+    // Stage all changes
+    Command::new("git")
+        .current_dir(&worktree_path)
+        .args(["add", "-A"])
+        .status()
+        .context("Failed to stage dist files")?;
+
+    // Check if there is anything to commit
+    let porcelain = Command::new("git")
+        .current_dir(&worktree_path)
+        .args(["status", "--porcelain"])
+        .output()
+        .context("Failed to check git status")?;
+
+    if porcelain.stdout.is_empty() {
+        println!("   ℹ️  No changes to commit (dist branch is up-to-date)");
+    } else {
+        let commit_msg = format!("dist: {} v{}", project_name, version);
+        println!("   💾 Committing: {}", commit_msg);
+        let status = Command::new("git")
+            .current_dir(&worktree_path)
+            .args(["commit", "-m", &commit_msg])
+            .status()
+            .context("Failed to commit dist artifacts")?;
+        if !status.success() {
+            return Err(anyhow!("git commit failed in dist branch"));
+        }
+    }
+
+    // Remove worktree (branch persists in the repo)
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+        .status();
+
+    println!(
+        "\n   ✅ Artifacts committed to branch '{}'",
+        branch
+    );
+
+    // Push if requested
+    if push {
+        println!("   📤 Pushing branch '{}' to origin...", branch);
+        let status = Command::new("git")
+            .current_dir(project_dir)
+            .args(["push", "origin", branch])
+            .status()
+            .context("Failed to push dist branch")?;
+        if !status.success() {
+            return Err(anyhow!("git push failed for branch '{}'", branch));
+        }
+        println!("   ✅ Pushed '{}' to origin", branch);
+    } else {
+        println!(
+            "   💡 Use --dist-push to push '{}' to remote",
+            branch
+        );
+    }
+
+    Ok(())
+}
+
 /// Package SDK for distribution
 #[derive(Args, Debug)]
+#[command(disable_version_flag = true)]
 pub struct PackageCommand {
     /// SDK version (default: auto-detect from git or CCGO.toml)
     #[arg(long)]
@@ -412,6 +606,18 @@ pub struct PackageCommand {
     /// Package release builds (default: debug builds)
     #[arg(long)]
     pub release: bool,
+
+    /// Publish packaged artifacts to a git distribution branch (e.g. "dist")
+    #[arg(long)]
+    pub dist_branch: Option<String>,
+
+    /// Shorthand for --dist-branch dist
+    #[arg(long)]
+    pub dist: bool,
+
+    /// Push the dist branch to remote after committing
+    #[arg(long)]
+    pub dist_push: bool,
 }
 
 impl PackageCommand {
@@ -624,6 +830,27 @@ impl PackageCommand {
         println!("\n{}", "=".repeat(80));
         println!("\n{}", style("✅ Package complete!").green().bold());
         println!("   Output: {}\n", output_path.display());
+
+        // Publish to dist branch if requested
+        let branch = if let Some(ref b) = self.dist_branch {
+            Some(b.as_str())
+        } else if self.dist {
+            Some("dist")
+        } else {
+            None
+        };
+
+        if let Some(branch) = branch {
+            let version_clean = version.strip_prefix('v').unwrap_or(&version);
+            publish_to_dist_branch(
+                &project_dir,
+                &output_path,
+                branch,
+                &project_name,
+                version_clean,
+                self.dist_push,
+            )?;
+        }
 
         Ok(())
     }

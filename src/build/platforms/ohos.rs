@@ -33,6 +33,99 @@ impl OhosBuilder {
         })
     }
 
+    /// Merge all module static libraries (from out/) into a single library
+    fn merge_module_static_libs(
+        &self,
+        sdk: &OhosSdkToolchain,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        let out_dir = build_dir.join("out");
+        if !out_dir.exists() {
+            return Ok(());
+        }
+
+        let main_lib_name = format!("lib{}.a", lib_name);
+        let main_lib_path = out_dir.join(&main_lib_name);
+
+        // Collect module libs, excluding the main one
+        let mut module_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&out_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" && path != main_lib_path {
+                        module_libs.push(path);
+                    }
+                }
+            }
+        }
+
+        if module_libs.is_empty() {
+            return Ok(());
+        }
+
+        if verbose {
+            eprintln!("    Merging {} module libraries into {}", module_libs.len(), main_lib_name);
+        }
+
+        sdk.merge_static_libs(&module_libs, &main_lib_path)?;
+
+        for lib in &module_libs {
+            let _ = std::fs::remove_file(lib);
+        }
+
+        Ok(())
+    }
+
+    /// Merge third-party static libs (e.g. libzstd.a) from cmake build root into the main lib
+    fn merge_third_party_static_libs(
+        &self,
+        sdk: &OhosSdkToolchain,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        let out_dir = build_dir.join("out");
+        let main_lib_path = out_dir.join(format!("lib{}.a", lib_name));
+        if !main_lib_path.exists() {
+            return Ok(());
+        }
+
+        let placeholder_name = format!("lib{}.a", lib_name);
+        let mut third_party_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(build_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        if fname != placeholder_name {
+                            third_party_libs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+
+        if third_party_libs.is_empty() {
+            return Ok(());
+        }
+
+        if verbose {
+            eprintln!("    Merging {} third-party libs into {}", third_party_libs.len(), placeholder_name);
+        }
+
+        let mut all_libs = vec![main_lib_path.clone()];
+        all_libs.extend(third_party_libs);
+        sdk.merge_static_libs(&all_libs, &main_lib_path)?;
+
+        Ok(())
+    }
+
     /// Build for a single ABI
     fn build_abi(
         &self,
@@ -105,6 +198,12 @@ impl OhosBuilder {
 
         cmake.configure_build_install()?;
 
+        // For static builds, merge module libs then third-party libs (e.g. libzstd.a)
+        if !build_shared {
+            self.merge_module_static_libs(sdk, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+            self.merge_third_party_static_libs(sdk, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+        }
+
         // Return build_dir since CCGO cmake installs to build_dir/out/
         Ok(build_dir)
     }
@@ -115,22 +214,18 @@ impl OhosBuilder {
         &self,
         build_dir: &PathBuf,
         is_shared: bool,
-        link_type: &str,
-        abi: OhosAbi,
+        _link_type: &str,
+        _abi: OhosAbi,
         lib_name: &str,
     ) -> Result<Vec<PathBuf>> {
         let extension = if is_shared { "so" } else { "a" };
         let mut libs = Vec::new();
 
-        // CCGO cmake puts the combined library in {link_type}/{arch}/out/
-        // e.g., shared/arm64-v8a/out/libccgonow.so
-        let combined_lib_dir = build_dir.join(format!("{}/{}/out", link_type, abi.abi_string()));
-
-        // Check multiple possible directories
+        // build_dir is already the per-ABI dir (e.g. cmake_build/debug/ohos/static/arm64-v8a),
+        // so the merged library from merge_module_static_libs lives in build_dir/out/.
         let possible_dirs = vec![
-            combined_lib_dir, // Combined library (libccgonow.so) - PRIORITY
+            build_dir.join("out"),           // Merged library — highest priority
             build_dir.join("install/lib"),
-            build_dir.join("out"),
             build_dir.join("lib"),
         ];
 
@@ -641,7 +736,7 @@ impl PlatformBuilder for OhosBuilder {
         }
 
         // Add include files from project's include directory (matching pyccgo behavior)
-        let include_source = ctx.project_root.join("include");
+        let include_source = ctx.include_source_dir();
         if include_source.exists() {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;

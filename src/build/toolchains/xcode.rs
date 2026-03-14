@@ -200,6 +200,20 @@ impl XcodeToolchain {
         let archs = platform.valid_architectures().join(";");
         vars.push(("CMAKE_OSX_ARCHITECTURES".to_string(), archs));
 
+        // Set platform-specific boolean flags for CMakeLists.txt platform detection
+        match platform {
+            ApplePlatform::IOS | ApplePlatform::IOSSimulator => {
+                vars.push(("IOS".to_string(), "TRUE".to_string()));
+            }
+            ApplePlatform::TvOS | ApplePlatform::TvOSSimulator => {
+                vars.push(("TVOS".to_string(), "TRUE".to_string()));
+            }
+            ApplePlatform::WatchOS | ApplePlatform::WatchOSSimulator => {
+                vars.push(("WATCHOS".to_string(), "TRUE".to_string()));
+            }
+            ApplePlatform::MacOS => {}
+        }
+
         Ok(vars)
     }
 

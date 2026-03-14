@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     mingw-w64 \
+    libz-mingw-w64-dev \
     cmake \
     make \
     git \
@@ -17,13 +18,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     pkg-config \
     libssl-dev \
+    zlib1g-dev \
     ca-certificates \
     python3 \
     python3-pip \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Create Windows.h compatibility symlinks for case-sensitive Linux filesystem.
+# MinGW-w64 on Ubuntu stores shared headers in /usr/share/mingw-w64/include/
+# and uses symlinks from /usr/x86_64-w64-mingw32/include/. We add mixed-case
+# aliases so Windows source code using #include <Windows.h> works on Linux.
+RUN MINGW_SHARED=/usr/share/mingw-w64/include && \
+    MINGW_X64=/usr/x86_64-w64-mingw32/include && \
+    ln -sf "$MINGW_SHARED/windows.h"  "$MINGW_SHARED/Windows.h"  && \
+    ln -sf "$MINGW_SHARED/winsock2.h" "$MINGW_SHARED/Winsock2.h" && \
+    ln -sf "$MINGW_SHARED/ws2tcpip.h" "$MINGW_SHARED/Ws2tcpip.h" && \
+    ln -sf "$MINGW_SHARED/winerror.h" "$MINGW_SHARED/Winerror.h" && \
+    ln -sf "$MINGW_SHARED/winbase.h"  "$MINGW_SHARED/Winbase.h"  && \
+    ln -sf "$MINGW_SHARED/winnt.h"    "$MINGW_SHARED/Winnt.h"    && \
+    ln -sf "$MINGW_X64/windows.h"     "$MINGW_X64/Windows.h"     2>/dev/null || true
+
 # Set environment variables for MinGW cross-compilation
+# Switch MinGW to posix threading model so std::mutex/std::thread are available
+RUN update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix && \
+    update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     CC=x86_64-w64-mingw32-gcc \
@@ -32,7 +52,7 @@ ENV LANG=C.UTF-8 \
     RANLIB=x86_64-w64-mingw32-ranlib
 
 # Install Rust for building ccgo from source
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Install ccgo from PyPI (pre-compiled Rust binary wheel, fast installation)

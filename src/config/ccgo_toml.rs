@@ -112,6 +112,22 @@ pub struct CcgoConfig {
     /// Allows overriding dependency sources for specific crates
     #[serde(default)]
     pub patch: PatchConfig,
+
+    /// Include directory configuration for SDK packaging
+    pub include: Option<IncludeConfig>,
+}
+
+/// Include directory configuration for SDK packaging.
+///
+/// ```toml
+/// [include]
+/// src = "dist/include"   # path relative to project root; defaults to "include"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct IncludeConfig {
+    /// Source directory for include headers (relative to project root).
+    /// Defaults to `"include"` when not specified.
+    pub src: Option<String>,
 }
 
 /// Patch configuration from [patch] section

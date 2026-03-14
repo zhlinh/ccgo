@@ -114,11 +114,60 @@ function(ccgo_find_dependency_libraries DEP_NAME DEP_PATH PLATFORM ARCH LINK_TYP
             file(GLOB LIB_FILES "${LIB_DIR}/*.so")
         endif()
     elseif(PLATFORM STREQUAL "ios" OR PLATFORM STREQUAL "macos" OR PLATFORM STREQUAL "tvos" OR PLATFORM STREQUAL "watchos")
-        # Check for frameworks first
-        file(GLOB FRAMEWORKS "${LIB_DIR}/*.framework" "${LIB_DIR}/*.xcframework")
+        # Check for plain .framework bundles
+        file(GLOB FRAMEWORKS "${LIB_DIR}/*.framework")
         if(FRAMEWORKS)
             list(APPEND LIBRARIES ${FRAMEWORKS})
-        else()
+        endif()
+
+        # Handle .xcframework: resolve inner library slice for cmake < 3.28 compatibility
+        file(GLOB XCFRAMEWORKS "${LIB_DIR}/*.xcframework")
+        foreach(_xcfw ${XCFRAMEWORKS})
+            # Select the platform slice directory
+            if(PLATFORM STREQUAL "macos")
+                file(GLOB _slices LIST_DIRECTORIES true "${_xcfw}/macos-*")
+            elseif(PLATFORM STREQUAL "ios")
+                if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+                    file(GLOB _slices LIST_DIRECTORIES true "${_xcfw}/*-simulator")
+                else()
+                    file(GLOB _slices LIST_DIRECTORIES true "${_xcfw}/ios-*")
+                    list(FILTER _slices EXCLUDE REGEX ".*-simulator$")
+                endif()
+            else()
+                file(GLOB _slices LIST_DIRECTORIES true "${_xcfw}/*")
+                list(FILTER _slices EXCLUDE REGEX ".*-simulator$")
+            endif()
+
+            if(NOT _slices)
+                list(APPEND LIBRARIES "${_xcfw}")
+                continue()
+            endif()
+
+            list(GET _slices 0 _slice_dir)
+
+            # If slice contains a .framework bundle it is a framework xcframework
+            file(GLOB _inner_fw LIST_DIRECTORIES true "${_slice_dir}/*.framework")
+            if(_inner_fw)
+                list(APPEND LIBRARIES "${_xcfw}")
+            else()
+                # Static/shared xcframework - link inner library directly
+                if(LINK_TYPE STREQUAL "static")
+                    file(GLOB _inner_libs "${_slice_dir}/*.a")
+                else()
+                    file(GLOB _inner_libs "${_slice_dir}/*.dylib")
+                    if(NOT _inner_libs)
+                        file(GLOB _inner_libs "${_slice_dir}/*.a")
+                    endif()
+                endif()
+                if(_inner_libs)
+                    list(APPEND LIBRARIES ${_inner_libs})
+                else()
+                    list(APPEND LIBRARIES "${_xcfw}")
+                endif()
+            endif()
+        endforeach()
+
+        if(NOT FRAMEWORKS AND NOT XCFRAMEWORKS)
             if(LINK_TYPE STREQUAL "static")
                 file(GLOB LIB_FILES "${LIB_DIR}/*.a")
             else()

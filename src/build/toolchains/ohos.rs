@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use super::Toolchain;
 
@@ -218,6 +218,86 @@ impl OhosSdkToolchain {
             ),
             ("OHOS_STL".to_string(), "c++_shared".to_string()),
         ]
+    }
+
+    /// Get the path to llvm-ar
+    pub fn llvm_ar_path(&self) -> PathBuf {
+        self.native_path().join("llvm").join("bin").join("llvm-ar")
+    }
+
+    /// Merge multiple static libraries into a single library using llvm-ar
+    pub fn merge_static_libs(&self, src_libs: &[PathBuf], dst_lib: &PathBuf) -> Result<()> {
+        if src_libs.is_empty() {
+            anyhow::bail!("No source libraries to merge");
+        }
+
+        if let Some(parent) = dst_lib.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let ar = self.llvm_ar_path();
+        let temp_dir = std::env::temp_dir().join(format!(
+            "ccgo-ohos-merge-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ));
+        std::fs::create_dir_all(&temp_dir)?;
+
+        for (idx, lib) in src_libs.iter().enumerate() {
+            let extract_dir = temp_dir.join(format!("lib{}", idx));
+            std::fs::create_dir_all(&extract_dir)?;
+
+            let output = std::process::Command::new(&ar)
+                .arg("x")
+                .arg(lib)
+                .current_dir(&extract_dir)
+                .output()
+                .context("Failed to run llvm-ar for extraction")?;
+
+            if !output.status.success() {
+                std::fs::remove_dir_all(&temp_dir).ok();
+                bail!(
+                    "llvm-ar extraction failed for {}: {}",
+                    lib.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+
+        let mut object_files: Vec<PathBuf> = Vec::new();
+        for entry in walkdir::WalkDir::new(&temp_dir) {
+            let entry = entry?;
+            let ext = entry.path().extension().and_then(|e| e.to_str());
+            if matches!(ext, Some("o") | Some("obj")) {
+                object_files.push(entry.path().to_path_buf());
+            }
+        }
+
+        if object_files.is_empty() {
+            std::fs::remove_dir_all(&temp_dir).ok();
+            bail!("No object files found in source libraries");
+        }
+
+        if dst_lib.exists() {
+            std::fs::remove_file(dst_lib)?;
+        }
+
+        let mut cmd = std::process::Command::new(&ar);
+        cmd.arg("rcs").arg(dst_lib);
+        for obj in &object_files {
+            cmd.arg(obj);
+        }
+
+        let output = cmd.output().context("Failed to run llvm-ar for merging")?;
+        std::fs::remove_dir_all(&temp_dir).ok();
+
+        if !output.status.success() {
+            bail!("llvm-ar merge failed: {}", String::from_utf8_lossy(&output.stderr));
+        }
+
+        Ok(())
     }
 
     /// Get SDK version string
