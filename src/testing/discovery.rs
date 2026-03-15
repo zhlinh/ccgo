@@ -1,6 +1,7 @@
 //! Test discovery module
 //!
 //! Provides automatic discovery of tests from executables and CMake CTest.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

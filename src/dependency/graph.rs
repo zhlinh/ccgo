@@ -1,6 +1,7 @@
 //! Dependency graph data structures and algorithms
 //!
 //! Provides dependency graph representation, cycle detection, and topological sorting.
+#![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
 

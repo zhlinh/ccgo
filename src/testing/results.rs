@@ -1,6 +1,7 @@
 //! Test result aggregation module
 //!
 //! Parses and aggregates test results from GoogleTest XML output.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 
@@ -444,7 +445,7 @@ impl TestResultAggregator {
                     .and_then(|t| t.parse::<f64>().ok())
                     .unwrap_or(0.0);
 
-                let mut test = TestResult::passed(&classname, &name, time);
+                let test = TestResult::passed(&classname, &name, time);
 
                 // Check if self-closing (passed)
                 if line.ends_with("/>") {

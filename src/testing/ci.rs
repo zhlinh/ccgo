@@ -2,11 +2,11 @@
 //!
 //! Provides integration with various CI services including GitHub Actions,
 //! GitLab CI, Jenkins, and Azure DevOps.
+#![allow(dead_code)]
 
 use std::path::Path;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use super::coverage::CoverageReport;
 use super::results::TestSummary;

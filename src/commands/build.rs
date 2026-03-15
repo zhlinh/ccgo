@@ -1,6 +1,6 @@
 //! Build command implementation
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{bail, Result};
 use clap::{Args, ValueEnum};
@@ -703,7 +703,7 @@ impl BuildCommand {
         jobs: usize,
     ) {
         let total_duration: f64 = results.iter().map(|r| r.duration_secs).sum();
-        let all_archs: Vec<String> = results
+        let _all_archs: Vec<String> = results
             .iter()
             .flat_map(|r| r.architectures.clone())
             .collect();
