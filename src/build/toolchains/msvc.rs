@@ -239,12 +239,16 @@ impl Toolchain for MsvcToolchain {
         if !self.is_xwin() {
             vars.push(("CMAKE_GENERATOR_PLATFORM".to_string(), "x64".to_string()));
         } else {
-            // xwin environment uses a CMake toolchain file
-            // This file sets CMAKE_SYSTEM_NAME, compilers, and all necessary flags
-            // before the project() command, which is required for cross-compilation
+            // xwin environment uses a CMake toolchain file extracted to ~/.ccgo/cmake/
+            // by the embedded cmake_templates system (same as ios/tvos/watchos toolchains)
+            let home = std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .unwrap_or_default();
+            let toolchain_path = PathBuf::from(home)
+                .join(".ccgo/cmake/windows-msvc.toolchain.cmake");
             vars.push((
                 "CMAKE_TOOLCHAIN_FILE".to_string(),
-                "/opt/ccgo/windows-msvc.toolchain.cmake".to_string(),
+                toolchain_path.display().to_string(),
             ));
         }
 

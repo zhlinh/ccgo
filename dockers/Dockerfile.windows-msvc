@@ -67,11 +67,8 @@ RUN . ~/.cargo/env && \
     mkdir -p /opt/xwin && \
     xwin --accept-license splat --output /opt/xwin/sdk
 
-# Copy CMake toolchain file for MSVC cross-compilation
-# This file is automatically extracted from embedded content at runtime to ~/.ccgo/dockers/cmake/
-# Source: cmake/windows-msvc.toolchain.cmake (embedded in Rust binary via include_str!)
-RUN mkdir -p /opt/ccgo
-COPY cmake/windows-msvc.toolchain.cmake /opt/ccgo/windows-msvc.toolchain.cmake
+# Note: The MSVC toolchain cmake file is embedded in the ccgo binary
+# and extracted at runtime to ~/.ccgo/cmake/ (same as ios/tvos/watchos toolchains)
 
 # Set environment variables for MSVC-compatible cross-compilation
 # xwin splat output structure:
