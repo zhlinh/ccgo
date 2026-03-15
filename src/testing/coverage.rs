@@ -1,6 +1,7 @@
 //! Code coverage module
 //!
 //! Provides code coverage collection and reporting using gcov/llvm-cov.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

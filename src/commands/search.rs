@@ -6,7 +6,7 @@
 //!   ccgo search <keyword> --registry <name>   # Search specific registry
 //!   ccgo search <keyword> --details           # Show detailed information
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Args;
 
 use crate::collection::CollectionManager;

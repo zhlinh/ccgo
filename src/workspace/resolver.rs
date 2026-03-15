@@ -1,6 +1,7 @@
 //! Workspace dependency resolution
+#![allow(dead_code)]
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::config::DependencyConfig;
 use crate::workspace::{Workspace, WorkspaceMember};

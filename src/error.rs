@@ -2,9 +2,8 @@
 //!
 //! This module provides custom error types with actionable hints and suggestions
 //! to help users quickly resolve common issues.
+#![allow(dead_code)]
 
-use std::fmt;
-use std::path::PathBuf;
 
 use thiserror::Error;
 

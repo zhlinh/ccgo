@@ -2,6 +2,7 @@
 //!
 //! Workspaces allow you to manage multiple related C++ packages in a single
 //! repository with shared dependencies and coordinated builds.
+#![allow(dead_code)]
 
 mod members;
 mod resolver;

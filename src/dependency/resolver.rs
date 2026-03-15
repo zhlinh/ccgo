@@ -2,6 +2,7 @@
 //!
 //! This module provides functionality to resolve transitive dependencies
 //! by recursively reading CCGO.toml files from dependencies.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

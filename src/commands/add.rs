@@ -7,6 +7,7 @@
 //!   ccgo add github:user/repo              # Git shorthand
 //!   ccgo add github:user/repo@v1.0.0       # With version tag
 //!   ccgo add <name> --git gh:user/repo     # Shorthand in --git
+#![allow(dead_code)]
 
 use anyhow::{bail, Context, Result};
 use clap::Args;

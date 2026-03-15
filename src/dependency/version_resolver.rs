@@ -2,6 +2,7 @@
 //!
 //! This module provides intelligent version conflict resolution when multiple
 //! dependencies require different versions of the same package.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::fmt;
@@ -72,7 +73,7 @@ impl VersionRequirement {
             (Self::Exact(v), Self::Range(req)) | (Self::Range(req), Self::Exact(v)) => {
                 req.matches(v)
             }
-            (Self::Range(req1), Self::Range(req2)) => {
+            (Self::Range(_req1), Self::Range(_req2)) => {
                 // Check if ranges overlap by testing against sample versions
                 // This is a heuristic - proper range intersection is complex
                 self.try_find_compatible_version(other).is_some()

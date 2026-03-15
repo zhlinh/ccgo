@@ -13,8 +13,3 @@ pub mod results;
 pub mod benchmark;
 pub mod ci;
 
-pub use coverage::{CoverageConfig, CoverageFormat, CoverageReport};
-pub use discovery::{DiscoveredTest, TestDiscovery};
-pub use results::{TestResult, TestResultAggregator, TestSummary};
-pub use benchmark::{BenchmarkComparison, BenchmarkResult, BenchmarkStore};
-pub use ci::{CiFormat, CiReporter};

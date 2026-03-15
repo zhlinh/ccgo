@@ -7,6 +7,3 @@ pub mod graph;
 pub mod resolver;
 pub mod version_resolver;
 
-pub use graph::{DependencyGraph, DependencyNode};
-pub use resolver::DependencyResolver;
-pub use version_resolver::{ConflictStrategy, VersionConflict, VersionRequirement, VersionResolver};
