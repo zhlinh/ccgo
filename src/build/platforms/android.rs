@@ -754,22 +754,13 @@ impl PlatformBuilder for AndroidBuilder {
             if ctx.options.verbose {
                 eprintln!("Building AAR package...");
             }
-            if let Err(e) = self.build_aar(ctx, &abis, &ctx.output_dir) {
-                eprintln!("Warning: Failed to build AAR: {}. Continuing without AAR.", e);
-                let gradle_cmd = if ctx.options.release {
-                    "cd android && ./gradlew buildAAR -PisRelease=true"
-                } else {
-                    "cd android && ./gradlew buildAAR -PisRelease=false"
-                };
-                eprintln!("To build AAR manually, run: {}", gradle_cmd);
-            } else {
-                if ctx.options.verbose {
-                    eprintln!("AAR package built successfully");
-                }
-                // After successful AAR build, copy unstripped libraries from obj/local/ to symbols
-                // This works for both release and debug builds
-                self.copy_obj_local_to_symbols(ctx, &abis, &symbols_staging)?;
+            self.build_aar(ctx, &abis, &ctx.output_dir)?;
+            if ctx.options.verbose {
+                eprintln!("AAR package built successfully");
             }
+            // After successful AAR build, copy unstripped libraries from obj/local/ to symbols
+            // This works for both release and debug builds
+            self.copy_obj_local_to_symbols(ctx, &abis, &symbols_staging)?;
         }
 
         // Add AAR to archive if it exists (not in native-only mode)
