@@ -10,6 +10,7 @@ pub mod check;
 pub mod clean;
 pub mod collection;
 pub mod doc;
+pub mod doctor;
 pub mod init;
 pub mod install;
 pub mod new;
