@@ -6,10 +6,10 @@ use clap::{Parser, Subcommand};
 use crate::commands::{
     add::AddCommand, analytics::AnalyticsCommand, bench::BenchCommand, build::BuildCommand,
     check::CheckCommand, clean::CleanCommand, collection::CollectionCommand, doc::DocCommand,
-    init::InitCommand, install::InstallCommand, new::NewCommand, package::PackageCommand,
-    publish::PublishCommand, registry::RegistryCommand, remove::RemoveCommand, run::RunCommand,
-    search::SearchCommand, tag::TagCommand, test::TestCommand, tree::TreeCommand,
-    update::UpdateCommand, vendor::VendorCommand,
+    doctor::DoctorCommand, init::InitCommand, install::InstallCommand, new::NewCommand,
+    package::PackageCommand, publish::PublishCommand, registry::RegistryCommand,
+    remove::RemoveCommand, run::RunCommand, search::SearchCommand, tag::TagCommand,
+    test::TestCommand, tree::TreeCommand, update::UpdateCommand, vendor::VendorCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -59,8 +59,11 @@ pub enum Commands {
     /// Publish library to repository
     Publish(PublishCommand),
 
-    /// Check platform dependencies
+    /// Check compilation without generating binaries
     Check(CheckCommand),
+
+    /// Diagnose platform dependencies and environment setup
+    Doctor(DoctorCommand),
 
     /// Clean build artifacts
     Clean(CleanCommand),
@@ -122,6 +125,7 @@ impl Cli {
             Commands::Doc(cmd) => cmd.execute(self.verbose),
             Commands::Publish(cmd) => cmd.execute(self.verbose),
             Commands::Check(cmd) => cmd.execute(self.verbose),
+            Commands::Doctor(cmd) => cmd.execute(self.verbose),
             Commands::Clean(cmd) => cmd.execute(self.verbose),
             Commands::Tag(cmd) => cmd.execute(self.verbose),
             Commands::Package(cmd) => cmd.execute(self.verbose),
