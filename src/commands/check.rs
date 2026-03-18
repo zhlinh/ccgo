@@ -114,18 +114,13 @@ impl CheckCommand {
             ctx.symbol_visibility().to_string(),
         );
 
-        // Add -fsyntax-only via compiler flags
-        // This tells the compiler to only check syntax/types without generating object files
-        cmake = cmake.variable("CMAKE_CXX_FLAGS", "-fsyntax-only");
-        cmake = cmake.variable("CMAKE_C_FLAGS", "-fsyntax-only");
-
         // Run CMake configure
         if verbose {
             eprintln!("Running CMake configure...");
         }
         cmake.configure()?;
 
-        // Run CMake build (with -fsyntax-only, this only checks compilation)
+        // Run CMake build to verify compilation
         if verbose {
             eprintln!("Running compilation check...");
         }
