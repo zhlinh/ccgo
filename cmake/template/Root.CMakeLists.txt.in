@@ -414,8 +414,12 @@ else()
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(api FILES ${SELF_TEMP_SRC_FILES})
 
-        # Include Android-specific implementation headers
-        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/android/*.h)
+        # Include Android-specific implementation
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/android/*.h src/api/android/*.cpp src/api/android/*.cc)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+
+        # Include native/ directory for cross-platform native API
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/native/*.h src/api/native/*.cpp src/api/native/*.cc)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
 
         # Remove any test files from production build
@@ -548,8 +552,12 @@ else()
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(api FILES ${SELF_TEMP_SRC_FILES})
 
-        # Include OHOS-specific implementation headers
-        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/ohos/*.h)
+        # Include OHOS-specific implementation
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/ohos/*.h src/api/ohos/*.cpp src/api/ohos/*.cc)
+        list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
+
+        # Include native/ directory for cross-platform native API
+        file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/native/*.h src/api/native/*.cpp src/api/native/*.cc)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
 
         # Remove any test files from production build
