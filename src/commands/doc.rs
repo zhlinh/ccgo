@@ -34,8 +34,9 @@ fn check_python_package_installed(package: &str) -> bool {
 
 /// Install Python dependencies from requirements.txt
 fn install_python_requirements(requirements_file: &Path) -> Result<()> {
-    let pip_cmd = get_pip_command()
-        .ok_or_else(|| anyhow!("Neither pip nor pip3 found in PATH. Please install Python pip first."))?;
+    let pip_cmd = get_pip_command().ok_or_else(|| {
+        anyhow!("Neither pip nor pip3 found in PATH. Please install Python pip first.")
+    })?;
 
     println!(
         "{}",
@@ -54,7 +55,10 @@ fn install_python_requirements(requirements_file: &Path) -> Result<()> {
         .with_context(|| format!("Failed to execute {}", pip_cmd))?;
 
     if status.success() {
-        println!("{}", style("Dependencies installed successfully!\n").green());
+        println!(
+            "{}",
+            style("Dependencies installed successfully!\n").green()
+        );
         return Ok(());
     }
 
@@ -79,19 +83,28 @@ fn install_python_requirements(requirements_file: &Path) -> Result<()> {
         ));
     }
 
-    println!("{}", style("Dependencies installed successfully!\n").green());
+    println!(
+        "{}",
+        style("Dependencies installed successfully!\n").green()
+    );
     Ok(())
 }
 
-/// Find the project directory containing mkdocs.yml
-fn find_mkdocs_project(start_dir: &Path) -> Result<PathBuf> {
-    // First check if mkdocs.yml exists in start_dir
+/// Documentation engine detected in the project
+enum DocEngine {
+    MkDocs(PathBuf),  // path to project dir containing mkdocs.yml
+    Doxygen(PathBuf), // path to Doxyfile or Doxyfile.in
+}
+
+/// Find the documentation engine configured in the project
+fn find_doc_engine(start_dir: &Path) -> Result<DocEngine> {
+    // First check for mkdocs.yml
     let mkdocs_yml = start_dir.join("mkdocs.yml");
     if mkdocs_yml.is_file() {
-        return Ok(start_dir.to_path_buf());
+        return Ok(DocEngine::MkDocs(start_dir.to_path_buf()));
     }
 
-    // Check immediate subdirectories
+    // Check immediate subdirectories for mkdocs.yml
     if let Ok(entries) = std::fs::read_dir(start_dir) {
         for entry in entries.flatten() {
             if !entry.path().is_dir() {
@@ -99,16 +112,162 @@ fn find_mkdocs_project(start_dir: &Path) -> Result<PathBuf> {
             }
             let mkdocs_yml = entry.path().join("mkdocs.yml");
             if mkdocs_yml.is_file() {
-                return Ok(entry.path());
+                return Ok(DocEngine::MkDocs(entry.path()));
             }
         }
     }
 
+    // Check for Doxyfile / Doxyfile.in
+    for name in &["Doxyfile", "Doxyfile.in"] {
+        let doxyfile = start_dir.join(name);
+        if doxyfile.is_file() {
+            return Ok(DocEngine::Doxygen(doxyfile));
+        }
+        let doxyfile = start_dir.join("docs").join(name);
+        if doxyfile.is_file() {
+            return Ok(DocEngine::Doxygen(doxyfile));
+        }
+    }
+
     Err(anyhow!(
-        "mkdocs.yml not found in project directory.\n\
-         Please ensure you are in a CCGO project directory with MkDocs configured.\n\
-         Expected location: <project>/mkdocs.yml or <project>/<subdir>/mkdocs.yml"
+        "No documentation configuration found in project directory.\n\
+         Supported: mkdocs.yml (MkDocs) or Doxyfile/Doxyfile.in (Doxygen).\n\
+         Expected location: <project>/mkdocs.yml, <project>/docs/Doxyfile, etc."
     ))
+}
+
+/// Build documentation using Doxygen
+fn build_doxygen(doxyfile: &Path, project_dir: &Path, open: bool) -> Result<()> {
+    if !check_command_installed("doxygen") {
+        return Err(anyhow!(
+            "Doxygen is not installed or not in PATH.\n\
+             Install it with:\n\
+               macOS: brew install doxygen\n\
+               Ubuntu: sudo apt-get install doxygen\n\
+               Windows: choco install doxygen"
+        ));
+    }
+
+    println!("Using Doxygen: {}", doxyfile.display());
+
+    let doxyfile_path = if doxyfile.extension().is_some_and(|e| e == "in") {
+        // Doxyfile.in needs variable substitution — generate a temporary Doxyfile
+        let content = std::fs::read_to_string(doxyfile)
+            .with_context(|| format!("Failed to read {}", doxyfile.display()))?;
+
+        // Get project name from CCGO.toml if available
+        let project_name = project_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        let output_dir = project_dir.join("target").join("docs").join("doxygen");
+        std::fs::create_dir_all(&output_dir)?;
+
+        let content = content
+            .replace("@CMAKE_CURRENT_SOURCE_DIR@", &project_dir.to_string_lossy())
+            .replace("@PROJECT_SOURCE_DIR@", &project_dir.to_string_lossy())
+            .replace("@CMAKE_SOURCE_DIR@", &project_dir.to_string_lossy())
+            .replace("@PROJECT_NAME@", &project_name)
+            .replace("@DOXYGEN_OUTPUT_DIR@", &output_dir.to_string_lossy());
+
+        let generated = project_dir.join("target").join("docs").join("Doxyfile");
+        std::fs::write(&generated, content)?;
+        generated
+    } else {
+        doxyfile.to_path_buf()
+    };
+
+    println!("Running: doxygen {}\n", doxyfile_path.display());
+
+    let status = Command::new("doxygen")
+        .arg(&doxyfile_path)
+        .current_dir(project_dir)
+        .status()
+        .context("Failed to execute doxygen")?;
+
+    if !status.success() {
+        return Err(anyhow!("Doxygen documentation build failed"));
+    }
+
+    println!(
+        "\n{}",
+        style("Documentation built successfully!").green().bold()
+    );
+
+    // Try to find and open the generated index.html
+    let possible_outputs = [
+        project_dir
+            .join("target")
+            .join("docs")
+            .join("doxygen")
+            .join("html")
+            .join("index.html"),
+        project_dir.join("docs").join("_html").join("index.html"),
+    ];
+
+    for index_path in &possible_outputs {
+        if index_path.exists() {
+            println!(
+                "Documentation location: {}",
+                index_path.parent().unwrap().display()
+            );
+            if open {
+                println!("\nOpening documentation in browser...");
+                let url = format!("file://{}", index_path.display());
+                if let Err(e) = open::that(&url) {
+                    println!("Warning: Failed to open browser: {}", e);
+                    println!("You can manually open: {}", url);
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    println!("Documentation output directory: check Doxyfile OUTPUT_DIRECTORY setting");
+    Ok(())
+}
+
+/// Print the installation status of a dependency
+fn print_dep_status(label: &str, installed: bool) {
+    let status = if installed {
+        style("✓ installed").green()
+    } else {
+        style("✗ missing").red()
+    };
+    println!("  {label} {status}");
+}
+
+/// Prompt user to install missing deps, or print skip instructions
+fn prompt_install_deps(requirements_file: &Path) -> Result<()> {
+    print!(
+        "{}",
+        style("Would you like to install missing dependencies now? [Y/n] ")
+            .cyan()
+            .bold()
+    );
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+
+    if input.is_empty() || input == "y" || input == "yes" {
+        install_python_requirements(requirements_file)?;
+    } else {
+        let pip_cmd = get_pip_command().unwrap_or("pip");
+        println!(
+            "{}",
+            style("Skipping dependency installation. Documentation build may fail.\n").yellow()
+        );
+        println!("You can install dependencies later with:");
+        println!("  {} install -r {}", pip_cmd, requirements_file.display());
+        println!("Or run:");
+        println!("  ccgo doc --install-deps\n");
+    }
+
+    Ok(())
 }
 
 /// Check and optionally install MkDocs dependencies
@@ -129,34 +288,10 @@ fn check_and_install_deps(project_dir: &Path, auto_install: bool) -> Result<()> 
     }
 
     // Some dependencies are missing
-    println!(
-        "{}",
-        style("MkDocs dependencies check:").yellow().bold()
-    );
-    println!(
-        "  mkdocs:          {}",
-        if mkdocs_installed {
-            style("✓ installed").green()
-        } else {
-            style("✗ missing").red()
-        }
-    );
-    println!(
-        "  mkdocs-material: {}",
-        if material_installed {
-            style("✓ installed").green()
-        } else {
-            style("✗ missing").red()
-        }
-    );
-    println!(
-        "  mkdoxy:          {}",
-        if mkdoxy_installed {
-            style("✓ installed").green()
-        } else {
-            style("✗ missing").red()
-        }
-    );
+    println!("{}", style("MkDocs dependencies check:").yellow().bold());
+    print_dep_status("mkdocs:         ", mkdocs_installed);
+    print_dep_status("mkdocs-material:", material_installed);
+    print_dep_status("mkdoxy:         ", mkdoxy_installed);
     println!();
 
     if auto_install {
@@ -164,32 +299,7 @@ fn check_and_install_deps(project_dir: &Path, auto_install: bool) -> Result<()> 
         return Ok(());
     }
 
-    // Ask user if they want to install
-    print!(
-        "{}",
-        style("Would you like to install missing dependencies now? [Y/n] ")
-            .cyan()
-            .bold()
-    );
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim().to_lowercase();
-
-    if input.is_empty() || input == "y" || input == "yes" {
-        install_python_requirements(&requirements_file)?;
-    } else {
-        let pip_cmd = get_pip_command().unwrap_or("pip");
-        println!(
-            "{}",
-            style("Skipping dependency installation. Documentation build may fail.\n").yellow()
-        );
-        println!("You can install dependencies later with:");
-        println!("  {} install -r {}", pip_cmd, requirements_file.display());
-        println!("Or run:");
-        println!("  ccgo doc --install-deps\n");
-    }
+    prompt_install_deps(&requirements_file)?;
 
     Ok(())
 }
@@ -221,21 +331,39 @@ pub struct DocCommand {
 impl DocCommand {
     /// Execute the doc command
     pub fn execute(self, _verbose: bool) -> Result<()> {
-        println!("{}", style("Building project documentation with MkDocs...\n").bold());
+        println!("{}", style("Building project documentation...\n").bold());
 
         // Get current working directory
-        let start_dir = std::env::current_dir()
-            .context("Failed to get current working directory")?;
+        let start_dir =
+            std::env::current_dir().context("Failed to get current working directory")?;
 
-        // Find project directory with mkdocs.yml
-        let project_dir = find_mkdocs_project(&start_dir)?;
+        // Find documentation engine
+        let doc_engine = find_doc_engine(&start_dir)?;
+
+        // If Doxygen project, handle it separately
+        let project_dir = match &doc_engine {
+            DocEngine::Doxygen(doxyfile) => {
+                // For Doxygen, --serve is not supported
+                if self.serve {
+                    return Err(anyhow!("--serve is not supported for Doxygen projects. Use --open to view after build."));
+                }
+                let project_dir = doxyfile
+                    .parent()
+                    .and_then(|p| {
+                        // If Doxyfile is in docs/, use parent as project dir
+                        if p.file_name().is_some_and(|n| n == "docs") {
+                            p.parent()
+                        } else {
+                            Some(p)
+                        }
+                    })
+                    .unwrap_or(&start_dir);
+                return build_doxygen(doxyfile, project_dir, self.open);
+            }
+            DocEngine::MkDocs(dir) => dir.clone(),
+        };
+
         println!("Project directory: {}", project_dir.display());
-
-        // Check for mkdocs.yml
-        let mkdocs_yml = project_dir.join("mkdocs.yml");
-        if !mkdocs_yml.is_file() {
-            return Err(anyhow!("mkdocs.yml not found at {}", mkdocs_yml.display()));
-        }
 
         // Check and install Python dependencies
         check_and_install_deps(&project_dir, self.install_deps)?;
@@ -247,7 +375,8 @@ impl DocCommand {
                 "MkDocs is not installed or not in PATH.\n\
                  Install it with: {} install ccgo[docs]\n\
                  Or install from project requirements: {} install -r docs/requirements.txt",
-                pip_cmd, pip_cmd
+                pip_cmd,
+                pip_cmd
             ));
         }
 
@@ -269,26 +398,32 @@ impl DocCommand {
 
         // Handle --serve mode (development server with live reload)
         if self.serve {
-            println!(
-                "Starting MkDocs development server on port {}...",
-                self.port
-            );
-            println!("Documentation URL: http://127.0.0.1:{}/", self.port);
-            println!("Press Ctrl+C to stop the server\n");
-
-            let status = Command::new("mkdocs")
-                .args(["serve", "-a", &format!("127.0.0.1:{}", self.port)])
-                .current_dir(&project_dir)
-                .status()
-                .context("Failed to execute mkdocs serve")?;
-
-            if !status.success() {
-                println!("\nServer stopped");
-            }
-            return Ok(());
+            return Self::run_serve(&project_dir, self.port);
         }
 
-        // Build mode
+        Self::run_build(&project_dir, self.clean, self.open)
+    }
+
+    /// Start MkDocs development server with live reload
+    fn run_serve(project_dir: &Path, port: u16) -> Result<()> {
+        println!("Starting MkDocs development server on port {port}...");
+        println!("Documentation URL: http://127.0.0.1:{port}/");
+        println!("Press Ctrl+C to stop the server\n");
+
+        let status = Command::new("mkdocs")
+            .args(["serve", "-a", &format!("127.0.0.1:{port}")])
+            .current_dir(project_dir)
+            .status()
+            .context("Failed to execute mkdocs serve")?;
+
+        if !status.success() {
+            println!("\nServer stopped");
+        }
+        Ok(())
+    }
+
+    /// Build MkDocs documentation
+    fn run_build(project_dir: &Path, clean: bool, open: bool) -> Result<()> {
         println!("Mode: Build documentation\n");
 
         // Output to target/docs/site/ directory
@@ -296,15 +431,15 @@ impl DocCommand {
         let mut cmd = Command::new("mkdocs");
         cmd.args(["build", "--site-dir"])
             .arg(&site_dir)
-            .current_dir(&project_dir);
+            .current_dir(project_dir);
 
-        if self.clean {
+        if clean {
             cmd.arg("--clean");
             println!("Clean build enabled");
         }
 
         println!("Running: mkdocs build --site-dir {}", site_dir.display());
-        if self.clean {
+        if clean {
             println!("         --clean");
         }
         println!();
@@ -315,7 +450,10 @@ impl DocCommand {
             return Err(anyhow!("Documentation build failed"));
         }
 
-        println!("\n{}", style("Documentation built successfully!").green().bold());
+        println!(
+            "\n{}",
+            style("Documentation built successfully!").green().bold()
+        );
 
         // Get output path
         let index_path = site_dir.join("index.html");
@@ -324,7 +462,7 @@ impl DocCommand {
             println!("Documentation location: {}", site_dir.display());
 
             // Handle --open option
-            if self.open {
+            if open {
                 println!("\nOpening documentation in browser...");
                 let url = format!("file://{}", index_path.display());
                 if let Err(e) = open::that(&url) {
