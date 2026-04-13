@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.2] - 2026-04-13
+
+### Added
+
+- add `ccgo release` command for user project releases
+- sync CCGO.toml version into android/ohos manifests
+
+### Documentation
+
+- regenerate CHANGELOG.md from git history
+
 ### Added
 
 - add `ccgo release` command for user project releases
