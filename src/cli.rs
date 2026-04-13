@@ -8,8 +8,9 @@ use crate::commands::{
     check::CheckCommand, clean::CleanCommand, collection::CollectionCommand, doc::DocCommand,
     doctor::DoctorCommand, init::InitCommand, install::InstallCommand, new::NewCommand,
     package::PackageCommand, publish::PublishCommand, registry::RegistryCommand,
-    remove::RemoveCommand, run::RunCommand, search::SearchCommand, tag::TagCommand,
-    test::TestCommand, tree::TreeCommand, update::UpdateCommand, vendor::VendorCommand,
+    release::ReleaseCommand, remove::RemoveCommand, run::RunCommand, search::SearchCommand,
+    tag::TagCommand, test::TestCommand, tree::TreeCommand, update::UpdateCommand,
+    vendor::VendorCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -71,6 +72,9 @@ pub enum Commands {
     /// Create version tag from CCGO.toml
     Tag(TagCommand),
 
+    /// Bump project version, sync platform manifests, update CHANGELOG, and commit
+    Release(ReleaseCommand),
+
     /// Package SDK for distribution
     Package(PackageCommand),
 
@@ -114,31 +118,45 @@ impl Cli {
             console::set_colors_enabled_stderr(false);
         }
 
-        // Execute the subcommand
-        match self.command {
-            Commands::Build(cmd) => cmd.execute(self.verbose),
-            Commands::New(cmd) => cmd.execute(self.verbose),
-            Commands::Init(cmd) => cmd.execute(self.verbose),
-            Commands::Run(cmd) => cmd.execute(self.verbose),
-            Commands::Test(cmd) => cmd.execute(self.verbose),
-            Commands::Bench(cmd) => cmd.execute(self.verbose),
-            Commands::Doc(cmd) => cmd.execute(self.verbose),
-            Commands::Publish(cmd) => cmd.execute(self.verbose),
-            Commands::Check(cmd) => cmd.execute(self.verbose),
-            Commands::Doctor(cmd) => cmd.execute(self.verbose),
-            Commands::Clean(cmd) => cmd.execute(self.verbose),
-            Commands::Tag(cmd) => cmd.execute(self.verbose),
-            Commands::Package(cmd) => cmd.execute(self.verbose),
-            Commands::Install(cmd) => cmd.execute(self.verbose),
-            Commands::Add(cmd) => cmd.execute(self.verbose),
-            Commands::Remove(cmd) => cmd.execute(self.verbose),
-            Commands::Update(cmd) => cmd.execute(self.verbose),
-            Commands::Tree(cmd) => cmd.execute(self.verbose),
-            Commands::Collection(cmd) => cmd.execute(self.verbose),
-            Commands::Registry(cmd) => cmd.execute(self.verbose),
-            Commands::Search(cmd) => cmd.execute(self.verbose),
-            Commands::Vendor(cmd) => cmd.execute(self.verbose),
-            Commands::Analytics(cmd) => cmd.execute(self.verbose),
-        }
+        dispatch_command(self.command, self.verbose)
+    }
+}
+
+/// Dispatch build/project-lifecycle commands, delegating dependency-management
+/// commands to [`dispatch_dependency_command`].
+fn dispatch_command(command: Commands, verbose: bool) -> Result<()> {
+    match command {
+        Commands::Build(cmd) => cmd.execute(verbose),
+        Commands::New(cmd) => cmd.execute(verbose),
+        Commands::Init(cmd) => cmd.execute(verbose),
+        Commands::Run(cmd) => cmd.execute(verbose),
+        Commands::Test(cmd) => cmd.execute(verbose),
+        Commands::Bench(cmd) => cmd.execute(verbose),
+        Commands::Doc(cmd) => cmd.execute(verbose),
+        Commands::Publish(cmd) => cmd.execute(verbose),
+        Commands::Check(cmd) => cmd.execute(verbose),
+        Commands::Doctor(cmd) => cmd.execute(verbose),
+        Commands::Clean(cmd) => cmd.execute(verbose),
+        Commands::Tag(cmd) => cmd.execute(verbose),
+        Commands::Release(cmd) => cmd.execute(verbose),
+        Commands::Package(cmd) => cmd.execute(verbose),
+        Commands::Analytics(cmd) => cmd.execute(verbose),
+        other => dispatch_dependency_command(other, verbose),
+    }
+}
+
+/// Dispatch dependency- and registry-management commands.
+fn dispatch_dependency_command(command: Commands, verbose: bool) -> Result<()> {
+    match command {
+        Commands::Install(cmd) => cmd.execute(verbose),
+        Commands::Add(cmd) => cmd.execute(verbose),
+        Commands::Remove(cmd) => cmd.execute(verbose),
+        Commands::Update(cmd) => cmd.execute(verbose),
+        Commands::Tree(cmd) => cmd.execute(verbose),
+        Commands::Collection(cmd) => cmd.execute(verbose),
+        Commands::Registry(cmd) => cmd.execute(verbose),
+        Commands::Search(cmd) => cmd.execute(verbose),
+        Commands::Vendor(cmd) => cmd.execute(verbose),
+        _ => unreachable!("dispatch_dependency_command called with non-dependency command"),
     }
 }
