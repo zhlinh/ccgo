@@ -2,162 +2,264 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.5] - 2025-01-04
+## [Unreleased]
+
+### Added
+
+- add `ccgo release` command for user project releases
+- sync CCGO.toml version into android/ohos manifests
+
+## [3.4.1] - 2026-04-11
+
+### Added
+
+- add Doxygen support alongside MkDocs
 
 ### Fixed
 
-- Pass toolchain argument for Windows builds in Docker
+- remove -fsyntax-only flag that breaks CMake compiler detection
+
+## [3.4.0] - 2026-03-16
+
+### Added
+
+- add tar.gz archive support, xcframework resolution, and dist branch publishing
+- support tar.gz archives alongside zip for prebuilt SDK deps
+- embed CCGO.toml with transitive zip deps into merged SDK ZIP
+- add zip source support for prebuilt SDK deps
+- add package ZIP path search and dedup guard to ccgo_link_dependency
+- add zip field to DependencyConfig for prebuilt SDK deps
+
+### Fixed
+
+- make AAR build failure fatal instead of warning
+- use ~/.ccgo/cmake/ for MSVC toolchain file like other platforms
+- simplify OHOS detection to if(OHOS) for consistency
+- handle zip deps in resolver, lockfile SourceType, and WorkspaceDependency
+- reject zip slip paths and check HTTP status in download_zip
+- add zip branch to build_source_string in resolver and lockfile
+- fix variable naming and improve Apple platform support
 
 ### Changed
 
-- Use consistent badge style for PyPI version in documentation
+- split check into check (compilation) and doctor (diagnostics)
 
-## [3.0.4] - 2025-01-03
+### Documentation
+
+- add publishing guide for JetBrains plugin
+- add publishing guide for VS Code extension
+
+## [3.3.0] - 2026-01-25
 
 ### Added
 
-- ELF parsing support for better binary analysis
-- Unified include directory handling across all platforms
+- add missing commands (doc, check, publish, tag, package, bench, tree)
+- add missing commands (doc, check, publish, tag, package, bench, tree)
+- disable notifications by default
+- add Neovim plugin (nvim-ccgo)
 
 ### Fixed
 
-- Prioritize `out/` directory for merged libraries
-- Rewrite builders for improved reliability
+- skip terminal buffers when finding CCGO.toml, try recent file buffers
+- pass all architectures as comma-separated list when 'all' is selected
+- add command stubs for lazy loading support
+- rename commands from CcgoXxx to ccgoXxx format
 
-## [3.0.3] - 2025-01-02
+### Documentation
+
+- change icons
+- reorder installation sections, clarify file paths
+- improve installation instructions for local and remote setup
+- update installation for GitHub subdirectory
+- clarify installation file paths
+- add Neovim plugin to IDE Integration
+- update to Rust-only implementation
+
+## [3.2.0] - 2026-01-25
 
 ### Added
 
-- Docker support for OHOS platform builds
-- Pre-installed ccgo from PyPI in Docker images for faster builds
+- add ccgo publish index command
+- add package registry and simplified dependency syntax
+- add JetBrains plugin
 
 ### Fixed
 
-- Linux SDK archive structure and content
+- use xcrun to find compilers for IDE project generation
+- simplify IDE project generation to let Xcode auto-detect SDK
+- handle IDE project output correctly in build result display
+- use explicit remote and branch in git push
 
-## [3.0.2] - 2025-01-01
+## [3.1.0] - 2026-01-22
 
 ### Added
 
-- Release script for automated version bumps
-- Lock file for dependency management
+- add VS Code extension and platform IDE project generation
+- add ccache/sccache integration and build analytics
+- complete testing framework enhancement
+
+### Fixed
+
+- resolve merge conflict in roadmap.md
+
+## [3.0.11] - 2026-01-22
+
+### Added
+
+- update MkDocs theme
+- implement workspace dependencies for monorepo support
+
+### Documentation
+
+- update documentation completion - mark CMake guide, Gradle plugins, and migration guides as complete
+- add comprehensive Conan to CCGO migration guide
+- add comprehensive Gradle plugins reference
+- add comprehensive CMake integration guide
+- update documentation completion status
+- add comprehensive CCGO.toml configuration reference
+- add comprehensive Chinese CLI reference documentation
+- add comprehensive tree, search, collection commands documentation
+- update contact email from ccgo@mojeter.com to zhlinhng@gmail.com
+- fix markdown list formatting in dependency-management and gradle-plugins
+- fix markdown list formatting in project-structure docs
+- fix markdown list formatting in all platform docs
+- fix markdown list formatting in configuration docs
+- fix markdown list formatting in build-system docs
+- complete missing documentation and update navigation
+- add logo and favicon SVG assets for documentation site
+- add comprehensive bilingual MkDocs documentation
+
+## [3.0.10] - 2026-01-18
+
+### Added
+
+- add ccgo vendor command
+- add ccgo run command to build and execute examples/binaries
+- add ccgo run command
+- add workspace support for multi-package management
+- add features system for conditional compilation
+- add HTTP(S) support for remote collections
+- add package collection and search commands
+- add ccgo tree command for dependency visualization
+- add comprehensive dependency management commands
+
+### Fixed
+
+- enhance get pip command
+- fix build bench and test
+
+### Documentation
+
+- add features system documentation
+
+## [3.0.9] - 2026-01-15
+
+### Added
+
+- enable MSVC cross-compilation with xwin and clang-cl
+
+### Fixed
+
+- update OHOS SDK URL format and version to 5.0.1
+
+## [3.0.8] - 2026-01-11
+
+### Added
+
+- add auto-docker flag and subprocess isolation for multi-platform builds
+
+### Fixed
+
+- print build info JSON before success message
+
+### Documentation
+
+- update README
+
+## [3.0.7] - 2026-01-04
+
+### Fixed
+
+- merge static library modules for Linux and Windows
+
+### Documentation
+
+- add CHANGELOG
+
+## [3.0.5] - 2026-01-04
+
+### Fixed
+
+- pass toolchain argument for Windows builds in Docker
+
+### Documentation
+
+- use consistent badge style for PyPI version
+
+## [3.0.4] - 2026-01-03
+
+### Added
+
+- add ELF parsing and unify include directory handling across platforms
+
+### Fixed
+
+- prioritize out/ directory for merged libraries and rewrite builders
+
+## [3.0.3] - 2026-01-02
+
+### Added
+
+- add OHOS Docker support and fix Linux SDK archive
+- update lock file
+- rewrite ccgo CLI in Rust with Docker build support
+- use MkDocs + MkDoxy for documentation instead of CMake
+- add --registry local support for apple and fix conan config loading
+- add tar.gz format support for OHOS HAR file preview
+- bump to v2.5.0 and add buildHAR fallback to assembleHar
+- add ConanConfig module for CCGO.toml integration
+- unify Maven registry options across Android and KMP targets
+- add Conan registry selection and improve remote configuration
+- add OHPM registry selection and improve package metadata handling
+- add dependency support for Apple, Maven, and OHPM platforms
+- add Apple platform publishing support (CocoaPods & SPM)
+- add --artifact-id option for Android/KMP publishing
+- separate debug/release artifacts into distinct directories
+- standardize archive structure with meta directory
+- add Apple static library build and improve Docker error handling
+- add source
+
+### Fixed
+
+- support dual registry publishing and fix unreachable code warnings
+- only add AAR to haars/android/ in SDK archive
+- embed Dockerfiles in binary at compile time
+- clean up target directory and preserve HAR for publish
+- clean stale HAR files and check buildHAR task before execution
+- fix target directory path in print_build_results
+- use correct target subdir in print_build_results
+- map macOS to 'osx' for CocoaPods podspec generation
+- improve CocoaPods podspec defaults and git URL handling
+- use correct target subdir in tvOS/watchOS build results
+- rename Gradle tasks and enable real-time output
+- prevent KMP from overwriting Android AAR in parallel builds
 
 ### Changed
 
-- Updated version dependencies
+- use pre-installed ccgo from PyPI in Docker images
+- change cmake_build to cmake_build/{release|debug}/<platform> structure
+- unify output directory structure across all platforms
+- clean up redundant artifacts and simplify archive naming
+- separate local build from publish workflow
+- simplify package command to copy ZIP artifacts directly
+- merge ci command into build all and improve KMP packaging
 
-## [3.0.1] - 2024-12-31
+### Documentation
 
-### Added
+- added crates.io version badge to README header
+- add README
 
-- crates.io version badge to README header
-- Release automation workflows for CI/CD
-- Docker image publishing workflows
 
-### Fixed
-
-- Dual registry publishing support (PyPI and crates.io)
-- Unreachable code warnings in Rust implementation
-
-## [3.0.0] - 2024-12-30
-
-### Added
-
-- **Rust CLI rewrite** - Complete rewrite of CCGO CLI in Rust for better performance
-- Docker-based cross-platform builds (Linux, Windows, macOS, iOS, watchOS, tvOS, Android)
-- Embedded Dockerfiles in binary at compile time
-- Pre-built binaries for multiple platforms (Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64)
-
-### Changed
-
-- **BREAKING**: CMake build output structure changed to `cmake_build/{release|debug}/<platform>`
-- Improved AAR packaging - only add AAR to `haars/android/` in SDK archive
-
-### Fixed
-
-- Clean up unused imports and mark intentionally unused code
-
-## Installation
-
-**Python Package (PyPI):**
-```bash
-pip install ccgo==3.0.5
-# or
-pip install --upgrade ccgo
-```
-
-**Rust Binary (crates.io):**
-```bash
-cargo install ccgo
-```
-
-**Pre-built Binaries:**
-Download platform-specific binaries from [GitHub Releases](https://github.com/zhlinh/ccgo/releases).
-
-## Quick Start
-
-```bash
-# Create a new C++ cross-platform project
-ccgo new my-project
-
-# Build for different platforms
-cd my-project/<project_name>
-ccgo build android
-ccgo build ios
-ccgo build macos
-ccgo build linux
-ccgo build windows
-
-# Cross-platform builds using Docker
-ccgo build linux --docker
-ccgo build windows --docker
-ccgo build macos --docker
-ccgo build ios --docker
-```
-
-## Available Commands
-
-- `ccgo new` - Create a new C++ cross-platform project
-- `ccgo init` - Initialize CCGO in an existing project
-- `ccgo build` - Build for specific platforms (android, ios, macos, linux, windows, ohos, kmp)
-- `ccgo test` - Run tests
-- `ccgo bench` - Run benchmarks
-- `ccgo doc` - Generate documentation
-- `ccgo publish` - Publish to registries (Maven, OHPM, CocoaPods, SPM, Conan)
-- `ccgo check` - Check platform dependencies
-- `ccgo clean` - Clean build artifacts
-- `ccgo tag` - Create version tag
-- `ccgo package` - Package source for distribution
-- `ccgo install` - Install dependencies
-- `ccgo ci` - CI build orchestration
-
-## Supported Platforms
-
-- **Android** - AAR packages via Gradle (armeabi-v7a, arm64-v8a, x86, x86_64)
-- **iOS** - Frameworks/XCFrameworks via Xcode (arm64, x86_64 simulator)
-- **macOS** - Frameworks/XCFrameworks (arm64, x86_64)
-- **Linux** - Static/shared libraries (x86_64, aarch64)
-- **Windows** - Static/shared libraries via MSVC or MinGW (x86_64)
-- **OpenHarmony (OHOS)** - HAR packages via Hvigor (armeabi-v7a, arm64-v8a, x86_64)
-- **watchOS** - Frameworks/XCFrameworks (arm64, simulator)
-- **tvOS** - Frameworks/XCFrameworks (arm64, simulator)
-
-## Publishing Targets
-
-- **Maven Central** - Android/KMP libraries
-- **Maven Local** - Local development
-- **OHPM** - OpenHarmony packages
-- **CocoaPods** - iOS/macOS frameworks
-- **Swift Package Manager (SPM)** - iOS/macOS frameworks
-- **Conan** - C++ package manager
-- **GitHub Pages** - Documentation
-
-## Links
-
-- [GitHub Repository](https://github.com/zhlinh/ccgo)
-- [PyPI Package](https://pypi.org/project/ccgo/)
-- [crates.io Package](https://crates.io/crates/ccgo)
-- [Documentation](https://github.com/zhlinh/ccgo/tree/main/docs)
