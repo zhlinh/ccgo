@@ -8,7 +8,7 @@
 //! - symbols/android/obj/{arch}/ - unstripped libraries (in symbols archive)
 //! - include/{lib_name}/ - header files
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -422,38 +422,6 @@ impl AndroidBuilder {
         None
     }
 
-    /// Sync CCGO.toml's project.version into android/gradle/libs.versions.toml.
-    ///
-    /// If the catalog contains `commMainProject = "<old>"`, its value is updated to `version`.
-    /// Silently no-ops when the catalog is missing or the key is not present — this keeps the
-    /// function safe for projects that don't use a Gradle version catalog.
-    fn sync_version_catalog(android_project: &Path, version: &str) {
-        let catalog = android_project.join("gradle").join("libs.versions.toml");
-        let content = match std::fs::read_to_string(&catalog) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
-        // Match `commMainProject = "..."` with optional whitespace. We preserve indentation
-        // and the surrounding quoting exactly, only swapping the value in-place.
-        let pattern = regex::Regex::new(r#"(?m)^(\s*commMainProject\s*=\s*")[^"]*(")"#).ok();
-        let Some(re) = pattern else { return };
-        if !re.is_match(&content) {
-            return;
-        }
-
-        let new_content = re.replace(&content, format!("${{1}}{}${{2}}", version)).to_string();
-        if new_content == content {
-            return;
-        }
-
-        if let Err(e) = std::fs::write(&catalog, new_content) {
-            eprintln!("Warning: failed to sync {} -> {}: {}", catalog.display(), version, e);
-            return;
-        }
-        eprintln!("Synced {} commMainProject -> {}", catalog.display(), version);
-    }
-
     /// Copy shared libraries to jniLibs directory for Gradle AAR packaging
     ///
     /// This copies .so files from cmake_build to android/main_android_sdk/src/main/jniLibs/
@@ -548,7 +516,10 @@ impl AndroidBuilder {
         // Sync CCGO.toml version -> android/gradle/libs.versions.toml (commMainProject).
         // Keeps the Gradle version catalog in lockstep with CCGO.toml without users having
         // to update two places.
-        Self::sync_version_catalog(&android_project, ctx.version());
+        crate::utils::version_sync::sync_gradle_version_catalog(
+            &android_project.join("gradle").join("libs.versions.toml"),
+            ctx.version(),
+        );
 
         // Libraries should already be copied to jniLibs by copy_libraries_to_jnilibs()
         // Just run Gradle buildAAR task

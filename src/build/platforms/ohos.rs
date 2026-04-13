@@ -3,7 +3,7 @@
 //! Builds native libraries and HAR packages for OpenHarmony using CMake with OHOS SDK.
 //! Supports multiple ABIs (arm64-v8a, armeabi-v7a, x86_64).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -479,36 +479,6 @@ impl OhosBuilder {
         Ok(())
     }
 
-    /// Sync CCGO.toml's project.version into ohos/main_ohos_sdk/oh-package.json5.
-    ///
-    /// Updates the top-level `"version": "..."` field. Silently no-ops when the file is
-    /// missing or the field is absent — safe for projects without an OHOS manifest.
-    fn sync_oh_package_version(ohos_project: &Path, version: &str) {
-        let manifest = ohos_project.join("main_ohos_sdk").join("oh-package.json5");
-        let content = match std::fs::read_to_string(&manifest) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
-        // Match `"version": "..."` at any indentation. We only swap the value.
-        let pattern = regex::Regex::new(r#"(?m)^(\s*"version"\s*:\s*")[^"]*(")"#).ok();
-        let Some(re) = pattern else { return };
-        if !re.is_match(&content) {
-            return;
-        }
-
-        let new_content = re.replace(&content, format!("${{1}}{}${{2}}", version)).to_string();
-        if new_content == content {
-            return;
-        }
-
-        if let Err(e) = std::fs::write(&manifest, new_content) {
-            eprintln!("Warning: failed to sync {} -> {}: {}", manifest.display(), version, e);
-            return;
-        }
-        eprintln!("Synced {} version -> {}", manifest.display(), version);
-    }
-
     /// Build HAR package using hvigorw assembleHar task
     fn build_har(
         &self,
@@ -523,7 +493,10 @@ impl OhosBuilder {
 
         // Sync CCGO.toml version -> ohos/main_ohos_sdk/oh-package.json5 so hvigor produces
         // a HAR whose version matches the canonical project version.
-        Self::sync_oh_package_version(&ohos_project, ctx.version());
+        crate::utils::version_sync::sync_oh_package_version(
+            &ohos_project.join("main_ohos_sdk").join("oh-package.json5"),
+            ctx.version(),
+        );
 
         // Try to find hvigorw - check local first, then system PATH
         let hvigorw_name = if cfg!(target_os = "windows") {

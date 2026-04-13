@@ -17,6 +17,7 @@ pub mod new;
 pub mod package;
 pub mod publish;
 pub mod registry;
+pub mod release;
 pub mod remove;
 pub mod run;
 pub mod search;
