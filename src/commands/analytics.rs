@@ -82,14 +82,16 @@ impl AnalyticsCommand {
 
         for (idx, analytics) in history[start..].iter().enumerate() {
             let build_num = start + idx + 1;
-            println!("Build #{} - {} ({})",
-                build_num,
-                analytics.platform,
-                analytics.timestamp
+            println!(
+                "Build #{} - {} ({})",
+                build_num, analytics.platform, analytics.timestamp
             );
             println!("  Duration:    {:.2}s", analytics.total_duration_secs);
             println!("  Jobs:        {}", analytics.parallel_jobs);
-            println!("  Success:     {}", if analytics.success { "✓" } else { "✗" });
+            println!(
+                "  Success:     {}",
+                if analytics.success { "✓" } else { "✗" }
+            );
 
             if let Some(tool) = &analytics.cache_stats.tool {
                 println!("  Cache Tool:  {}", tool);
@@ -145,7 +147,10 @@ impl AnalyticsCommand {
             .unwrap_or(0.0);
 
         println!("Total Builds:      {}", total_builds);
-        println!("Successful:        {} ({:.1}%)", successful_builds, success_rate);
+        println!(
+            "Successful:        {} ({:.1}%)",
+            successful_builds, success_rate
+        );
         println!();
         println!("Build Duration:");
         println!("  Average:         {:.2}s", avg_duration);
@@ -163,7 +168,8 @@ impl AnalyticsCommand {
             let avg_hit_rate: f64 = builds_with_cache
                 .iter()
                 .map(|a| a.cache_stats.hit_rate)
-                .sum::<f64>() / builds_with_cache.len() as f64;
+                .sum::<f64>()
+                / builds_with_cache.len() as f64;
 
             println!("Cache Statistics:");
             println!("  Builds with cache: {}", builds_with_cache.len());
@@ -175,7 +181,9 @@ impl AnalyticsCommand {
         use std::collections::HashMap;
         let mut platform_counts: HashMap<String, usize> = HashMap::new();
         for analytics in &history {
-            *platform_counts.entry(analytics.platform.clone()).or_insert(0) += 1;
+            *platform_counts
+                .entry(analytics.platform.clone())
+                .or_insert(0) += 1;
         }
 
         if !platform_counts.is_empty() {
@@ -204,8 +212,11 @@ impl AnalyticsCommand {
         }
 
         if !yes {
-            println!("This will delete {} build analytics entries for '{}'",
-                history.len(), package.name);
+            println!(
+                "This will delete {} build analytics entries for '{}'",
+                history.len(),
+                package.name
+            );
             print!("Continue? [y/N] ");
 
             use std::io::{self, Write};
@@ -261,7 +272,7 @@ impl AnalyticsCommand {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 if let Some(stem) = path.file_stem() {
                     if let Some(project_name) = stem.to_str() {
                         // Load history to get build count

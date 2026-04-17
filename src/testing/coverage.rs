@@ -36,7 +36,10 @@ impl std::str::FromStr for CoverageFormat {
             "json" => Ok(CoverageFormat::Json),
             "cobertura" | "xml" => Ok(CoverageFormat::Cobertura),
             "summary" | "text" => Ok(CoverageFormat::Summary),
-            _ => bail!("Unknown coverage format: {}. Valid formats: html, lcov, json, cobertura, summary", s),
+            _ => bail!(
+                "Unknown coverage format: {}. Valid formats: html, lcov, json, cobertura, summary",
+                s
+            ),
         }
     }
 }
@@ -269,11 +272,7 @@ impl CoverageReport {
             } else {
                 path_str.to_string()
             };
-            println!(
-                "  {:>5.1}%  {}",
-                file.line_coverage_percent(),
-                display_path
-            );
+            println!("  {:>5.1}%  {}", file.line_coverage_percent(), display_path);
         }
 
         println!("{}", "═".repeat(60));
@@ -366,16 +365,18 @@ impl CoverageCollector {
         let profraw_files: Vec<_> = walkdir::WalkDir::new(&self.config.build_dir)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map(|ext| ext == "profraw").unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "profraw")
+                    .unwrap_or(false)
+            })
             .map(|e| e.path().to_path_buf())
             .collect();
 
         if !profraw_files.is_empty() {
             let mut cmd = Command::new("llvm-profdata");
-            cmd.arg("merge")
-                .arg("-sparse")
-                .arg("-o")
-                .arg(&profdata);
+            cmd.arg("merge").arg("-sparse").arg("-o").arg(&profdata);
 
             for file in &profraw_files {
                 cmd.arg(file);
@@ -414,7 +415,12 @@ impl CoverageCollector {
         let gcda_files: Vec<_> = walkdir::WalkDir::new(&self.config.build_dir)
             .into_iter()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map(|ext| ext == "gcda").unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "gcda")
+                    .unwrap_or(false)
+            })
             .map(|e| e.path().to_path_buf())
             .collect();
 
@@ -434,10 +440,9 @@ impl CoverageCollector {
                 .context("Failed to run gcov")?;
 
             if output.status.success() {
-                if let Ok(file_coverage) = self.parse_gcov_output(
-                    &gcda,
-                    &String::from_utf8_lossy(&output.stdout),
-                ) {
+                if let Ok(file_coverage) =
+                    self.parse_gcov_output(&gcda, &String::from_utf8_lossy(&output.stdout))
+                {
                     report.add_file(file_coverage);
                 }
             }
@@ -564,13 +569,13 @@ impl CoverageCollector {
         let mut current_file: Option<FileCoverage> = None;
 
         for line in content.lines() {
-            if line.starts_with("SF:") {
+            if let Some(sf_path) = line.strip_prefix("SF:") {
                 // New source file
                 if let Some(file) = current_file.take() {
                     report.add_file(file);
                 }
                 current_file = Some(FileCoverage {
-                    path: PathBuf::from(&line[3..]),
+                    path: PathBuf::from(sf_path),
                     lines_covered: 0,
                     lines_total: 0,
                     branches_covered: 0,
@@ -579,10 +584,10 @@ impl CoverageCollector {
                     functions_total: 0,
                     line_coverage: HashMap::new(),
                 });
-            } else if line.starts_with("DA:") {
+            } else if let Some(da_payload) = line.strip_prefix("DA:") {
                 // Line data: DA:line,hits
                 if let Some(ref mut file) = current_file {
-                    let parts: Vec<&str> = line[3..].split(',').collect();
+                    let parts: Vec<&str> = da_payload.split(',').collect();
                     if parts.len() >= 2 {
                         if let (Ok(line_num), Ok(hits)) =
                             (parts[0].parse::<u32>(), parts[1].parse::<u32>())
@@ -603,17 +608,17 @@ impl CoverageCollector {
                         file.branches_covered += 1;
                     }
                 }
-            } else if line.starts_with("FNF:") {
+            } else if let Some(count_str) = line.strip_prefix("FNF:") {
                 // Function count
                 if let Some(ref mut file) = current_file {
-                    if let Ok(count) = line[4..].parse::<u32>() {
+                    if let Ok(count) = count_str.parse::<u32>() {
                         file.functions_total = count;
                     }
                 }
-            } else if line.starts_with("FNH:") {
+            } else if let Some(count_str) = line.strip_prefix("FNH:") {
                 // Functions hit
                 if let Some(ref mut file) = current_file {
-                    if let Ok(count) = line[4..].parse::<u32>() {
+                    if let Ok(count) = count_str.parse::<u32>() {
                         file.functions_covered = count;
                     }
                 }

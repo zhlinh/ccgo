@@ -246,7 +246,7 @@ impl DockerBuilder {
 
         // Tag the remote image with local name
         let status = Command::new("docker")
-            .args(["tag", &self.config.remote_image, &self.config.image_name])
+            .args(["tag", &self.config.remote_image, self.config.image_name])
             .status()
             .context("Failed to tag Docker image")?;
 
@@ -469,23 +469,19 @@ impl DockerBuilder {
             (cargo_build_cmd, "/tmp/ccgo-build/release/ccgo".to_string())
         } else if self.ctx.options.dev {
             // Download pre-built ccgo from GitHub releases
-            let download_cmd = format!(
-                "echo 'Downloading pre-built ccgo from GitHub releases...' && \
+            let download_cmd = "echo 'Downloading pre-built ccgo from GitHub releases...' && \
                  curl -fsSL https://github.com/zhlinh/ccgo/releases/latest/download/ccgo-x86_64-unknown-linux-gnu.tar.gz -o /tmp/ccgo.tar.gz && \
                  tar xzf /tmp/ccgo.tar.gz -C /tmp && \
                  chmod +x /tmp/ccgo-x86_64-unknown-linux-gnu/ccgo || \
                  (echo 'ERROR: Failed to download ccgo from GitHub releases.' && \
                   echo 'No release found. Try without --dev flag to use pre-installed ccgo' && \
-                  exit 1)"
-            );
+                  exit 1)".to_string();
             (download_cmd, "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string())
         } else {
             // Default: Use pre-installed ccgo from Docker image
-            let setup_cmd = format!(
-                "command -v ccgo >/dev/null 2>&1 || \
+            let setup_cmd = "command -v ccgo >/dev/null 2>&1 || \
                  (pip3 install -q ccgo) || \
-                 (echo 'ERROR: ccgo not found.' && exit 1)"
-            );
+                 (echo 'ERROR: ccgo not found.' && exit 1)".to_string();
             (setup_cmd, "ccgo".to_string())
         };
 

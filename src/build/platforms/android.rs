@@ -606,7 +606,7 @@ impl AndroidBuilder {
         // Clean up any other .aar files in output_dir (from previous builds)
         // This ensures only the renamed AAR exists, matching Python ccgo behavior
         if output_dir.exists() {
-            for entry in std::fs::read_dir(&output_dir)? {
+            for entry in std::fs::read_dir(output_dir)? {
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_file() {

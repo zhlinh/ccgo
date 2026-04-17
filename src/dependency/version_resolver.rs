@@ -84,23 +84,20 @@ impl VersionRequirement {
     /// Try to find a version that satisfies both requirements
     fn try_find_compatible_version(&self, other: &Self) -> Option<Version> {
         // Generate candidate versions to test
-        let candidates = match (self, other) {
-            (Self::Exact(v), _) if other.matches(v) => return Some(v.clone()),
-            (_, Self::Exact(v)) if self.matches(v) => return Some(v.clone()),
+
+        match (self, other) {
+            (Self::Exact(v), _) if other.matches(v) => Some(v.clone()),
+            (_, Self::Exact(v)) if self.matches(v) => Some(v.clone()),
             (Self::Range(req1), Self::Range(req2)) => {
                 // Try common versions
-                let test_versions = vec![
-                    "1.0.0", "1.1.0", "1.2.0", "2.0.0", "2.1.0", "3.0.0",
-                ];
+                let test_versions = vec!["1.0.0", "1.1.0", "1.2.0", "2.0.0", "2.1.0", "3.0.0"];
                 test_versions
                     .into_iter()
                     .filter_map(|v| Version::parse(v).ok())
                     .find(|v| req1.matches(v) && req2.matches(v))
             }
             _ => None,
-        };
-
-        candidates
+        }
     }
 }
 
@@ -243,9 +240,8 @@ impl VersionConflict {
                     .unwrap_or(&range_str)
                     .trim();
 
-                Version::parse(version_str).with_context(|| {
-                    format!("Cannot extract version from range '{}'", range)
-                })
+                Version::parse(version_str)
+                    .with_context(|| format!("Cannot extract version from range '{}'", range))
             }
             VersionRequirement::Any => {
                 // Default to 1.0.0 for "any" requirement
@@ -334,9 +330,9 @@ impl VersionResolver {
         let mut resolved = HashMap::new();
 
         for (package, conflict) in &self.conflicts {
-            let version = conflict.resolve_with_strategy(self.strategy).with_context(|| {
-                format!("Failed to resolve version conflict for '{}'", package)
-            })?;
+            let version = conflict
+                .resolve_with_strategy(self.strategy)
+                .with_context(|| format!("Failed to resolve version conflict for '{}'", package))?;
 
             resolved.insert(package.clone(), version);
         }
@@ -493,7 +489,11 @@ mod tests {
         let mut resolver = VersionResolver::new();
 
         resolver
-            .add_requirement("fmt".to_string(), "project".to_string(), "^10.0.0".to_string())
+            .add_requirement(
+                "fmt".to_string(),
+                "project".to_string(),
+                "^10.0.0".to_string(),
+            )
             .unwrap();
         resolver
             .add_requirement("fmt".to_string(), "dep1".to_string(), "10.1.0".to_string())

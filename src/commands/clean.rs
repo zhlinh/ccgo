@@ -50,7 +50,10 @@ impl ProjectCleaner {
 
     fn get_dir_size(path: &Path) -> u64 {
         let mut total_size = 0u64;
-        if let Ok(entries) = WalkDir::new(path).into_iter().collect::<Result<Vec<_>, _>>() {
+        if let Ok(entries) = WalkDir::new(path)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+        {
             for entry in entries {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
@@ -93,7 +96,11 @@ impl ProjectCleaner {
         });
 
         if self.dry_run {
-            println!("  [DRY RUN] Would remove: {} ({})", name, Self::format_size(size));
+            println!(
+                "  [DRY RUN] Would remove: {} ({})",
+                name,
+                Self::format_size(size)
+            );
             return true;
         }
 
@@ -139,12 +146,11 @@ impl ProjectCleaner {
             return;
         }
 
-        if !self.dry_run && !self.skip_confirm {
-            if !self.confirm_clean("  Remove bin/ directory?") {
+        if !self.dry_run && !self.skip_confirm
+            && !self.confirm_clean("  Remove bin/ directory?") {
                 println!("  ⏭️  Skipped");
                 return;
             }
-        }
 
         self.remove_directory(&bin_dir, Some("bin/"));
     }
@@ -161,12 +167,11 @@ impl ProjectCleaner {
             return;
         }
 
-        if !self.dry_run && !self.skip_confirm {
-            if !self.confirm_clean("  Remove cmake_build/ directory?") {
+        if !self.dry_run && !self.skip_confirm
+            && !self.confirm_clean("  Remove cmake_build/ directory?") {
                 println!("  ⏭️  Skipped");
                 return;
             }
-        }
 
         self.remove_directory(&cmake_dir, Some("cmake_build/"));
     }
@@ -202,7 +207,8 @@ impl ProjectCleaner {
                     if file_type.is_dir() {
                         let subproject_build = entry.path().join("build");
                         if subproject_build.exists() {
-                            let name = format!("android/{}/build/", entry.file_name().to_string_lossy());
+                            let name =
+                                format!("android/{}/build/", entry.file_name().to_string_lossy());
                             self.remove_directory(&subproject_build, Some(&name));
                         }
                     }
@@ -367,12 +373,11 @@ impl ProjectCleaner {
         println!("  Cleaning ALL build artifacts and caches");
         println!("{}", "=".repeat(60));
 
-        if !self.dry_run && !self.skip_confirm {
-            if !self.confirm_clean("\n⚠️  This will remove ALL build artifacts. Continue?") {
+        if !self.dry_run && !self.skip_confirm
+            && !self.confirm_clean("\n⚠️  This will remove ALL build artifacts. Continue?") {
                 println!("  ⏭️  Aborted");
                 return;
             }
-        }
 
         // Clean in order
         self.clean_bin();
@@ -404,17 +409,26 @@ impl ProjectCleaner {
         }
 
         if !self.cleaned_dirs.is_empty() {
-            println!("  ✅ Successfully cleaned {} directories:", self.cleaned_dirs.len());
+            println!(
+                "  ✅ Successfully cleaned {} directories:",
+                self.cleaned_dirs.len()
+            );
             for dir_name in &self.cleaned_dirs {
                 println!("     - {}", dir_name);
             }
-            println!("\n  💾 Total space freed: {}", Self::format_size(self.cleaned_size));
+            println!(
+                "\n  💾 Total space freed: {}",
+                Self::format_size(self.cleaned_size)
+            );
         } else {
             println!("  ℹ️  No directories were cleaned");
         }
 
         if !self.failed_dirs.is_empty() {
-            println!("\n  ❌ Failed to clean {} directories:", self.failed_dirs.len());
+            println!(
+                "\n  ❌ Failed to clean {} directories:",
+                self.failed_dirs.len()
+            );
             for (dir_name, error) in &self.failed_dirs {
                 println!("     - {}: {}", dir_name, error);
             }
@@ -434,8 +448,8 @@ impl CleanCommand {
         println!("Cleaning build artifacts and caches...\n");
 
         // Get current working directory (project directory)
-        let project_dir = std::env::current_dir()
-            .context("Failed to get current working directory")?;
+        let project_dir =
+            std::env::current_dir().context("Failed to get current working directory")?;
 
         // Find CCGO.toml to locate project directory
         let project_subdir = Self::find_project_dir(&project_dir)?;

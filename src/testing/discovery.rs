@@ -127,15 +127,13 @@ impl TestDiscovery {
             if path.is_file() {
                 let file_name = path.file_name().unwrap().to_string_lossy();
                 // Look for test-related names
-                if file_name.contains("test")
+                if (file_name.contains("test")
                     || file_name.contains("Test")
                     || file_name.contains("_googletest")
-                    || file_name.contains("_catch2")
-                {
-                    if self.is_executable(&path) {
+                    || file_name.contains("_catch2"))
+                    && self.is_executable(&path) {
                         executables.push(path);
                     }
-                }
             }
         }
 
@@ -155,9 +153,7 @@ impl TestDiscovery {
 
         #[cfg(windows)]
         {
-            path.extension()
-                .map(|ext| ext == "exe")
-                .unwrap_or(false)
+            path.extension().map(|ext| ext == "exe").unwrap_or(false)
         }
     }
 
@@ -253,7 +249,10 @@ impl TestDiscovery {
             // Catch2 test names are listed one per line
             let (suite, case) = if line.contains("::") {
                 let parts: Vec<&str> = line.splitn(2, "::").collect();
-                (parts[0].to_string(), parts.get(1).unwrap_or(&"").to_string())
+                (
+                    parts[0].to_string(),
+                    parts.get(1).unwrap_or(&"").to_string(),
+                )
             } else {
                 ("Default".to_string(), line.to_string())
             };
@@ -314,10 +313,7 @@ impl TestDiscovery {
         let mut by_suite: HashMap<String, Vec<DiscoveredTest>> = HashMap::new();
 
         for test in tests {
-            by_suite
-                .entry(test.suite.clone())
-                .or_default()
-                .push(test);
+            by_suite.entry(test.suite.clone()).or_default().push(test);
         }
 
         Ok(by_suite)
@@ -333,9 +329,7 @@ impl TestDiscovery {
         Ok(tests
             .into_iter()
             .filter(|t| {
-                t.name.contains(&pattern)
-                    || t.suite.contains(&pattern)
-                    || t.case.contains(&pattern)
+                t.name.contains(&pattern) || t.suite.contains(&pattern) || t.case.contains(&pattern)
             })
             .collect())
     }
@@ -349,10 +343,7 @@ impl TestDiscovery {
 
         println!("\n{} tests discovered:", tests.len());
         println!("{}", "─".repeat(80));
-        println!(
-            "{:<40} {:<15} {:<20}",
-            "Test Name", "Type", "Executable"
-        );
+        println!("{:<40} {:<15} {:<20}", "Test Name", "Type", "Executable");
         println!("{}", "─".repeat(80));
 
         for test in tests {

@@ -275,12 +275,16 @@ impl PackageIndex {
             2 => PathBuf::from("2").join(format!("{}.json", name)),
             3 => {
                 let first = &name[0..1];
-                PathBuf::from("3").join(first).join(format!("{}.json", name))
+                PathBuf::from("3")
+                    .join(first)
+                    .join(format!("{}.json", name))
             }
             _ => {
                 let prefix1 = &name[0..2];
                 let prefix2 = &name[2..4.min(len)];
-                PathBuf::from(prefix1).join(prefix2).join(format!("{}.json", name))
+                PathBuf::from(prefix1)
+                    .join(prefix2)
+                    .join(format!("{}.json", name))
             }
         }
     }
@@ -300,11 +304,11 @@ impl PackageIndex {
             return Ok(());
         }
 
-        let content = fs::read_to_string(&config_path)
-            .context("Failed to read registries config")?;
+        let content =
+            fs::read_to_string(&config_path).context("Failed to read registries config")?;
 
-        let configs: Vec<RegistryConfig> = serde_json::from_str(&content)
-            .context("Failed to parse registries config")?;
+        let configs: Vec<RegistryConfig> =
+            serde_json::from_str(&content).context("Failed to parse registries config")?;
 
         for mut config in configs {
             config.cache_path = Some(self.registry_cache_path(&config.name));
@@ -324,11 +328,10 @@ impl PackageIndex {
             .context("Failed to create registry config directory")?;
 
         let configs: Vec<&RegistryConfig> = self.registries.values().collect();
-        let content = serde_json::to_string_pretty(&configs)
-            .context("Failed to serialize registries")?;
+        let content =
+            serde_json::to_string_pretty(&configs).context("Failed to serialize registries")?;
 
-        fs::write(&config_path, content)
-            .context("Failed to write registries config")?;
+        fs::write(&config_path, content).context("Failed to write registries config")?;
 
         Ok(())
     }
@@ -352,14 +355,14 @@ impl PackageIndex {
             bail!("Cannot remove the default registry");
         }
 
-        self.registries.remove(name)
+        self.registries
+            .remove(name)
             .with_context(|| format!("Registry not found: {}", name))?;
 
         // Remove cache directory
         let cache_path = self.registry_cache_path(name);
         if cache_path.exists() {
-            fs::remove_dir_all(&cache_path)
-                .context("Failed to remove registry cache")?;
+            fs::remove_dir_all(&cache_path).context("Failed to remove registry cache")?;
         }
 
         self.save_registries()?;
@@ -447,17 +450,21 @@ impl PackageIndex {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(&metadata_path)
-            .context("Failed to read index metadata")?;
+        let content =
+            fs::read_to_string(&metadata_path).context("Failed to read index metadata")?;
 
-        let metadata: IndexMetadata = serde_json::from_str(&content)
-            .context("Failed to parse index metadata")?;
+        let metadata: IndexMetadata =
+            serde_json::from_str(&content).context("Failed to parse index metadata")?;
 
         Ok(Some(metadata))
     }
 
     /// Look up a package in a registry
-    pub fn lookup_package(&self, registry_name: &str, package_name: &str) -> Result<Option<PackageEntry>> {
+    pub fn lookup_package(
+        &self,
+        registry_name: &str,
+        package_name: &str,
+    ) -> Result<Option<PackageEntry>> {
         let cache_path = self.registry_cache_path(registry_name);
         let package_file = cache_path.join(Self::package_index_path(package_name));
 
@@ -485,19 +492,22 @@ impl PackageIndex {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_dir() && path.file_name().map_or(false, |n| n.len() == 1) {
+            if path.is_dir() && path.file_name().is_some_and(|n| n.len() == 1) {
                 // This is a letter directory
                 for package_file in std::fs::read_dir(&path)? {
                     let package_file = package_file?;
                     let file_path = package_file.path();
 
-                    if file_path.extension().map_or(false, |e| e == "json") {
+                    if file_path.extension().is_some_and(|e| e == "json") {
                         if let Ok(content) = std::fs::read_to_string(&file_path) {
                             if let Ok(package) = serde_json::from_str::<PackageEntry>(&content) {
                                 // Match against name, description, or keywords
                                 let matches = package.name.to_lowercase().contains(&query_lower)
                                     || package.description.to_lowercase().contains(&query_lower)
-                                    || package.keywords.iter().any(|k| k.to_lowercase().contains(&query_lower));
+                                    || package
+                                        .keywords
+                                        .iter()
+                                        .any(|k| k.to_lowercase().contains(&query_lower));
 
                                 if matches {
                                     results.push(package);
@@ -513,24 +523,26 @@ impl PackageIndex {
     }
 
     /// Get the latest version of a package
-    pub fn get_latest_version(&self, registry_name: &str, package_name: &str) -> Result<Option<VersionEntry>> {
+    pub fn get_latest_version(
+        &self,
+        registry_name: &str,
+        package_name: &str,
+    ) -> Result<Option<VersionEntry>> {
         let package = self.lookup_package(registry_name, package_name)?;
 
         if let Some(pkg) = package {
             // Find the latest non-yanked version
-            let latest = pkg.versions.iter()
-                .filter(|v| !v.yanked)
-                .max_by(|a, b| {
-                    // Compare by semver
-                    let ver_a = crate::registry::SemVer::parse(&a.version);
-                    let ver_b = crate::registry::SemVer::parse(&b.version);
-                    match (ver_a, ver_b) {
-                        (Some(a), Some(b)) => a.cmp(&b),
-                        (Some(_), None) => std::cmp::Ordering::Greater,
-                        (None, Some(_)) => std::cmp::Ordering::Less,
-                        (None, None) => a.version.cmp(&b.version),
-                    }
-                });
+            let latest = pkg.versions.iter().filter(|v| !v.yanked).max_by(|a, b| {
+                // Compare by semver
+                let ver_a = crate::registry::SemVer::parse(&a.version);
+                let ver_b = crate::registry::SemVer::parse(&b.version);
+                match (ver_a, ver_b) {
+                    (Some(a), Some(b)) => a.cmp(&b),
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (None, None) => a.version.cmp(&b.version),
+                }
+            });
 
             Ok(latest.cloned())
         } else {
@@ -551,9 +563,7 @@ impl PackageIndex {
             let req = crate::version::VersionReq::parse(version_req)?;
 
             // Sort versions by semver (highest first) to get best match
-            let mut versions: Vec<_> = pkg.versions.iter()
-                .filter(|v| !v.yanked)
-                .collect();
+            let mut versions: Vec<_> = pkg.versions.iter().filter(|v| !v.yanked).collect();
 
             versions.sort_by(|a, b| {
                 let ver_a = crate::registry::SemVer::parse(&a.version);

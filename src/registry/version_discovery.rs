@@ -38,7 +38,10 @@ impl SemVer {
 
         // Split by '-' to separate prerelease
         let (version_part, prerelease) = if let Some(dash_pos) = version.find('-') {
-            (&version[..dash_pos], Some(version[dash_pos + 1..].to_string()))
+            (
+                &version[..dash_pos],
+                Some(version[dash_pos + 1..].to_string()),
+            )
         } else {
             (version, None)
         };
@@ -168,13 +171,11 @@ impl VersionDiscovery {
         }
 
         // Sort by semver (highest first)
-        tags.sort_by(|a, b| {
-            match (&b.semver, &a.semver) {
-                (Some(b_ver), Some(a_ver)) => b_ver.cmp(a_ver),
-                (Some(_), None) => Ordering::Less,
-                (None, Some(_)) => Ordering::Greater,
-                (None, None) => b.tag.cmp(&a.tag),
-            }
+        tags.sort_by(|a, b| match (&b.semver, &a.semver) {
+            (Some(b_ver), Some(a_ver)) => b_ver.cmp(a_ver),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => b.tag.cmp(&a.tag),
         });
 
         Ok(tags)
@@ -187,7 +188,7 @@ impl VersionDiscovery {
         // Find first stable version (they're sorted highest first)
         Ok(versions
             .into_iter()
-            .find(|t| t.semver.as_ref().map_or(false, |v| v.is_stable())))
+            .find(|t| t.semver.as_ref().is_some_and(|v| v.is_stable())))
     }
 
     /// Find the latest version (including prereleases)
@@ -197,11 +198,7 @@ impl VersionDiscovery {
     }
 
     /// Find versions matching a version requirement
-    pub fn find_matching(
-        &self,
-        git_url: &str,
-        version_req: &str,
-    ) -> Result<Vec<GitTagInfo>> {
+    pub fn find_matching(&self, git_url: &str, version_req: &str) -> Result<Vec<GitTagInfo>> {
         let versions = self.discover_versions(git_url)?;
         let req = crate::version::VersionReq::parse(version_req)
             .with_context(|| format!("Invalid version requirement: {}", version_req))?;
@@ -234,7 +231,10 @@ impl VersionDiscovery {
 }
 
 /// Convenience function to discover the latest version
-pub fn discover_latest_version(git_url: &str, include_prereleases: bool) -> Result<Option<GitTagInfo>> {
+pub fn discover_latest_version(
+    git_url: &str,
+    include_prereleases: bool,
+) -> Result<Option<GitTagInfo>> {
     let discovery = VersionDiscovery::new();
     if include_prereleases {
         discovery.find_latest(git_url)

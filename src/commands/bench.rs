@@ -6,7 +6,7 @@
 //! - Regression detection
 //! - CI integration
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Args;
@@ -173,8 +173,8 @@ impl BenchCommand {
     /// Process benchmark results (save, compare, report)
     fn process_results(
         &self,
-        project_root: &PathBuf,
-        build_dir: &PathBuf,
+        project_root: &Path,
+        build_dir: &Path,
         verbose: bool,
     ) -> Result<()> {
         let store = BenchmarkStore::new(project_root.join(".ccgo").join("benchmarks"));
@@ -207,7 +207,11 @@ impl BenchCommand {
                 match store.load_latest() {
                     Ok(baseline) => {
                         if baseline.run_id != current_run.run_id {
-                            Some(ComparisonReport::new(&baseline, &current_run, self.threshold))
+                            Some(ComparisonReport::new(
+                                &baseline,
+                                &current_run,
+                                self.threshold,
+                            ))
                         } else {
                             None
                         }
@@ -223,14 +227,17 @@ impl BenchCommand {
                 self.report_comparison(&report, verbose)?;
             }
         } else if verbose {
-            eprintln!("Warning: No benchmark JSON output found in {}", build_dir.display());
+            eprintln!(
+                "Warning: No benchmark JSON output found in {}",
+                build_dir.display()
+            );
         }
 
         Ok(())
     }
 
     /// Find benchmark JSON output file
-    fn find_benchmark_json(&self, build_dir: &PathBuf) -> Result<Option<PathBuf>> {
+    fn find_benchmark_json(&self, build_dir: &Path) -> Result<Option<PathBuf>> {
         if !build_dir.exists() {
             return Ok(None);
         }

@@ -936,7 +936,7 @@ fn detect_archive_format(path: &Path) -> Result<ArchiveFormat> {
         return Ok(ArchiveFormat::Zip);
     }
     // GZIP magic: 0x1F 0x8B
-    if &header[..2] == [0x1F, 0x8B] {
+    if header[..2] == [0x1F, 0x8B] {
         return Ok(ArchiveFormat::TarGz);
     }
 
@@ -1021,7 +1021,7 @@ fn print_zip_tree_impl(archive_path: &Path, indent: &str) -> Result<()> {
         }
 
         // Extract library info if this is a library file
-        let filename = path.split('/').last().unwrap_or(&path);
+        let filename = path.split('/').next_back().unwrap_or(&path);
         let lib_info = if is_library_file(filename, &path) {
             // Read the file data for analysis
             let mut data = Vec::with_capacity(size as usize);

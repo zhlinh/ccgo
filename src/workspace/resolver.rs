@@ -33,15 +33,14 @@ impl<'a> WorkspaceResolver<'a> {
         for dep in &member.config.dependencies {
             if dep.workspace {
                 // Inherit from workspace dependencies
-                let workspace_dep = self.find_workspace_dependency(&dep.name)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Member '{}' declares dependency '{}' with workspace=true, \
+                let workspace_dep = self.find_workspace_dependency(&dep.name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Member '{}' declares dependency '{}' with workspace=true, \
                              but it's not defined in workspace dependencies",
-                            member.name,
-                            dep.name
-                        )
-                    })?;
+                        member.name,
+                        dep.name
+                    )
+                })?;
 
                 // Use workspace dependency, but allow member to override features
                 let mut resolved_dep = workspace_dep;
@@ -104,10 +103,9 @@ impl<'a> WorkspaceResolver<'a> {
                 // Check if it points to a workspace member
                 if let Some(target_member) = self.workspace.get_member(target) {
                     // Compare canonical paths if possible
-                    if let (Ok(dep_canon), Ok(target_canon)) = (
-                        dep_path.canonicalize(),
-                        target_member.path.canonicalize(),
-                    ) {
+                    if let (Ok(dep_canon), Ok(target_canon)) =
+                        (dep_path.canonicalize(), target_member.path.canonicalize())
+                    {
                         return dep_canon == target_canon;
                     }
                 }
@@ -156,11 +154,10 @@ impl<'a> WorkspaceResolver<'a> {
 
         // Visit dependencies first
         for other_member in self.workspace.members.all() {
-            if other_member.name != member.name {
-                if self.depends_on_member(member, &other_member.name)? {
+            if other_member.name != member.name
+                && self.depends_on_member(member, &other_member.name)? {
                     self.visit_member(other_member, visited, visiting, order)?;
                 }
-            }
         }
 
         visiting.remove(&member.name);
@@ -329,6 +326,9 @@ workspace = true
 
         let result = resolver.resolve_member_dependencies(member);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not defined in workspace dependencies"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not defined in workspace dependencies"));
     }
 }

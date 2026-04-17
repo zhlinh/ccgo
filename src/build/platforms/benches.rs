@@ -352,7 +352,7 @@ impl PlatformBuilder for BenchesBuilder {
 
     fn validate_prerequisites(&self, _ctx: &BuildContext) -> Result<()> {
         // Check if cmake is available
-        if !which::which("cmake").is_ok() {
+        if which::which("cmake").is_err() {
             bail!("CMake is required but not found in PATH");
         }
         Ok(())

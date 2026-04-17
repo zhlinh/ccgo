@@ -277,14 +277,10 @@ impl ShorthandSpec {
         // Add git URL
         entry.push_str(&format!("\ngit = \"{}\"", self.url));
 
-        // Add reference as branch/tag if present
+        // Add reference as branch (same key regardless of looking tag-like
+        // or branch-like; TODO: emit `tag = …` when reference looks like a tag).
         if let Some(ref reference) = self.reference {
-            // Determine if it looks like a tag (starts with v) or branch
-            if reference.starts_with('v') || reference.chars().next().map_or(false, |c| c.is_numeric()) {
-                entry.push_str(&format!("\nbranch = \"{}\"", reference));
-            } else {
-                entry.push_str(&format!("\nbranch = \"{}\"", reference));
-            }
+            entry.push_str(&format!("\nbranch = \"{}\"", reference));
         }
 
         entry.push('\n');
