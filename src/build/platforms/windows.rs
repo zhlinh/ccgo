@@ -43,6 +43,41 @@ impl WindowsBuilder {
         Self
     }
 
+    /// Remove all `.a` files in `out_dir` except for `keep_path`
+    fn cleanup_module_libs(out_dir: &PathBuf, keep_path: &PathBuf) -> Result<()> {
+        for entry in std::fs::read_dir(out_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() && &path != keep_path {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Collect all `.a` files in `out_dir`, excluding `exclude_path`
+    fn collect_a_files(dir: &PathBuf, exclude_path: Option<&PathBuf>) -> Result<Vec<PathBuf>> {
+        let mut libs = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        if exclude_path.map_or(true, |excl| &path != excl) {
+                            libs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(libs)
+    }
+
     /// Merge all module static libraries into a single library (MinGW)
     /// This is essential for KMP cinterop which expects a single complete library
     fn merge_module_static_libs_mingw(
@@ -59,59 +94,33 @@ impl WindowsBuilder {
             return Ok(());
         }
 
-        // Check if the main library already exists (CMake may have already merged it)
         let main_lib_name = format!("lib{}.a", lib_name);
         let main_lib_path = out_dir.join(&main_lib_name);
 
-        if main_lib_path.exists() {
-            // Check if it's a non-empty file (CMake already created the merged library)
-            if let Ok(metadata) = std::fs::metadata(&main_lib_path) {
-                if metadata.len() > 0 {
-                    if verbose {
-                        eprintln!("    Main library {} already exists, skipping merge", main_lib_name);
-                    }
-                    // Clean up module libraries (keep output directory clean)
-                    for entry in std::fs::read_dir(&out_dir)? {
-                        let entry = entry?;
-                        let path = entry.path();
-                        if path.is_file() && path != main_lib_path {
-                            if let Some(ext) = path.extension() {
-                                if ext == "a" {
-                                    let _ = std::fs::remove_file(&path);
-                                }
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
+        // Check if the main library already exists and is non-empty (CMake merged it)
+        if Self::main_lib_already_merged(&main_lib_path) {
+            if verbose {
+                eprintln!("    Main library {} already exists, skipping merge", main_lib_name);
             }
+            Self::cleanup_module_libs(&out_dir, &main_lib_path)?;
+            return Ok(());
         }
 
-        // Find all .a files (module libraries)
-        let mut module_libs: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(&out_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "a" {
-                        module_libs.push(path);
-                    }
-                }
-            }
-        }
+        // Find all .a files (module libraries), excluding the main lib
+        let mut module_libs = Self::collect_a_files(&out_dir, None)?;
 
         if module_libs.is_empty() {
             return Ok(());
         }
 
-        // Check if we only have the main library (already merged or single module)
-        if module_libs.len() == 1 && module_libs[0].file_name().is_some_and(|n| n == main_lib_name.as_str()) {
-            // Already a single main library, nothing to merge
+        // If the only file is already the main library, nothing to merge
+        if module_libs.len() == 1
+            && module_libs[0].file_name().is_some_and(|n| n == main_lib_name.as_str())
+        {
             return Ok(());
         }
 
-        // Filter out the main library if it exists (we'll recreate it)
+        // Remove the main library from the list (we will recreate it)
         module_libs.retain(|p| p != &main_lib_path);
 
         if module_libs.is_empty() {
@@ -126,10 +135,9 @@ impl WindowsBuilder {
             );
         }
 
-        // Merge all module libraries into the main library
         mingw.merge_static_libs(&module_libs, &main_lib_path)?;
 
-        // Clean up module libraries after merge (optional, keeps output clean)
+        // Clean up module libraries after merge
         for lib in &module_libs {
             if lib != &main_lib_path {
                 let _ = std::fs::remove_file(lib);
@@ -137,6 +145,14 @@ impl WindowsBuilder {
         }
 
         Ok(())
+    }
+
+    /// Returns true when the main library already exists and is non-empty
+    fn main_lib_already_merged(main_lib_path: &PathBuf) -> bool {
+        if !main_lib_path.exists() {
+            return false;
+        }
+        std::fs::metadata(main_lib_path).map_or(false, |m| m.len() > 0)
     }
 
     /// Merge third-party static libs from cmake build root into the main lib (MinGW)
@@ -154,28 +170,18 @@ impl WindowsBuilder {
         }
 
         let placeholder_name = format!("lib{}.a", lib_name);
-        let mut third_party_libs: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(build_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "a" {
-                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
-                        if fname != placeholder_name {
-                            third_party_libs.push(path);
-                        }
-                    }
-                }
-            }
-        }
+        let third_party_libs = Self::collect_third_party_libs(build_dir, &placeholder_name)?;
 
         if third_party_libs.is_empty() {
             return Ok(());
         }
 
         if verbose {
-            eprintln!("    Merging {} third-party libs into {}", third_party_libs.len(), placeholder_name);
+            eprintln!(
+                "    Merging {} third-party libs into {}",
+                third_party_libs.len(),
+                placeholder_name
+            );
         }
 
         let mut all_libs = vec![main_lib_path.clone()];
@@ -183,6 +189,27 @@ impl WindowsBuilder {
         mingw.merge_static_libs(&all_libs, &main_lib_path)?;
 
         Ok(())
+    }
+
+    /// Collect `.a` files in `dir` whose filename differs from `exclude_name`
+    fn collect_third_party_libs(dir: &PathBuf, exclude_name: &str) -> Result<Vec<PathBuf>> {
+        let mut libs = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        let fname =
+                            path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        if fname != exclude_name {
+                            libs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(libs)
     }
 
     /// Detect available Windows toolchain
@@ -204,32 +231,13 @@ impl WindowsBuilder {
         )
     }
 
-    /// Build for a specific link type with MinGW
-    fn build_with_mingw(
-        &self,
+    /// Apply shared cmake options common to both MinGW and MSVC builds
+    fn apply_common_cmake_options(
+        cmake: CMakeConfig,
         ctx: &BuildContext,
-        mingw: &MingwToolchain,
-        link_type: &str,
-    ) -> Result<PathBuf> {
-        let build_dir = ctx
-            .cmake_build_dir
-            .join(format!("{}/mingw", link_type));
-        let install_dir = build_dir.join("install");
-
-        let build_shared = link_type == "shared";
-
-        // Get MinGW CMake variables
-        let cmake_vars = mingw.cmake_variables_for_arch();
-
-        // Configure and build with CMake
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
-            .generator("Unix Makefiles")
-            .build_type(if ctx.options.release {
-                BuildType::Release
-            } else {
-                BuildType::Debug
-            })
-            .install_prefix(install_dir.clone())
+        build_shared: bool,
+    ) -> Result<CMakeConfig> {
+        let mut cmake = cmake
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
             .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
@@ -237,28 +245,19 @@ impl WindowsBuilder {
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
-        // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
         }
 
-        // Add MinGW-specific variables
-        for (name, value) in cmake_vars {
-            cmake = cmake.variable(&name, &value);
-        }
-
-        // Add CCGO configuration variables
         cmake = cmake.variable(
             "CCGO_CONFIG_PRESET_VISIBILITY",
             ctx.symbol_visibility().to_string(),
         );
 
-        // Add submodule dependencies for shared library linking
         if let Some(deps_map) = ctx.deps_map() {
             cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
         }
 
-        // Add feature definitions for conditional compilation
         if let Ok(feature_defines) = ctx.cmake_feature_defines() {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
@@ -268,18 +267,53 @@ impl WindowsBuilder {
             }
         }
 
-        // Add compiler cache if available
         if let Some(cache) = ctx.compiler_cache() {
             cmake = cmake.compiler_cache(cache);
+        }
+
+        Ok(cmake)
+    }
+
+    /// Build for a specific link type with MinGW
+    fn build_with_mingw(
+        &self,
+        ctx: &BuildContext,
+        mingw: &MingwToolchain,
+        link_type: &str,
+    ) -> Result<PathBuf> {
+        let build_dir = ctx.cmake_build_dir.join(format!("{}/mingw", link_type));
+        let install_dir = build_dir.join("install");
+        let build_shared = link_type == "shared";
+
+        let cmake_vars = mingw.cmake_variables_for_arch();
+
+        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+            .generator("Unix Makefiles")
+            .build_type(if ctx.options.release { BuildType::Release } else { BuildType::Debug })
+            .install_prefix(install_dir.clone());
+
+        cmake = Self::apply_common_cmake_options(cmake, ctx, build_shared)?;
+
+        for (name, value) in cmake_vars {
+            cmake = cmake.variable(&name, &value);
         }
 
         cmake.configure_build_install()?;
 
         // For static builds, merge all module libraries into a single library
-        // This is essential for KMP cinterop which expects a single complete library
         if !build_shared {
-            self.merge_module_static_libs_mingw(mingw, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
-            self.merge_third_party_static_libs_mingw(mingw, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+            self.merge_module_static_libs_mingw(
+                mingw,
+                &build_dir,
+                ctx.lib_name(),
+                ctx.options.verbose,
+            )?;
+            self.merge_third_party_static_libs_mingw(
+                mingw,
+                &build_dir,
+                ctx.lib_name(),
+                ctx.options.verbose,
+            )?;
         }
 
         Ok(build_dir)
@@ -293,68 +327,67 @@ impl WindowsBuilder {
         msvc: &MsvcToolchain,
         link_type: &str,
     ) -> Result<PathBuf> {
-        let build_dir = ctx
-            .cmake_build_dir
-            .join(format!("{}/msvc", link_type));
+        let build_dir = ctx.cmake_build_dir.join(format!("{}/msvc", link_type));
         let install_dir = build_dir.join("install");
-
         let build_shared = link_type == "shared";
 
-        // Configure and build with CMake
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .generator(msvc.cmake_generator())
-            .build_type(if ctx.options.release {
-                BuildType::Release
-            } else {
-                BuildType::Debug
-            })
-            .install_prefix(install_dir.clone())
-            .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
-            .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_LIB_NAME", ctx.lib_name())
-            .jobs(ctx.jobs())
-            .verbose(ctx.options.verbose);
+            .build_type(if ctx.options.release { BuildType::Release } else { BuildType::Debug })
+            .install_prefix(install_dir.clone());
 
-        // Add MSVC-specific CMake variables
         for (name, value) in msvc.cmake_variables() {
             cmake = cmake.variable(&name, &value);
         }
 
-        // Add CCGO_CMAKE_DIR if available
-        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
-            cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
-        }
-
-        // Add CCGO configuration variables
-        cmake = cmake.variable(
-            "CCGO_CONFIG_PRESET_VISIBILITY",
-            ctx.symbol_visibility().to_string(),
-        );
-
-        // Add submodule dependencies for shared library linking
-        if let Some(deps_map) = ctx.deps_map() {
-            cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
-        }
-
-        // Add feature definitions for conditional compilation
-        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
-            if !feature_defines.is_empty() {
-                cmake = cmake.feature_definitions(&feature_defines);
-                if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
-                }
-            }
-        }
-
-        // Add compiler cache if available
-        if let Some(cache) = ctx.compiler_cache() {
-            cmake = cmake.compiler_cache(cache);
-        }
+        cmake = Self::apply_common_cmake_options(cmake, ctx, build_shared)?;
 
         cmake.configure_build_install()?;
 
         Ok(build_dir)
+    }
+
+    /// Scan `lib_dir` and add files with `extension` to `libs`, skipping duplicates by filename
+    fn collect_libs_from_dir(
+        lib_dir: &PathBuf,
+        extension: &str,
+        libs: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        for entry in std::fs::read_dir(lib_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == extension {
+                        if !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name()) {
+                            libs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Scan `lib_dir` and add import library files (matching `import_ext` suffix) to `libs`
+    fn collect_import_libs_from_dir(
+        lib_dir: &PathBuf,
+        import_ext: &str,
+        libs: &mut Vec<PathBuf>,
+    ) -> Result<()> {
+        for entry in std::fs::read_dir(lib_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                let name = path.file_name().unwrap().to_str().unwrap();
+                if name.ends_with(import_ext)
+                    && !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name())
+                {
+                    libs.push(path);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Find library files in build directory
@@ -372,40 +405,19 @@ impl WindowsBuilder {
         let extension = if is_shared { shared_ext } else { static_ext };
         let mut libs = Vec::new();
 
-        // Check multiple possible directories
-        // Prioritize out/ directory where CCGO cmake puts the merged library
-        // This avoids including intermediate module libs (e.g., lib{name}-api.a)
-        let possible_dirs = vec![
-            build_dir.join("out"),           // Merged library (priority)
-            build_dir.join("install/lib"),   // Fallback: CMake install location
+        // Prioritize out/ directory (merged library), then fall back to install/lib, lib, bin
+        let possible_dirs = [
+            build_dir.join("out"),
+            build_dir.join("install/lib"),
             build_dir.join("lib"),
-            build_dir.join("bin"),           // DLLs often go to bin/
+            build_dir.join("bin"),
         ];
 
-        for lib_dir in possible_dirs {
+        for lib_dir in &possible_dirs {
             if !lib_dir.exists() {
                 continue;
             }
-
-            for entry in std::fs::read_dir(&lib_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == extension {
-                            // Avoid duplicates
-                            if !libs
-                                .iter()
-                                .any(|p: &PathBuf| p.file_name() == path.file_name())
-                            {
-                                libs.push(path);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // If we found libraries, stop searching
+            Self::collect_libs_from_dir(lib_dir, extension, &mut libs)?;
             if !libs.is_empty() {
                 break;
             }
@@ -418,7 +430,6 @@ impl WindowsBuilder {
                 WindowsToolchain::MSVC => "lib",
             };
 
-            // Prioritize out/ directory for import libraries as well
             for lib_dir in &[
                 build_dir.join("out"),
                 build_dir.join("install/lib"),
@@ -427,18 +438,7 @@ impl WindowsBuilder {
                 if !lib_dir.exists() {
                     continue;
                 }
-
-                for entry in std::fs::read_dir(lib_dir)? {
-                    let entry = entry?;
-                    let path = entry.path();
-                    if path.is_file() {
-                        let name = path.file_name().unwrap().to_str().unwrap();
-                        if name.ends_with(import_ext)
-                            && !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name()) {
-                                libs.push(path);
-                            }
-                    }
-                }
+                Self::collect_import_libs_from_dir(lib_dir, import_ext, &mut libs)?;
             }
         }
 
@@ -499,10 +499,73 @@ impl WindowsBuilder {
         Ok(())
     }
 
-    /// Generate Visual Studio IDE project for Windows
-    pub fn generate_ide_project(&self, ctx: &BuildContext) -> Result<BuildResult> {
+    /// Run `cmake -S … -B … -G …` and return the exit status
+    fn run_cmake_configure(
+        ctx: &BuildContext,
+        build_dir: &PathBuf,
+        generator: &str,
+    ) -> Result<()> {
         use std::process::Command;
 
+        let mut cmake_cmd = Command::new("cmake");
+        cmake_cmd
+            .arg("-S")
+            .arg(&ctx.project_root)
+            .arg("-B")
+            .arg(build_dir)
+            .arg("-G")
+            .arg(generator)
+            .arg("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
+
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake_cmd.arg(format!("-DCCGO_CMAKE_DIR={}", cmake_dir.display()));
+        }
+
+        cmake_cmd.arg(format!("-DCCGO_LIB_NAME={}", ctx.lib_name()));
+
+        if ctx.options.verbose {
+            eprintln!("CMake configure: {:?}", cmake_cmd);
+        }
+
+        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        if !status.success() {
+            bail!("CMake configure failed");
+        }
+
+        Ok(())
+    }
+
+    /// Print the location of generated IDE project files
+    fn report_project_files(ctx: &BuildContext, build_dir: &PathBuf) {
+        use std::process::Command;
+
+        let sln_file = build_dir.join(format!("{}.sln", ctx.lib_name()));
+        let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
+
+        if sln_file.exists() {
+            eprintln!("\n✓ Visual Studio solution generated: {}", sln_file.display());
+
+            #[cfg(target_os = "windows")]
+            {
+                let _ = Command::new("cmd")
+                    .args(["/C", "start", ""])
+                    .arg(&sln_file)
+                    .status();
+            }
+        } else if workspace_file.exists() {
+            eprintln!("\n✓ CodeLite workspace generated: {}", workspace_file.display());
+        } else {
+            eprintln!("\n✓ IDE project files generated in: {}", build_dir.display());
+        }
+
+        let compile_commands = build_dir.join("compile_commands.json");
+        if compile_commands.exists() {
+            eprintln!("   compile_commands.json: {}", compile_commands.display());
+        }
+    }
+
+    /// Generate Visual Studio IDE project for Windows
+    pub fn generate_ide_project(&self, ctx: &BuildContext) -> Result<BuildResult> {
         let build_dir = ctx.cmake_build_dir.join("ide_project");
 
         // Clean build directory
@@ -519,7 +582,6 @@ impl WindowsBuilder {
         let (generator, toolchain_name) = if is_msvc_available() {
             ("Visual Studio 17 2022", "MSVC")
         } else if is_mingw_available() {
-            // MinGW can use CodeLite or just Unix Makefiles with compile_commands.json
             ("CodeLite - MinGW Makefiles", "MinGW")
         } else {
             bail!(
@@ -535,74 +597,9 @@ impl WindowsBuilder {
             build_dir.display()
         );
 
-        // Configure with CMake
-        let mut cmake_cmd = Command::new("cmake");
-        cmake_cmd
-            .arg("-S")
-            .arg(&ctx.project_root)
-            .arg("-B")
-            .arg(&build_dir)
-            .arg("-G")
-            .arg(generator)
-            .arg("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON");
+        Self::run_cmake_configure(ctx, &build_dir, generator)?;
+        Self::report_project_files(ctx, &build_dir);
 
-        // Add CCGO_CMAKE_DIR if available
-        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
-            cmake_cmd.arg(format!("-DCCGO_CMAKE_DIR={}", cmake_dir.display()));
-        }
-
-        // Add lib name
-        cmake_cmd.arg(format!("-DCCGO_LIB_NAME={}", ctx.lib_name()));
-
-        if ctx.options.verbose {
-            eprintln!("CMake configure: {:?}", cmake_cmd);
-        }
-
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
-        if !status.success() {
-            bail!("CMake configure failed");
-        }
-
-        // Find and report project file
-        let sln_file = build_dir.join(format!("{}.sln", ctx.lib_name()));
-        let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
-
-        if sln_file.exists() {
-            eprintln!(
-                "\n✓ Visual Studio solution generated: {}",
-                sln_file.display()
-            );
-
-            // Try to open the solution on Windows
-            #[cfg(target_os = "windows")]
-            {
-                let _ = Command::new("cmd")
-                    .args(["/C", "start", ""])
-                    .arg(&sln_file)
-                    .status();
-            }
-        } else if workspace_file.exists() {
-            eprintln!(
-                "\n✓ CodeLite workspace generated: {}",
-                workspace_file.display()
-            );
-        } else {
-            eprintln!(
-                "\n✓ IDE project files generated in: {}",
-                build_dir.display()
-            );
-        }
-
-        // Report compile_commands.json for IDEs that use it
-        let compile_commands = build_dir.join("compile_commands.json");
-        if compile_commands.exists() {
-            eprintln!(
-                "   compile_commands.json: {}",
-                compile_commands.display()
-            );
-        }
-
-        // Return a placeholder result for IDE generation
         Ok(BuildResult {
             sdk_archive: build_dir,
             symbols_archive: None,
@@ -645,6 +642,94 @@ impl WindowsBuilder {
 
         Ok(())
     }
+
+    /// Validate the MinGW toolchain and optionally print its version
+    fn validate_mingw_toolchain(verbose: bool) -> Result<()> {
+        let mingw = MingwToolchain::detect()?;
+        mingw.validate()?;
+        if verbose {
+            eprintln!(
+                "Using MinGW-w64 {} at {}",
+                mingw.version(),
+                mingw.path().unwrap().display()
+            );
+        }
+        Ok(())
+    }
+
+    /// Validate the MSVC toolchain and optionally print its version
+    fn validate_msvc_toolchain(verbose: bool) -> Result<()> {
+        let msvc = MsvcToolchain::detect()?;
+        msvc.validate()?;
+        if verbose {
+            eprintln!(
+                "Using MSVC {} at {}",
+                msvc.version(),
+                msvc.path().unwrap().display()
+            );
+        }
+        Ok(())
+    }
+
+    /// Build and archive the static link type
+    fn build_and_archive_static(
+        &self,
+        ctx: &BuildContext,
+        archive: &ArchiveBuilder,
+        toolchain: WindowsToolchain,
+    ) -> Result<()> {
+        let build_dir = self.build_link_type(ctx, "static", toolchain)?;
+        self.add_libraries_to_archive(archive, &build_dir, "static", false, toolchain)
+    }
+
+    /// Build and archive the shared link type, stripping when appropriate
+    fn build_and_archive_shared(
+        &self,
+        ctx: &BuildContext,
+        archive: &ArchiveBuilder,
+        toolchain: WindowsToolchain,
+    ) -> Result<()> {
+        let build_dir = self.build_link_type(ctx, "shared", toolchain)?;
+
+        // Strip shared libraries for release builds (MinGW only)
+        if ctx.options.release && toolchain == WindowsToolchain::MinGW {
+            if ctx.options.verbose {
+                eprintln!("Stripping shared libraries...");
+            }
+            let mingw = MingwToolchain::detect()?;
+            self.strip_libraries(&mingw, &build_dir, ctx.options.verbose)?;
+        }
+
+        self.add_libraries_to_archive(archive, &build_dir, "shared", true, toolchain)
+    }
+
+    /// Add include files from the project's include directory into the archive
+    fn add_include_files(ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+        let include_source = ctx.include_source_dir();
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove a list of directories if they exist, surfacing errors with context
+    fn remove_dirs_if_exist(dirs: &[PathBuf]) -> Result<()> {
+        for dir in dirs {
+            if dir.exists() {
+                std::fs::remove_dir_all(dir)
+                    .with_context(|| format!("Failed to clean {}", dir.display()))?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl PlatformBuilder for WindowsBuilder {
@@ -662,37 +747,12 @@ impl PlatformBuilder for WindowsBuilder {
             bail!("CMake is required for Windows builds. Please install CMake.");
         }
 
-        // Check for a Windows toolchain
         let toolchain = Self::detect_toolchain()?;
 
         match toolchain {
-            WindowsToolchain::MinGW => {
-                let mingw = MingwToolchain::detect()?;
-                mingw.validate()?;
-
-                if ctx.options.verbose {
-                    eprintln!(
-                        "Using MinGW-w64 {} at {}",
-                        mingw.version(),
-                        mingw.path().unwrap().display()
-                    );
-                }
-            }
-            WindowsToolchain::MSVC => {
-                let msvc = MsvcToolchain::detect()?;
-                msvc.validate()?;
-
-                if ctx.options.verbose {
-                    eprintln!(
-                        "Using MSVC {} at {}",
-                        msvc.version(),
-                        msvc.path().unwrap().display()
-                    );
-                }
-            }
+            WindowsToolchain::MinGW => Self::validate_mingw_toolchain(ctx.options.verbose),
+            WindowsToolchain::MSVC => Self::validate_msvc_toolchain(ctx.options.verbose),
         }
-
-        Ok(())
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
@@ -702,8 +762,6 @@ impl PlatformBuilder for WindowsBuilder {
         }
 
         let start = Instant::now();
-
-        // Validate prerequisites first
         self.validate_prerequisites(ctx)?;
 
         let toolchain = Self::detect_toolchain()?;
@@ -712,10 +770,8 @@ impl PlatformBuilder for WindowsBuilder {
             eprintln!("Building {} for Windows...", ctx.lib_name());
         }
 
-        // Create output directory
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        // Create archive builder
         let archive = ArchiveBuilder::new(
             ctx.lib_name(),
             ctx.version(),
@@ -727,41 +783,18 @@ impl PlatformBuilder for WindowsBuilder {
 
         let mut built_link_types = Vec::new();
 
-        // Build static libraries
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
-            let build_dir = self.build_link_type(ctx, "static", toolchain)?;
-            self.add_libraries_to_archive(&archive, &build_dir, "static", false, toolchain)?;
+            self.build_and_archive_static(ctx, &archive, toolchain)?;
             built_link_types.push("static");
         }
 
-        // Build shared libraries
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-            let build_dir = self.build_link_type(ctx, "shared", toolchain)?;
-
-            // Strip shared libraries for release builds (MinGW only)
-            if ctx.options.release && toolchain == WindowsToolchain::MinGW {
-                if ctx.options.verbose {
-                    eprintln!("Stripping shared libraries...");
-                }
-                let mingw = MingwToolchain::detect()?;
-                self.strip_libraries(&mingw, &build_dir, ctx.options.verbose)?;
-            }
-
-            self.add_libraries_to_archive(&archive, &build_dir, "shared", true, toolchain)?;
+            self.build_and_archive_shared(ctx, &archive, toolchain)?;
             built_link_types.push("shared");
         }
 
-        // Add include files from project's include directory (matching pyccgo behavior)
-        let include_source = ctx.include_source_dir();
-        if include_source.exists() {
-            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
-            archive.add_directory(&include_source, &include_path)?;
-            if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
-            }
-        }
+        Self::add_include_files(ctx, &archive)?;
 
-        // Create the SDK archive
         let architectures = vec!["x86_64".to_string()];
         let link_type_str = ctx.options.link_type.to_string();
         let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
@@ -787,39 +820,29 @@ impl PlatformBuilder for WindowsBuilder {
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/windows
-        for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("windows");
-            if build_dir.exists() {
-                std::fs::remove_dir_all(&build_dir)
-                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-            }
-        }
+        let new_build_dirs: Vec<PathBuf> = ["release", "debug"]
+            .iter()
+            .map(|s| ctx.project_root.join("cmake_build").join(s).join("windows"))
+            .collect();
+        Self::remove_dirs_if_exist(&new_build_dirs)?;
 
-        // Clean old structure for backwards compatibility: cmake_build/Windows, cmake_build/windows
-        for old_dir in &[
+        // Clean old structure for backwards compatibility
+        let old_build_dirs = [
             ctx.project_root.join("cmake_build/Windows"),
             ctx.project_root.join("cmake_build/windows"),
-        ] {
-            if old_dir.exists() {
-                std::fs::remove_dir_all(old_dir)
-                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
-            }
-        }
+        ];
+        Self::remove_dirs_if_exist(&old_build_dirs)?;
 
         // Clean target directories
-        for old_dir in &[
+        let target_dirs = [
             ctx.project_root.join("target/release/windows"),
             ctx.project_root.join("target/debug/windows"),
             ctx.project_root.join("target/release/Windows"),
             ctx.project_root.join("target/debug/Windows"),
             ctx.project_root.join("target/windows"),
             ctx.project_root.join("target/Windows"),
-        ] {
-            if old_dir.exists() {
-                std::fs::remove_dir_all(old_dir)
-                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
-            }
-        }
+        ];
+        Self::remove_dirs_if_exist(&target_dirs)?;
 
         Ok(())
     }
