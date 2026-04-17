@@ -2,6 +2,7 @@
 // Matches Python ccgo's git version calculation logic
 
 use anyhow::{Context, Result};
+use chrono::Utc;
 use std::path::Path;
 use std::process::Command;
 
@@ -24,6 +25,22 @@ pub struct GitVersion {
 }
 
 impl GitVersion {
+    /// Build identity embedded into artifacts (Go-style pseudo-version).
+    ///
+    /// Format: `<base-version>-<utc-timestamp>-<short-hash>[-dirty]`
+    /// Example: `25.2.9519653-20260414202500-a1b2c3d`
+    ///
+    /// Unlike `version_with_suffix` (which under Plan A is just the CCGO.toml
+    /// version), this identity is intended to be baked into the binary as a
+    /// C const string so `strings libfoo.so | grep VERIDENTITY=` can recover
+    /// the exact source state a shipped artifact came from.
+    pub fn veridentity(&self, base_version: &str) -> String {
+        let timestamp = Utc::now().format("%Y%m%d%H%M%S").to_string();
+        let short = self.revision.chars().take(7).collect::<String>();
+        let dirty = if self.is_dirty { "-dirty" } else { "" };
+        format!("{}-{}-{}{}", base_version, timestamp, short, dirty)
+    }
+
     /// Calculate git version information from project root
     pub fn from_project_root(project_root: &Path, base_version: &str) -> Result<Self> {
         // Get git branch name
@@ -38,15 +55,11 @@ impl GitVersion {
         // Get commits since last tag
         let commits_since_tag = get_commits_since_tag(project_root)?;
 
-        // Calculate publish suffix
-        let publish_suffix = calculate_publish_suffix(commits_since_tag, is_dirty);
-
-        // Build full version string
-        let version_with_suffix = if publish_suffix == "release" {
-            base_version.to_string()
-        } else {
-            format!("{}-{}", base_version, publish_suffix)
-        };
+        // Plan A (Cargo-aligned): version is the unchanged base_version from
+        // CCGO.toml. Git state is reported on the struct for tooling/logging
+        // but never folded into the version string.
+        let publish_suffix = String::new();
+        let version_with_suffix = base_version.to_string();
 
         Ok(GitVersion {
             version_with_suffix,
@@ -161,6 +174,7 @@ fn count_all_commits(project_root: &Path) -> Result<u32> {
 /// Matches Python ccgo logic:
 /// - If 0 commits since tag and clean: "release"
 /// - If N commits since tag: "beta.N" or "beta.N-dirty"
+#[allow(dead_code)] // kept for tests / potential future use
 fn calculate_publish_suffix(commits_since_tag: u32, is_dirty: bool) -> String {
     if commits_since_tag == 0 && !is_dirty {
         "release".to_string()

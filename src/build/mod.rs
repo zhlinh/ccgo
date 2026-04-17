@@ -33,6 +33,7 @@ pub mod elf;
 pub mod incremental;
 pub mod platforms;
 pub mod toolchains;
+pub mod verinfo;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -152,6 +153,30 @@ impl BuildContext {
             &package.version,
         ).ok();
 
+        // If [build].verinfo_path is set, regenerate verinfo_gen.{h,c} with
+        // the current build identity before the C/C++ build starts. Best-
+        // effort — skipping on failure so verinfo trouble can't block builds.
+        if let Some(header_rel) = config
+            .build
+            .as_ref()
+            .and_then(|b| b.verinfo_path.as_deref())
+        {
+            if let Some(gv) = git_version.as_ref() {
+                let identity = gv.veridentity(&package.version);
+                let source_rel = config
+                    .build
+                    .as_ref()
+                    .and_then(|b| b.verinfo_source_path.as_deref());
+                let _ = verinfo::generate(
+                    &project_root,
+                    header_rel,
+                    source_rel,
+                    &package.name,
+                    &identity,
+                );
+            }
+        }
+
         Self {
             project_root,
             config,
@@ -186,21 +211,20 @@ impl BuildContext {
             .version
     }
 
-    /// Get the publish suffix (e.g., "beta.18-dirty" or "release")
-    /// Returns the base version if git version info is not available
+    /// Publish suffix (e.g., "beta.18-dirty").
+    ///
+    /// Plan A (Cargo-aligned): always empty. The version comes solely from
+    /// `[package].version` in CCGO.toml; git state is not folded into it.
+    /// Retained as a `&str` API so filename templates can pass it through
+    /// unchanged — ArchiveBuilder & friends already short-circuit on empty.
     pub fn publish_suffix(&self) -> &str {
-        self.git_version
-            .as_ref()
-            .map(|gv| gv.publish_suffix.as_str())
-            .unwrap_or_else(|| self.version())
+        ""
     }
 
-    /// Get the full version with suffix (e.g., "1.0.2-beta.18-dirty")
+    /// Get the full version (same as `version()` under Plan A — no suffix
+    /// is ever appended). Name retained for API compatibility.
     pub fn version_with_suffix(&self) -> &str {
-        self.git_version
-            .as_ref()
-            .map(|gv| gv.version_with_suffix.as_str())
-            .unwrap_or_else(|| self.version())
+        self.version()
     }
 
     /// Get the number of parallel jobs (default to CPU count)

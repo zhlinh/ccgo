@@ -67,32 +67,18 @@ fn get_project_name(config_file: &Path) -> Result<String> {
 }
 
 /// Get version from args, git, or CCGO.toml
-fn get_version(config_file: &Path, version_arg: Option<&str>, release: bool) -> String {
-    // Use provided version argument
+/// Resolve the version string for packaging.
+///
+/// Cargo-aligned semantics (Plan A):
+///   * --version argument wins if provided.
+///   * Otherwise read `[package].version` from CCGO.toml.
+///   * Git state (tag/commits/dirty) is NOT consulted — the author decides
+///     the version by editing CCGO.toml, just like Cargo.toml.
+fn get_version(config_file: &Path, version_arg: Option<&str>, _release: bool) -> String {
     if let Some(version) = version_arg {
         return version.to_string();
     }
 
-    // Try git tag with full version info (--long --dirty for beta and dirty status)
-    let project_dir = config_file.parent().unwrap();
-    if let Ok(output) = Command::new("git")
-        .args(["describe", "--tags", "--always", "--long", "--dirty"])
-        .current_dir(project_dir)
-        .output()
-    {
-        if output.status.success() {
-            if let Ok(git_version) = String::from_utf8(output.stdout) {
-                let git_version = git_version.trim();
-                if !git_version.is_empty() {
-                    // Parse git describe output: v1.0.2-18-g<hash>-dirty
-                    // Format: <tag>-<commits>-g<hash>[-dirty]
-                    return format_version_from_git(git_version, release);
-                }
-            }
-        }
-    }
-
-    // Try CCGO.toml
     if let Ok(content) = fs::read_to_string(config_file) {
         if let Ok(config) = toml::from_str::<crate::config::CcgoConfig>(&content) {
             if let Some(pkg) = config.package {
@@ -101,57 +87,9 @@ fn get_version(config_file: &Path, version_arg: Option<&str>, release: bool) -> 
         }
     }
 
-    // Default to date
+    // Fallback when CCGO.toml is missing/invalid — keep previous date format
+    // so packaging still produces a named artifact instead of crashing.
     Local::now().format("%Y%m%d").to_string()
-}
-
-/// Format version from git describe output
-/// Input: v1.0.2-18-g<hash>-dirty or v1.0.2-0-g<hash>
-/// Output (debug): 1.0.2-beta.18-dirty or 1.0.2 (if on exact tag)
-/// Output (release): 1.0.2-release
-fn format_version_from_git(git_version: &str, release: bool) -> String {
-    let mut parts: Vec<&str> = git_version.split('-').collect();
-    let is_dirty = parts.last() == Some(&"dirty");
-    if is_dirty {
-        parts.pop(); // Remove "dirty"
-    }
-
-    // Extract base version (strip 'v' prefix)
-    let base_version = parts[0].strip_prefix('v').unwrap_or(parts[0]);
-
-    // For release builds, always use -release suffix
-    if release {
-        return format!("{}-release", base_version);
-    }
-
-    // For debug builds, extract commit count
-    if parts.len() >= 3 {
-        // parts: ["v1.0.2", "18", "g<hash>"]
-        let commits = parts[1];
-
-        // If commits is 0, we're exactly on a tag
-        if commits == "0" {
-            if is_dirty {
-                format!("{}-dirty", base_version)
-            } else {
-                base_version.to_string()
-            }
-        } else {
-            // Not on exact tag, use beta.N format
-            if is_dirty {
-                format!("{}-beta.{}-dirty", base_version, commits)
-            } else {
-                format!("{}-beta.{}", base_version, commits)
-            }
-        }
-    } else {
-        // Fallback: just return base version
-        if is_dirty {
-            format!("{}-dirty", base_version)
-        } else {
-            base_version.to_string()
-        }
-    }
 }
 
 /// Find all ZIP files for a platform in target/debug/<platform>/ or target/release/<platform>/
