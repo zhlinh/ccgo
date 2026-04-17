@@ -808,13 +808,45 @@ pub(crate) fn install_to_local_cache(
     project_name: &str,
     version: &str,
 ) -> Result<()> {
-    use std::io;
-
     println!("\n{}", "=".repeat(80));
     println!("Installing to Global CCGO Cache");
     println!("{}", "=".repeat(80));
 
-    // Resolve $CCGO_HOME/packages/<name-lower>/<version>/, default ~/.ccgo
+    let dest = prepare_cache_dest(project_name, version)?;
+    let unified_zip = find_unified_sdk_zip(output_path, project_name);
+
+    if let Some(zip_path) = unified_zip {
+        println!("📦 Source: {}", zip_path.display());
+        extract_unified_zip_to(&zip_path, &dest, project_name)?;
+    } else {
+        println!("📦 Source: {} (directory copy)", output_path.display());
+        copy_dir_recursive(output_path, &dest)?;
+    }
+
+    ensure_ccgo_toml_present(project_dir, &dest)?;
+
+    println!(
+        "\n{}",
+        style(format!(
+            "✅ Installed: {} {} -> {}",
+            project_name,
+            version,
+            dest.display()
+        ))
+        .green()
+        .bold()
+    );
+    println!(
+        "\n💡 Other projects can now depend on this via CCGO.toml:\n    [[dependencies]]\n    name = \"{}\"\n    version = \"{}\"\n",
+        project_name.to_lowercase(),
+        version
+    );
+
+    Ok(())
+}
+
+/// Resolve `$CCGO_HOME/packages/<name>/<ver>/` and wipe any prior install.
+fn prepare_cache_dest(project_name: &str, version: &str) -> Result<PathBuf> {
     let ccgo_home = if let Ok(custom) = std::env::var("CCGO_HOME") {
         PathBuf::from(custom)
     } else {
@@ -826,88 +858,85 @@ pub(crate) fn install_to_local_cache(
         .join("packages")
         .join(project_name.to_lowercase())
         .join(version);
-
     if dest.exists() {
         println!("🧹 Removing existing: {}", dest.display());
         fs::remove_dir_all(&dest)?;
     }
     fs::create_dir_all(&dest)?;
+    Ok(dest)
+}
 
-    // Prefer the merged unified SDK zip. Fallback to copying the output dir.
-    let expected_zip_prefix = format!("{}_SDK-", project_name.to_uppercase());
-    let mut unified_zip: Option<PathBuf> = None;
-    if let Ok(entries) = fs::read_dir(output_path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                if name.starts_with(&expected_zip_prefix)
-                    && name.ends_with(".zip")
-                    && !name.contains("SYMBOLS")
-                    && !name.contains("ARCHIVE")
-                {
-                    unified_zip = Some(path);
-                    break;
-                }
-            }
+/// Locate the merged unified SDK zip produced by `ccgo package` (not the
+/// symbols/archive variants) so it can be re-extracted into the cache.
+fn find_unified_sdk_zip(output_path: &Path, project_name: &str) -> Option<PathBuf> {
+    let prefix = format!("{}_SDK-", project_name.to_uppercase());
+    let entries = fs::read_dir(output_path).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if name.starts_with(&prefix)
+            && name.ends_with(".zip")
+            && !name.contains("SYMBOLS")
+            && !name.contains("ARCHIVE")
+        {
+            return Some(path);
         }
     }
+    None
+}
 
-    if let Some(zip_path) = unified_zip {
-        println!("📦 Source: {}", zip_path.display());
-        let file = fs::File::open(&zip_path)
-            .with_context(|| format!("Failed to open {}", zip_path.display()))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .with_context(|| format!("Failed to read {} as zip", zip_path.display()))?;
+/// Extract a unified SDK zip into `dest`, stripping the leading
+/// `<project-name>/` top-level directory (if present).
+fn extract_unified_zip_to(zip_path: &Path, dest: &Path, project_name: &str) -> Result<()> {
+    use std::io;
 
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i)?;
-            let rel = match entry.enclosed_name() {
-                Some(p) => p.to_path_buf(),
-                None => continue,
-            };
-            // The unified zip typically has a single top-level dir <name>/. Strip it.
-            let stripped = strip_top_level(&rel, &project_name.to_lowercase());
-            if stripped.as_os_str().is_empty() {
-                continue;
-            }
-            let target = dest.join(&stripped);
-            if entry.is_dir() {
-                fs::create_dir_all(&target)?;
-            } else {
-                if let Some(parent) = target.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                let mut out = fs::File::create(&target)?;
-                io::copy(&mut entry, &mut out)?;
-            }
+    let file = fs::File::open(zip_path)
+        .with_context(|| format!("Failed to open {}", zip_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .with_context(|| format!("Failed to read {} as zip", zip_path.display()))?;
+    let prefix = project_name.to_lowercase();
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let rel = match entry.enclosed_name() {
+            Some(p) => p.to_path_buf(),
+            None => continue,
+        };
+        let stripped = strip_top_level(&rel, &prefix);
+        if stripped.as_os_str().is_empty() {
+            continue;
         }
-    } else {
-        println!("📦 Source: {} (directory copy)", output_path.display());
-        copy_dir_recursive(output_path, &dest)?;
+        let target = dest.join(&stripped);
+        if entry.is_dir() {
+            fs::create_dir_all(&target)?;
+        } else {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut out = fs::File::create(&target)?;
+            io::copy(&mut entry, &mut out)?;
+        }
     }
+    Ok(())
+}
 
-    // Ensure CCGO.toml exists in cache — copy from project if not extracted
+/// Copy the project's `CCGO.toml` into the cache if the zip didn't include one.
+fn ensure_ccgo_toml_present(project_dir: &Path, dest: &Path) -> Result<()> {
     let dest_toml = dest.join("CCGO.toml");
-    if !dest_toml.exists() {
-        let src_toml = project_dir.join("CCGO.toml");
-        if src_toml.exists() {
-            fs::copy(&src_toml, &dest_toml)?;
-        }
+    if dest_toml.exists() {
+        return Ok(());
     }
-
-    println!(
-        "\n{}",
-        style(format!("✅ Installed: {} {} -> {}", project_name, version, dest.display()))
-            .green()
-            .bold()
-    );
-    println!(
-        "\n💡 Other projects can now depend on this via CCGO.toml:\n    [[dependencies]]\n    name = \"{}\"\n    version = \"{}\"\n",
-        project_name.to_lowercase(),
-        version
-    );
-
+    let src_toml = project_dir.join("CCGO.toml");
+    if src_toml.exists() {
+        fs::copy(&src_toml, &dest_toml)?;
+    }
     Ok(())
 }
 
