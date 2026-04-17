@@ -22,17 +22,18 @@ A cross-platform C++ build system designed to simplify and accelerate multi-plat
 ## Installation
 
 ```bash
-# Install from PyPI (pre-built binaries)
+# 1. Install from PyPI via uv (recommended)
+pip install uv
+uv tool install ccgo
+# or via pip
 pip install ccgo
 
-# Or install from crates.io
-cargo install ccgo
+# 2. Install via Homebrew
+brew tap zhlinh/ccgo
+brew install ccgo
 
-# Or build from source
-git clone https://github.com/zhlinh/ccgo.git
-cd ccgo
-cargo build --release
-# Binary will be at target/release/ccgo
+# 3. Install from crates.io
+cargo install ccgo
 ```
 
 ## Quick Start
@@ -480,6 +481,7 @@ When you run `ccgo build <target>`, the output is placed in `target/{debug|relea
 ```
 
 **Examples:**
+
 - `MYLIB_ANDROID_SDK-1.0.0-release.zip`
 - `MYLIB_IOS_SDK-1.0.0-beta.5-dirty.zip`
 - `MYLIB_LINUX_SDK-2.1.0-SYMBOLS.zip`
@@ -516,13 +518,14 @@ ccgo build android [--arch armeabi-v7a,arm64-v8a,x86_64]
 
 **Output:** `target/{debug|release}/android/`
 
-| File | Description |
-|------|-------------|
-| `MYLIB_ANDROID_SDK-{version}.zip` | Main SDK archive |
+| File                                      | Description                    |
+| ----------------------------------------- | ------------------------------ |
+| `MYLIB_ANDROID_SDK-{version}.zip`         | Main SDK archive               |
 | `MYLIB_ANDROID_SDK-{version}-SYMBOLS.zip` | Debug symbols (unstripped .so) |
-| `MYLIB_ANDROID_SDK-{version}.aar` | Android Archive (standalone) |
+| `MYLIB_ANDROID_SDK-{version}.aar`         | Android Archive (standalone)   |
 
 **SDK Contents:**
+
 ```
 ├── lib/android/static/{arch}/lib{name}.a
 ├── lib/android/shared/{arch}/lib{name}.so
@@ -539,12 +542,13 @@ ccgo build ios
 
 **Output:** `target/{debug|release}/ios/`
 
-| File | Description |
-|------|-------------|
-| `MYLIB_IOS_SDK-{version}.zip` | Main SDK archive |
+| File                                  | Description          |
+| ------------------------------------- | -------------------- |
+| `MYLIB_IOS_SDK-{version}.zip`         | Main SDK archive     |
 | `MYLIB_IOS_SDK-{version}-SYMBOLS.zip` | Debug symbols (dSYM) |
 
 **SDK Contents:**
+
 ```
 ├── lib/ios/static/{name}.xcframework/
 ├── lib/ios/shared/{name}.xcframework/
@@ -562,12 +566,13 @@ ccgo build macos
 
 **Output:** `target/{debug|release}/macos/`
 
-| File | Description |
-|------|-------------|
-| `MYLIB_MACOS_SDK-{version}.zip` | Main SDK archive |
+| File                                    | Description          |
+| --------------------------------------- | -------------------- |
+| `MYLIB_MACOS_SDK-{version}.zip`         | Main SDK archive     |
 | `MYLIB_MACOS_SDK-{version}-SYMBOLS.zip` | Debug symbols (dSYM) |
 
 **SDK Contents:**
+
 ```
 ├── lib/macos/static/{name}.xcframework/
 ├── lib/macos/shared/{name}.xcframework/
@@ -586,6 +591,7 @@ ccgo build tvos
 **Output:** `target/{debug|release}/tvos/`
 
 **SDK Contents:**
+
 ```
 ├── lib/tvos/static/{name}.xcframework/
 ├── lib/tvos/shared/{name}.xcframework/
@@ -604,6 +610,7 @@ ccgo build watchos
 **Output:** `target/{debug|release}/watchos/`
 
 **SDK Contents:**
+
 ```
 ├── lib/watchos/static/{name}.xcframework/
 ├── lib/watchos/shared/{name}.xcframework/
@@ -621,12 +628,13 @@ ccgo build linux
 
 **Output:** `target/{debug|release}/linux/`
 
-| File | Description |
-|------|-------------|
-| `MYLIB_LINUX_SDK-{version}.zip` | Main SDK archive |
+| File                                    | Description                    |
+| --------------------------------------- | ------------------------------ |
+| `MYLIB_LINUX_SDK-{version}.zip`         | Main SDK archive               |
 | `MYLIB_LINUX_SDK-{version}-SYMBOLS.zip` | Debug symbols (unstripped .so) |
 
 **SDK Contents:**
+
 ```
 ├── lib/linux/static/lib{name}.a
 ├── lib/linux/shared/lib{name}.so
@@ -644,11 +652,12 @@ ccgo build windows [--toolchain auto|msvc|mingw]
 
 **Output:** `target/{debug|release}/windows/`
 
-| File | Description |
-|------|-------------|
+| File                              | Description      |
+| --------------------------------- | ---------------- |
 | `MYLIB_WINDOWS_SDK-{version}.zip` | Main SDK archive |
 
 **SDK Contents (MinGW):**
+
 ```
 ├── lib/windows/static/lib{name}.a
 ├── lib/windows/shared/{name}.dll
@@ -658,6 +667,7 @@ ccgo build windows [--toolchain auto|msvc|mingw]
 ```
 
 **SDK Contents (MSVC):**
+
 ```
 ├── lib/windows/static/{name}.lib
 ├── lib/windows/shared/{name}.dll
@@ -676,13 +686,14 @@ ccgo build ohos [--arch armeabi-v7a,arm64-v8a,x86_64]
 
 **Output:** `target/{debug|release}/ohos/`
 
-| File | Description |
-|------|-------------|
-| `MYLIB_OHOS_SDK-{version}.zip` | Main SDK archive |
+| File                                   | Description                    |
+| -------------------------------------- | ------------------------------ |
+| `MYLIB_OHOS_SDK-{version}.zip`         | Main SDK archive               |
 | `MYLIB_OHOS_SDK-{version}-SYMBOLS.zip` | Debug symbols (unstripped .so) |
-| `MYLIB_OHOS_SDK-{version}.har` | Harmony Archive (standalone) |
+| `MYLIB_OHOS_SDK-{version}.har`         | Harmony Archive (standalone)   |
 
 **SDK Contents:**
+
 ```
 ├── lib/ohos/static/{arch}/lib{name}.a
 ├── lib/ohos/shared/{arch}/lib{name}.so
@@ -700,6 +711,7 @@ ccgo build conan
 **Output:** `target/{debug|release}/conan/`
 
 **SDK Contents:**
+
 ```
 ├── lib/conan/static/lib{name}.a
 ├── lib/conan/shared/lib{name}.so
@@ -755,6 +767,7 @@ Contains file listing with sizes:
 ### Excluded Files
 
 The following files are automatically excluded from archives:
+
 - `CPPLINT.cfg`
 - `.clang-format`
 - `.clang-tidy`
@@ -860,6 +873,7 @@ Features are resolved transitively:
 4. **Optional dependencies** are included only if enabled by an active feature
 
 Example resolution for `--features full`:
+
 ```
 full → advanced, networking, logging
 advanced → networking, async
@@ -1031,9 +1045,10 @@ ccgo build ohos --arch armeabi-v7a,arm64-v8a,x86_64
 ### Common Issues
 
 1. **"Command not found" after installation**
-
-   - Ensure `pip` or `cargo` install directory is in your PATH
+   
+   - Ensure the install directory is in your PATH
    - For pip: typically `~/.local/bin` (Linux/macOS) or `%APPDATA%\Python\Scripts` (Windows)
+   - For uv tool: typically `~/.local/bin`
    - For cargo: typically `~/.cargo/bin`
 
 2. **Android build fails**
