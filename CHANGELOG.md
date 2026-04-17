@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.3] - 2026-04-17
+
+### Added
+
+- CCGO.toml-sourced versions + embedded VERIDENTITY
+- mvn-install-style local package cache + bin/lib targets
+
+### Fixed
+
+- zero out remaining clippy errors
+- address clippy errors from last result
+- use relative CHANGELOG link in release notes
+
+### Changed
+
+- extract helpers to reduce cyclomatic complexity
+
 ## [3.4.2] - 2026-04-13
 
 ### Added
