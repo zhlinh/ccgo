@@ -6,11 +6,12 @@ use clap::{Parser, Subcommand};
 use crate::commands::{
     add::AddCommand, analytics::AnalyticsCommand, bench::BenchCommand, build::BuildCommand,
     check::CheckCommand, clean::CleanCommand, collection::CollectionCommand, doc::DocCommand,
-    doctor::DoctorCommand, init::InitCommand, install::InstallCommand, new::NewCommand,
+    doctor::DoctorCommand, fetch::FetchCommand, init::InitCommand, install::InstallCommand,
+    new::NewCommand,
     package::PackageCommand, publish::PublishCommand, registry::RegistryCommand,
     release::ReleaseCommand, remove::RemoveCommand, run::RunCommand, search::SearchCommand,
-    tag::TagCommand, test::TestCommand, tree::TreeCommand, update::UpdateCommand,
-    vendor::VendorCommand,
+    tag::TagCommand, test::TestCommand, tree::TreeCommand, uninstall::UninstallCommand,
+    update::UpdateCommand, vendor::VendorCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -78,8 +79,16 @@ pub enum Commands {
     /// Package SDK for distribution
     Package(PackageCommand),
 
-    /// Install project dependencies
+    /// Install the current project into the global CCGO package cache
+    /// (analog of `cargo install --path .` / `mvn install`)
     Install(InstallCommand),
+
+    /// Fetch this project's dependencies into `.ccgo/deps/`
+    /// (was `ccgo install` prior to v3.5)
+    Fetch(FetchCommand),
+
+    /// Uninstall a package previously installed with `ccgo install`
+    Uninstall(UninstallCommand),
 
     /// Add a dependency to CCGO.toml
     Add(AddCommand),
@@ -149,6 +158,8 @@ fn dispatch_command(command: Commands, verbose: bool) -> Result<()> {
 fn dispatch_dependency_command(command: Commands, verbose: bool) -> Result<()> {
     match command {
         Commands::Install(cmd) => cmd.execute(verbose),
+        Commands::Fetch(cmd) => cmd.execute(verbose),
+        Commands::Uninstall(cmd) => cmd.execute(verbose),
         Commands::Add(cmd) => cmd.execute(verbose),
         Commands::Remove(cmd) => cmd.execute(verbose),
         Commands::Update(cmd) => cmd.execute(verbose),

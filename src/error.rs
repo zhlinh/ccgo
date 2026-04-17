@@ -394,8 +394,8 @@ pub mod hints {
         "CCGO.lock is out of sync with CCGO.toml.\n\
          \n\
          To fix:\n\
-         • Run: ccgo install to update lockfile\n\
-         • Or delete CCGO.lock and run ccgo install again\n\
+         • Run: ccgo fetch to update lockfile\n\
+         • Or delete CCGO.lock and run ccgo fetch again\n\
          \n\
          In CI, use --locked flag to enforce lockfile usage."
     }

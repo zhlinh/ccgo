@@ -45,8 +45,7 @@ impl UpdateCommand {
             bail!("CCGO.toml not found in current directory.");
         }
 
-        let config = CcgoConfig::load()
-            .context("Failed to load CCGO.toml")?;
+        let config = CcgoConfig::load().context("Failed to load CCGO.toml")?;
 
         if config.dependencies.is_empty() {
             println!("\n   ℹ️  No dependencies to update");
@@ -55,7 +54,9 @@ impl UpdateCommand {
 
         // Filter dependencies to update
         let deps_to_update: Vec<&DependencyConfig> = if let Some(ref dep_name) = self.dependency {
-            config.dependencies.iter()
+            config
+                .dependencies
+                .iter()
                 .filter(|d| &d.name == dep_name)
                 .collect()
         } else {
@@ -70,7 +71,10 @@ impl UpdateCommand {
             return Ok(());
         }
 
-        println!("\n📦 Checking {} dependency(ies) for updates...\n", deps_to_update.len());
+        println!(
+            "\n📦 Checking {} dependency(ies) for updates...\n",
+            deps_to_update.len()
+        );
 
         let mut updates = Vec::new();
         let mut up_to_date = Vec::new();
@@ -79,10 +83,10 @@ impl UpdateCommand {
         for dep in deps_to_update {
             match self.check_dependency_update(dep, verbose) {
                 Ok(Some(update_info)) => {
-                    println!("   ⬆  {} {} → {}",
-                        update_info.name,
-                        update_info.current_version,
-                        update_info.new_version);
+                    println!(
+                        "   ⬆  {} {} → {}",
+                        update_info.name, update_info.current_version, update_info.new_version
+                    );
                     updates.push(update_info);
                 }
                 Ok(None) => {
@@ -119,7 +123,7 @@ impl UpdateCommand {
             println!("\n📝 Applying updates...");
             self.apply_updates(&updates)?;
             println!("\n✓ Updated {} dependency(ies)", updates.len());
-            println!("\n💡 Run 'ccgo install --force' to install updated dependencies");
+            println!("\n💡 Run 'ccgo fetch --force' to install updated dependencies");
         }
 
         if !errors.is_empty() {
@@ -177,13 +181,16 @@ impl UpdateCommand {
 
         // Fetch latest from remote
         let output = std::process::Command::new("git")
-            .args(&["fetch", "origin"])
+            .args(["fetch", "origin"])
             .current_dir(&deps_dir)
             .output()
             .context("Failed to fetch from git remote")?;
 
         if !output.status.success() {
-            bail!("Git fetch failed: {}", String::from_utf8_lossy(&output.stderr));
+            bail!(
+                "Git fetch failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         // Get remote commit
@@ -254,13 +261,16 @@ impl UpdateCommand {
     /// Get git revision (commit hash)
     fn get_git_revision(&self, repo_path: &Path) -> Result<String> {
         let output = std::process::Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .current_dir(repo_path)
             .output()
             .context("Failed to get git revision")?;
 
         if !output.status.success() {
-            bail!("Git rev-parse failed: {}", String::from_utf8_lossy(&output.stderr));
+            bail!(
+                "Git rev-parse failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -269,13 +279,16 @@ impl UpdateCommand {
     /// Get git revision of a specific branch
     fn get_git_revision_of_branch(&self, repo_path: &Path, branch: &str) -> Result<String> {
         let output = std::process::Command::new("git")
-            .args(&["rev-parse", &format!("origin/{}", branch)])
+            .args(["rev-parse", &format!("origin/{}", branch)])
             .current_dir(repo_path)
             .output()
             .context("Failed to get git revision")?;
 
         if !output.status.success() {
-            bail!("Git rev-parse failed: {}", String::from_utf8_lossy(&output.stderr));
+            bail!(
+                "Git rev-parse failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -301,9 +314,7 @@ impl UpdateCommand {
 
             // Track which dependency we're in
             if trimmed.starts_with("name = ") {
-                let name = trimmed
-                    .trim_start_matches("name = ")
-                    .trim_matches('"');
+                let name = trimmed.trim_start_matches("name = ").trim_matches('"');
                 current_dep = Some(name.to_string());
             }
 
@@ -313,7 +324,8 @@ impl UpdateCommand {
                     if let Some(update) = update_map.get(dep_name) {
                         // Replace version line
                         let indent = line.len() - line.trim_start().len();
-                        let new_line = format!("{}version = \"{}\"", " ".repeat(indent), update.new_version);
+                        let new_line =
+                            format!("{}version = \"{}\"", " ".repeat(indent), update.new_version);
                         new_lines.push(new_line);
                         continue;
                     }

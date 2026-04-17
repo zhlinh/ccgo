@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::config::CcgoConfig;
-use crate::registry::{expand_git_shorthand, discover_latest_version};
+use crate::registry::{discover_latest_version, expand_git_shorthand};
 use crate::version::VersionReq;
 
 /// Add a dependency to CCGO.toml
@@ -109,8 +109,10 @@ impl AddCommand {
                 println!("\n🔍 Discovering latest version from {}...", git);
                 match discover_latest_version(git, self.prerelease) {
                     Ok(Some(tag_info)) => {
-                        println!("   Found: {} ({})", tag_info.tag,
-                            if tag_info.semver.as_ref().map_or(false, |v| v.is_stable()) {
+                        println!(
+                            "   Found: {} ({})",
+                            tag_info.tag,
+                            if tag_info.semver.as_ref().is_some_and(|v| v.is_stable()) {
                                 "stable"
                             } else {
                                 "prerelease"
@@ -143,8 +145,7 @@ impl AddCommand {
             bail!("CCGO.toml not found in current directory. Run 'ccgo init' first.");
         }
 
-        let mut content = fs::read_to_string(config_path)
-            .context("Failed to read CCGO.toml")?;
+        let mut content = fs::read_to_string(config_path).context("Failed to read CCGO.toml")?;
 
         // Parse to validate and check for duplicates
         let config = CcgoConfig::parse(&content)?;
@@ -160,8 +161,7 @@ impl AddCommand {
 
         // Append to CCGO.toml
         content = self.append_dependency(&content, &dep_entry);
-        fs::write(config_path, content)
-            .context("Failed to write CCGO.toml")?;
+        fs::write(config_path, content).context("Failed to write CCGO.toml")?;
 
         println!("\n✓ Added '{}' to CCGO.toml", dep_name);
 
@@ -171,24 +171,24 @@ impl AddCommand {
             println!("Installing dependency...");
             println!("{}", "=".repeat(80));
 
-            let install_cmd = crate::commands::install::InstallCommand {
+            let fetch_cmd = crate::commands::fetch::FetchCommand {
                 dependency: Some(dep_name.clone()),
                 force: false,
                 platform: None,
                 clean_cache: false,
                 copy: false,
                 locked: false,
-                conflict_strategy: crate::commands::install::ConflictStrategy::default(),
+                conflict_strategy: crate::commands::fetch::ConflictStrategy::default(),
                 workspace: false,
                 package: None,
             };
 
-            if let Err(e) = install_cmd.execute(_verbose) {
-                eprintln!("\n⚠️  Failed to install '{}': {}", dep_name, e);
-                eprintln!("   You can install manually with: ccgo install {}", dep_name);
+            if let Err(e) = fetch_cmd.execute(_verbose) {
+                eprintln!("\n⚠️  Failed to fetch '{}': {}", dep_name, e);
+                eprintln!("   You can fetch manually with: ccgo fetch {}", dep_name);
             }
         } else {
-            println!("\n💡 Run 'ccgo install' to install the dependency");
+            println!("\n💡 Run 'ccgo fetch' to install the dependency");
         }
 
         Ok(())
@@ -198,7 +198,9 @@ impl AddCommand {
     fn resolve_input(&self) -> Result<(String, Option<String>, Option<String>)> {
         // Check if name looks like a Git shorthand
         let is_shorthand = self.name.contains(':')
-            || (self.name.contains('/') && !self.name.starts_with('.') && !self.name.starts_with('/'));
+            || (self.name.contains('/')
+                && !self.name.starts_with('.')
+                && !self.name.starts_with('/'));
 
         if is_shorthand && self.git.is_none() && self.path.is_none() {
             // Parse as Git shorthand
@@ -211,7 +213,11 @@ impl AddCommand {
 
         // Check if --git is a shorthand
         if let Some(ref git) = self.git {
-            if git.contains(':') && !git.starts_with("https://") && !git.starts_with("http://") && !git.starts_with("git@") {
+            if git.contains(':')
+                && !git.starts_with("https://")
+                && !git.starts_with("http://")
+                && !git.starts_with("git@")
+            {
                 let spec = expand_git_shorthand(git)?;
                 return Ok((self.name.clone(), Some(spec.url), spec.reference));
             }

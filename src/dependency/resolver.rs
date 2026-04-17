@@ -47,7 +47,11 @@ impl DependencyResolver {
     }
 
     /// Create a new dependency resolver with a specific conflict strategy
-    pub fn with_strategy(project_root: PathBuf, ccgo_home: PathBuf, strategy: ConflictStrategy) -> Self {
+    pub fn with_strategy(
+        project_root: PathBuf,
+        ccgo_home: PathBuf,
+        strategy: ConflictStrategy,
+    ) -> Self {
         Self {
             graph: DependencyGraph::new(),
             visited: HashMap::new(),
@@ -101,9 +105,11 @@ impl DependencyResolver {
             // Try to resolve using current strategy
             match self.version_resolver.resolve_all() {
                 Ok(resolved) => {
-                    println!("\n   ✓ Resolved {} version conflicts using '{}' strategy",
-                             resolved.len(),
-                             self.version_resolver.strategy_name());
+                    println!(
+                        "\n   ✓ Resolved {} version conflicts using '{}' strategy",
+                        resolved.len(),
+                        self.version_resolver.strategy_name()
+                    );
                     for (pkg, version) in &resolved {
                         println!("      {} → {}", pkg, version);
                     }
@@ -133,19 +139,20 @@ impl DependencyResolver {
         // Check if already processed
         if let Some(existing_version) = self.visited.get(&dep.name) {
             // Already processed, check version compatibility using VersionResolver
-            if !existing_version.is_empty() && !dep.version.is_empty() {
-                if existing_version != &dep.version {
-                    // Try to parse versions and check compatibility
-                    let existing_req = VersionRequirement::parse(existing_version);
-                    let new_req = VersionRequirement::parse(&dep.version);
+            if !existing_version.is_empty()
+                && !dep.version.is_empty()
+                && existing_version != &dep.version
+            {
+                // Try to parse versions and check compatibility
+                let existing_req = VersionRequirement::parse(existing_version);
+                let new_req = VersionRequirement::parse(&dep.version);
 
-                    if let (Ok(existing), Ok(new)) = (existing_req, new_req) {
-                        if !existing.is_compatible_with(&new) {
-                            eprintln!(
-                                "   ⚠️  Version conflict for '{}': have {}, need {}",
-                                dep.name, existing_version, dep.version
-                            );
-                        }
+                if let (Ok(existing), Ok(new)) = (existing_req, new_req) {
+                    if !existing.is_compatible_with(&new) {
+                        eprintln!(
+                            "   ⚠️  Version conflict for '{}': have {}, need {}",
+                            dep.name, existing_version, dep.version
+                        );
                     }
                 }
             }
@@ -162,8 +169,7 @@ impl DependencyResolver {
         }
 
         // Mark as visited with current version
-        self.visited
-            .insert(dep.name.clone(), dep.version.clone());
+        self.visited.insert(dep.name.clone(), dep.version.clone());
 
         // Find the dependency's CCGO.toml
         let dep_path = self.locate_dependency(dep)?;
@@ -222,39 +228,81 @@ impl DependencyResolver {
             };
 
             if !dep_path.exists() {
-                anyhow::bail!("Path dependency '{}' not found at: {}", dep.name, dep_path.display());
-            }
-
-            Ok(dep_path)
-        } else if dep.git.is_some() {
-            // Git dependency - should be in global cache
-            let hash_input = format!("{}:{}", dep.name, dep.git.as_ref().unwrap());
-            let hash = format!("{:x}", md5::compute(hash_input.as_bytes()));
-            let registry_name = format!("{}-{}", dep.name, &hash[..16]);
-            let dep_path = self.ccgo_home.join("registry").join(&registry_name);
-
-            if !dep_path.exists() {
                 anyhow::bail!(
-                    "Git dependency '{}' not found in cache. Run 'ccgo install' first.",
-                    dep.name
+                    "Path dependency '{}' not found at: {}",
+                    dep.name,
+                    dep_path.display()
                 );
             }
 
             Ok(dep_path)
+        } else if let Some(ref git_url) = dep.git {
+            // Git dependency cache. Try new layout first (git/checkouts/<hash>/),
+            // then the legacy flat registry/<name>-<hash>/ for back-compat.
+            let hash_input = format!("{}:{}", dep.name, git_url);
+            let full_hash = format!("{:x}", md5::compute(hash_input.as_bytes()));
+            let short_hash = &full_hash[..16];
+
+            let new_path = self
+                .ccgo_home
+                .join("git")
+                .join("checkouts")
+                .join(&full_hash);
+            if new_path.exists() {
+                return Ok(new_path);
+            }
+
+            let legacy_path = self
+                .ccgo_home
+                .join("registry")
+                .join(format!("{}-{}", dep.name, short_hash));
+            if legacy_path.exists() {
+                return Ok(legacy_path);
+            }
+
+            anyhow::bail!(
+                "Git dependency '{}' not found in cache. Run 'ccgo fetch' first.",
+                dep.name
+            );
         } else if dep.zip.is_some() {
-            // Zip deps are installed to .ccgo/deps/{name} by ccgo install
+            // Zip deps are installed to .ccgo/deps/{name} by ccgo fetch
             // Return the expected install path as the resolved location
             Ok(self.project_root.join(".ccgo").join("deps").join(&dep.name))
+        } else if !dep.version.is_empty() {
+            // "name + version only" — resolve from the packages cache populated
+            // by `ccgo install` in the source project.
+            let local_cache = self
+                .ccgo_home
+                .join("packages")
+                .join(dep.name.to_lowercase())
+                .join(&dep.version);
+            if local_cache.exists() {
+                Ok(local_cache)
+            } else {
+                anyhow::bail!(
+                    "Dependency '{}' version {} not found in local cache ({}).\n\
+                     Hint: in the source project run `ccgo install`\n\
+                     to populate the cache, or add a git/path/zip source.",
+                    dep.name,
+                    dep.version,
+                    local_cache.display()
+                );
+            }
         } else {
             anyhow::bail!(
-                "Dependency '{}' has no valid source (git or path)",
+                "Dependency '{}' has no valid source (git, path, zip, or version)",
                 dep.name
             );
         }
     }
 
     /// Add a node to the dependency graph
-    fn add_node_to_graph(&mut self, dep: &DependencyConfig, dependencies: Vec<String>, depth: usize) {
+    fn add_node_to_graph(
+        &mut self,
+        dep: &DependencyConfig,
+        dependencies: Vec<String>,
+        depth: usize,
+    ) {
         let source = self.build_source_string(dep);
 
         let node = DependencyNode {
@@ -330,8 +378,8 @@ pub fn resolve_dependencies_with_strategy(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     fn create_test_dependency(name: &str, deps: Vec<&str>) -> DependencyConfig {
         DependencyConfig {
@@ -393,7 +441,10 @@ version = "1.0.0"
         // Try to resolve at max depth + 1
         let result = resolver.resolve_dependency(&dep, MAX_DEPTH);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Maximum dependency depth"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Maximum dependency depth"));
     }
 
     #[test]
