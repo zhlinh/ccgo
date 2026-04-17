@@ -75,7 +75,7 @@ impl GitVersion {
 /// Get current git branch name
 fn get_git_branch(project_root: &Path) -> Result<String> {
     let output = Command::new("git")
-        .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(project_root)
         .output()
         .context("Failed to get git branch")?;
@@ -91,7 +91,7 @@ fn get_git_branch(project_root: &Path) -> Result<String> {
 /// Get current git revision (short commit hash)
 fn get_git_revision(project_root: &Path) -> Result<String> {
     let output = Command::new("git")
-        .args(&["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "--short", "HEAD"])
         .current_dir(project_root)
         .output()
         .context("Failed to get git revision")?;
@@ -107,7 +107,7 @@ fn get_git_revision(project_root: &Path) -> Result<String> {
 /// Check if working directory has uncommitted changes
 fn is_git_dirty(project_root: &Path) -> Result<bool> {
     let output = Command::new("git")
-        .args(&["status", "--porcelain"])
+        .args(["status", "--porcelain"])
         .current_dir(project_root)
         .output()
         .context("Failed to check git status")?;
@@ -124,7 +124,7 @@ fn is_git_dirty(project_root: &Path) -> Result<bool> {
 fn get_commits_since_tag(project_root: &Path) -> Result<u32> {
     // Try to get the most recent tag
     let tag_output = Command::new("git")
-        .args(&["describe", "--tags", "--abbrev=0"])
+        .args(["describe", "--tags", "--abbrev=0"])
         .current_dir(project_root)
         .output()
         .context("Failed to get git tags")?;
@@ -141,7 +141,7 @@ fn get_commits_since_tag(project_root: &Path) -> Result<u32> {
 
     // Count commits since the tag
     let count_output = Command::new("git")
-        .args(&["rev-list", &format!("{}..HEAD", latest_tag), "--count"])
+        .args(["rev-list", &format!("{latest_tag}..HEAD"), "--count"])
         .current_dir(project_root)
         .output()
         .context("Failed to count commits since tag")?;
@@ -157,7 +157,7 @@ fn get_commits_since_tag(project_root: &Path) -> Result<u32> {
 /// Count all commits in the repository
 fn count_all_commits(project_root: &Path) -> Result<u32> {
     let output = Command::new("git")
-        .args(&["rev-list", "HEAD", "--count"])
+        .args(["rev-list", "HEAD", "--count"])
         .current_dir(project_root)
         .output()
         .context("Failed to count all commits")?;

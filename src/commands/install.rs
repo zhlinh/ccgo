@@ -98,159 +98,219 @@ impl InstallCommand {
         println!("CCGO Install - Current project → global package cache");
         println!("{}", "=".repeat(80));
 
-        let project_dir =
-            std::env::current_dir().context("Failed to get current working directory")?;
-        let config_path = find_ccgo_toml(&project_dir)?;
+        let ctx = InstallContext::load()?;
+        let release = !self.debug;
+        let package_output = ctx.project_root.join("target").join(if release { "release" } else { "debug" }).join("package");
+
+        self.ensure_packaged(&ctx, &package_output, release, verbose)?;
+
+        let zip_prefix = format!("{}_SDK-", ctx.project_name.to_uppercase());
+        let version_clean = self.resolve_version(&package_output, &zip_prefix, &ctx.package_version);
+
+        let plan = self.plan_install(&ctx.bins);
+        self.install_lib_part(&ctx, &package_output, &version_clean, &plan)?;
+        self.install_bins_part(&ctx, &version_clean, &plan, release, verbose)?;
+
+        Ok(())
+    }
+
+    /// Guarantee `target/<mode>/package/<NAME>_SDK-*.zip` exists, invoking
+    /// `ccgo package` when absent and the caller allows auto-packaging.
+    fn ensure_packaged(
+        &self,
+        ctx: &InstallContext,
+        package_output: &Path,
+        release: bool,
+        verbose: bool,
+    ) -> Result<()> {
+        let zip_prefix = format!("{}_SDK-", ctx.project_name.to_uppercase());
+        if find_sdk_zip(package_output, &zip_prefix).is_some() {
+            return Ok(());
+        }
+
+        let pkg_flag = if release { " --release" } else { "" };
+        if !self.auto_package {
+            return Err(anyhow!(
+                "No packaged SDK found at {}.\n\
+                 Run `ccgo package{}` first, or re-run with --auto-package.",
+                package_output.display(),
+                pkg_flag
+            ));
+        }
+        println!("📦 No packaged SDK found, running `ccgo package{pkg_flag}` first…");
+        PackageCommand {
+            version: self.version.clone(),
+            output: None,
+            platforms: self.platforms.clone(),
+            no_merge: false,
+            release,
+            dist_branch: None,
+            dist: false,
+            dist_push: false,
+        }
+        .execute(verbose)
+    }
+
+    /// Prefer explicit `--version`, else parse the produced zip filename, else
+    /// fall back to CCGO.toml's `[package].version`. Strips a leading `v`.
+    fn resolve_version(&self, package_output: &Path, zip_prefix: &str, toml_version: &str) -> String {
+        let version = self
+            .version
+            .clone()
+            .or_else(|| infer_version_from_zip(package_output, zip_prefix))
+            .unwrap_or_else(|| toml_version.to_string());
+        version.strip_prefix('v').unwrap_or(&version).to_string()
+    }
+
+    fn plan_install(&self, bins: &[BinConfig]) -> InstallPlan {
+        let has_bin_config = !bins.is_empty();
+        let user_selected_bin = !self.bin.is_empty() || self.bins;
+        let install_lib = if self.lib {
+            true
+        } else {
+            !user_selected_bin
+        };
+        let install_bins = if self.lib && !user_selected_bin {
+            false
+        } else if user_selected_bin {
+            true
+        } else {
+            has_bin_config
+        };
+        InstallPlan {
+            install_lib,
+            install_bins,
+            has_bin_config,
+        }
+    }
+
+    fn install_lib_part(
+        &self,
+        ctx: &InstallContext,
+        package_output: &Path,
+        version_clean: &str,
+        plan: &InstallPlan,
+    ) -> Result<()> {
+        if !plan.install_lib {
+            return Ok(());
+        }
+        let dest = cache_path(&ctx.project_name, version_clean)?;
+        if dest.exists() && !self.force {
+            println!(
+                "\n{}",
+                style(format!(
+                    "ℹ️  Lib already installed: {} {} -> {}",
+                    ctx.project_name,
+                    version_clean,
+                    dest.display()
+                ))
+                .yellow()
+            );
+            println!("   Re-run with --force to reinstall.");
+            return Ok(());
+        }
+        install_to_local_cache(
+            &ctx.project_root,
+            package_output,
+            &ctx.project_name,
+            version_clean,
+        )
+    }
+
+    fn install_bins_part(
+        &self,
+        ctx: &InstallContext,
+        version_clean: &str,
+        plan: &InstallPlan,
+        release: bool,
+        verbose: bool,
+    ) -> Result<()> {
+        if !plan.install_bins {
+            return Ok(());
+        }
+        if !plan.has_bin_config {
+            println!(
+                "\n{}",
+                style("ℹ️  No [[bin]] targets in CCGO.toml — skipping bin install.").yellow()
+            );
+            return Ok(());
+        }
+        let selected: Vec<String> = if self.bin.is_empty() {
+            ctx.bins.iter().map(|b| b.name.clone()).collect()
+        } else {
+            self.bin.clone()
+        };
+        install_bin_targets(
+            &ctx.project_root,
+            &ctx.project_name,
+            version_clean,
+            &ctx.bins,
+            &selected,
+            release,
+            self.force,
+            verbose,
+        )
+    }
+}
+
+struct InstallContext {
+    project_root: PathBuf,
+    project_name: String,
+    package_version: String,
+    bins: Vec<BinConfig>,
+}
+
+impl InstallContext {
+    fn load() -> Result<Self> {
+        let cwd = std::env::current_dir().context("Failed to get current working directory")?;
+        let config_path = find_ccgo_toml(&cwd)?;
         let project_root = config_path
             .parent()
             .ok_or_else(|| anyhow!("Invalid CCGO.toml path: {}", config_path.display()))?
             .to_path_buf();
-
         let config = CcgoConfig::load_from_path(&config_path)
             .with_context(|| format!("Failed to load {}", config_path.display()))?;
         let package = config
             .package
             .as_ref()
             .ok_or_else(|| anyhow!("CCGO.toml is missing a [package] section"))?;
-        let project_name = package.name.clone();
-
-        let release = !self.debug;
-        let build_mode = if release { "release" } else { "debug" };
-        let package_output = project_root.join("target").join(build_mode).join("package");
-
-        // Look for an existing packaged zip.
-        let zip_prefix = format!("{}_SDK-", project_name.to_uppercase());
-        let mut existing_zip: Option<PathBuf> = None;
-        if package_output.exists() {
-            if let Ok(entries) = std::fs::read_dir(&package_output) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if !p.is_file() {
-                        continue;
-                    }
-                    let fname = p
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    if fname.starts_with(&zip_prefix)
-                        && fname.ends_with(".zip")
-                        && !fname.contains("SYMBOLS")
-                        && !fname.contains("ARCHIVE")
-                    {
-                        existing_zip = Some(p);
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Auto-package if needed.
-        if existing_zip.is_none() {
-            let pkg_flag = if release { " --release" } else { "" };
-            if !self.auto_package {
-                return Err(anyhow!(
-                    "No packaged SDK found at {}.\n\
-                     Run `ccgo package{}` first, or re-run with --auto-package.",
-                    package_output.display(),
-                    pkg_flag
-                ));
-            }
-            println!(
-                "📦 No packaged SDK found, running `ccgo package{}` first…",
-                pkg_flag
-            );
-            let pkg_cmd = PackageCommand {
-                version: self.version.clone(),
-                output: None,
-                platforms: self.platforms.clone(),
-                no_merge: false,
-                release,
-                dist_branch: None,
-                dist: false,
-                dist_push: false,
-            };
-            pkg_cmd.execute(verbose)?;
-        }
-
-        // Resolve the version (prefer explicit --version, else infer from zip filename).
-        let version = self
-            .version
-            .clone()
-            .or_else(|| infer_version_from_zip(&package_output, &zip_prefix))
-            .unwrap_or_else(|| package.version.clone());
-        let version_clean = version.strip_prefix('v').unwrap_or(&version).to_string();
-
-        // Decide what to install this run.
-        let has_bin_config = !config.bins.is_empty();
-        let user_selected_bin = !self.bin.is_empty() || self.bins;
-        let install_lib = if self.lib {
-            true // explicit --lib wins
-        } else if user_selected_bin {
-            false // --bin/--bins without --lib → bins only
-        } else {
-            true // default: always install lib
-        };
-        let install_bins = if self.lib && !user_selected_bin {
-            false // `--lib` alone → library only
-        } else if user_selected_bin {
-            true
-        } else {
-            has_bin_config // otherwise, install bins iff project has any
-        };
-
-        // --- lib ---
-        if install_lib {
-            let dest = cache_path(&project_name, &version_clean)?;
-            if dest.exists() && !self.force {
-                println!(
-                    "\n{}",
-                    style(format!(
-                        "ℹ️  Lib already installed: {} {} -> {}",
-                        project_name,
-                        version_clean,
-                        dest.display()
-                    ))
-                    .yellow()
-                );
-                println!("   Re-run with --force to reinstall.");
-            } else {
-                install_to_local_cache(
-                    &project_root,
-                    &package_output,
-                    &project_name,
-                    &version_clean,
-                )?;
-            }
-        }
-
-        // --- bins ---
-        if install_bins && has_bin_config {
-            let selected: Vec<String> = if self.bin.is_empty() {
-                // All bins
-                config.bins.iter().map(|b| b.name.clone()).collect()
-            } else {
-                self.bin.clone()
-            };
-            install_bin_targets(
-                &project_root,
-                &project_name,
-                &version_clean,
-                &config.bins,
-                &selected,
-                release,
-                self.force,
-                verbose,
-            )?;
-        } else if install_bins && !has_bin_config {
-            println!(
-                "\n{}",
-                style("ℹ️  No [[bin]] targets in CCGO.toml — skipping bin install.").yellow()
-            );
-        }
-
-        Ok(())
+        Ok(InstallContext {
+            project_root,
+            project_name: package.name.clone(),
+            package_version: package.version.clone(),
+            bins: config.bins.clone(),
+        })
     }
+}
+
+struct InstallPlan {
+    install_lib: bool,
+    install_bins: bool,
+    has_bin_config: bool,
+}
+
+/// Return the first unified SDK zip (not SYMBOLS / ARCHIVE variants) in dir.
+fn find_sdk_zip(dir: &Path, prefix: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let fname = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if fname.starts_with(prefix)
+            && fname.ends_with(".zip")
+            && !fname.contains("SYMBOLS")
+            && !fname.contains("ARCHIVE")
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// Walk up from `start_dir` looking for a CCGO.toml. Returns its absolute path.
