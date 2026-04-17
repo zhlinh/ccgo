@@ -580,10 +580,9 @@ impl AndroidBuilder {
         // Example: CCGONOW_ANDROID_SDK-1.0.2-beta.18-dirty.aar
         let project_name_upper = ctx.lib_name().to_uppercase();
         let dest_name = format!(
-            "{}_ANDROID_SDK-{}-{}.aar",
+            "{}_ANDROID_SDK-{}.aar",
             project_name_upper,
-            ctx.version(),
-            ctx.publish_suffix()
+            ctx.version()
         );
         let dest = output_dir.join(&dest_name);
 
@@ -778,10 +777,9 @@ impl PlatformBuilder for AndroidBuilder {
             // Format: {PROJECT}_ANDROID_SDK-{version}-{publish_suffix}.aar
             let project_name_upper = ctx.lib_name().to_uppercase();
             let aar_versioned_name = format!(
-                "{}_ANDROID_SDK-{}-{}.aar",
+                "{}_ANDROID_SDK-{}.aar",
                 project_name_upper,
-                ctx.version(),
-                ctx.publish_suffix()
+                ctx.version()
             );
             let aar_path = ctx.output_dir.join(&aar_versioned_name);
 
@@ -827,10 +825,9 @@ impl PlatformBuilder for AndroidBuilder {
         let aar_archive = if !ctx.options.native_only {
             let project_name_upper = ctx.lib_name().to_uppercase();
             let aar_versioned_name = format!(
-                "{}_ANDROID_SDK-{}-{}.aar",
+                "{}_ANDROID_SDK-{}.aar",
                 project_name_upper,
-                ctx.version(),
-                ctx.publish_suffix()
+                ctx.version()
             );
             let aar_path = ctx.output_dir.join(&aar_versioned_name);
             if aar_path.exists() {
