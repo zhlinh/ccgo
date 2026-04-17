@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::config::CcgoConfig;
-use crate::lockfile::{Lockfile, LockedPackage, LOCKFILE_NAME};
+use crate::lockfile::{LockedPackage, Lockfile, LOCKFILE_NAME};
 
 /// Default vendor directory name
 pub const VENDOR_DIR: &str = "vendor";
@@ -224,11 +224,12 @@ impl VendorCommand {
         let config = CcgoConfig::load().context("Failed to load CCGO.toml")?;
 
         // Load lockfile (required for vendor)
-        let lockfile = Lockfile::load(&project_dir)?
-            .ok_or_else(|| anyhow::anyhow!(
-                "No {} found. Run 'ccgo install' first to generate a lockfile.",
+        let lockfile = Lockfile::load(&project_dir)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No {} found. Run 'ccgo fetch' first to generate a lockfile.",
                 LOCKFILE_NAME
-            ))?;
+            )
+        })?;
 
         let dependencies = &config.dependencies;
         if dependencies.is_empty() {
@@ -245,8 +246,12 @@ impl VendorCommand {
         }
 
         // Create vendor directory
-        fs::create_dir_all(&vendor_dir)
-            .with_context(|| format!("Failed to create vendor directory: {}", vendor_dir.display()))?;
+        fs::create_dir_all(&vendor_dir).with_context(|| {
+            format!(
+                "Failed to create vendor directory: {}",
+                vendor_dir.display()
+            )
+        })?;
 
         println!("\n📦 Vendoring {} dependencies...", lockfile.packages.len());
 
@@ -338,8 +343,12 @@ impl VendorCommand {
 
         // Remove existing if present
         if target_dir.exists() {
-            fs::remove_dir_all(&target_dir)
-                .with_context(|| format!("Failed to remove existing vendor dir: {}", target_dir.display()))?;
+            fs::remove_dir_all(&target_dir).with_context(|| {
+                format!(
+                    "Failed to remove existing vendor dir: {}",
+                    target_dir.display()
+                )
+            })?;
         }
 
         // Determine source and copy
@@ -411,7 +420,10 @@ impl VendorCommand {
 
             let output = cmd.output().context("Failed to execute git clone")?;
             if !output.status.success() {
-                bail!("Git clone failed: {}", String::from_utf8_lossy(&output.stderr));
+                bail!(
+                    "Git clone failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
 
             // Checkout specific revision if available
@@ -422,7 +434,10 @@ impl VendorCommand {
                     .output()
                     .context("Failed to checkout revision")?;
                 if !checkout.status.success() {
-                    bail!("Git checkout failed: {}", String::from_utf8_lossy(&checkout.stderr));
+                    bail!(
+                        "Git checkout failed: {}",
+                        String::from_utf8_lossy(&checkout.stderr)
+                    );
                 }
             }
         }
@@ -577,9 +592,8 @@ impl VendorCommand {
     ) -> Result<()> {
         println!("\n🔍 Verifying vendor directory...");
 
-        let vendor_config = vendor_config.ok_or_else(|| {
-            anyhow::anyhow!("No {} found in vendor directory", VENDOR_TOML)
-        })?;
+        let vendor_config = vendor_config
+            .ok_or_else(|| anyhow::anyhow!("No {} found in vendor directory", VENDOR_TOML))?;
 
         let mut missing = Vec::new();
         let mut outdated = Vec::new();
@@ -642,9 +656,8 @@ impl VendorCommand {
     /// Get CCGO home directory
     fn get_ccgo_home() -> PathBuf {
         directories::BaseDirs::new()
-            .and_then(|dirs| Some(dirs.home_dir().to_path_buf()))
+            .map(|dirs| dirs.home_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."))
             .join(".ccgo")
     }
 }
-

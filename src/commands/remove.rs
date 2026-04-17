@@ -72,7 +72,7 @@ impl RemoveCommand {
             // Update lock file
             self.update_lock_file()?;
         } else {
-            println!("\n💡 Run 'ccgo install --force' to update installed dependencies");
+            println!("\n💡 Run 'ccgo fetch --force' to update installed dependencies");
             println!("   Or use 'ccgo remove {} --purge' to also delete installed files", self.name);
         }
 

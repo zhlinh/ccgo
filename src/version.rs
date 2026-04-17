@@ -203,6 +203,11 @@ impl VersionReq {
 
     /// Parse version parts for a comparator
     fn parse_version_parts(op: Op, s: &str) -> Result<Comparator> {
+        // Strip prerelease (`-xxx`) and build metadata (`+xxx`) before splitting
+        // on `.` — this matches semver (2.0) where only the MAJOR.MINOR.PATCH
+        // triple needs to be numeric.
+        let s = s.split('+').next().unwrap_or(s);
+        let s = s.split('-').next().unwrap_or(s);
         let parts: Vec<&str> = s.split('.').collect();
 
         if parts.is_empty() || parts.len() > 3 {

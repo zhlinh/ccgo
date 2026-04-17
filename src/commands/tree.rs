@@ -229,10 +229,21 @@ impl TreeCommand {
 
         // Output based on format
         match self.format {
-            OutputFormat::Json => self.output_json(&package.name, &package.version, &config, &resolved),
-            OutputFormat::Dot => self.output_dot(&package.name, &package.version, &config, &resolved),
+            OutputFormat::Json => {
+                self.output_json(&package.name, &package.version, &config, &resolved)
+            }
+            OutputFormat::Dot => {
+                self.output_dot(&package.name, &package.version, &config, &resolved)
+            }
             OutputFormat::Text => {
-                self.output_text(&package.name, &package.version, &config, &resolved, &lock_info, &project_dir)?;
+                self.output_text(
+                    &package.name,
+                    &package.version,
+                    &config,
+                    &resolved,
+                    &lock_info,
+                    &project_dir,
+                )?;
 
                 // Show conflicts if requested
                 if self.conflicts {
@@ -393,6 +404,7 @@ impl TreeCommand {
     }
 
     /// Print a dependency and its children
+    #[allow(clippy::too_many_arguments)]
     fn print_dependency(
         &self,
         dep: &DependencyConfig,
@@ -531,7 +543,7 @@ impl TreeCommand {
     fn load_lock_file(project_dir: &Path) -> Result<LockInfo> {
         let lock_path = project_dir.join("CCGO.toml.lock");
         if !lock_path.exists() {
-            bail!("CCGO.toml.lock not found. Run 'ccgo install' first.");
+            bail!("CCGO.toml.lock not found. Run 'ccgo fetch' first.");
         }
 
         let content = fs::read_to_string(&lock_path).context("Failed to read CCGO.toml.lock")?;
@@ -616,7 +628,13 @@ impl TreeCommand {
     // JSON Output
     // ========================================================================
 
-    fn output_json(&self, pkg_name: &str, pkg_version: &str, _config: &CcgoConfig, resolved: &[ResolvedDep]) -> Result<()> {
+    fn output_json(
+        &self,
+        pkg_name: &str,
+        pkg_version: &str,
+        _config: &CcgoConfig,
+        resolved: &[ResolvedDep],
+    ) -> Result<()> {
         let conflicts = if self.conflicts {
             let c = self.detect_conflicts(resolved);
             if c.is_empty() {
@@ -644,7 +662,11 @@ impl TreeCommand {
             name: dep.name.clone(),
             version: dep.version.clone(),
             source: DepSourceJson::from(&dep.source),
-            dependencies: dep.children.iter().map(|c| self.resolved_to_json(c)).collect(),
+            dependencies: dep
+                .children
+                .iter()
+                .map(|c| self.resolved_to_json(c))
+                .collect(),
             duplicate: if dep.is_duplicate { Some(true) } else { None },
         }
     }
@@ -653,10 +675,18 @@ impl TreeCommand {
     // DOT (Graphviz) Output
     // ========================================================================
 
-    fn output_dot(&self, pkg_name: &str, pkg_version: &str, _config: &CcgoConfig, resolved: &[ResolvedDep]) -> Result<()> {
+    fn output_dot(
+        &self,
+        pkg_name: &str,
+        pkg_version: &str,
+        _config: &CcgoConfig,
+        resolved: &[ResolvedDep],
+    ) -> Result<()> {
         println!("digraph dependencies {{");
         println!("    rankdir=TB;");
-        println!("    node [shape=box, style=filled, fillcolor=lightblue, fontname=\"Helvetica\"];");
+        println!(
+            "    node [shape=box, style=filled, fillcolor=lightblue, fontname=\"Helvetica\"];"
+        );
         println!("    edge [fontname=\"Helvetica\", fontsize=10];");
         println!();
 
@@ -674,9 +704,16 @@ impl TreeCommand {
 
         // Detect version conflicts for highlighting
         let conflicts = self.detect_conflicts(resolved);
-        let conflict_packages: HashSet<String> = conflicts.iter().map(|c| c.package.clone()).collect();
+        let conflict_packages: HashSet<String> =
+            conflicts.iter().map(|c| c.package.clone()).collect();
 
-        self.collect_dot_nodes(&root_id, resolved, &mut edges, &mut nodes, &conflict_packages);
+        self.collect_dot_nodes(
+            &root_id,
+            resolved,
+            &mut edges,
+            &mut nodes,
+            &conflict_packages,
+        );
 
         // Print nodes
         for (id, (label, is_conflict)) in &nodes {
@@ -752,16 +789,27 @@ impl TreeCommand {
         // Find who depends on target
         if let Some(dependents) = reverse_deps.get(target) {
             println!("\n{}", target);
-            let unique_dependents: Vec<_> = dependents.iter().collect::<HashSet<_>>().into_iter().collect();
+            let unique_dependents: Vec<_> = dependents
+                .iter()
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
             for (idx, dep) in unique_dependents.iter().enumerate() {
                 let is_last = idx == unique_dependents.len() - 1;
                 let prefix = if is_last { "└── " } else { "├── " };
                 println!("{}{} (depends on {})", prefix, dep, target);
             }
-            println!("\nTotal: {} package(s) depend on '{}'", unique_dependents.len(), target);
+            println!(
+                "\nTotal: {} package(s) depend on '{}'",
+                unique_dependents.len(),
+                target
+            );
         } else {
             println!("\n✓ No packages depend on '{}'", target);
-            println!("\nNote: '{}' may not exist in the dependency tree, or it's a leaf dependency.", target);
+            println!(
+                "\nNote: '{}' may not exist in the dependency tree, or it's a leaf dependency.",
+                target
+            );
         }
 
         Ok(())
