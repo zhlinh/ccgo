@@ -153,10 +153,7 @@ impl DependencyGraph {
         let mut adj_list: HashMap<String, Vec<String>> = HashMap::new();
 
         for (from, to) in &self.edges {
-            adj_list
-                .entry(from.clone())
-                .or_insert_with(Vec::new)
-                .push(to.clone());
+            adj_list.entry(from.clone()).or_default().push(to.clone());
         }
 
         adj_list
@@ -246,7 +243,8 @@ impl DependencyGraph {
         output: &mut String,
         visited: &mut HashSet<String>,
         depth: usize,
-        indent: usize,
+        // only consumed by the recursive call below — not used at this level
+        _indent: usize,
         is_last: bool,
     ) {
         // Indentation
@@ -300,14 +298,7 @@ impl DependencyGraph {
         for (i, dep_name) in node.dependencies.iter().enumerate() {
             if let Some(dep_node) = self.nodes.get(dep_name) {
                 let is_last_child = i == deps_count - 1;
-                self.format_node(
-                    dep_node,
-                    output,
-                    visited,
-                    depth + 1,
-                    indent,
-                    is_last_child,
-                );
+                self.format_node(dep_node, output, visited, depth + 1, _indent, is_last_child);
             }
         }
     }
@@ -316,11 +307,7 @@ impl DependencyGraph {
     pub fn stats(&self) -> DependencyStats {
         let unique_count = self.nodes.len();
         let total_count = self.edges.len() + self.roots.len();
-        let shared_count = if total_count > unique_count {
-            total_count - unique_count
-        } else {
-            0
-        };
+        let shared_count = total_count.saturating_sub(unique_count);
 
         // Calculate max depth
         let max_depth = self.nodes.values().map(|n| n.depth).max().unwrap_or(0);

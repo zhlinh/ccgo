@@ -245,16 +245,14 @@ fn print_build_error(stdout: &str, stderr: &str) {
 ///
 /// Each platform is built in a subprocess to isolate output and prevent interleaving.
 pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
-    let all_platforms = vec![
-        BuildTarget::Linux,
+    let all_platforms = [BuildTarget::Linux,
         BuildTarget::Windows,
         BuildTarget::Ohos,
         BuildTarget::Ios,
         BuildTarget::Macos,
         BuildTarget::Tvos,
         BuildTarget::Watchos,
-        BuildTarget::Android,
-    ];
+        BuildTarget::Android];
 
     // Define platform groups
     let apple_platforms: HashSet<_> = [
@@ -539,12 +537,10 @@ pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
 /// Apple platforms share Xcode toolchain and must be built sequentially
 /// to avoid conflicts. Uses subprocess to isolate output.
 pub fn build_apple(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
-    let platforms = vec![
-        BuildTarget::Ios,
+    let platforms = [BuildTarget::Ios,
         BuildTarget::Macos,
         BuildTarget::Tvos,
-        BuildTarget::Watchos,
-    ];
+        BuildTarget::Watchos];
 
     let total_platforms = platforms.len();
 

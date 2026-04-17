@@ -77,7 +77,7 @@ impl WatchosBuilder {
         if module_libs.len() == 1
             && module_libs[0]
                 .file_name()
-                .map_or(false, |n| n == main_lib_name.as_str())
+                .is_some_and(|n| n == main_lib_name.as_str())
         {
             // Already a single main library, nothing to merge
             return Ok(());

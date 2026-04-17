@@ -311,8 +311,8 @@ impl ComparisonReport {
         md.push_str(&format!("**Threshold:** {:.1}%\n\n", self.threshold));
 
         md.push_str("## Summary\n\n");
-        md.push_str(&format!("| Metric | Count |\n"));
-        md.push_str(&format!("|--------|-------|\n"));
+        md.push_str("| Metric | Count |\n");
+        md.push_str("|--------|-------|\n");
         md.push_str(&format!("| Total | {} |\n", self.comparisons.len()));
         md.push_str(&format!("| 🟢 Improvements | {} |\n", self.improvements));
         md.push_str(&format!("| 🔴 Regressions | {} |\n", self.regressions));
@@ -467,9 +467,18 @@ impl BenchmarkStore {
         if let Some(benchmarks) = json.get("benchmarks").and_then(|b| b.as_array()) {
             for bench in benchmarks {
                 let name = bench.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                let iterations = bench.get("iterations").and_then(|i| i.as_u64()).unwrap_or(0);
-                let real_time = bench.get("real_time").and_then(|t| t.as_f64()).unwrap_or(0.0);
-                let cpu_time = bench.get("cpu_time").and_then(|t| t.as_f64()).unwrap_or(0.0);
+                let iterations = bench
+                    .get("iterations")
+                    .and_then(|i| i.as_u64())
+                    .unwrap_or(0);
+                let real_time = bench
+                    .get("real_time")
+                    .and_then(|t| t.as_f64())
+                    .unwrap_or(0.0);
+                let cpu_time = bench
+                    .get("cpu_time")
+                    .and_then(|t| t.as_f64())
+                    .unwrap_or(0.0);
                 let time_unit = bench
                     .get("time_unit")
                     .and_then(|u| u.as_str())

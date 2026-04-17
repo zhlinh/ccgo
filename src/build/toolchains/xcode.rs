@@ -304,7 +304,7 @@ impl XcodeToolchain {
         cmd.arg("-create-xcframework");
 
         for (lib, dsym) in inputs {
-            if lib.extension().map_or(false, |e| e == "framework") {
+            if lib.extension().is_some_and(|e| e == "framework") {
                 cmd.arg("-framework").arg(lib);
             } else {
                 cmd.arg("-library").arg(lib);

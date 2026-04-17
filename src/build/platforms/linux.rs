@@ -104,7 +104,7 @@ impl LinuxBuilder {
         }
 
         // Check if we only have the main library (already merged or single module)
-        if module_libs.len() == 1 && module_libs[0].file_name().map_or(false, |n| n == main_lib_name.as_str()) {
+        if module_libs.len() == 1 && module_libs[0].file_name().is_some_and(|n| n == main_lib_name.as_str()) {
             if verbose {
                 eprintln!("    [merge] Only main library exists, skipping merge");
             }
@@ -533,7 +533,7 @@ impl PlatformBuilder for LinuxBuilder {
                 for entry in std::fs::read_dir(&lib_dir)? {
                     let entry = entry?;
                     let path = entry.path();
-                    if path.extension().map_or(false, |ext| ext == "so") {
+                    if path.extension().is_some_and(|ext| ext == "so") {
                         let file_name = path.file_name().unwrap();
                         std::fs::copy(&path, obj_arch_dir.join(file_name))?;
                     }

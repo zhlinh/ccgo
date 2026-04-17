@@ -59,7 +59,7 @@ impl KmpBuilder {
             if out_dir.exists() {
                 if let Ok(entries) = std::fs::read_dir(&out_dir) {
                     for entry in entries.flatten() {
-                        if entry.path().extension().map_or(false, |e| e == "a") {
+                        if entry.path().extension().is_some_and(|e| e == "a") {
                             return true;
                         }
                     }
@@ -80,7 +80,7 @@ impl KmpBuilder {
             if out_dir.exists() {
                 if let Ok(entries) = std::fs::read_dir(&out_dir) {
                     for entry in entries.flatten() {
-                        if entry.path().extension().map_or(false, |e| e == "a") {
+                        if entry.path().extension().is_some_and(|e| e == "a") {
                             return true;
                         }
                     }
@@ -286,7 +286,7 @@ impl KmpBuilder {
                 for entry in std::fs::read_dir(&klib_dir)? {
                     let entry = entry?;
                     let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "klib") {
+                    if path.extension().is_some_and(|e| e == "klib") {
                         outputs.push(path);
                     }
                 }
@@ -298,7 +298,7 @@ impl KmpBuilder {
                 for entry in std::fs::read_dir(&cinterop_dir)? {
                     let entry = entry?;
                     let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "klib") {
+                    if path.extension().is_some_and(|e| e == "klib") {
                         outputs.push(path);
                     }
                 }

@@ -60,7 +60,7 @@ impl TagCommand {
         // Handle delete operation
         if self.delete {
             if self.version.is_none() {
-                eprintln!("✗ {}", "Version required for delete operation");
+                eprintln!("✗ Version required for delete operation");
                 eprintln!("Usage: ccgo tag --delete v1.0.0");
                 std::process::exit(1);
             }
@@ -73,7 +73,7 @@ impl TagCommand {
 
     /// Create a Git tag
     fn create_tag(self) -> Result<()> {
-        eprintln!("=== {} ===", "Creating Git tag");
+        eprintln!("=== Creating Git tag ===");
 
         // Load project configuration
         let config = CcgoConfig::load()
@@ -123,13 +123,16 @@ impl TagCommand {
                 eprintln!("Use --force to replace it");
                 std::process::exit(1);
             } else {
-                eprintln!("⚠ {}", &format!(
-                    "Tag '{}' already exists, will be replaced (--force)",
-                    tag_version
-                ));
+                eprintln!(
+                    "⚠ {}",
+                    &format!(
+                        "Tag '{}' already exists, will be replaced (--force)",
+                        tag_version
+                    )
+                );
                 // Delete existing tag
                 let _ = Command::new("git")
-                    .args(&["tag", "-d", &tag_version])
+                    .args(["tag", "-d", &tag_version])
                     .current_dir(&project_dir)
                     .output();
             }
@@ -139,7 +142,7 @@ impl TagCommand {
         let result = if self.lightweight {
             // Lightweight tag
             let mut cmd = Command::new("git");
-            cmd.args(&["tag", &tag_version]);
+            cmd.args(["tag", &tag_version]);
             if self.force {
                 cmd.arg("-f");
             }
@@ -149,7 +152,7 @@ impl TagCommand {
         } else {
             // Annotated tag
             let mut cmd = Command::new("git");
-            cmd.args(&["tag", "-a", &tag_version, "-m", &tag_message]);
+            cmd.args(["tag", "-a", &tag_version, "-m", &tag_message]);
             if self.force {
                 cmd.arg("-f");
             }
@@ -162,19 +165,22 @@ impl TagCommand {
             bail!("Failed to create tag");
         }
 
-        eprintln!("✓ {}", &format!(
-            "Created {} tag: {}",
-            if self.lightweight {
-                "lightweight"
-            } else {
-                "annotated"
-            },
-            tag_version
-        ));
+        eprintln!(
+            "✓ {}",
+            &format!(
+                "Created {} tag: {}",
+                if self.lightweight {
+                    "lightweight"
+                } else {
+                    "annotated"
+                },
+                tag_version
+            )
+        );
 
         // Show tag info
         let output = Command::new("git")
-            .args(&["show", &tag_version, "--no-patch"])
+            .args(["show", &tag_version, "--no-patch"])
             .current_dir(&project_dir)
             .output()
             .context("Failed to show tag info")?;
@@ -186,9 +192,9 @@ impl TagCommand {
 
         // Push to remote
         if self.push {
-            eprintln!("{}", "Pushing tag to remote...");
+            eprintln!("Pushing tag to remote...");
             let mut push_cmd = Command::new("git");
-            push_cmd.args(&["push", "origin", &tag_version]);
+            push_cmd.args(["push", "origin", &tag_version]);
             if self.force {
                 push_cmd.arg("-f");
             }
@@ -200,7 +206,7 @@ impl TagCommand {
                     eprintln!("✓ {}", &format!("Pushed tag to origin/{}", tag_version));
                 }
                 _ => {
-                    eprintln!("⚠ {}", "Failed to push tag to remote");
+                    eprintln!("⚠ Failed to push tag to remote");
                     println!("Tag created locally. You can push it manually:");
                     println!("  git push origin {}", tag_version);
                 }
@@ -212,7 +218,7 @@ impl TagCommand {
         }
 
         println!("\n{}", "=".repeat(60));
-        eprintln!("✓ {}", "Tag operation completed successfully!");
+        eprintln!("✓ Tag operation completed successfully!");
         println!("{}\n", "=".repeat(60));
 
         Ok(())
@@ -228,7 +234,7 @@ impl TagCommand {
 
         // Delete local tag
         let result = Command::new("git")
-            .args(&["tag", "-d", tag_version])
+            .args(["tag", "-d", tag_version])
             .current_dir(&project_dir)
             .status();
 
@@ -237,31 +243,34 @@ impl TagCommand {
                 eprintln!("✓ {}", &format!("Deleted local tag: {}", tag_version));
             }
             _ => {
-                eprintln!("⚠ {}", &format!(
-                    "Local tag '{}' not found or already deleted",
-                    tag_version
-                ));
+                eprintln!(
+                    "⚠ {}",
+                    &format!("Local tag '{}' not found or already deleted", tag_version)
+                );
             }
         }
 
         // Delete remote tag
         if !self.local_only {
             let result = Command::new("git")
-                .args(&["push", "origin", "--delete", tag_version])
+                .args(["push", "origin", "--delete", tag_version])
                 .current_dir(&project_dir)
                 .status();
 
             match result {
                 Ok(status) if status.success() => {
-                    eprintln!("✓ {}", &format!("Deleted remote tag: origin/{}", tag_version));
+                    eprintln!(
+                        "✓ {}",
+                        &format!("Deleted remote tag: origin/{}", tag_version)
+                    );
                 }
                 _ => {
-                    eprintln!("⚠ {}", "Failed to delete remote tag (may not exist)");
+                    eprintln!("⚠ Failed to delete remote tag (may not exist)");
                 }
             }
         }
 
-        eprintln!("✓ {}", "Tag deletion completed");
+        eprintln!("✓ Tag deletion completed");
 
         Ok(())
     }
@@ -271,10 +280,10 @@ impl TagCommand {
         let project_dir = std::env::current_dir().context("Failed to get current directory")?;
 
         if self.remote {
-            eprintln!("=== {} ===", "Remote tags");
+            eprintln!("=== Remote tags ===");
 
             let output = Command::new("git")
-                .args(&["ls-remote", "--tags", "origin"])
+                .args(["ls-remote", "--tags", "origin"])
                 .current_dir(&project_dir)
                 .output()
                 .context("Failed to list remote tags")?;
@@ -299,10 +308,10 @@ impl TagCommand {
                 }
             }
         } else {
-            eprintln!("=== {} ===", "Local tags");
+            eprintln!("=== Local tags ===");
 
             let output = Command::new("git")
-                .args(&["tag", "-l"])
+                .args(["tag", "-l"])
                 .current_dir(&project_dir)
                 .output()
                 .context("Failed to list tags")?;
@@ -342,7 +351,7 @@ struct GitInfo {
 fn get_git_info(project_dir: &std::path::Path) -> Result<GitInfo> {
     // Get branch name
     let branch = Command::new("git")
-        .args(&["symbolic-ref", "--short", "-q", "HEAD"])
+        .args(["symbolic-ref", "--short", "-q", "HEAD"])
         .current_dir(project_dir)
         .output()
         .ok()
@@ -357,7 +366,7 @@ fn get_git_info(project_dir: &std::path::Path) -> Result<GitInfo> {
 
     // Get version code (commit count)
     let version_code = Command::new("git")
-        .args(&["rev-list", "HEAD", "--count"])
+        .args(["rev-list", "HEAD", "--count"])
         .current_dir(project_dir)
         .output()
         .ok()
@@ -372,7 +381,7 @@ fn get_git_info(project_dir: &std::path::Path) -> Result<GitInfo> {
 
     // Get revision (short commit hash)
     let revision = Command::new("git")
-        .args(&["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "--short", "HEAD"])
         .current_dir(project_dir)
         .output()
         .ok()
@@ -387,7 +396,7 @@ fn get_git_info(project_dir: &std::path::Path) -> Result<GitInfo> {
 
     // Get datetime from last commit
     let datetime = Command::new("git")
-        .args(&["log", "-n1", "--format=%at"])
+        .args(["log", "-n1", "--format=%at"])
         .current_dir(project_dir)
         .output()
         .ok()
@@ -416,14 +425,20 @@ fn get_git_info(project_dir: &std::path::Path) -> Result<GitInfo> {
 fn generate_tag_message(version: &str, project_name: &str, info: &GitInfo) -> String {
     format!(
         "{}\n\nPROJECT: {}\nVERSION: {}\nVERSION_CODE: {}\nREVISION: {}\nBRANCH: {}\nDATETIME: {}",
-        version, project_name, version, info.version_code, info.revision, info.branch, info.datetime
+        version,
+        project_name,
+        version,
+        info.version_code,
+        info.revision,
+        info.branch,
+        info.datetime
     )
 }
 
 /// Check if a tag exists
 fn tag_exists(project_dir: &std::path::Path, tag: &str) -> Result<bool> {
     let output = Command::new("git")
-        .args(&["rev-parse", tag])
+        .args(["rev-parse", tag])
         .current_dir(project_dir)
         .output()
         .context("Failed to check tag existence")?;

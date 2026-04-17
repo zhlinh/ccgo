@@ -106,7 +106,7 @@ impl WindowsBuilder {
         }
 
         // Check if we only have the main library (already merged or single module)
-        if module_libs.len() == 1 && module_libs[0].file_name().map_or(false, |n| n == main_lib_name.as_str()) {
+        if module_libs.len() == 1 && module_libs[0].file_name().is_some_and(|n| n == main_lib_name.as_str()) {
             // Already a single main library, nothing to merge
             return Ok(());
         }
@@ -433,11 +433,10 @@ impl WindowsBuilder {
                     let path = entry.path();
                     if path.is_file() {
                         let name = path.file_name().unwrap().to_str().unwrap();
-                        if name.ends_with(import_ext) {
-                            if !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name()) {
+                        if name.ends_with(import_ext)
+                            && !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name()) {
                                 libs.push(path);
                             }
-                        }
                     }
                 }
             }

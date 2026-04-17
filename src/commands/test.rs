@@ -6,7 +6,7 @@
 //! - Code coverage reporting
 //! - Result aggregation and CI integration
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Args, ValueEnum};
@@ -15,10 +15,10 @@ use crate::build::platforms::tests::TestsBuilder;
 use crate::build::{BuildContext, BuildOptions, PlatformBuilder};
 use crate::commands::build::{BuildTarget, LinkType, WindowsToolchain};
 use crate::config::CcgoConfig;
+use crate::testing::ci::{CiFormat, CiReporter};
 use crate::testing::coverage::{CoverageCollector, CoverageConfig, CoverageFormat};
 use crate::testing::discovery::TestDiscovery;
 use crate::testing::results::TestResultAggregator;
-use crate::testing::ci::{CiFormat, CiReporter};
 
 /// Coverage output format for CLI
 #[derive(Debug, Clone, Copy, ValueEnum, Default)]
@@ -203,8 +203,8 @@ impl TestCommand {
     }
 
     /// List discovered tests
-    fn list_tests(&self, build_dir: &PathBuf, verbose: bool) -> Result<()> {
-        let discovery = TestDiscovery::new(build_dir.clone(), verbose);
+    fn list_tests(&self, build_dir: &Path, verbose: bool) -> Result<()> {
+        let discovery = TestDiscovery::new(build_dir.to_path_buf(), verbose);
 
         println!("Discovering tests...");
 
@@ -227,7 +227,7 @@ impl TestCommand {
     }
 
     /// Aggregate test results
-    fn aggregate_results(&self, build_dir: &PathBuf, verbose: bool) -> Result<()> {
+    fn aggregate_results(&self, build_dir: &Path, verbose: bool) -> Result<()> {
         let mut aggregator = TestResultAggregator::new(verbose);
         aggregator.find_results(build_dir)?;
 
@@ -248,7 +248,7 @@ impl TestCommand {
     }
 
     /// Report results to CI
-    fn report_to_ci(&self, build_dir: &PathBuf, verbose: bool) -> Result<()> {
+    fn report_to_ci(&self, build_dir: &Path, verbose: bool) -> Result<()> {
         let mut aggregator = TestResultAggregator::new(verbose);
         aggregator.find_results(build_dir)?;
         let summary = aggregator.aggregate()?;
@@ -275,15 +275,15 @@ impl TestCommand {
     /// Collect code coverage
     fn collect_coverage(
         &self,
-        project_root: &PathBuf,
-        build_dir: &PathBuf,
+        project_root: &Path,
+        build_dir: &Path,
         verbose: bool,
     ) -> Result<()> {
         eprintln!("\n📊 Collecting code coverage...");
 
         let config = CoverageConfig {
-            source_dir: project_root.clone(),
-            build_dir: build_dir.clone(),
+            source_dir: project_root.to_path_buf(),
+            build_dir: build_dir.to_path_buf(),
             output_dir: self.coverage_dir.clone(),
             format: self.coverage_format.into(),
             threshold: self.coverage_threshold,
@@ -306,9 +306,7 @@ impl TestCommand {
                             // Try to open in browser
                             #[cfg(target_os = "macos")]
                             {
-                                let _ = std::process::Command::new("open")
-                                    .arg(&html_path)
-                                    .status();
+                                let _ = std::process::Command::new("open").arg(&html_path).status();
                             }
                         }
                         Err(e) => {

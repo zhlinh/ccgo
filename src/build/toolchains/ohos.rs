@@ -142,7 +142,7 @@ impl OhosSdkToolchain {
         if let Some(name) = sdk_path.file_name() {
             let name_str = name.to_string_lossy();
             // Extract version number if present (e.g., "ohos-sdk-4.0" -> "4.0")
-            if let Some(version_part) = name_str.split('-').last() {
+            if let Some(version_part) = name_str.split('-').next_back() {
                 if version_part
                     .chars()
                     .next()

@@ -6,7 +6,7 @@ use anyhow::{bail, Result};
 use clap::{Args, ValueEnum};
 
 use crate::build::analytics::{
-    get_cache_stats, count_files, get_artifact_size, BuildAnalytics, CacheStats, FileStats,
+    count_files, get_artifact_size, get_cache_stats, BuildAnalytics, CacheStats, FileStats,
 };
 use crate::build::archive::{create_build_info_full, print_build_info_json};
 use crate::build::platforms::{build_all, build_apple, get_builder};
@@ -48,7 +48,7 @@ impl std::fmt::Display for BuildTarget {
         match self {
             BuildTarget::All => write!(f, "all"),
             BuildTarget::Apple => write!(f, "apple"),
-            BuildTarget::Android => write!(f, "Android"),  // Capital A to match Python pyccgo
+            BuildTarget::Android => write!(f, "Android"), // Capital A to match Python pyccgo
             BuildTarget::Ios => write!(f, "ios"),
             BuildTarget::Macos => write!(f, "macos"),
             BuildTarget::Windows => write!(f, "windows"),
@@ -266,10 +266,7 @@ impl BuildCommand {
         let package = config.require_package()?;
 
         if verbose {
-            eprintln!(
-                "Building {} for {} platform...",
-                package.name, self.target
-            );
+            eprintln!("Building {} for {} platform...", package.name, self.target);
         }
 
         // Check if we should use Docker (explicit or auto-detected)
@@ -413,10 +410,11 @@ impl BuildCommand {
     /// Execute build for workspace members
     fn execute_workspace_build(&self, current_dir: &Path, verbose: bool) -> Result<()> {
         // Find workspace root
-        let workspace_root = find_workspace_root(current_dir)?
-            .ok_or_else(|| anyhow::anyhow!(
+        let workspace_root = find_workspace_root(current_dir)?.ok_or_else(|| {
+            anyhow::anyhow!(
                 "Not in a workspace. Use --workspace or --package only within a workspace."
-            ))?;
+            )
+        })?;
 
         // Load workspace
         let workspace = Workspace::load(&workspace_root)?;
@@ -428,12 +426,13 @@ impl BuildCommand {
         // Determine which members to build
         let members_to_build = if let Some(ref package_name) = self.package {
             // Build specific package
-            let member = workspace.get_member(package_name)
-                .ok_or_else(|| anyhow::anyhow!(
+            let member = workspace.get_member(package_name).ok_or_else(|| {
+                anyhow::anyhow!(
                     "Package '{}' not found in workspace. Available: {}",
                     package_name,
                     workspace.members.names().join(", ")
-                ))?;
+                )
+            })?;
             vec![member]
         } else {
             // Build default members (or all if no default_members specified)
@@ -445,7 +444,10 @@ impl BuildCommand {
         }
 
         eprintln!("\n{}", "=".repeat(80));
-        eprintln!("CCGO Workspace Build - Building {} member(s)", members_to_build.len());
+        eprintln!(
+            "CCGO Workspace Build - Building {} member(s)",
+            members_to_build.len()
+        );
         eprintln!("{}", "=".repeat(80));
 
         let mut all_results: Vec<(String, Vec<BuildResult>)> = Vec::new();
@@ -510,7 +512,9 @@ impl BuildCommand {
         let package = config.require_package()?;
 
         // Parse architectures
-        let architectures = self.arch.clone()
+        let architectures = self
+            .arch
+            .clone()
             .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
             .unwrap_or_default();
 
@@ -594,6 +598,7 @@ impl BuildCommand {
     }
 
     /// Print build results summary
+    #[allow(clippy::too_many_arguments)]
     fn print_results(
         lib_name: &str,
         version: &str,
@@ -652,7 +657,8 @@ impl BuildCommand {
                 }
 
                 // Print archive tree structure
-                if let Err(e) = crate::build::archive::print_zip_tree(&result.sdk_archive, "      ") {
+                if let Err(e) = crate::build::archive::print_zip_tree(&result.sdk_archive, "      ")
+                {
                     eprintln!("      Warning: Failed to print archive contents: {}", e);
                 }
 
@@ -660,21 +666,27 @@ impl BuildCommand {
                 if let Some(symbols_path) = &result.symbols_archive {
                     eprintln!("\n      Symbols archive:");
                     if let Err(e) = crate::build::archive::print_zip_tree(symbols_path, "      ") {
-                        eprintln!("      Warning: Failed to print symbols archive contents: {}", e);
+                        eprintln!(
+                            "      Warning: Failed to print symbols archive contents: {}",
+                            e
+                        );
                     }
                 }
 
                 // Print AAR/HAR archive tree if present (Android/OHOS)
                 if let Some(archive_path) = &result.aar_archive {
                     // Detect archive type from extension
-                    let archive_type = if archive_path.extension().map_or(false, |e| e == "har") {
+                    let archive_type = if archive_path.extension().is_some_and(|e| e == "har") {
                         "HAR"
                     } else {
                         "AAR"
                     };
                     eprintln!("\n      {} contents:", archive_type);
                     if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
-                        eprintln!("      Warning: Failed to print {} contents: {}", archive_type, e);
+                        eprintln!(
+                            "      Warning: Failed to print {} contents: {}",
+                            archive_type, e
+                        );
                     }
                 }
             }
