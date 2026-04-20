@@ -33,7 +33,6 @@ pub struct UpdateCommand {
 }
 
 impl UpdateCommand {
-    /// Execute the update command
     pub fn execute(self, verbose: bool) -> Result<()> {
         println!("{}", "=".repeat(80));
         println!("CCGO Update - Update Dependencies");

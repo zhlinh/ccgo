@@ -7,11 +7,10 @@ use crate::commands::{
     add::AddCommand, analytics::AnalyticsCommand, bench::BenchCommand, build::BuildCommand,
     check::CheckCommand, clean::CleanCommand, collection::CollectionCommand, doc::DocCommand,
     doctor::DoctorCommand, fetch::FetchCommand, init::InitCommand, install::InstallCommand,
-    new::NewCommand,
-    package::PackageCommand, publish::PublishCommand, registry::RegistryCommand,
+    new::NewCommand, package::PackageCommand, publish::PublishCommand, registry::RegistryCommand,
     release::ReleaseCommand, remove::RemoveCommand, run::RunCommand, search::SearchCommand,
-    tag::TagCommand, test::TestCommand, tree::TreeCommand, uninstall::UninstallCommand,
-    update::UpdateCommand, vendor::VendorCommand,
+    self_cmd::SelfCmdCommand, tag::TagCommand, test::TestCommand, tree::TreeCommand,
+    uninstall::UninstallCommand, update::UpdateCommand, vendor::VendorCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -116,6 +115,10 @@ pub enum Commands {
 
     /// View build performance analytics
     Analytics(AnalyticsCommand),
+
+    /// Manage the ccgo tool itself (e.g. update)
+    #[command(name = "self")]
+    SelfCmd(SelfCmdCommand),
 }
 
 impl Cli {
@@ -150,6 +153,7 @@ fn dispatch_command(command: Commands, verbose: bool) -> Result<()> {
         Commands::Release(cmd) => cmd.execute(verbose),
         Commands::Package(cmd) => cmd.execute(verbose),
         Commands::Analytics(cmd) => cmd.execute(verbose),
+        Commands::SelfCmd(cmd) => cmd.execute(verbose),
         other => dispatch_dependency_command(other, verbose),
     }
 }

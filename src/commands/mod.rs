@@ -22,6 +22,8 @@ pub mod release;
 pub mod remove;
 pub mod run;
 pub mod search;
+pub mod self_cmd;
+pub mod self_update;
 pub mod tag;
 pub mod test;
 pub mod tree;
