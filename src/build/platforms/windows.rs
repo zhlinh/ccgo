@@ -537,8 +537,6 @@ impl WindowsBuilder {
 
     /// Print the location of generated IDE project files
     fn report_project_files(ctx: &BuildContext, build_dir: &PathBuf) {
-        use std::process::Command;
-
         let sln_file = build_dir.join(format!("{}.sln", ctx.lib_name()));
         let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
 
@@ -547,7 +545,7 @@ impl WindowsBuilder {
 
             #[cfg(target_os = "windows")]
             {
-                let _ = Command::new("cmd")
+                let _ = std::process::Command::new("cmd")
                     .args(["/C", "start", ""])
                     .arg(&sln_file)
                     .status();
