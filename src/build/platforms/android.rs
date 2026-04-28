@@ -1,7 +1,7 @@
 //! Android platform builder
 //!
 //! Builds native libraries and AAR packages for Android using CMake with NDK.
-//! Supports multiple ABIs (arm64-v8a, armeabi-v7a, x86_64, x86).
+//! Supports three ABIs (arm64-v8a, armeabi-v7a, x86_64) — same set as OHOS.
 //!
 //! Archive structure matches Python pyccgo output:
 //! - lib/{static|shared}/{arch}/ - stripped libraries
@@ -30,8 +30,15 @@ impl AndroidBuilder {
 
     /// Parse ABI string to AndroidAbi enum
     fn parse_abi(s: &str) -> Result<AndroidAbi> {
-        AndroidAbi::from_str(s)
-            .ok_or_else(|| anyhow::anyhow!("Invalid Android ABI: {}. Valid options: arm64-v8a, armeabi-v7a, x86_64, x86", s))
+        AndroidAbi::from_str(s).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid Android ABI: {}.\n\
+                 Valid options: arm64-v8a, armeabi-v7a, x86_64\n\
+                 Aliases: v8/a64/arm64/armv8/aarch64 → arm64-v8a;  \
+                 v7/a32/arm32/armv7/aarch32 → armeabi-v7a;  x64 → x86_64",
+                s
+            )
+        })
     }
 
     /// Build for a single ABI

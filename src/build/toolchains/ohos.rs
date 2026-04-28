@@ -42,11 +42,20 @@ impl OhosAbi {
         }
     }
 
-    /// Parse ABI from string
+    /// Parse ABI from string. Accepts canonical ABI names (`arm64-v8a`,
+    /// `armeabi-v7a`, `x86_64`) plus shorthand aliases:
+    /// * `v8`, `a64`, `arm64`, `armv8`, `aarch64` → `arm64-v8a`
+    /// * `v7`, `a32`, `arm32`, `armv7`, `aarch32` → `armeabi-v7a`
+    /// * `x64`                                    → `x86_64`
+    ///
+    /// Matching is case-insensitive. Bare `arm` is intentionally NOT
+    /// accepted — it is ambiguous between 32-bit and 64-bit ARM.
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "arm64-v8a" | "arm64" | "aarch64" => Some(OhosAbi::Arm64V8a),
-            "armeabi-v7a" | "arm" | "armv7" => Some(OhosAbi::ArmeabiV7a),
+        match s.trim().to_lowercase().as_str() {
+            "arm64-v8a" | "v8" | "a64" | "arm64" | "armv8" | "aarch64" => Some(OhosAbi::Arm64V8a),
+            "armeabi-v7a" | "v7" | "a32" | "arm32" | "armv7" | "aarch32" => {
+                Some(OhosAbi::ArmeabiV7a)
+            }
             "x86_64" | "x64" => Some(OhosAbi::X86_64),
             _ => None,
         }

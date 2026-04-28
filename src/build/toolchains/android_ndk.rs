@@ -10,13 +10,18 @@ use anyhow::{bail, Context, Result};
 
 use super::Toolchain;
 
-/// Android ABI targets
+/// Android ABI targets.
+///
+/// ccgo targets only the three ABIs shipped by modern Android devices —
+/// `arm64-v8a`, `armeabi-v7a`, `x86_64`. 32-bit x86 (`x86`, i686) is
+/// intentionally omitted: it has no device market, and dropping it keeps
+/// parity with OHOS so the `--arch` alias table is identical across both
+/// platforms.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AndroidAbi {
     Arm64V8a,
     ArmeabiV7a,
     X86_64,
-    X86,
 }
 
 impl AndroidAbi {
@@ -26,7 +31,6 @@ impl AndroidAbi {
             AndroidAbi::Arm64V8a => "arm64-v8a",
             AndroidAbi::ArmeabiV7a => "armeabi-v7a",
             AndroidAbi::X86_64 => "x86_64",
-            AndroidAbi::X86 => "x86",
         }
     }
 
@@ -36,7 +40,6 @@ impl AndroidAbi {
             AndroidAbi::Arm64V8a => "aarch64-linux-android",
             AndroidAbi::ArmeabiV7a => "armv7a-linux-androideabi",
             AndroidAbi::X86_64 => "x86_64-linux-android",
-            AndroidAbi::X86 => "i686-linux-android",
         }
     }
 
@@ -44,9 +47,8 @@ impl AndroidAbi {
     pub fn stl_lib_dir(&self) -> &str {
         match self {
             AndroidAbi::Arm64V8a => "aarch64-linux-android",
-            AndroidAbi::ArmeabiV7a => "arm-linux-androideabi",  // Special case!
+            AndroidAbi::ArmeabiV7a => "arm-linux-androideabi", // Special case!
             AndroidAbi::X86_64 => "x86_64-linux-android",
-            AndroidAbi::X86 => "i686-linux-android",
         }
     }
 
@@ -56,17 +58,27 @@ impl AndroidAbi {
             AndroidAbi::Arm64V8a,
             AndroidAbi::ArmeabiV7a,
             AndroidAbi::X86_64,
-            AndroidAbi::X86,
         ]
     }
 
-    /// Parse from string
+    /// Parse from string. Accepts canonical ABI names (`arm64-v8a`,
+    /// `armeabi-v7a`, `x86_64`) plus shorthand aliases:
+    /// * `v8`, `a64`, `arm64`, `armv8`, `aarch64` → `arm64-v8a`
+    /// * `v7`, `a32`, `arm32`, `armv7`, `aarch32` → `armeabi-v7a`
+    /// * `x64`                                    → `x86_64`
+    ///
+    /// Matching is case-insensitive. Bare `arm` is intentionally NOT
+    /// accepted — it is ambiguous between 32-bit and 64-bit ARM and
+    /// would confuse projects that read build logs.
     pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "arm64-v8a" => Some(AndroidAbi::Arm64V8a),
-            "armeabi-v7a" => Some(AndroidAbi::ArmeabiV7a),
-            "x86_64" => Some(AndroidAbi::X86_64),
-            "x86" => Some(AndroidAbi::X86),
+        match s.trim().to_lowercase().as_str() {
+            "arm64-v8a" | "v8" | "a64" | "arm64" | "armv8" | "aarch64" => {
+                Some(AndroidAbi::Arm64V8a)
+            }
+            "armeabi-v7a" | "v7" | "a32" | "arm32" | "armv7" | "aarch32" => {
+                Some(AndroidAbi::ArmeabiV7a)
+            }
+            "x86_64" | "x64" => Some(AndroidAbi::X86_64),
             _ => None,
         }
     }
@@ -353,7 +365,7 @@ impl AndroidNdkToolchain {
     pub fn min_api_level(abi: AndroidAbi) -> u32 {
         match abi {
             AndroidAbi::Arm64V8a | AndroidAbi::X86_64 => MIN_API_LEVEL_64BIT,
-            AndroidAbi::ArmeabiV7a | AndroidAbi::X86 => 16,
+            AndroidAbi::ArmeabiV7a => 16,
         }
     }
 

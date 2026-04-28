@@ -27,7 +27,10 @@ impl OhosBuilder {
     fn parse_abi(s: &str) -> Result<OhosAbi> {
         OhosAbi::from_str(s).ok_or_else(|| {
             anyhow::anyhow!(
-                "Invalid OHOS ABI: {}. Valid options: arm64-v8a, armeabi-v7a, x86_64",
+                "Invalid OHOS ABI: {}.\n\
+                 Valid options: arm64-v8a, armeabi-v7a, x86_64\n\
+                 Aliases: v8/a64/arm64/armv8/aarch64 → arm64-v8a;  \
+                 v7/a32/arm32/armv7/aarch32 → armeabi-v7a;  x64 → x86_64",
                 s
             )
         })

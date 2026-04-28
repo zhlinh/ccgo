@@ -62,6 +62,62 @@ impl std::fmt::Display for BuildTarget {
     }
 }
 
+/// Parse the full value of the `--arch` flag into a concrete architecture list.
+///
+/// * Splits on commas, trims whitespace, lowercases.
+/// * Expands shorthand aliases via [`normalize_arch_alias`].
+/// * When any token resolves to `all`, returns an empty `Vec` — which signals
+///   downstream platform builders to use their `default_architectures()`, i.e.
+///   "every arch this platform builds by default". This matches what a user
+///   expects from `--arch all` without duplicating the default list here.
+pub fn parse_arch_arg(raw: &str, target: &BuildTarget) -> Vec<String> {
+    let tokens: Vec<String> = raw
+        .split(',')
+        .map(|a| normalize_arch_alias(a, target))
+        .filter(|a| !a.is_empty())
+        .collect();
+
+    if tokens.iter().any(|t| t == "all") {
+        Vec::new()
+    } else {
+        tokens
+    }
+}
+
+/// Normalize a user-supplied `--arch` token into the canonical name that
+/// the target platform's toolchain understands.
+///
+/// Accepts shorthand aliases (case-insensitive) that map differently per
+/// platform — `v8` means `arm64-v8a` on Android/OHOS but `arm64` on
+/// macOS/iOS. Unrecognized strings pass through unchanged so the
+/// platform's own validator produces the final error message.
+pub fn normalize_arch_alias(raw: &str, target: &BuildTarget) -> String {
+    let lower = raw.trim().to_lowercase();
+    match target {
+        BuildTarget::Android | BuildTarget::Ohos => match lower.as_str() {
+            "v8" | "a64" | "arm64" | "armv8" | "aarch64" => "arm64-v8a".to_string(),
+            "v7" | "a32" | "arm32" | "armv7" | "aarch32" => "armeabi-v7a".to_string(),
+            "x64" => "x86_64".to_string(),
+            _ => lower,
+        },
+        BuildTarget::Macos | BuildTarget::Ios | BuildTarget::Tvos | BuildTarget::Watchos => {
+            match lower.as_str() {
+                "v8" | "a64" | "armv8" | "aarch64" => "arm64".to_string(),
+                "x64" => "x86_64".to_string(),
+                _ => lower,
+            }
+        }
+        BuildTarget::Linux | BuildTarget::Windows => match lower.as_str() {
+            "x64" => "x86_64".to_string(),
+            _ => lower,
+        },
+        // Meta-targets (All/Apple/Kmp/Conan) delegate to individual platforms
+        // during dispatch; pass the token through and let the per-platform
+        // step re-normalize against its concrete target.
+        BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => lower,
+    }
+}
+
 /// Library linking type
 #[derive(Debug, Clone, Default, ValueEnum, PartialEq)]
 pub enum LinkType {
@@ -114,7 +170,29 @@ pub struct BuildCommand {
     pub target: BuildTarget,
 
     /// Architectures to build (comma-separated)
-    #[arg(long)]
+    ///
+    /// Canonical values per platform:
+    ///   * Android  arm64-v8a, armeabi-v7a, x86_64
+    ///   * OHOS     arm64-v8a, armeabi-v7a, x86_64
+    ///   * macOS    arm64, x86_64   (both by default — universal)
+    ///   * iOS      arm64, x86_64   (device + sim built automatically; flag is a no-op)
+    ///   * Linux    x86_64          (flag is a no-op)
+    ///   * Windows  x86_64          (flag is a no-op)
+    ///
+    /// Accepted aliases (case-insensitive):
+    ///   all                              ->  every arch this platform builds by default
+    ///   v8, a64, arm64, armv8, aarch64   ->  arm64-v8a (Android/OHOS) | arm64 (macOS/iOS)
+    ///   v7, a32, arm32, armv7, aarch32   ->  armeabi-v7a (Android/OHOS)
+    ///   x64                              ->  x86_64
+    ///
+    /// If omitted entirely, the same platform defaults apply (equivalent to `--arch all`).
+    ///
+    /// Examples:
+    ///   --arch all          (every default arch — same as omitting the flag)
+    ///   --arch v8           (arm64-v8a on Android/OHOS)
+    ///   --arch v8,v7,x64    (all three ABIs on Android/OHOS)
+    ///   --arch a64,x64      (universal macOS)
+    #[arg(long, verbatim_doc_comment)]
     pub arch: Option<String>,
 
     /// Link type
@@ -281,11 +359,15 @@ impl BuildCommand {
             );
         }
 
-        // Parse architectures from comma-separated string
+        // Parse architectures from comma-separated string, normalizing
+        // shorthand aliases (v8/a64/v7/a32/x64/…) to the canonical names
+        // each platform's toolchain expects. `all` is a shorthand for the
+        // platform's full default set — resolved by returning an empty Vec
+        // so the builder falls back to `default_architectures()`.
         let architectures = self
             .arch
             .clone()
-            .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
+            .map(|s| parse_arch_arg(&s, &self.target))
             .unwrap_or_default();
 
         // Create build options
@@ -511,11 +593,11 @@ impl BuildCommand {
         // Get package info
         let package = config.require_package()?;
 
-        // Parse architectures
+        // Parse architectures (same alias expansion as the single-package path).
         let architectures = self
             .arch
             .clone()
-            .map(|s| s.split(',').map(|a| a.trim().to_string()).collect())
+            .map(|s| parse_arch_arg(&s, &self.target))
             .unwrap_or_default();
 
         // Check if we should use Docker
