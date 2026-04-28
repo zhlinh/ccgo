@@ -668,7 +668,15 @@ impl PackageCommand {
             // Merge all ZIPs into one unified SDK ZIP
             // Strip leading 'v' from version if present (e.g., v1.0.2 -> 1.0.2)
             let version_clean = version.strip_prefix('v').unwrap_or(&version);
-            let sdk_zip_name = format!("{}_SDK-{}.zip", project_name.to_uppercase(), version_clean);
+            // Merged cross-platform artifact produced by `ccgo package`.
+            // Namespaced with `CCGO_PACKAGE` to distinguish it from the
+            // per-platform `<NAME>_<PLATFORM>_SDK-…` archives that the
+            // build step emits (those keep their legacy naming).
+            let sdk_zip_name = format!(
+                "{}_CCGO_PACKAGE-{}.zip",
+                project_name.to_uppercase(),
+                version_clean
+            );
             let sdk_zip_path = output_path.join(&sdk_zip_name);
 
             merge_zips(&all_zip_files, &sdk_zip_path, &project_name, &version, &config_file)?;
@@ -800,8 +808,9 @@ impl PackageCommand {
 /// Contents: CCGO.toml (from source project) + include/ + lib/<platform>/...
 ///
 /// The source is the merged unified SDK produced by `ccgo package`
-/// (i.e. <output_path>/<NAME>_SDK-<version>-<suffix>.zip). If the zip is not
-/// found, falls back to copying the unpacked contents of <output_path>/.
+/// (i.e. <output_path>/<NAME>_CCGO_PACKAGE-<version>-<suffix>.zip). If the
+/// zip is not found, falls back to copying the unpacked contents of
+/// <output_path>/.
 pub(crate) fn install_to_local_cache(
     project_dir: &Path,
     output_path: &Path,
@@ -869,7 +878,7 @@ fn prepare_cache_dest(project_name: &str, version: &str) -> Result<PathBuf> {
 /// Locate the merged unified SDK zip produced by `ccgo package` (not the
 /// symbols/archive variants) so it can be re-extracted into the cache.
 fn find_unified_sdk_zip(output_path: &Path, project_name: &str) -> Option<PathBuf> {
-    let prefix = format!("{}_SDK-", project_name.to_uppercase());
+    let prefix = format!("{}_CCGO_PACKAGE-", project_name.to_uppercase());
     let entries = fs::read_dir(output_path).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -987,7 +996,7 @@ description = "netcomm SDK"
 [[dependencies]]
 name = "foundrycomm"
 version = "1.0.0"
-zip = "https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"
+zip = "https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"
 
 [[dependencies]]
 name = "locallib"
@@ -1002,7 +1011,7 @@ git = "https://github.com/example/locallib.git"
         assert!(result.contains("description = \"netcomm SDK\""));
         // Only zip deps included
         assert!(result.contains("foundrycomm"));
-        assert!(result.contains("zip = \"https://cdn.example.com/foundrycomm_SDK-1.0.0.zip\""));
+        assert!(result.contains("zip = \"https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip\""));
         // git deps NOT included
         assert!(!result.contains("locallib"));
     }

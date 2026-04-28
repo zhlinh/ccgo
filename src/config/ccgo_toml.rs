@@ -575,7 +575,7 @@ pub struct DependencyConfig {
 
     /// ZIP archive URL or local path (for prebuilt SDK deps)
     /// Supports https:// URLs and relative/absolute local paths.
-    /// Example: "https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"
+    /// Example: "https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"
     pub zip: Option<String>,
 
     /// Whether this dependency is optional (only included when a feature enables it)
@@ -1585,12 +1585,12 @@ version = "1.0.0"
 [[dependencies]]
 name = "foundrycomm"
 version = "1.0.0"
-zip = "https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"
+zip = "https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"
 "#;
         let config: CcgoConfig = toml::from_str(toml_str).unwrap();
         let dep = &config.dependencies[0];
         assert_eq!(dep.name, "foundrycomm");
-        assert_eq!(dep.zip.as_deref(), Some("https://cdn.example.com/foundrycomm_SDK-1.0.0.zip"));
+        assert_eq!(dep.zip.as_deref(), Some("https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"));
         assert!(dep.git.is_none());
         assert!(dep.path.is_none());
     }

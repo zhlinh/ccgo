@@ -104,7 +104,7 @@ impl InstallCommand {
 
         self.ensure_packaged(&ctx, &package_output, release, verbose)?;
 
-        let zip_prefix = format!("{}_SDK-", ctx.project_name.to_uppercase());
+        let zip_prefix = format!("{}_CCGO_PACKAGE-", ctx.project_name.to_uppercase());
         let version_clean = self.resolve_version(&package_output, &zip_prefix, &ctx.package_version);
 
         let plan = self.plan_install(&ctx.bins);
@@ -114,8 +114,8 @@ impl InstallCommand {
         Ok(())
     }
 
-    /// Guarantee `target/<mode>/package/<NAME>_SDK-*.zip` exists, invoking
-    /// `ccgo package` when absent and the caller allows auto-packaging.
+    /// Guarantee `target/<mode>/package/<NAME>_CCGO_PACKAGE-*.zip` exists,
+    /// invoking `ccgo package` when absent and the caller allows auto-packaging.
     fn ensure_packaged(
         &self,
         ctx: &InstallContext,
@@ -123,7 +123,7 @@ impl InstallCommand {
         release: bool,
         verbose: bool,
     ) -> Result<()> {
-        let zip_prefix = format!("{}_SDK-", ctx.project_name.to_uppercase());
+        let zip_prefix = format!("{}_CCGO_PACKAGE-", ctx.project_name.to_uppercase());
         if find_sdk_zip(package_output, &zip_prefix).is_some() {
             return Ok(());
         }
@@ -486,7 +486,7 @@ fn describe_package_contents(pkg_dir: &Path) {
 }
 
 /// Best-effort: read the zip filename to infer the version used by the
-/// packaging step. Filename format: `<NAME>_SDK-<version>-<suffix>.zip`.
+/// packaging step. Filename format: `<NAME>_CCGO_PACKAGE-<version>-<suffix>.zip`.
 fn infer_version_from_zip(dir: &Path, prefix: &str) -> Option<String> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
