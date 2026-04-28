@@ -17,6 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   See [`docs/dependency-linkage.md`](docs/dependency-linkage.md) for the full decision matrix.
 
+* **Source-only dependency auto-materialize**: `ccgo build` now automatically
+  (re)compiles any path-source dependency whose `lib/<platform>/` artifacts
+  are missing or stale relative to the dep's source tree. The materialize
+  step spawns a recursive `ccgo build` inside `.ccgo/deps/<name>/` with a
+  `--build-as` derived from the consumer's resolved linkage hint, caches
+  via per-platform fingerprint at `.ccgo/deps/<name>/.ccgo_materialize_<platform>.fingerprint`,
+  and exposes the build output to `FindCCGODependencies.cmake` via a
+  `lib/<platform>/` → `cmake_build/<profile>/<platform>/` symlink. See
+  [`docs/dependency-linkage.md`](docs/dependency-linkage.md#source-only-dependencies)
+  for the full behavior matrix.
+
+  Limitations in this release:
+  * The consumer-side CMake template's source-precedence behavior means
+    a source-shipped dep linked as `shared-external` still ends up
+    statically embedded in practice. Tracked as a follow-up.
+  * Windows path-source deps: the `lib/<platform>/` bridge uses Unix
+    `symlink`; junction/copy fallback is deferred.
+
+### Changed
+
+* `crate::build::linkage::resolve_linkage` now returns an explicit error
+  when given `DepArtifacts::SourceOnly` instead of silently coalescing
+  with `Both`. External callers must run `BuildContext::materialize_source_deps`
+  (or the standalone `materialize_source_deps_inner`) before resolving
+  linkage. This prevents a class of bugs where the materialize step is
+  skipped and the resolver silently produces an incorrect link line.
+
 ## [3.4.4] - 2026-04-20
 
 ### Added

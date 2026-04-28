@@ -1,0 +1,22 @@
+[project]
+name = "consumer"
+version = "0.1.0"
+description = "Consumer of a source-only leaf dep"
+group_id = "com.ccgo.test.consumer"
+license = "MIT"
+
+[build]
+output_dir = "cmake_build"
+
+[apple]
+export_headers = [
+    { src = "include/consumer.h", dest = "" },
+]
+
+[include]
+src = "include"
+
+[[dependencies]]
+name = "leaf"
+version = "0.1.0"
+path = "../leaf"

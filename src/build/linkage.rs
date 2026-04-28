@@ -27,9 +27,12 @@ pub enum DepArtifacts {
     OnlyStatic,
     OnlyShared,
     Both,
-    /// Dep is consumed as source — both a `.a` and a `.so` are buildable.
-    /// Treated identically to `Both` by the resolver; kept distinct so the
-    /// caller can log it accurately.
+    /// Dep has a `src/` directory and `CCGO.toml` but no pre-built `.a`/`.so`
+    /// for the platform being queried. **Must not be passed to `resolve_linkage`** —
+    /// the materialize pass (`BuildContext::materialize_source_deps`) is required
+    /// to compile the dep first, after which detection re-classifies it as
+    /// `Both`, `OnlyStatic`, or `OnlyShared`. Passing this variant directly to
+    /// the resolver is a programmer error and returns `Err`.
     SourceOnly,
     /// Nothing usable found; the caller should fail loudly rather than
     /// silently producing an empty link line.
@@ -88,12 +91,17 @@ pub fn resolve_linkage(
     match consumer {
         // Static consumer: always thin. The hint can only choose between
         // referencing the dep's .so vs .a externally — never embed.
-        LinkType::Static => Ok(match artifacts {
-            DepArtifacts::OnlyShared => ResolvedLinkage::SharedExternal,
-            // OnlyStatic / Both / SourceOnly: prefer static. The final
-            // executable's linker will dedupe at exe stage.
-            _ => ResolvedLinkage::StaticExternal,
-        }),
+        LinkType::Static => match artifacts {
+            DepArtifacts::OnlyShared => Ok(ResolvedLinkage::SharedExternal),
+            DepArtifacts::OnlyStatic | DepArtifacts::Both => Ok(ResolvedLinkage::StaticExternal),
+            DepArtifacts::SourceOnly => Err(anyhow!(
+                "internal: dependency '{dep_name}' is still source-only at \
+                 link-resolution time. `materialize_source_deps` must run \
+                 before `resolve_linkage` so the dep's .a/.so are available. \
+                 This is a ccgo bug — please report it."
+            )),
+            DepArtifacts::None => unreachable!("handled above"),
+        },
         // Shared consumer: forced moves first, then honor hint, then default.
         LinkType::Shared => match artifacts {
             DepArtifacts::OnlyStatic => {
@@ -127,7 +135,7 @@ pub fn resolve_linkage(
                 }
                 Ok(ResolvedLinkage::SharedExternal)
             }
-            DepArtifacts::Both | DepArtifacts::SourceOnly => match hint {
+            DepArtifacts::Both => match hint {
                 None | Some(Linkage::SharedExternal) => Ok(ResolvedLinkage::SharedExternal),
                 Some(Linkage::StaticEmbedded) => Ok(ResolvedLinkage::StaticEmbedded),
                 Some(Linkage::StaticExternal) => Err(anyhow!(
@@ -136,6 +144,12 @@ pub fn resolve_linkage(
                      references). Use shared-external or static-embedded."
                 )),
             },
+            DepArtifacts::SourceOnly => Err(anyhow!(
+                "internal: dependency '{dep_name}' is still source-only at \
+                 link-resolution time. `materialize_source_deps` must run \
+                 before `resolve_linkage` so the dep's .a/.so are available. \
+                 This is a ccgo bug — please report it."
+            )),
             DepArtifacts::None => unreachable!("handled above"),
         },
         LinkType::Both => Err(anyhow!(
@@ -224,7 +238,6 @@ mod tests {
                 DepArtifacts::OnlyStatic,
                 DepArtifacts::OnlyShared,
                 DepArtifacts::Both,
-                DepArtifacts::SourceOnly,
             ] {
                 let resolved = resolve_linkage(LinkType::Static, arts, hint, "dep").unwrap();
                 assert!(
@@ -243,7 +256,6 @@ mod tests {
         for arts in [
             DepArtifacts::OnlyStatic,
             DepArtifacts::Both,
-            DepArtifacts::SourceOnly,
         ] {
             for hint in [
                 None,
@@ -485,5 +497,27 @@ mod tests {
             detect_dep_artifacts(&dep, "macos"),
             DepArtifacts::OnlyStatic
         );
+    }
+
+    #[test]
+    fn source_only_in_resolver_is_an_invariant_error_for_static_consumer() {
+        let err = resolve_linkage(LinkType::Static, DepArtifacts::SourceOnly, None, "leaf").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("materialize_source_deps") || msg.contains("source-only"),
+            "expected message pointing at materialize step, got: {msg}"
+        );
+        assert!(msg.contains("leaf"), "expected dep name in error, got: {msg}");
+    }
+
+    #[test]
+    fn source_only_in_resolver_is_an_invariant_error_for_shared_consumer() {
+        let err = resolve_linkage(LinkType::Shared, DepArtifacts::SourceOnly, None, "leaf").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("materialize_source_deps") || msg.contains("source-only"),
+            "expected message pointing at materialize step, got: {msg}"
+        );
+        assert!(msg.contains("leaf"), "expected dep name in error, got: {msg}");
     }
 }

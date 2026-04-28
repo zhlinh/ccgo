@@ -32,6 +32,7 @@ pub mod docker;
 pub mod elf;
 pub mod incremental;
 pub mod linkage;
+pub mod materialize;
 pub mod platforms;
 pub mod toolchains;
 pub mod verinfo;
@@ -39,7 +40,7 @@ pub mod verinfo;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::build::{BuildTarget, LinkType, WindowsToolchain};
@@ -488,42 +489,93 @@ impl BuildContext {
         }
 
         let consumer = self.options.link_type.preferred_single();
+        let mut out = Vec::new();
+        for dep in &self.config.dependencies {
+            let dep_root = self.project_root.join(".ccgo/deps").join(&dep.name);
+            let artifacts = detect_dep_artifacts(&dep_root, &platform);
+            let hint = self.resolved_linkage_hint(dep);
+            let resolved = resolve_linkage(consumer.clone(), artifacts, hint, &dep.name)?;
+            out.push((dep.name.clone(), resolved));
+        }
+        Ok(out)
+    }
+
+    /// Resolve the linkage hint for a single dep using the canonical
+    /// precedence chain. Centralises the rule so [`Self::resolved_dep_linkages`]
+    /// (which feeds the resolver) and [`Self::materialize_source_deps`] (which
+    /// feeds the recursive build) cannot drift.
+    ///
+    /// Precedence (highest to lowest):
+    ///   1. CLI per-dep   (`--linkage <name>=<value>`)        — most explicit
+    ///   2. CLI default   (`--linkage <value>`)               — CLI beats toml so
+    ///                                                          comparisons via
+    ///                                                          `--linkage X` honestly
+    ///                                                          flip every dep, even
+    ///                                                          ones the toml pinned.
+    ///   3. toml per-dep  (`[[dependencies]].linkage`)
+    ///   4. toml default  (`[build].default_dep_linkage`)
+    ///   5. `None` → resolver picks based on artifacts
+    ///
+    /// Pin-by-toml is recoverable via `--linkage <name>=<toml-value>`.
+    fn resolved_linkage_hint(
+        &self,
+        dep: &crate::config::DependencyConfig,
+    ) -> Option<crate::config::Linkage> {
         let toml_default = self
             .config
             .build
             .as_ref()
             .and_then(|b| b.default_dep_linkage);
-        // CLI default sits between toml per-dep and toml default. CLI per-dep
-        // is at the very top — see `BuildOptions::linkage_overrides`.
-        let cli_default = self.options.linkage_default;
-        let mut out = Vec::new();
-        for dep in &self.config.dependencies {
-            let dep_root = self.project_root.join(".ccgo/deps").join(&dep.name);
-            let artifacts = detect_dep_artifacts(&dep_root, &platform);
-            // Precedence (highest to lowest):
-            //   1. CLI per-dep   (--linkage <name>=<value>)   — most explicit
-            //   2. CLI default   (--linkage <value>)          — CLI beats toml so
-            //                                                   comparisons via
-            //                                                   `--linkage X` honestly
-            //                                                   flip every dep, even
-            //                                                   ones the toml pinned.
-            //   3. toml per-dep  ([[dependencies]].linkage)
-            //   4. toml default  ([build].default_dep_linkage)
-            //   5. None → resolver picks based on artifacts
-            //
-            // Pin-by-toml is recoverable via `--linkage <name>=<toml-value>`.
-            let hint = self
-                .options
-                .linkage_overrides
-                .get(&dep.name)
-                .copied()
-                .or(cli_default)
-                .or(dep.linkage)
-                .or(toml_default);
-            let resolved = resolve_linkage(consumer.clone(), artifacts, hint, &dep.name)?;
-            out.push((dep.name.clone(), resolved));
-        }
-        Ok(out)
+        self.options
+            .linkage_overrides
+            .get(&dep.name)
+            .copied()
+            .or(self.options.linkage_default)
+            .or(dep.linkage)
+            .or(toml_default)
+    }
+
+    /// Run the source-only-dep materialize pass: for any dep that ships
+    /// source code we can rebuild from, spawn `ccgo build` inside it when
+    /// its artifacts are missing OR the source has changed since the last
+    /// successful materialize. Skips deps whose source fingerprint matches
+    /// the persisted sidecar AND whose `lib/<platform>/` already has
+    /// artifacts on disk.
+    pub fn materialize_source_deps(&self, platform: &str) -> anyhow::Result<()> {
+        use crate::build::materialize::materialize_source_deps_inner;
+
+        let dep_hints: Vec<(String, Option<crate::config::Linkage>)> = self
+            .config
+            .dependencies
+            .iter()
+            .map(|d| (d.name.clone(), self.resolved_linkage_hint(d)))
+            .collect();
+
+        // `BuildOptions::architectures` is already lowercased by
+        // `parse_arch_arg` at parse time, but `materialize_source_deps_inner`
+        // requires lowercase for fingerprint-key consistency. Re-applying
+        // is cheap and pins the invariant locally so a future change to
+        // `parse_arch_arg` can't silently corrupt cache keys.
+        let archs: Vec<String> = self
+            .options
+            .architectures
+            .iter()
+            .map(|a| a.to_lowercase())
+            .collect();
+
+        let ccgo_bin =
+            std::env::current_exe().context("failed to resolve current ccgo binary path")?;
+
+        materialize_source_deps_inner(
+            &self.project_root,
+            platform,
+            &archs,
+            self.options.release,
+            &dep_hints,
+            ccgo_bin
+                .to_str()
+                .context("ccgo binary path is not UTF-8")?,
+        )
     }
 
     /// Create incremental build analyzer for a specific link type

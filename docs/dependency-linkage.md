@@ -79,6 +79,99 @@ Reads as: "I'm a shared library. By default my deps are external. tinyhelper
 is the exception — bake it into me." Three semantics, three settings, no
 ambiguity.
 
+## Source-only dependencies
+
+When a dep ships only source code (the `.ccgo/deps/<name>/` dir contains
+`src/` and `CCGO.toml` but no `lib/<platform>/` artifacts for the platform
+being built), `ccgo build` automatically recurses: it spawns `ccgo build
+<platform> --build-as <derived>` inside the dep before it resolves linkage,
+then symlinks `dep/lib/<platform>/` to the new build output so the
+consumer's `FindCCGODependencies.cmake` walks find the artifacts.
+
+The `--build-as` value is derived from the consumer's resolved hint for
+that dep:
+
+| Consumer's hint for the dep | Recursive `--build-as` |
+|---|---|
+| `shared-external` (default) | `shared` |
+| `static-embedded` / `static-external` | `static` |
+| (no hint) | `both` |
+
+A dep's own `[build].link_type` declaration **does not** dictate what gets
+produced during a recursive materialize — the consumer's needs do. If you
+set `--linkage stdcomm=static-embedded` on a build that has a source-only
+`stdcomm`, you get a `.a`. If you flip to `--linkage stdcomm=shared-external`,
+ccgo rebuilds `stdcomm` as a `.so` on the next build.
+
+### Caching
+
+The materialize step persists a per-platform fingerprint at
+`.ccgo/deps/<name>/.ccgo_materialize_<platform>.fingerprint`. The fingerprint
+is a SHA-256 over (sorted source-tree mtimes + sizes + paths) + the `CCGO.toml`
+content + the requested `--build-as`. Subsequent builds skip the recursive
+spawn when the fingerprint matches AND `lib/<platform>/` still has artifacts.
+
+Behavior matrix:
+
+| State | Action |
+|---|---|
+| no `lib/<platform>/`, no fingerprint | Spawn build, write fingerprint |
+| no `lib/<platform>/`, fingerprint exists | Spawn build (lib was deleted) |
+| `lib/<platform>/` exists, fingerprint matches | Skip (cache hit) |
+| `lib/<platform>/` exists, fingerprint mismatches | Spawn build (source changed) |
+| `lib/<platform>/` exists, no fingerprint | Trust prebuilt, write fingerprint |
+
+The "trust prebuilt" path matters for fixtures and projects that ship
+hand-curated `lib/<platform>/` layouts (e.g. xcframework symlinks). Those
+get a fingerprint stamped on the first invocation and then participate in
+normal source-change invalidation from then on.
+
+### What gets propagated to the recursive build
+
+The recursive `ccgo build` call inherits:
+
+* `--release` (from the parent's release flag)
+* `--arch <csv>` (lowercased; matches the parent's `--arch`)
+* `--build-as <variant>` (derived from hint as above)
+
+It does **not** inherit:
+
+* `--linkage` — the dep's own `[[dependencies]]` are decided by its own
+  CCGO.toml. A consumer's per-dep linkage hint applies only to that
+  consumer's relationship with the dep, not to the dep's relationship with
+  its own deps.
+
+### Failure mode
+
+If the recursive build fails, the parent ccgo bails with the dep name and
+a reproduction command:
+
+```
+recursive `ccgo build` for source-only dep 'stdcomm' (--build-as shared) failed
+with exit code Some(1). The dep at .ccgo/deps/stdcomm could not be compiled —
+check its CCGO.toml and try `ccgo build macos --build-as shared` inside that
+directory to reproduce.
+```
+
+### Known limitations
+
+* **CMake template's source-precedence behavior**: the consumer-side CMake
+  template currently treats any dep with `<deps>/<name>/src/` visible as a
+  source-level inline dependency, compiling it into a `consumer-deps`
+  static archive even when the dep also has prebuilt `lib/<platform>/`
+  artifacts (which the materialize step just produced). This means a
+  consumer's `--linkage shared-external` for a source-shipped dep currently
+  yields a statically-embedded copy in practice rather than an external
+  `.so` reference. Materialize still produces the `.so`, but the consumer
+  doesn't link against it. This precedence is a pre-existing CCGO design
+  decision and is tracked as a follow-up — making `[[dependencies]]` honor
+  binary artifacts when present is a larger change to the CMake template.
+
+* **Windows materialize is a no-op**: the `bridge_cmake_build_to_lib` step
+  uses Unix `symlink`. Windows path-source deps will need junction or
+  directory-copy fallback — deferred until a Windows path-source use case
+  surfaces.
+
 ## See also
 
 - [`dependency-resolution.md`](dependency-resolution.md) — how ccgo finds and

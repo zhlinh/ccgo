@@ -774,6 +774,11 @@ impl PlatformBuilder for AndroidBuilder {
             eprintln!("Building {} for Android...", ctx.lib_name());
         }
 
+        // Source-only deps: ensure they have artifacts before we compose link lines.
+        // (Skips deps whose fingerprint matches and whose lib/<platform>/ already
+        // has artifacts on disk; spawns `ccgo build` recursively otherwise.)
+        ctx.materialize_source_deps(self.platform_name())?;
+
         let abis = Self::resolve_abis(ctx)?;
         let api_level = DEFAULT_API_LEVEL;
 

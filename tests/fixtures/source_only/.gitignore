@@ -1,4 +1,6 @@
 */cmake_build/
 */target/
-*/.ccgo/deps/
+*/.ccgo/
+*/lib/
+*/CCGO.lock
 */.ccgo_materialize_*.fingerprint
