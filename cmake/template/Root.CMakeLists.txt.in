@@ -512,6 +512,16 @@ else()
             set(SHARED_TARGET ${PROJECT_NAME})
             add_library(${SHARED_TARGET} SHARED ${SELF_SRC_FILES})
 
+            # 16 KB ELF page alignment.
+            # Required by Google Play for AAB uploads as of Nov 2025, and by
+            # Android 15+ devices with 16 KB page size at runtime. Setting
+            # max-page-size tells the linker to align LOAD segments to 16 KB;
+            # common-page-size pads the binary so it boots correctly on both
+            # 4 KB and 16 KB page-size devices. Both flags are harmless on
+            # older devices (they just use more virtual address space).
+            target_link_options(${SHARED_TARGET} PRIVATE "-Wl,-z,common-page-size=16384")
+            target_link_options(${SHARED_TARGET} PRIVATE "-Wl,-z,max-page-size=16384")
+
             target_link_libraries(${SHARED_TARGET} PUBLIC ${TARGET_SRC_LINKS})
 
             # Link CCGO dependencies (prefer shared, fallback to static)
@@ -658,6 +668,15 @@ else()
         if(CCGO_BUILD_SHARED)
             set(SHARED_TARGET ${PROJECT_NAME})
             add_library(${SHARED_TARGET} SHARED ${SELF_SRC_FILES})
+
+            # 16 KB ELF page alignment.
+            # OpenHarmony follows Android's direction on page-size migration
+            # and several OHOS devices already ship 16 KB pages. Aligning
+            # LOAD segments to 16 KB keeps binaries portable across 4 KB and
+            # 16 KB page-size devices at essentially zero cost (a few extra
+            # KB of virtual address space per segment).
+            target_link_options(${SHARED_TARGET} PRIVATE "-Wl,-z,common-page-size=16384")
+            target_link_options(${SHARED_TARGET} PRIVATE "-Wl,-z,max-page-size=16384")
 
             target_link_libraries(${SHARED_TARGET} PUBLIC ${TARGET_SRC_LINKS})
 
