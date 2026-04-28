@@ -614,7 +614,7 @@ impl OhosBuilder {
             bail!("Hvigor assembleHar failed with exit code: {:?}", status.code());
         }
 
-        self.find_and_copy_har_to_output(ctx, &ohos_project, output_dir)?;
+        OhosBuilder::find_and_copy_har_to_output(ctx, &ohos_project, output_dir)?;
 
         Ok(())
     }
@@ -665,6 +665,125 @@ impl PlatformBuilder for OhosBuilder {
         Ok(())
     }
 
+    fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        let start = Instant::now();
+
+        self.validate_prerequisites(ctx)?;
+
+        let sdk = OhosSdkToolchain::detect()?;
+
+        if ctx.options.verbose {
+            eprintln!("Building {} for OHOS...", ctx.lib_name());
+        }
+
+        let abis = Self::resolve_abis(ctx)?;
+        let min_sdk_version = DEFAULT_MIN_SDK_VERSION;
+
+        std::fs::create_dir_all(&ctx.output_dir)?;
+
+        let archive = ArchiveBuilder::new(
+            ctx.lib_name(),
+            ctx.version(),
+            ctx.publish_suffix(),
+            ctx.options.release,
+            "ohos",
+            ctx.output_dir.clone(),
+        )?;
+
+        let symbols_staging = ctx.output_dir.join(".symbols_staging");
+        std::fs::create_dir_all(&symbols_staging)?;
+
+        let built_link_types = self.build_static_and_shared(
+            ctx, &sdk, &abis, min_sdk_version, &archive, &symbols_staging
+        )?;
+
+        let include_source = ctx.include_source_dir();
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+            }
+        }
+
+        if built_link_types.contains(&"shared") {
+            self.build_har_package(ctx, &abis);
+        }
+
+        self.add_har_to_archive_if_needed(ctx, &archive)?;
+
+        let architectures: Vec<String> = abis.iter().map(|a| a.abi_string().to_string()).collect();
+        let link_type_str = ctx.options.link_type.to_string();
+        let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
+
+        let symbols_archive = self.create_symbols_archive_if_needed(
+            ctx, &built_link_types, &symbols_staging, &archive
+        )?;
+
+        std::fs::remove_dir_all(&symbols_staging).ok();
+
+        let duration = start.elapsed();
+
+        if ctx.options.verbose {
+            eprintln!(
+                "OHOS build completed in {:.2}s: {}",
+                duration.as_secs_f64(),
+                sdk_archive.display()
+            );
+        }
+
+        Ok(BuildResult {
+            sdk_archive,
+            symbols_archive,
+            aar_archive: Self::get_har_archive_path(ctx),
+            duration_secs: duration.as_secs_f64(),
+            architectures,
+        })
+    }
+
+    fn clean(&self, ctx: &BuildContext) -> Result<()> {
+        // Clean new directory structure: cmake_build/{release|debug}/ohos
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("ohos");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
+        }
+
+        // Clean old structure for backwards compatibility: cmake_build/OHOS, cmake_build/ohos
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/OHOS"),
+            ctx.project_root.join("cmake_build/ohos"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/ohos"),
+            ctx.project_root.join("target/debug/ohos"),
+            ctx.project_root.join("target/release/OHOS"),
+            ctx.project_root.join("target/debug/OHOS"),
+            ctx.project_root.join("target/ohos"),
+            ctx.project_root.join("target/OHOS"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// Non-trait helpers used by the `build` impl above. Kept in an inherent
+// impl — `PlatformBuilder` only exposes 5 methods.
+impl OhosBuilder {
     /// Resolve ABIs from build options
     fn resolve_abis(ctx: &BuildContext) -> Result<Vec<OhosAbi>> {
         if ctx.options.architectures.is_empty() {
@@ -792,121 +911,6 @@ impl PlatformBuilder for OhosBuilder {
         let har_path = ctx.output_dir.join(&har_versioned_name);
 
         if har_path.exists() { Some(har_path) } else { None }
-    }
-
-    fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
-        let start = Instant::now();
-
-        self.validate_prerequisites(ctx)?;
-
-        let sdk = OhosSdkToolchain::detect()?;
-
-        if ctx.options.verbose {
-            eprintln!("Building {} for OHOS...", ctx.lib_name());
-        }
-
-        let abis = Self::resolve_abis(ctx)?;
-        let min_sdk_version = DEFAULT_MIN_SDK_VERSION;
-
-        std::fs::create_dir_all(&ctx.output_dir)?;
-
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "ohos",
-            ctx.output_dir.clone(),
-        )?;
-
-        let symbols_staging = ctx.output_dir.join(".symbols_staging");
-        std::fs::create_dir_all(&symbols_staging)?;
-
-        let built_link_types = self.build_static_and_shared(
-            ctx, &sdk, &abis, min_sdk_version, &archive, &symbols_staging
-        )?;
-
-        let include_source = ctx.include_source_dir();
-        if include_source.exists() {
-            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
-            archive.add_directory(&include_source, &include_path)?;
-            if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
-            }
-        }
-
-        if built_link_types.contains(&"shared") {
-            self.build_har_package(ctx, &abis);
-        }
-
-        self.add_har_to_archive_if_needed(ctx, &archive)?;
-
-        let architectures: Vec<String> = abis.iter().map(|a| a.abi_string().to_string()).collect();
-        let link_type_str = ctx.options.link_type.to_string();
-        let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
-
-        let symbols_archive = self.create_symbols_archive_if_needed(
-            ctx, &built_link_types, &symbols_staging, &archive
-        )?;
-
-        std::fs::remove_dir_all(&symbols_staging).ok();
-
-        let duration = start.elapsed();
-
-        if ctx.options.verbose {
-            eprintln!(
-                "OHOS build completed in {:.2}s: {}",
-                duration.as_secs_f64(),
-                sdk_archive.display()
-            );
-        }
-
-        Ok(BuildResult {
-            sdk_archive,
-            symbols_archive,
-            aar_archive: Self::get_har_archive_path(ctx),
-            duration_secs: duration.as_secs_f64(),
-            architectures,
-        })
-    }
-
-    fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean new directory structure: cmake_build/{release|debug}/ohos
-        for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("ohos");
-            if build_dir.exists() {
-                std::fs::remove_dir_all(&build_dir)
-                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-            }
-        }
-
-        // Clean old structure for backwards compatibility: cmake_build/OHOS, cmake_build/ohos
-        for old_dir in &[
-            ctx.project_root.join("cmake_build/OHOS"),
-            ctx.project_root.join("cmake_build/ohos"),
-        ] {
-            if old_dir.exists() {
-                std::fs::remove_dir_all(old_dir)
-                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
-            }
-        }
-
-        // Clean target directories
-        for old_dir in &[
-            ctx.project_root.join("target/release/ohos"),
-            ctx.project_root.join("target/debug/ohos"),
-            ctx.project_root.join("target/release/OHOS"),
-            ctx.project_root.join("target/debug/OHOS"),
-            ctx.project_root.join("target/ohos"),
-            ctx.project_root.join("target/OHOS"),
-        ] {
-            if old_dir.exists() {
-                std::fs::remove_dir_all(old_dir)
-                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
-            }
-        }
-
-        Ok(())
     }
 }
 

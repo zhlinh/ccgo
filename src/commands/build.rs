@@ -352,7 +352,7 @@ impl BuildCommand {
     fn handle_docker_build(
         &self,
         ctx: BuildContext,
-        package: &crate::config::PackageInfo,
+        package: &crate::config::PackageConfig,
         verbose: bool,
     ) -> Result<()> {
         use crate::build::docker::DockerBuilder;
@@ -403,7 +403,7 @@ impl BuildCommand {
     fn execute_native_build(
         &self,
         ctx: &BuildContext,
-        package: &crate::config::PackageInfo,
+        package: &crate::config::PackageConfig,
         verbose: bool,
     ) -> Result<()> {
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
@@ -461,7 +461,7 @@ impl BuildCommand {
 
         let config = CcgoConfig::load()?;
         let project_root = current_dir;
-        let package = config.require_package()?;
+        let package = config.require_package()?.clone();
 
         if verbose {
             eprintln!("Building {} for {} platform...", package.name, self.target);
@@ -587,21 +587,25 @@ impl BuildCommand {
     }
 
     /// Execute Docker or native build for workspace member
-    fn execute_member_build(&self, ctx: &BuildContext) -> Result<Vec<BuildResult>> {
+    ///
+    /// Takes `ctx` by value so it can be handed to `DockerBuilder::new`,
+    /// which stores the context internally. Native paths only need a
+    /// borrow, so we pass `&ctx` through to `execute_build_by_target`.
+    fn execute_member_build(&self, ctx: BuildContext) -> Result<Vec<BuildResult>> {
         if self.should_use_docker(&self.target) {
             use crate::build::docker::DockerBuilder;
 
             match self.target {
                 BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
-                    self.execute_build_by_target(ctx)
+                    self.execute_build_by_target(&ctx)
                 }
                 _ => {
-                    let docker_builder = DockerBuilder::new(ctx.clone())?;
+                    let docker_builder = DockerBuilder::new(ctx)?;
                     Ok(vec![docker_builder.execute()?])
                 }
             }
         } else {
-            self.execute_build_by_target(ctx)
+            self.execute_build_by_target(&ctx)
         }
     }
 
@@ -615,7 +619,7 @@ impl BuildCommand {
         let member_path = workspace_root.join(&member.name);
         let config_path = member_path.join("CCGO.toml");
         let config = CcgoConfig::load_from(&config_path)?;
-        let package = config.require_package()?;
+        let package = config.require_package()?.clone();
 
         let options = self.create_build_options(verbose);
         let ctx = BuildContext::new(member_path.clone(), config, options);
@@ -623,7 +627,7 @@ impl BuildCommand {
         let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
         let jobs = ctx.jobs();
 
-        let results = self.execute_member_build(&ctx)?;
+        let results = self.execute_member_build(ctx)?;
 
         Self::print_results(
             &package.name,

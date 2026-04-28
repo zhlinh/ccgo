@@ -672,6 +672,115 @@ impl PlatformBuilder for AndroidBuilder {
         Ok(())
     }
 
+    fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
+        let start = Instant::now();
+
+        self.validate_prerequisites(ctx)?;
+        let ndk = AndroidNdkToolchain::detect()?;
+
+        if ctx.options.verbose {
+            eprintln!("Building {} for Android...", ctx.lib_name());
+        }
+
+        let abis = Self::resolve_abis(ctx)?;
+        let api_level = DEFAULT_API_LEVEL;
+
+        std::fs::create_dir_all(&ctx.output_dir)?;
+
+        let archive = ArchiveBuilder::new(
+            ctx.lib_name(),
+            ctx.version(),
+            ctx.publish_suffix(),
+            ctx.options.release,
+            "Android",
+            ctx.output_dir.clone(),
+        )?;
+
+        let symbols_staging = ctx.cmake_build_dir.join("symbols_staging");
+        std::fs::create_dir_all(&symbols_staging)?;
+
+        let built_link_types = self.build_static_and_shared(
+            ctx, &ndk, &abis, api_level, &archive, &symbols_staging
+        )?;
+
+        self.add_include_files_if_needed(ctx, &archive)?;
+        self.build_aar_and_symbols(ctx, &abis, &built_link_types, &symbols_staging)?;
+        self.add_aar_to_archive_if_needed(ctx, &archive)?;
+
+        let architectures: Vec<String> = abis.iter().map(|a| a.abi_string().to_string()).collect();
+        let link_type_str = ctx.options.link_type.to_string();
+        let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
+
+        let symbols_archive = self.create_symbols_archive_if_needed(
+            ctx, &built_link_types, &symbols_staging, &archive
+        )?;
+
+        std::fs::remove_dir_all(&symbols_staging).ok();
+
+        let aar_archive = Self::get_aar_archive_path(ctx);
+        let duration = start.elapsed();
+
+        if ctx.options.verbose {
+            eprintln!(
+                "Android build completed in {:.2}s: {}",
+                duration.as_secs_f64(),
+                sdk_archive.display()
+            );
+        }
+
+        Ok(BuildResult {
+            sdk_archive,
+            symbols_archive,
+            aar_archive,
+            duration_secs: duration.as_secs_f64(),
+            architectures,
+        })
+    }
+
+    fn clean(&self, ctx: &BuildContext) -> Result<()> {
+        // Clean new directory structure: cmake_build/{release|debug}/android
+        for subdir in &["release", "debug"] {
+            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("android");
+            if build_dir.exists() {
+                std::fs::remove_dir_all(&build_dir)
+                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+            }
+        }
+
+        // Clean old structure for backwards compatibility: cmake_build/Android, cmake_build/android
+        for old_dir in &[
+            ctx.project_root.join("cmake_build/Android"),
+            ctx.project_root.join("cmake_build/android"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        // Clean target directories
+        for old_dir in &[
+            ctx.project_root.join("target/release/android"),
+            ctx.project_root.join("target/debug/android"),
+            ctx.project_root.join("target/release/Android"),
+            ctx.project_root.join("target/debug/Android"),
+            ctx.project_root.join("target/android"),
+            ctx.project_root.join("target/Android"),
+        ] {
+            if old_dir.exists() {
+                std::fs::remove_dir_all(old_dir)
+                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// Non-trait helpers used by the `build` impl above. Kept in an inherent
+// impl because `PlatformBuilder` only exposes 5 methods; these are
+// internal decomposition.
+impl AndroidBuilder {
     /// Resolve ABIs from build options
     fn resolve_abis(ctx: &BuildContext) -> Result<Vec<AndroidAbi>> {
         if ctx.options.architectures.is_empty() {
@@ -823,110 +932,6 @@ impl PlatformBuilder for AndroidBuilder {
             eprintln!("AAR package built successfully");
         }
         self.copy_obj_local_to_symbols(ctx, abis, symbols_staging)?;
-        Ok(())
-    }
-
-    fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
-        let start = Instant::now();
-
-        self.validate_prerequisites(ctx)?;
-        let ndk = AndroidNdkToolchain::detect()?;
-
-        if ctx.options.verbose {
-            eprintln!("Building {} for Android...", ctx.lib_name());
-        }
-
-        let abis = Self::resolve_abis(ctx)?;
-        let api_level = DEFAULT_API_LEVEL;
-
-        std::fs::create_dir_all(&ctx.output_dir)?;
-
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "Android",
-            ctx.output_dir.clone(),
-        )?;
-
-        let symbols_staging = ctx.cmake_build_dir.join("symbols_staging");
-        std::fs::create_dir_all(&symbols_staging)?;
-
-        let built_link_types = self.build_static_and_shared(
-            ctx, &ndk, &abis, api_level, &archive, &symbols_staging
-        )?;
-
-        self.add_include_files_if_needed(ctx, &archive)?;
-        self.build_aar_and_symbols(ctx, &abis, &built_link_types, &symbols_staging)?;
-        self.add_aar_to_archive_if_needed(ctx, &archive)?;
-
-        let architectures: Vec<String> = abis.iter().map(|a| a.abi_string().to_string()).collect();
-        let link_type_str = ctx.options.link_type.to_string();
-        let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
-
-        let symbols_archive = self.create_symbols_archive_if_needed(
-            ctx, &built_link_types, &symbols_staging, &archive
-        )?;
-
-        std::fs::remove_dir_all(&symbols_staging).ok();
-
-        let aar_archive = Self::get_aar_archive_path(ctx);
-        let duration = start.elapsed();
-
-        if ctx.options.verbose {
-            eprintln!(
-                "Android build completed in {:.2}s: {}",
-                duration.as_secs_f64(),
-                sdk_archive.display()
-            );
-        }
-
-        Ok(BuildResult {
-            sdk_archive,
-            symbols_archive,
-            aar_archive,
-            duration_secs: duration.as_secs_f64(),
-            architectures,
-        })
-    }
-
-    fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean new directory structure: cmake_build/{release|debug}/android
-        for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("android");
-            if build_dir.exists() {
-                std::fs::remove_dir_all(&build_dir)
-                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-            }
-        }
-
-        // Clean old structure for backwards compatibility: cmake_build/Android, cmake_build/android
-        for old_dir in &[
-            ctx.project_root.join("cmake_build/Android"),
-            ctx.project_root.join("cmake_build/android"),
-        ] {
-            if old_dir.exists() {
-                std::fs::remove_dir_all(old_dir)
-                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
-            }
-        }
-
-        // Clean target directories
-        for old_dir in &[
-            ctx.project_root.join("target/release/android"),
-            ctx.project_root.join("target/debug/android"),
-            ctx.project_root.join("target/release/Android"),
-            ctx.project_root.join("target/debug/Android"),
-            ctx.project_root.join("target/android"),
-            ctx.project_root.join("target/Android"),
-        ] {
-            if old_dir.exists() {
-                std::fs::remove_dir_all(old_dir)
-                    .with_context(|| format!("Failed to clean {}", old_dir.display()))?;
-            }
-        }
-
         Ok(())
     }
 }
