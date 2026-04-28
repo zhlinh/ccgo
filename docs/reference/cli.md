@@ -148,7 +148,7 @@ ccgo build [OPTIONS] <TARGET>
 | Option | Description |
 |--------|-------------|
 | `--arch <ARCH>` | Target architectures (comma-separated) |
-| `--link-type <TYPE>` | `static`, `shared`, or `both` (default: `both`) |
+| `--build-as <TYPE>` | `static`, `shared`, or `both` (default: `both`) |
 | `--docker` | Build using Docker container |
 | `--auto-docker` | Auto-detect and use Docker when native build not possible |
 | `-j, --jobs <N>` | Number of parallel build jobs |

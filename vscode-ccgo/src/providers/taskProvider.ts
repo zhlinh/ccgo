@@ -127,7 +127,7 @@ export class CcgoTaskProvider implements vscode.TaskProvider {
         }
 
         if (definition.linkType) {
-            args.push('--link-type', definition.linkType);
+            args.push('--build-as', definition.linkType);
         }
 
         return args;

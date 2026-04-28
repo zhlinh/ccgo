@@ -81,9 +81,9 @@ ccgo build macos --build-type debug           # Debug 构建
 ccgo build macos --build-type release         # Release 构建（默认）
 
 # 链接类型
-ccgo build macos --link-type static           # 仅静态库/框架
-ccgo build macos --link-type shared           # 仅动态库/框架
-ccgo build macos --link-type both             # 两种类型（默认）
+ccgo build macos --build-as static           # 仅静态库/框架
+ccgo build macos --build-as shared           # 仅动态库/框架
+ccgo build macos --build-as both             # 两种类型（默认）
 ```
 
 ### 使用 Framework 构建
@@ -613,7 +613,7 @@ ccgo build macos --docker
 ccgo build macos --docker --arch arm64
 
 # 所有标准选项都可用
-ccgo build macos --docker --framework --link-type static
+ccgo build macos --docker --framework --build-as static
 ```
 
 ### 工作原理
@@ -1068,7 +1068,7 @@ Frameworks 有轻微开销：
 
 ```bash
 # 对于性能关键，使用 dylib
-ccgo build macos --dylib --link-type shared
+ccgo build macos --dylib --build-as shared
 
 # 对于分发，使用 framework
 ccgo build macos --framework
@@ -1080,7 +1080,7 @@ ccgo build macos --framework
 
 ```bash
 # 静态框架
-ccgo build macos --framework --link-type static
+ccgo build macos --framework --build-as static
 ```
 
 ## 迁移指南

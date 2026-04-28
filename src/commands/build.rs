@@ -260,8 +260,14 @@ pub struct BuildCommand {
     #[arg(long, verbatim_doc_comment)]
     pub arch: Option<String>,
 
-    /// Link type
-    #[arg(long, value_enum, default_value_t = LinkType::Both)]
+    /// What this project itself produces: a static archive, a shared
+    /// library, or both. Distinct from `--linkage`, which controls how
+    /// dependencies are integrated into the build.
+    ///
+    /// * `static` — produce only `.a` / `.lib`
+    /// * `shared` — produce only `.so` / `.dylib` / `.dll`
+    /// * `both`   — produce both (default)
+    #[arg(long = "build-as", value_enum, default_value_t = LinkType::Both)]
     pub link_type: LinkType,
 
     /// Per-dependency linkage strategy (overrides CCGO.toml).

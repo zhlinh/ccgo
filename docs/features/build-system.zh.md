@@ -410,7 +410,7 @@ ccgo build <platform> --release
 
 **使用：**
 ```bash
-ccgo build <platform> --link-type static
+ccgo build <platform> --build-as static
 ```
 
 **输出：** `.a`（Unix）、`.lib`（Windows）
@@ -425,7 +425,7 @@ ccgo build <platform> --link-type static
 
 **使用：**
 ```bash
-ccgo build <platform> --link-type shared
+ccgo build <platform> --build-as shared
 ```
 
 **输出：** `.so`（Unix/Android）、`.dylib`（macOS）、`.dll`（Windows）
@@ -435,7 +435,7 @@ ccgo build <platform> --link-type shared
 构建静态和动态库：
 
 ```bash
-ccgo build <platform> --link-type both
+ccgo build <platform> --build-as both
 ```
 
 ## 工具链选择
@@ -554,7 +554,7 @@ ccgo build <platform>
 
 **优化提示：**
 1. 开发期间使用 `--arch` 限制架构
-2. 使用 `--link-type` 仅构建所需的库类型
+2. 使用 `--build-as` 仅构建所需的库类型
 3. 为编译器缓存启用 `ccache`（未来功能）
 4. 使用预构建依赖（未来功能）
 
@@ -686,7 +686,7 @@ Error: c++: fatal error: Killed signal terminated program cc1plus
 
 **解决方案：**
 1. 构建更少的架构：`--arch arm64-v8a`
-2. 构建单一链接类型：`--link-type static`
+2. 构建单一链接类型：`--build-as static`
 3. 增加 Docker 内存：Docker Desktop → 偏好设置 → 资源
 4. 在 Linux 上使用交换空间
 

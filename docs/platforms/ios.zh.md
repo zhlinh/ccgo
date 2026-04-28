@@ -80,9 +80,9 @@ ccgo build ios --build-type debug             # Debug 构建
 ccgo build ios --build-type release           # Release 构建（默认）
 
 # 链接类型
-ccgo build ios --link-type static             # 仅静态框架
-ccgo build ios --link-type shared             # 仅动态框架
-ccgo build ios --link-type both               # 两种类型（默认）
+ccgo build ios --build-as static             # 仅静态框架
+ccgo build ios --build-as shared             # 仅动态框架
+ccgo build ios --build-as both               # 两种类型（默认）
 ```
 
 ### 使用 XCFramework 构建
@@ -564,7 +564,7 @@ ccgo build ios --docker
 ccgo build ios --docker --arch arm64
 
 # 所有标准选项都可用
-ccgo build ios --docker --xcframework --link-type static
+ccgo build ios --docker --xcframework --build-as static
 ```
 
 ### 工作原理
@@ -1004,10 +1004,10 @@ ccgo build ios --arch arm64,x86_64      # 两者（较慢）
 
 ```bash
 # 静态构建更快
-ccgo build ios --link-type static
+ccgo build ios --build-as static
 
 # 动态需要签名
-ccgo build ios --link-type shared       # 较慢
+ccgo build ios --build-as shared       # 较慢
 ```
 
 ### 5. 并行构建

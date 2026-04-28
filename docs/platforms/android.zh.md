@@ -95,9 +95,9 @@ ccgo build android --clean
 ccgo build android --docker
 
 # 链接类型控制
-ccgo build android --link-type static   # 仅静态库
-ccgo build android --link-type shared   # 仅动态库
-ccgo build android --link-type both     # 两者都有（默认）
+ccgo build android --build-as static   # 仅静态库
+ccgo build android --build-as shared   # 仅动态库
+ccgo build android --build-as both     # 两者都有（默认）
 ```
 
 ## 输出结构

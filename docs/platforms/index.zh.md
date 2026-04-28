@@ -99,13 +99,13 @@ ccgo build android
 
 ```bash
 # 仅静态库
-ccgo build --link-type static
+ccgo build --build-as static
 
 # 仅共享库
-ccgo build --link-type shared
+ccgo build --build-as shared
 
 # 两者都有（默认）
-ccgo build --link-type both
+ccgo build --build-as both
 ```
 
 ### 工具链选择（Windows）

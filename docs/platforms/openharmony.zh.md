@@ -94,9 +94,9 @@ ccgo build ohos --build-type debug      # Debug 构建
 ccgo build ohos --build-type release    # Release 构建（默认）
 
 # 链接类型
-ccgo build ohos --link-type static      # 仅静态库
-ccgo build ohos --link-type shared      # 仅共享库
-ccgo build ohos --link-type both        # 两种类型（默认）
+ccgo build ohos --build-as static      # 仅静态库
+ccgo build ohos --build-as shared      # 仅共享库
+ccgo build ohos --build-as both        # 两种类型（默认）
 
 # 生成 HAR 包
 ccgo build ohos --har                   # 创建 .har 包
@@ -708,7 +708,7 @@ ldflags = ["-Wl,--gc-sections"]
 静态库可能更快：
 
 ```bash
-ccgo build ohos --link-type static
+ccgo build ohos --build-as static
 ```
 
 ### 5. 在设备上进行性能分析

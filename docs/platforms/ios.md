@@ -80,9 +80,9 @@ ccgo build ios --build-type debug             # Debug build
 ccgo build ios --build-type release           # Release build (default)
 
 # Link types
-ccgo build ios --link-type static             # Static framework only
-ccgo build ios --link-type shared             # Dynamic framework only
-ccgo build ios --link-type both               # Both types (default)
+ccgo build ios --build-as static             # Static framework only
+ccgo build ios --build-as shared             # Dynamic framework only
+ccgo build ios --build-as both               # Both types (default)
 ```
 
 ### Build with XCFramework
@@ -564,7 +564,7 @@ ccgo build ios --docker
 ccgo build ios --docker --arch arm64
 
 # All standard options work
-ccgo build ios --docker --xcframework --link-type static
+ccgo build ios --docker --xcframework --build-as static
 ```
 
 ### How It Works
@@ -1004,10 +1004,10 @@ ccgo build ios --arch arm64,x86_64      # Both (slower)
 
 ```bash
 # Static builds are faster
-ccgo build ios --link-type static
+ccgo build ios --build-as static
 
 # Dynamic needs signing
-ccgo build ios --link-type shared       # Slower
+ccgo build ios --build-as shared       # Slower
 ```
 
 ### 5. Parallel Builds

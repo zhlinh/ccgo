@@ -94,9 +94,9 @@ ccgo build ohos --build-type debug      # Debug build
 ccgo build ohos --build-type release    # Release build (default)
 
 # Link types
-ccgo build ohos --link-type static      # Static library only
-ccgo build ohos --link-type shared      # Shared library only
-ccgo build ohos --link-type both        # Both types (default)
+ccgo build ohos --build-as static      # Static library only
+ccgo build ohos --build-as shared      # Shared library only
+ccgo build ohos --build-as both        # Both types (default)
 
 # Generate HAR package
 ccgo build ohos --har                   # Creates .har package
@@ -708,7 +708,7 @@ ldflags = ["-Wl,--gc-sections"]
 Static libraries can be faster:
 
 ```bash
-ccgo build ohos --link-type static
+ccgo build ohos --build-as static
 ```
 
 ### 5. Profile on Device

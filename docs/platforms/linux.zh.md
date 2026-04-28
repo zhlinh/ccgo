@@ -117,9 +117,9 @@ ccgo build linux --build-type debug    # Debug 构建
 ccgo build linux --build-type release  # Release 构建（默认）
 
 # 链接类型
-ccgo build linux --link-type static    # 仅静态库
-ccgo build linux --link-type shared    # 仅共享库
-ccgo build linux --link-type both      # 两种类型（默认）
+ccgo build linux --build-as static    # 仅静态库
+ccgo build linux --build-as shared    # 仅共享库
+ccgo build linux --build-as both      # 两种类型（默认）
 ```
 
 ### 生成 CodeLite 项目
@@ -364,7 +364,7 @@ ccgo build linux --docker
 ccgo build linux --docker --arch x86_64
 
 # 所有标准选项都可用
-ccgo build linux --docker --compiler gcc --link-type static
+ccgo build linux --docker --compiler gcc --build-as static
 ```
 
 ### 工作原理
@@ -585,7 +585,7 @@ version = "1.2.3"          # 创建 libmylib.so.1.2.3
 
 ```bash
 # 仅构建静态库
-ccgo build linux --link-type static
+ccgo build linux --build-as static
 
 # 所有代码都嵌入在可执行文件中
 g++ -o myapp main.cpp -I/path/to/include -L/path/to/lib/static -lmylib
@@ -785,7 +785,7 @@ CXXFLAGS="-fprofile-use" ccgo build linux
 由于更好的优化，静态链接可能更快：
 
 ```bash
-ccgo build linux --link-type static
+ccgo build linux --build-as static
 ```
 
 ### 5. 禁用异常（如果不需要）
@@ -953,7 +953,7 @@ ccgo build linux --arch armv7 --docker
 
 ```bash
 # 使用 Alpine Linux Docker 镜像
-ccgo build linux --docker --libc musl --link-type static
+ccgo build linux --docker --libc musl --build-as static
 ```
 
 ### 清理器（Sanitizers）

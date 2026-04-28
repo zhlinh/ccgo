@@ -105,9 +105,9 @@ ccgo build windows --build-type debug    # Debug build
 ccgo build windows --build-type release  # Release build (default)
 
 # Link types
-ccgo build windows --link-type static    # Static library only
-ccgo build windows --link-type shared    # DLL only
-ccgo build windows --link-type both      # Both types (default)
+ccgo build windows --build-as static    # Static library only
+ccgo build windows --build-as shared    # DLL only
+ccgo build windows --build-as both      # Both types (default)
 ```
 
 ### Generate Visual Studio Project
@@ -342,7 +342,7 @@ ccgo build windows --docker
 ccgo build windows --docker --arch x64
 
 # All standard options work (MinGW only)
-ccgo build windows --docker --link-type static
+ccgo build windows --docker --build-as static
 ```
 
 ### How It Works

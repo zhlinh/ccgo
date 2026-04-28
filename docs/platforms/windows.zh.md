@@ -105,9 +105,9 @@ ccgo build windows --build-type debug    # Debug 构建
 ccgo build windows --build-type release  # Release 构建（默认）
 
 # 链接类型
-ccgo build windows --link-type static    # 仅静态库
-ccgo build windows --link-type shared    # 仅 DLL
-ccgo build windows --link-type both      # 两种类型（默认）
+ccgo build windows --build-as static    # 仅静态库
+ccgo build windows --build-as shared    # 仅 DLL
+ccgo build windows --build-as both      # 两种类型（默认）
 ```
 
 ### 生成 Visual Studio 项目
@@ -342,7 +342,7 @@ ccgo build windows --docker
 ccgo build windows --docker --arch x64
 
 # 所有标准选项都可用（仅 MinGW）
-ccgo build windows --docker --link-type static
+ccgo build windows --docker --build-as static
 ```
 
 ### 工作原理

@@ -117,9 +117,9 @@ ccgo build linux --build-type debug    # Debug build
 ccgo build linux --build-type release  # Release build (default)
 
 # Link types
-ccgo build linux --link-type static    # Static library only
-ccgo build linux --link-type shared    # Shared library only
-ccgo build linux --link-type both      # Both types (default)
+ccgo build linux --build-as static    # Static library only
+ccgo build linux --build-as shared    # Shared library only
+ccgo build linux --build-as both      # Both types (default)
 ```
 
 ### Generate CodeLite Project
@@ -364,7 +364,7 @@ ccgo build linux --docker
 ccgo build linux --docker --arch x86_64
 
 # All standard options work
-ccgo build linux --docker --compiler gcc --link-type static
+ccgo build linux --docker --compiler gcc --build-as static
 ```
 
 ### How It Works
@@ -585,7 +585,7 @@ For simpler distribution without dependencies:
 
 ```bash
 # Build static library only
-ccgo build linux --link-type static
+ccgo build linux --build-as static
 
 # All code is embedded in executable
 g++ -o myapp main.cpp -I/path/to/include -L/path/to/lib/static -lmylib
@@ -785,7 +785,7 @@ CXXFLAGS="-fprofile-use" ccgo build linux
 Static linking can be faster due to better optimization:
 
 ```bash
-ccgo build linux --link-type static
+ccgo build linux --build-as static
 ```
 
 ### 5. Disable Exceptions (If Not Needed)
@@ -953,7 +953,7 @@ For truly portable static binaries:
 
 ```bash
 # Use Alpine Linux Docker image
-ccgo build linux --docker --libc musl --link-type static
+ccgo build linux --docker --libc musl --build-as static
 ```
 
 ### Sanitizers

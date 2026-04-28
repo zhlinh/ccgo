@@ -548,20 +548,20 @@ impl DockerBuilder {
             format!(
                 "{} && \
                  {} build android --native-only \
-                 --arch armeabi-v7a,arm64-v8a,x86_64 --link-type {}",
+                 --arch armeabi-v7a,arm64-v8a,x86_64 --build-as {}",
                 setup_cmd, ccgo_bin, link_type
             )
         } else if self.ctx.options.target == BuildTarget::Ohos {
             format!(
                 "{} && \
                  {} build ohos --native-only \
-                 --arch armeabi-v7a,arm64-v8a,x86_64 --link-type {}",
+                 --arch armeabi-v7a,arm64-v8a,x86_64 --build-as {}",
                 setup_cmd, ccgo_bin, link_type
             )
         } else {
             format!(
                 "{} && \
-                 {} build {} --link-type {}{}",
+                 {} build {} --build-as {}{}",
                 setup_cmd, ccgo_bin, platform, link_type, toolchain_arg
             )
         };

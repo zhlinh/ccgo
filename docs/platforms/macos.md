@@ -81,9 +81,9 @@ ccgo build macos --build-type debug           # Debug build
 ccgo build macos --build-type release         # Release build (default)
 
 # Link types
-ccgo build macos --link-type static           # Static library/framework only
-ccgo build macos --link-type shared           # Dynamic library/framework only
-ccgo build macos --link-type both             # Both types (default)
+ccgo build macos --build-as static           # Static library/framework only
+ccgo build macos --build-as shared           # Dynamic library/framework only
+ccgo build macos --build-as both             # Both types (default)
 ```
 
 ### Build with Framework
@@ -613,7 +613,7 @@ ccgo build macos --docker
 ccgo build macos --docker --arch arm64
 
 # All standard options work
-ccgo build macos --docker --framework --link-type static
+ccgo build macos --docker --framework --build-as static
 ```
 
 ### How It Works
@@ -1068,7 +1068,7 @@ Frameworks have slight overhead:
 
 ```bash
 # For performance-critical, use dylib
-ccgo build macos --dylib --link-type shared
+ccgo build macos --dylib --build-as shared
 
 # For distribution, use framework
 ccgo build macos --framework
@@ -1080,7 +1080,7 @@ Fastest startup, no dynamic loading:
 
 ```bash
 # Static framework
-ccgo build macos --framework --link-type static
+ccgo build macos --framework --build-as static
 ```
 
 ## Migration Guides

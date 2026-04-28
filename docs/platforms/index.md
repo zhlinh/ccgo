@@ -99,13 +99,13 @@ ccgo build android
 
 ```bash
 # Static libraries only
-ccgo build --link-type static
+ccgo build --build-as static
 
 # Shared libraries only
-ccgo build --link-type shared
+ccgo build --build-as shared
 
 # Both (default)
-ccgo build --link-type both
+ccgo build --build-as both
 ```
 
 ### Toolchain Selection (Windows)

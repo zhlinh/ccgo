@@ -139,7 +139,7 @@ fn build_platform_subprocess(
         cmd_args.push(toolchain.clone());
     }
     if let Some(link_type) = &args.link_type {
-        cmd_args.push("--link-type".to_string());
+        cmd_args.push("--build-as".to_string());
         cmd_args.push(link_type.clone());
     }
     if args.release {

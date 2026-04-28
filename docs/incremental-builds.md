@@ -481,10 +481,10 @@ Static and shared builds share the same build state:
 
 ```bash
 # Build static
-ccgo build linux --link-type static
+ccgo build linux --build-as static
 
 # Build shared (incremental, shared source compilation)
-ccgo build linux --link-type shared
+ccgo build linux --build-as shared
 ```
 
 Both link types use the same source files, so changes propagate.

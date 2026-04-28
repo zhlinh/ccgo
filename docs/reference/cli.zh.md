@@ -148,7 +148,7 @@ ccgo build [OPTIONS] <TARGET>
 | 选项 | 描述 |
 |--------|-------------|
 | `--arch <ARCH>` | 目标架构（逗号分隔）|
-| `--link-type <TYPE>` | `static`、`shared` 或 `both`（默认：`both`）|
+| `--build-as <TYPE>` | `static`、`shared` 或 `both`（默认：`both`）|
 | `--docker` | 使用 Docker 容器构建 |
 | `--auto-docker` | 当本地构建不可用时自动检测并使用 Docker |
 | `-j, --jobs <N>` | 并行构建作业数 |

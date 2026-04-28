@@ -410,7 +410,7 @@ ccgo build <platform> --release
 
 **Usage:**
 ```bash
-ccgo build <platform> --link-type static
+ccgo build <platform> --build-as static
 ```
 
 **Output:** `.a` (Unix), `.lib` (Windows)
@@ -425,7 +425,7 @@ ccgo build <platform> --link-type static
 
 **Usage:**
 ```bash
-ccgo build <platform> --link-type shared
+ccgo build <platform> --build-as shared
 ```
 
 **Output:** `.so` (Unix/Android), `.dylib` (macOS), `.dll` (Windows)
@@ -435,7 +435,7 @@ ccgo build <platform> --link-type shared
 Build both static and shared libraries:
 
 ```bash
-ccgo build <platform> --link-type both
+ccgo build <platform> --build-as both
 ```
 
 ## Toolchain Selection
@@ -554,7 +554,7 @@ ccgo build <platform>
 
 **Optimization tips:**
 1. Use `--arch` to limit architectures during development
-2. Use `--link-type` to build only needed library types
+2. Use `--build-as` to build only needed library types
 3. Enable `ccache` for compiler caching (future feature)
 4. Use prebuilt dependencies (future feature)
 
@@ -686,7 +686,7 @@ Error: c++: fatal error: Killed signal terminated program cc1plus
 
 **Solutions:**
 1. Build fewer architectures: `--arch arm64-v8a`
-2. Build single link type: `--link-type static`
+2. Build single link type: `--build-as static`
 3. Increase Docker memory: Docker Desktop → Preferences → Resources
 4. Use swap space on Linux
 
