@@ -22,18 +22,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are missing or stale relative to the dep's source tree. The materialize
   step spawns a recursive `ccgo build` inside `.ccgo/deps/<name>/` with a
   `--build-as` derived from the consumer's resolved linkage hint, caches
-  via per-platform fingerprint at `.ccgo/deps/<name>/.ccgo_materialize_<platform>.fingerprint`,
-  and exposes the build output to `FindCCGODependencies.cmake` via a
-  `lib/<platform>/` → `cmake_build/<profile>/<platform>/` symlink. See
-  [`docs/dependency-linkage.md`](docs/dependency-linkage.md#source-only-dependencies)
+  via per-platform, per-`--build-as` fingerprint at
+  `.ccgo/deps/<name>/.ccgo_materialize_<platform>_<build_as>.fingerprint`,
+  and exposes the build output to `FindCCGODependencies.cmake` via per-link-type
+  directory symlinks (xcframework-aware on Apple, wholesale on Android/OHOS/
+  Linux/Windows). See [`docs/dependency-linkage.md`](docs/dependency-linkage.md#source-only-dependencies)
   for the full behavior matrix.
 
-  Limitations in this release:
-  * The consumer-side CMake template's source-precedence behavior means
-    a source-shipped dep linked as `shared-external` still ends up
-    statically embedded in practice. Tracked as a follow-up.
-  * Windows path-source deps: the `lib/<platform>/` bridge uses Unix
-    `symlink`; junction/copy fallback is deferred.
+  When the dep ships both `src/` and pre-built `lib/<platform>/` artifacts,
+  the consumer's CMake template now skips the inline source compilation
+  (`<consumer>-deps` static archive) IF the resolved linkage is
+  `shared-external` AND the bridge has populated `lib/<platform>/<link_type>/`.
+  This means `--linkage shared-external` on a source-shipped dep now
+  produces an honest external `.so` reference (DT_NEEDED / LC_LOAD_DYLIB)
+  instead of a duplicate-symbol inline-static copy.
+
+  Windows is supported via NTFS directory junctions (`mklink /J`), which
+  don't require admin or Developer Mode and work on the same volume as
+  the dep — which the cmake_build tree always is.
 
 ### Changed
 

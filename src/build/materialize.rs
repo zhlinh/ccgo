@@ -102,13 +102,23 @@ pub fn compute_source_fingerprint(dep_root: &Path, build_as: LinkType) -> Result
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-/// Per-platform fingerprint sidecar path inside the dep root.
+/// Per-platform, per-build-as fingerprint sidecar path inside the dep root.
+///
+/// Sidecar name is `.ccgo_materialize_<platform>_<build_as>.fingerprint`.
+/// Splitting by build_as is essential when multiple consumers materialize
+/// the same path-source dep with different `--build-as` values
+/// concurrently (e.g. integration test fixtures linked via `path = "../leaf"`):
+/// without it, two parallel runs would race on the same sidecar and
+/// alternate between writing each other's fingerprint, never settling on
+/// "cache hit".
 ///
 /// `platform` must be lowercase (matches `BuildTarget::to_string()` and the
 /// `lib/<platform>/` layout). Mixing case will produce a different sidecar
 /// path and silently invalidate caches.
-pub fn fingerprint_path(dep_root: &Path, platform: &str) -> PathBuf {
-    dep_root.join(format!(".ccgo_materialize_{platform}.fingerprint"))
+pub fn fingerprint_path(dep_root: &Path, platform: &str, build_as: LinkType) -> PathBuf {
+    dep_root.join(format!(
+        ".ccgo_materialize_{platform}_{build_as}.fingerprint"
+    ))
 }
 
 /// Read a previously persisted fingerprint. `None` if the sidecar does
@@ -183,7 +193,7 @@ pub fn materialize_source_deps_inner(
         }
 
         let build_as = build_as_for_hint(consumer_link_type.clone(), *hint);
-        let fp_path = fingerprint_path(&dep_root, &platform_lc);
+        let fp_path = fingerprint_path(&dep_root, &platform_lc, build_as.clone());
         let fp_now = compute_source_fingerprint(&dep_root, build_as.clone())?;
         let fp_prev = read_fingerprint(&fp_path)?;
 
@@ -269,13 +279,25 @@ pub fn materialize_source_deps_inner(
 /// `cmake_build/<profile>/<platform>/` tree as `lib/<platform>/` so the
 /// consumer's `FindCCGODependencies.cmake` walks find the artifacts.
 ///
-/// Implemented as a single directory symlink (Unix) — no per-platform or
-/// per-arch logic needed because the cmake_build subtree already mirrors
-/// the `{shared,static}/<arch>/...` shape that CMake-Find walks. Pre-existing
-/// `lib/<platform>/` content (e.g. a hand-committed xcframework symlink in
-/// the linkage fixtures) is left alone; we only act when the directory is
-/// absent. On Windows this is a no-op for now — Windows path-source deps
-/// would need junction or copy support, deferred.
+/// Layout per link-type:
+/// * **Apple** (xcframework available) — creates per-xcframework links at
+///   `lib/<platform>/<link_type>/<name>.xcframework` pointing into
+///   `cmake_build/<profile>/<platform>/<link_type>/xcframework/<name>.xcframework`.
+///   This matches `FindCCGODependencies.cmake`'s `file(GLOB *.xcframework
+///   ${LIB_DIR})` walk, which expects the bundle at the top of `<link_type>/`.
+/// * **Non-Apple** (Android/OHOS/Linux/Windows) — links the entire
+///   `<link_type>/` subtree wholesale. The cmake_build layout already
+///   mirrors `<link_type>/<arch>/<lib>` so a coarse symlink works.
+///
+/// Pre-existing `lib/<platform>/<link_type>/` content (e.g. a hand-committed
+/// xcframework symlink in the linkage fixtures) is left alone — we operate
+/// at link-type granularity so a half-curated layout (`static/` committed,
+/// `shared/` missing) lets the bridge fill in only the absent half.
+///
+/// Windows uses NTFS directory junctions via `mklink /J`. Junctions don't
+/// require admin or Developer Mode (unlike Win32 symlinks), so this works
+/// for any user on any modern Windows. They behave like symlinks for the
+/// CMake-Find globs we care about.
 fn bridge_cmake_build_to_lib(dep_root: &Path, platform: &str, release: bool) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
     let cmake_build_platform = dep_root.join("cmake_build").join(profile).join(platform);
@@ -288,44 +310,104 @@ fn bridge_cmake_build_to_lib(dep_root: &Path, platform: &str, release: bool) -> 
     }
 
     let lib_platform = dep_root.join("lib").join(platform);
-    if lib_platform.exists() {
-        // Pre-existing layout — committed symlinks (e.g. tests/fixtures/
-        // linkage/leaf), or a previously-bridged dep. Don't disturb.
-        //
-        // Edge case: if the curated layout covers only one link type
-        // (e.g. lib/<platform>/static/ exists but shared/ is missing),
-        // the bridge skips entirely rather than filling in the missing
-        // half. That's the safer default — touching the curated tree
-        // could conflict with hand-rolled symlink/copy strategies. Deps
-        // in this state need to commit both halves up front, or delete
-        // the partial layout to let materialize own it.
-        return Ok(());
-    }
 
-    std::fs::create_dir_all(dep_root.join("lib")).with_context(|| {
-        format!(
-            "failed to create lib/ in dep {}",
-            dep_root.display()
-        )
-    })?;
+    for link_type in ["shared", "static"] {
+        let cmake_link_dir = cmake_build_platform.join(link_type);
+        if !cmake_link_dir.is_dir() {
+            continue;
+        }
 
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&cmake_build_platform, &lib_platform).with_context(|| {
-            format!(
-                "failed to symlink {} -> {}",
-                lib_platform.display(),
-                cmake_build_platform.display()
-            )
-        })?;
-    }
-    #[cfg(not(unix))]
-    {
-        // TODO: junction or copy fallback for Windows path-source deps.
-        let _ = (cmake_build_platform, lib_platform);
+        let lib_link_dir = lib_platform.join(link_type);
+        if lib_link_dir.exists() {
+            // Pre-existing — committed by the dep author, or bridged on a
+            // prior run. Don't disturb.
+            continue;
+        }
+
+        // Apple variant: cmake_build contains an extra `xcframework/`
+        // intermediate dir under each link_type. Bridge per-bundle so
+        // FindCCGODependencies's `file(GLOB *.xcframework ${LIB_DIR})`
+        // sees the bundles at the depth it expects.
+        let xcfw_intermediate = cmake_link_dir.join("xcframework");
+        if xcfw_intermediate.is_dir() {
+            std::fs::create_dir_all(&lib_link_dir).with_context(|| {
+                format!("failed to create {}", lib_link_dir.display())
+            })?;
+            for entry in std::fs::read_dir(&xcfw_intermediate).with_context(|| {
+                format!("failed to read {}", xcfw_intermediate.display())
+            })? {
+                let entry = entry?;
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".xcframework")
+                {
+                    create_dir_link(&entry.path(), &lib_link_dir.join(entry.file_name()))?;
+                }
+            }
+        } else {
+            // Non-Apple: the cmake_build subtree mirrors
+            // `<link_type>/<arch>/<lib>`. A wholesale link is enough.
+            std::fs::create_dir_all(&lib_platform).with_context(|| {
+                format!("failed to create {}", lib_platform.display())
+            })?;
+            create_dir_link(&cmake_link_dir, &lib_link_dir)?;
+        }
     }
 
     Ok(())
+}
+
+/// Cross-platform "make a directory link from `target` pointing at `source`".
+///
+/// * Unix: standard `symlink` (always available).
+/// * Windows: NTFS junction via `cmd /c mklink /J`. Junctions don't need
+///   admin or Developer Mode, work on the same volume (which the cmake_build
+///   tree always is — it's inside the dep), and behave like symlinks for
+///   `file(GLOB ...)` and `EXISTS` which is all FindCCGODependencies needs.
+///
+/// `target` must not yet exist; `source` must exist and be a directory. The
+/// bridge caller already enforces those invariants.
+fn create_dir_link(source: &Path, target: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(source, target).with_context(|| {
+            format!(
+                "failed to symlink {} -> {}",
+                target.display(),
+                source.display()
+            )
+        })
+    }
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(target)
+            .arg(source)
+            .status()
+            .with_context(|| {
+                format!(
+                    "failed to spawn `cmd /c mklink /J` for {} -> {}",
+                    target.display(),
+                    source.display()
+                )
+            })?;
+        if !status.success() {
+            anyhow::bail!(
+                "`mklink /J {} {}` exited with code {:?}",
+                target.display(),
+                source.display(),
+                status.code()
+            );
+        }
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (source, target);
+        anyhow::bail!("create_dir_link is not implemented for this OS");
+    }
 }
 
 #[cfg(test)]
@@ -467,7 +549,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(consumer.join(".ccgo"));
         let _ = std::fs::remove_dir_all(leaf.join("cmake_build"));
         let _ = std::fs::remove_dir_all(leaf.join("lib"));
-        let _ = std::fs::remove_file(leaf.join(".ccgo_materialize_macos.fingerprint"));
+        for build_as in &["both", "shared", "static"] {
+            let _ = std::fs::remove_file(
+                leaf.join(format!(".ccgo_materialize_macos_{build_as}.fingerprint")),
+            );
+        }
 
         let deps_dir = consumer.join(".ccgo/deps");
         std::fs::create_dir_all(&deps_dir).unwrap();
@@ -506,9 +592,10 @@ mod tests {
             leaf.join("cmake_build").exists(),
             "leaf should have produced cmake_build/ after materialize"
         );
+        // hint=None → driver picks build_as=Both → sidecar lives at the Both variant.
         assert!(
-            leaf.join(".ccgo_materialize_macos.fingerprint").exists(),
-            "fingerprint sidecar should be persisted after a successful spawn"
+            leaf.join(".ccgo_materialize_macos_both.fingerprint").exists(),
+            "fingerprint sidecar (Both variant) should be persisted after a successful spawn"
         );
     }
 
@@ -543,7 +630,7 @@ mod tests {
 
         let build_as = build_as_for_hint(LinkType::Both, None);
         let fp = compute_source_fingerprint(&dep_root, build_as.clone()).unwrap();
-        write_fingerprint(&fingerprint_path(&dep_root, "macos"), &fp).unwrap();
+        write_fingerprint(&fingerprint_path(&dep_root, "macos", build_as.clone()), &fp).unwrap();
 
         let sentinel = tmp.path().join("does-not-exist-and-must-not-be-spawned");
         let result = materialize_source_deps_inner(
@@ -571,8 +658,10 @@ mod tests {
         let dep_root = make_synthetic_dep(&project, "leaf");
 
         // Persist a fingerprint that won't match the current source.
+        // Hint=None → driver picks build_as=Both, so write the sidecar
+        // for that variant.
         write_fingerprint(
-            &fingerprint_path(&dep_root, "macos"),
+            &fingerprint_path(&dep_root, "macos", LinkType::Both),
             "stale-fingerprint-0000",
         )
         .unwrap();
@@ -609,7 +698,9 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let dep_root = make_synthetic_dep(&project, "leaf");
 
-        let fp_path = fingerprint_path(&dep_root, "macos");
+        // The driver picks build_as=Both for hint=None, so the sidecar
+        // it will write/read lives at the Both variant path.
+        let fp_path = fingerprint_path(&dep_root, "macos", LinkType::Both);
         assert!(
             !fp_path.exists(),
             "test setup invariant: no fingerprint sidecar yet"
@@ -645,7 +736,7 @@ mod tests {
 
         let build_as = build_as_for_hint(LinkType::Both, None);
         let fp = compute_source_fingerprint(&dep_root, build_as.clone()).unwrap();
-        write_fingerprint(&fingerprint_path(&dep_root, "macos"), &fp).unwrap();
+        write_fingerprint(&fingerprint_path(&dep_root, "macos", build_as.clone()), &fp).unwrap();
 
         // Now wipe lib/ to simulate the user nuking build artifacts.
         std::fs::remove_dir_all(dep_root.join("lib")).unwrap();

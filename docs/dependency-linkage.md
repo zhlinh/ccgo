@@ -105,11 +105,14 @@ ccgo rebuilds `stdcomm` as a `.so` on the next build.
 
 ### Caching
 
-The materialize step persists a per-platform fingerprint at
-`.ccgo/deps/<name>/.ccgo_materialize_<platform>.fingerprint`. The fingerprint
-is a SHA-256 over (sorted source-tree mtimes + sizes + paths) + the `CCGO.toml`
-content + the requested `--build-as`. Subsequent builds skip the recursive
-spawn when the fingerprint matches AND `lib/<platform>/` still has artifacts.
+The materialize step persists a per-platform, per-`--build-as` fingerprint at
+`.ccgo/deps/<name>/.ccgo_materialize_<platform>_<build_as>.fingerprint`.
+The fingerprint is a SHA-256 over (sorted source-tree mtimes + sizes + paths)
++ the `CCGO.toml` content + the requested `--build-as`. Subsequent builds
+skip the recursive spawn when the fingerprint matches AND `lib/<platform>/`
+still has artifacts. Splitting the sidecar by `build_as` prevents two
+parallel builds of the same path-source dep from racing on a shared sidecar
+when one wants `--build-as shared` and the other wants `--build-as static`.
 
 Behavior matrix:
 
@@ -153,24 +156,33 @@ check its CCGO.toml and try `ccgo build macos --build-as shared` inside that
 directory to reproduce.
 ```
 
-### Known limitations
+### Source vs binary precedence in the consumer's CMake template
 
-* **CMake template's source-precedence behavior**: the consumer-side CMake
-  template currently treats any dep with `<deps>/<name>/src/` visible as a
-  source-level inline dependency, compiling it into a `consumer-deps`
-  static archive even when the dep also has prebuilt `lib/<platform>/`
-  artifacts (which the materialize step just produced). This means a
-  consumer's `--linkage shared-external` for a source-shipped dep currently
-  yields a statically-embedded copy in practice rather than an external
-  `.so` reference. Materialize still produces the `.so`, but the consumer
-  doesn't link against it. This precedence is a pre-existing CCGO design
-  decision and is tracked as a follow-up — making `[[dependencies]]` honor
-  binary artifacts when present is a larger change to the CMake template.
+When a path-source dep ships both `src/` and pre-built `lib/<platform>/`
+artifacts (the latter being what the bridge populates after a successful
+materialize spawn), the consumer's CMake template now skips the inline
+source compilation if the resolved linkage is `shared-external` and the
+bridge has placed a usable shared library at the expected depth. Concretely:
 
-* **Windows materialize is a no-op**: the `bridge_cmake_build_to_lib` step
-  uses Unix `symlink`. Windows path-source deps will need junction or
-  directory-copy fallback — deferred until a Windows path-source use case
-  surfaces.
+* `consumer/.ccgo/deps/<name>/lib/<platform>/shared/<name>.xcframework/`
+  exists (Apple) or `lib/<platform>/shared/<arch>/lib<name>.so` exists
+  (Android/OHOS/Linux) → the dep's `src/` is skipped in the
+  `<consumer>-deps` aggregate. The consumer's main shared target picks up
+  `libleaf.dylib` / `libleaf.so` via DT_NEEDED / LC_LOAD_DYLIB instead.
+* `static-embedded` linkage continues to compile the dep's source into the
+  consumer's archive (or link against the pre-built `.a`), as expected.
+
+Falling back to inline source compilation only happens when no shared
+artifacts are present and the linkage hint either asks for or ends up at
+`static-embedded`. This is the contract the linkage matrix expects.
+
+### Cross-platform bridge
+
+The bridge step uses NTFS directory junctions (`mklink /J`) on Windows in
+place of Unix `symlink`. Junctions don't require admin or Developer Mode
+and work on the same volume as the dep — which the `cmake_build/` tree
+always is. They behave identically to symlinks for the `EXISTS` /
+`file(GLOB ...)` walks that `FindCCGODependencies.cmake` performs.
 
 ## See also
 
