@@ -189,6 +189,70 @@ fn generate_embedded_ccgo_toml(config_file: &Path) -> Result<String> {
     Ok(out)
 }
 
+/// Detect platform from ZIP filename
+fn detect_platform_from_filename(filename: &str) -> Option<String> {
+    let fname_lower = filename.to_lowercase();
+    for plat in &[
+        "android", "ios", "macos", "watchos", "tvos", "windows", "linux", "ohos", "kmp",
+        "conan", "include",
+    ] {
+        if fname_lower.contains(plat) {
+            return Some(plat.to_string());
+        }
+    }
+    None
+}
+
+/// Extract a single ZIP file to the merged directory
+fn extract_zip_to_merged_dir(zip_path: &Path, merged_dir: &Path) -> Result<()> {
+    let file = fs::File::open(zip_path)?;
+    let mut archive = ZipArchive::new(file)?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = merged_dir.join(file.name());
+
+        if file.name().ends_with('/') {
+            fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                fs::create_dir_all(p)?;
+            }
+
+            if !outpath.exists() {
+                let mut outfile = fs::File::create(&outpath)?;
+                std::io::copy(&mut file, &mut outfile)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Write merged directory contents to a ZIP file
+fn write_merged_zip(merged_dir: &Path, output_zip_path: &Path) -> Result<()> {
+    let file = fs::File::create(output_zip_path)?;
+    let mut zip = ZipWriter::new(file);
+    let options: FileOptions<()> = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o755);
+
+    for entry in WalkDir::new(merged_dir) {
+        let entry = entry?;
+        let path = entry.path();
+        let name = path.strip_prefix(merged_dir)?;
+
+        if path.is_file() {
+            zip.start_file(name.to_string_lossy().to_string(), options)?;
+            let mut f = fs::File::open(path)?;
+            let mut buffer = Vec::new();
+            f.read_to_end(&mut buffer)?;
+            zip.write_all(&buffer)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
+}
+
 /// Merge multiple ZIP files into a single unified SDK ZIP
 fn merge_zips(
     zip_files: &[PathBuf],
@@ -201,7 +265,6 @@ fn merge_zips(
     println!("Merging ZIP files into unified SDK");
     println!("{}", "=".repeat(80));
 
-    // Create temporary directory for extraction
     let temp_dir = tempfile::tempdir()?;
     let merged_dir = temp_dir.path().join("merged");
     fs::create_dir_all(&merged_dir)?;
@@ -212,38 +275,10 @@ fn merge_zips(
         let filename = zip_path.file_name().unwrap().to_string_lossy();
         println!("   📦 Processing: {}", filename);
 
-        let file = fs::File::open(zip_path)?;
-        let mut archive = ZipArchive::new(file)?;
+        extract_zip_to_merged_dir(zip_path, &merged_dir)?;
 
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            let outpath = merged_dir.join(file.name());
-
-            if file.name().ends_with('/') {
-                fs::create_dir_all(&outpath)?;
-            } else {
-                if let Some(p) = outpath.parent() {
-                    fs::create_dir_all(p)?;
-                }
-
-                // Skip if file already exists (don't overwrite)
-                if !outpath.exists() {
-                    let mut outfile = fs::File::create(&outpath)?;
-                    std::io::copy(&mut file, &mut outfile)?;
-                }
-            }
-        }
-
-        // Detect platform from filename
-        let fname_lower = filename.to_lowercase();
-        for plat in &[
-            "android", "ios", "macos", "watchos", "tvos", "windows", "linux", "ohos", "kmp",
-            "conan", "include",
-        ] {
-            if fname_lower.contains(plat) {
-                platforms_merged.insert(plat.to_string());
-                break;
-            }
+        if let Some(plat) = detect_platform_from_filename(&filename) {
+            platforms_merged.insert(plat);
         }
     }
 
@@ -265,28 +300,46 @@ fn merge_zips(
 
     // Create the merged ZIP
     println!("\n   📦 Creating merged SDK ZIP...");
-
-    let file = fs::File::create(output_zip_path)?;
-    let mut zip = ZipWriter::new(file);
-    let options: FileOptions<()> = FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o755);
-
-    for entry in WalkDir::new(&merged_dir) {
-        let entry = entry?;
-        let path = entry.path();
-        let name = path.strip_prefix(&merged_dir)?;
-
-        if path.is_file() {
-            zip.start_file(name.to_string_lossy().to_string(), options)?;
-            let mut f = fs::File::open(path)?;
-            let mut buffer = Vec::new();
-            f.read_to_end(&mut buffer)?;
-            zip.write_all(&buffer)?;
-        }
-    }
+    write_merged_zip(&merged_dir, output_zip_path)?;
 
     // Embed CCGO.toml at ZIP root for use as prebuilt dep
+    embed_ccgo_toml(output_zip_path, config_file)?;
+
+    let size_mb = fs::metadata(output_zip_path)?.len() as f64 / (1024.0 * 1024.0);
+    println!(
+        "   ✅ Created: {} ({:.2} MB)",
+        output_zip_path.file_name().unwrap().to_string_lossy(),
+        size_mb
+    );
+    println!("   📍 Location: {}", output_zip_path.display());
+
+    Ok(())
+}
+
+/// Embed CCGO.toml into an existing ZIP file
+fn embed_ccgo_toml(zip_path: &Path, config_file: &Path) -> Result<()> {
+    // Read existing zip
+    let file = fs::File::open(zip_path)?;
+    let mut archive = ZipArchive::new(file)?;
+
+    // Create temp file for new zip
+    let temp_path = zip_path.with_extension("tmp");
+    let out_file = fs::File::create(&temp_path)?;
+    let mut zip = ZipWriter::new(out_file);
+
+    // Copy all existing entries
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let name = entry.name().to_string();
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(entry.compression());
+        zip.start_file(&name, options)?;
+        let mut buffer = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut buffer)?;
+        zip.write_all(&buffer)?;
+    }
+
+    // Add CCGO.toml
     match generate_embedded_ccgo_toml(config_file) {
         Ok(toml_content) => {
             let options = zip::write::SimpleFileOptions::default()
@@ -301,15 +354,7 @@ fn merge_zips(
     }
 
     zip.finish()?;
-
-    let size_mb = fs::metadata(output_zip_path)?.len() as f64 / (1024.0 * 1024.0);
-    println!(
-        "   ✅ Created: {} ({:.2} MB)",
-        output_zip_path.file_name().unwrap().to_string_lossy(),
-        size_mb
-    );
-    println!("   📍 Location: {}", output_zip_path.display());
-
+    fs::rename(&temp_path, zip_path)?;
     Ok(())
 }
 
@@ -328,28 +373,8 @@ fn print_zip_contents(zip_path: &Path, indent: &str) -> Result<()> {
     Ok(())
 }
 
-/// Publish packaged artifacts to a git distribution branch using a worktree.
-///
-/// Steps:
-///  1. Check that we are in a git repository.
-///  2. Create (or reset) a temporary git worktree for `branch`.
-///  3. Copy every file from `package_dir` into the worktree root.
-///  4. Commit the changes with a version-stamped message.
-///  5. Optionally push the branch to `origin`.
-///  6. Remove the worktree.
-fn publish_to_dist_branch(
-    project_dir: &Path,
-    package_dir: &Path,
-    branch: &str,
-    project_name: &str,
-    version: &str,
-    push: bool,
-) -> Result<()> {
-    println!("\n{}", "=".repeat(80));
-    println!("Publishing to dist branch: {}", branch);
-    println!("{}", "=".repeat(80));
-
-    // Verify we are inside a git repo
+/// Verify we're in a git repo and return the repo root path
+fn get_git_repo_root(project_dir: &Path) -> Result<PathBuf> {
     let git_check = Command::new("git")
         .current_dir(project_dir)
         .args(["rev-parse", "--git-dir"])
@@ -359,40 +384,44 @@ fn publish_to_dist_branch(
         return Err(anyhow!("Not inside a git repository"));
     }
 
-    // Locate the .git directory so we can place the worktree alongside it
     let git_dir_out = String::from_utf8_lossy(&git_check.stdout).trim().to_string();
-    // git_dir_out is relative or absolute; make it absolute
     let git_dir = if Path::new(&git_dir_out).is_absolute() {
         PathBuf::from(&git_dir_out)
     } else {
         project_dir.join(&git_dir_out)
     };
-    let repo_root = git_dir.parent().unwrap_or(project_dir);
+    Ok(git_dir.parent().unwrap_or(project_dir).to_path_buf())
+}
 
-    let worktree_path = repo_root.join(".ccgo-dist-worktree");
-
-    // Remove stale worktree if it already exists
-    if worktree_path.exists() {
-        println!("   🧹 Removing stale worktree...");
-        let _ = Command::new("git")
-            .current_dir(project_dir)
-            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
-            .status();
-        if worktree_path.exists() {
-            fs::remove_dir_all(&worktree_path)?;
-        }
+/// Remove stale worktree if it exists
+fn remove_stale_worktree(project_dir: &Path, worktree_path: &Path) -> Result<()> {
+    if !worktree_path.exists() {
+        return Ok(());
     }
+    println!("   🧹 Removing stale worktree...");
+    let _ = Command::new("git")
+        .current_dir(project_dir)
+        .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+        .status();
+    if worktree_path.exists() {
+        fs::remove_dir_all(worktree_path)?;
+    }
+    Ok(())
+}
 
-    // Check if the branch exists (locally)
-    let branch_exists = Command::new("git")
+/// Check if a branch exists locally
+fn branch_exists_locally(project_dir: &Path, branch: &str) -> bool {
+    Command::new("git")
         .current_dir(project_dir)
         .args(["rev-parse", "--verify", branch])
         .status()
         .map(|s| s.success())
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
 
-    if branch_exists {
-        // Checkout existing branch into worktree
+/// Create worktree for existing branch or new orphan branch
+fn create_worktree_for_branch(project_dir: &Path, worktree_path: &Path, branch: &str) -> Result<()> {
+    if branch_exists_locally(project_dir, branch) {
         println!("   📂 Checking out existing branch '{}'...", branch);
         let status = Command::new("git")
             .current_dir(project_dir)
@@ -403,7 +432,6 @@ fn publish_to_dist_branch(
             return Err(anyhow!("git worktree add failed"));
         }
     } else {
-        // Create orphan branch in worktree (no parent commits)
         println!("   📂 Creating new orphan branch '{}'...", branch);
         let status = Command::new("git")
             .current_dir(project_dir)
@@ -414,10 +442,13 @@ fn publish_to_dist_branch(
             return Err(anyhow!("git worktree add --orphan failed"));
         }
     }
+    Ok(())
+}
 
-    // Clear the worktree (keep .git file that links back to main repo)
+/// Clear worktree contents (keep .git file)
+fn clear_worktree_directory(worktree_path: &Path) -> Result<()> {
     println!("   🧹 Clearing worktree...");
-    if let Ok(entries) = fs::read_dir(&worktree_path) {
+    if let Ok(entries) = fs::read_dir(worktree_path) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             if name == ".git" {
@@ -431,8 +462,11 @@ fn publish_to_dist_branch(
             }
         }
     }
+    Ok(())
+}
 
-    // Copy all packaged files into the worktree root
+/// Copy artifacts from package_dir to worktree
+fn copy_artifacts_to_worktree(package_dir: &Path, worktree_path: &Path) -> Result<usize> {
     println!("   📦 Copying artifacts...");
     let mut copied = 0usize;
     for entry in fs::read_dir(package_dir)
@@ -443,32 +477,22 @@ fn publish_to_dist_branch(
         let dst = worktree_path.join(entry.file_name());
         fs::copy(&src, &dst)
             .with_context(|| format!("Failed to copy {} to worktree", src.display()))?;
-        println!(
-            "   ✓ {}",
-            entry.file_name().to_string_lossy()
-        );
+        println!("   ✓ {}", entry.file_name().to_string_lossy());
         copied += 1;
     }
+    Ok(copied)
+}
 
-    if copied == 0 {
-        // Clean up and bail
-        let _ = Command::new("git")
-            .current_dir(project_dir)
-            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
-            .status();
-        return Err(anyhow!("No artifacts found in package directory"));
-    }
-
-    // Stage all changes
+/// Commit changes in worktree
+fn commit_dist_changes(worktree_path: &Path, project_name: &str, version: &str) -> Result<()> {
     Command::new("git")
-        .current_dir(&worktree_path)
+        .current_dir(worktree_path)
         .args(["add", "-A"])
         .status()
         .context("Failed to stage dist files")?;
 
-    // Check if there is anything to commit
     let porcelain = Command::new("git")
-        .current_dir(&worktree_path)
+        .current_dir(worktree_path)
         .args(["status", "--porcelain"])
         .output()
         .context("Failed to check git status")?;
@@ -479,7 +503,7 @@ fn publish_to_dist_branch(
         let commit_msg = format!("dist: {} v{}", project_name, version);
         println!("   💾 Committing: {}", commit_msg);
         let status = Command::new("git")
-            .current_dir(&worktree_path)
+            .current_dir(worktree_path)
             .args(["commit", "-m", &commit_msg])
             .status()
             .context("Failed to commit dist artifacts")?;
@@ -487,35 +511,66 @@ fn publish_to_dist_branch(
             return Err(anyhow!("git commit failed in dist branch"));
         }
     }
+    Ok(())
+}
 
-    // Remove worktree (branch persists in the repo)
+/// Push dist branch to origin
+fn push_dist_branch(project_dir: &Path, branch: &str) -> Result<()> {
+    println!("   📤 Pushing branch '{}' to origin...", branch);
+    let status = Command::new("git")
+        .current_dir(project_dir)
+        .args(["push", "origin", branch])
+        .status()
+        .context("Failed to push dist branch")?;
+    if !status.success() {
+        return Err(anyhow!("git push failed for branch '{}'", branch));
+    }
+    println!("   ✅ Pushed '{}' to origin", branch);
+    Ok(())
+}
+
+/// Publish packaged artifacts to a git distribution branch using a worktree.
+fn publish_to_dist_branch(
+    project_dir: &Path,
+    package_dir: &Path,
+    branch: &str,
+    project_name: &str,
+    version: &str,
+    push: bool,
+) -> Result<()> {
+    println!("\n{}", "=".repeat(80));
+    println!("Publishing to dist branch: {}", branch);
+    println!("{}", "=".repeat(80));
+
+    let repo_root = get_git_repo_root(project_dir)?;
+    let worktree_path = repo_root.join(".ccgo-dist-worktree");
+
+    remove_stale_worktree(project_dir, &worktree_path)?;
+    create_worktree_for_branch(project_dir, &worktree_path, branch)?;
+    clear_worktree_directory(&worktree_path)?;
+
+    let copied = copy_artifacts_to_worktree(package_dir, &worktree_path)?;
+    if copied == 0 {
+        let _ = Command::new("git")
+            .current_dir(project_dir)
+            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+            .status();
+        return Err(anyhow!("No artifacts found in package directory"));
+    }
+
+    commit_dist_changes(&worktree_path, project_name, version)?;
+
     let _ = Command::new("git")
         .current_dir(project_dir)
         .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
         .status();
 
-    println!(
-        "\n   ✅ Artifacts committed to branch '{}'",
-        branch
-    );
+    println!("\n   ✅ Artifacts committed to branch '{}'", branch);
 
-    // Push if requested
     if push {
-        println!("   📤 Pushing branch '{}' to origin...", branch);
-        let status = Command::new("git")
-            .current_dir(project_dir)
-            .args(["push", "origin", branch])
-            .status()
-            .context("Failed to push dist branch")?;
-        if !status.success() {
-            return Err(anyhow!("git push failed for branch '{}'", branch));
-        }
-        println!("   ✅ Pushed '{}' to origin", branch);
+        push_dist_branch(project_dir, branch)?;
     } else {
-        println!(
-            "   💡 Use --dist-push to push '{}' to remote",
-            branch
-        );
+        println!("   💡 Use --dist-push to push '{}' to remote", branch);
     }
 
     Ok(())
@@ -558,6 +613,228 @@ pub struct PackageCommand {
     pub dist_push: bool,
 }
 
+/// Get default platforms to scan
+fn get_default_platforms() -> Vec<String> {
+    vec![
+        "android", "ios", "macos", "tvos", "watchos", "windows", "linux", "ohos", "conan", "kmp",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
+/// Collect platform ZIP artifacts
+struct PlatformArtifacts {
+    collected: Vec<String>,
+    failed: Vec<String>,
+    zip_files: Vec<PathBuf>,
+}
+
+fn collect_platform_artifacts(
+    project_dir: &Path,
+    platforms: &[String],
+    release: bool,
+) -> PlatformArtifacts {
+    let mut collected = Vec::new();
+    let mut failed = Vec::new();
+    let mut all_zip_files = Vec::new();
+
+    for platform in platforms {
+        let zip_files = find_platform_zips(project_dir, platform, release);
+        if !zip_files.is_empty() {
+            collected.push(platform.clone());
+            for zf in &zip_files {
+                println!("   ✓ Found: {}", zf.file_name().unwrap().to_string_lossy());
+            }
+            all_zip_files.extend(zip_files);
+        } else {
+            failed.push(platform.clone());
+        }
+    }
+
+    PlatformArtifacts {
+        collected,
+        failed,
+        zip_files: all_zip_files,
+    }
+}
+
+/// Print help message when no artifacts found
+fn print_no_artifacts_help(build_mode: &str, release: bool) {
+    println!("\n{}", "=".repeat(80));
+    println!("⚠️  WARNING: No platform artifacts found!");
+    println!("{}", "=".repeat(80));
+    println!("\nIt looks like no platforms have been built yet in {} mode.", build_mode);
+    println!("\nTo build platforms, use:");
+    if release {
+        println!("  ccgo build android --release");
+        println!("  ccgo build ios --release");
+        println!("  ccgo build all --release");
+    } else {
+        println!("  ccgo build android");
+        println!("  ccgo build ios");
+        println!("  ccgo build all");
+    }
+    println!("\nThen run 'ccgo package{}' again.\n", if release { " --release" } else { "" });
+}
+
+/// Handle merged mode packaging
+fn handle_merged_mode(
+    all_zip_files: &[PathBuf],
+    output_path: &Path,
+    project_name: &str,
+    version: &str,
+    config_file: &Path,
+    collected_platforms: &[String],
+) -> Result<()> {
+    let version_clean = version.strip_prefix('v').unwrap_or(version);
+    let sdk_zip_name = format!(
+        "{}_CCGO_PACKAGE-{}.zip",
+        project_name.to_uppercase(),
+        version_clean
+    );
+    let sdk_zip_path = output_path.join(&sdk_zip_name);
+
+    merge_zips(all_zip_files, &sdk_zip_path, project_name, version, config_file)?;
+
+    println!("\n{}", "=".repeat(80));
+    println!("Package Summary");
+    println!("{}", "=".repeat(80));
+    println!("\nPlatforms merged: {}", collected_platforms.join(", "));
+    println!("Output: {}", sdk_zip_path.display());
+
+    let size_mb = fs::metadata(&sdk_zip_path)?.len() as f64 / (1024.0 * 1024.0);
+    println!("Size: {:.2} MB", size_mb);
+    Ok(())
+}
+
+/// Handle individual mode packaging
+fn handle_individual_mode(all_zip_files: &[PathBuf], output_path: &Path) -> Result<()> {
+    println!("\n{}", "=".repeat(80));
+    println!("Copying Individual ZIP Files");
+    println!("{}", "=".repeat(80));
+
+    let mut copied_files = Vec::new();
+    for zip_file in all_zip_files {
+        let filename = zip_file.file_name().unwrap();
+        let dest_path = output_path.join(filename);
+        fs::copy(zip_file, &dest_path)?;
+        let size_mb = fs::metadata(&dest_path)?.len() as f64 / (1024.0 * 1024.0);
+        println!("   ✓ {} ({:.2} MB)", filename.to_string_lossy(), size_mb);
+        copied_files.push(filename.to_string_lossy().to_string());
+    }
+
+    println!("\n{}", "=".repeat(80));
+    println!("Package Summary");
+    println!("{}", "=".repeat(80));
+    println!("\nOutput Directory: {}", output_path.display());
+    println!("\nCopied {} artifact(s):", copied_files.len());
+    println!("{}", "-".repeat(60));
+    for f in &copied_files {
+        let file_path = output_path.join(f);
+        let size_mb = fs::metadata(&file_path)?.len() as f64 / (1024.0 * 1024.0);
+        println!("  {} ({:.2} MB)", f, size_mb);
+    }
+    println!("{}", "-".repeat(60));
+    Ok(())
+}
+
+/// Print platform status
+fn print_platform_status(collected_platforms: &[String], failed_platforms: &[String]) {
+    println!("\n{}", "=".repeat(80));
+    println!("Platform Status");
+    println!("{}", "=".repeat(80));
+    println!();
+
+    for platform in collected_platforms {
+        println!("  {} {}", style("✅").green(), platform.to_uppercase());
+    }
+    for platform in failed_platforms {
+        println!(
+            "  {} {} (not built)",
+            style("⚠️").yellow(),
+            platform.to_uppercase()
+        );
+    }
+
+    let total_platforms = collected_platforms.len() + failed_platforms.len();
+    println!(
+        "\nTotal: {}/{} platform(s)",
+        collected_platforms.len(),
+        total_platforms
+    );
+    println!("{}", "=".repeat(80));
+}
+
+/// Print package contents
+fn print_package_contents(output_path: &Path) -> Result<()> {
+    println!("\n{}", "=".repeat(80));
+    println!("Package Contents");
+    println!("{}", "=".repeat(80));
+    println!("\n📁 {}/", output_path.display());
+
+    if let Ok(entries) = fs::read_dir(output_path) {
+        let mut items: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        items.sort_by_key(|e| e.file_name());
+
+        for entry in items {
+            let path = entry.path();
+            if path.is_file() {
+                let filename = path.file_name().unwrap().to_string_lossy();
+                let size_mb = fs::metadata(&path)?.len() as f64 / (1024.0 * 1024.0);
+                println!("   📦 {} ({:.2} MB)", filename, size_mb);
+
+                if filename.ends_with(".zip") {
+                    if let Err(e) = print_zip_contents(&path, "      ") {
+                        println!("      Error reading ZIP contents: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    println!("\n{}", "=".repeat(80));
+    println!("\n{}", style("✅ Package complete!").green().bold());
+    println!("   Output: {}\n", output_path.display());
+    Ok(())
+}
+
+/// Get dist branch from options
+fn get_dist_branch(dist_branch: Option<&str>, dist: bool) -> Option<&'static str> {
+    if let Some(b) = dist_branch {
+        Some(b.to_string().leak())
+    } else if dist {
+        Some("dist")
+    } else {
+        None
+    }
+}
+
+/// Print package header info
+fn print_package_header(project_name: &str, version: &str, build_mode: &str, output_path: &Path, merge_mode: bool) {
+    let mode_str = if merge_mode {
+        "Merge into unified SDK"
+    } else {
+        "Keep individual ZIPs"
+    };
+
+    println!("\nProject: {}", project_name);
+    println!("Version: {}", version);
+    println!("Build Mode: {}", build_mode);
+    println!("Output: {}", output_path.display());
+    println!("Mode: {}", mode_str);
+}
+
+/// Setup output directory (clean and create)
+fn setup_output_directory(output_path: &Path) -> Result<()> {
+    if output_path.exists() {
+        println!("\n🧹 Cleaning output directory...");
+        fs::remove_dir_all(output_path)?;
+    }
+    fs::create_dir_all(output_path)?;
+    Ok(())
+}
+
 impl PackageCommand {
     /// Execute the package command
     pub fn execute(self, _verbose: bool) -> Result<()> {
@@ -565,22 +842,17 @@ impl PackageCommand {
         println!("CCGO Package - Collect Build Artifacts");
         println!("{}", "=".repeat(80));
 
-        // Get current working directory
         let project_dir = std::env::current_dir()
             .context("Failed to get current working directory")?;
 
-        // Find CCGO.toml
         let config_file = find_ccgo_toml(&project_dir)?;
 
-        // Get project info
         let project_name = get_project_name(&config_file)?;
         let version = get_version(&config_file, self.version.as_deref(), self.release);
 
-        // Determine build mode and default output path
         let build_mode = if self.release { "release" } else { "debug" };
         let default_output = format!("./target/{}/package", build_mode);
 
-        // Convert output path to absolute path
         let output_str = self.output.as_deref().unwrap_or(&default_output);
         let output_path = if Path::new(output_str).is_absolute() {
             PathBuf::from(output_str)
@@ -589,204 +861,42 @@ impl PackageCommand {
         };
 
         let merge_mode = !self.no_merge;
-        let mode_str = if merge_mode {
-            "Merge into unified SDK"
-        } else {
-            "Keep individual ZIPs"
-        };
 
-        println!("\nProject: {}", project_name);
-        println!("Version: {}", version);
-        println!("Build Mode: {}", build_mode);
-        println!("Output: {}", output_path.display());
-        println!("Mode: {}", mode_str);
-
-        // Clean output directory
-        if output_path.exists() {
-            println!("\n🧹 Cleaning output directory...");
-            fs::remove_dir_all(&output_path)?;
-        }
-
-        // Create output directory
-        fs::create_dir_all(&output_path)?;
+        print_package_header(&project_name, &version, build_mode, &output_path, merge_mode);
+        setup_output_directory(&output_path)?;
 
         println!("\n{}", "=".repeat(80));
         println!("Scanning Build Artifacts");
         println!("{}", "=".repeat(80));
 
-        // Define platforms to scan
-        let platforms: Vec<String> = if let Some(platforms_str) = &self.platforms {
-            platforms_str.split(',').map(|s| s.trim().to_string()).collect()
-        } else {
-            vec![
-                "android", "ios", "macos", "tvos", "watchos", "windows", "linux", "ohos", "conan",
-                "kmp",
-            ]
-            .into_iter()
-            .map(String::from)
-            .collect()
-        };
+        let platforms: Vec<String> = self.platforms.as_ref()
+            .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
+            .unwrap_or_else(get_default_platforms);
 
-        let mut collected_platforms = Vec::new();
-        let mut failed_platforms = Vec::new();
-        let mut all_zip_files = Vec::new();
+        let artifacts = collect_platform_artifacts(&project_dir, &platforms, self.release);
 
-        for platform in &platforms {
-            let zip_files = find_platform_zips(&project_dir, platform, self.release);
-            if !zip_files.is_empty() {
-                collected_platforms.push(platform.clone());
-                for zf in &zip_files {
-                    println!("   ✓ Found: {}", zf.file_name().unwrap().to_string_lossy());
-                }
-                all_zip_files.extend(zip_files);
-            } else {
-                failed_platforms.push(platform.clone());
-            }
-        }
-
-        // Check if any artifacts were found
-        if collected_platforms.is_empty() {
-            println!("\n{}", "=".repeat(80));
-            println!("⚠️  WARNING: No platform artifacts found!");
-            println!("{}", "=".repeat(80));
-            println!("\nIt looks like no platforms have been built yet in {} mode.", build_mode);
-            println!("\nTo build platforms, use:");
-            if self.release {
-                println!("  ccgo build android --release");
-                println!("  ccgo build ios --release");
-                println!("  ccgo build all --release");
-            } else {
-                println!("  ccgo build android");
-                println!("  ccgo build ios");
-                println!("  ccgo build all");
-            }
-            println!("\nThen run 'ccgo package{}' again.\n", if self.release { " --release" } else { "" });
+        if artifacts.collected.is_empty() {
+            print_no_artifacts_help(build_mode, self.release);
             return Err(anyhow!("No platform artifacts found in {} mode", build_mode));
         }
 
         if merge_mode {
-            // Merge all ZIPs into one unified SDK ZIP
-            // Strip leading 'v' from version if present (e.g., v1.0.2 -> 1.0.2)
-            let version_clean = version.strip_prefix('v').unwrap_or(&version);
-            // Merged cross-platform artifact produced by `ccgo package`.
-            // Namespaced with `CCGO_PACKAGE` to distinguish it from the
-            // per-platform `<NAME>_<PLATFORM>_SDK-…` archives that the
-            // build step emits (those keep their legacy naming).
-            let sdk_zip_name = format!(
-                "{}_CCGO_PACKAGE-{}.zip",
-                project_name.to_uppercase(),
-                version_clean
-            );
-            let sdk_zip_path = output_path.join(&sdk_zip_name);
-
-            merge_zips(&all_zip_files, &sdk_zip_path, &project_name, &version, &config_file)?;
-
-            // Print summary
-            println!("\n{}", "=".repeat(80));
-            println!("Package Summary");
-            println!("{}", "=".repeat(80));
-            println!("\nPlatforms merged: {}", collected_platforms.join(", "));
-            println!("Output: {}", sdk_zip_path.display());
-
-            let size_mb = fs::metadata(&sdk_zip_path)?.len() as f64 / (1024.0 * 1024.0);
-            println!("Size: {:.2} MB", size_mb);
+            handle_merged_mode(
+                &artifacts.zip_files,
+                &output_path,
+                &project_name,
+                &version,
+                &config_file,
+                &artifacts.collected,
+            )?;
         } else {
-            // Copy individual ZIPs to output directory
-            println!("\n{}", "=".repeat(80));
-            println!("Copying Individual ZIP Files");
-            println!("{}", "=".repeat(80));
-
-            let mut copied_files = Vec::new();
-            for zip_file in &all_zip_files {
-                let filename = zip_file.file_name().unwrap();
-                let dest_path = output_path.join(filename);
-                fs::copy(zip_file, &dest_path)?;
-                let size_mb = fs::metadata(&dest_path)?.len() as f64 / (1024.0 * 1024.0);
-                println!("   ✓ {} ({:.2} MB)", filename.to_string_lossy(), size_mb);
-                copied_files.push(filename.to_string_lossy().to_string());
-            }
-
-            // Print summary
-            println!("\n{}", "=".repeat(80));
-            println!("Package Summary");
-            println!("{}", "=".repeat(80));
-            println!("\nOutput Directory: {}", output_path.display());
-            println!("\nCopied {} artifact(s):", copied_files.len());
-            println!("{}", "-".repeat(60));
-            for f in &copied_files {
-                let file_path = output_path.join(f);
-                let size_mb = fs::metadata(&file_path)?.len() as f64 / (1024.0 * 1024.0);
-                println!("  {} ({:.2} MB)", f, size_mb);
-            }
-            println!("{}", "-".repeat(60));
+            handle_individual_mode(&artifacts.zip_files, &output_path)?;
         }
 
-        // Platform status
-        println!("\n{}", "=".repeat(80));
-        println!("Platform Status");
-        println!("{}", "=".repeat(80));
-        println!();
+        print_platform_status(&artifacts.collected, &artifacts.failed);
+        print_package_contents(&output_path)?;
 
-        for platform in &collected_platforms {
-            println!("  {} {}", style("✅").green(), platform.to_uppercase());
-        }
-        for platform in &failed_platforms {
-            println!(
-                "  {} {} (not built)",
-                style("⚠️").yellow(),
-                platform.to_uppercase()
-            );
-        }
-
-        let total_platforms = collected_platforms.len() + failed_platforms.len();
-        println!(
-            "\nTotal: {}/{} platform(s)",
-            collected_platforms.len(),
-            total_platforms
-        );
-        println!("{}", "=".repeat(80));
-
-        // Print package contents
-        println!("\n{}", "=".repeat(80));
-        println!("Package Contents");
-        println!("{}", "=".repeat(80));
-        println!("\n📁 {}/", output_path.display());
-
-        if let Ok(entries) = fs::read_dir(&output_path) {
-            let mut items: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-            items.sort_by_key(|e| e.file_name());
-
-            for entry in items {
-                let path = entry.path();
-                if path.is_file() {
-                    let filename = path.file_name().unwrap().to_string_lossy();
-                    let size_mb = fs::metadata(&path)?.len() as f64 / (1024.0 * 1024.0);
-                    println!("   📦 {} ({:.2} MB)", filename, size_mb);
-
-                    // If it's a ZIP file, print its contents
-                    if filename.ends_with(".zip") {
-                        if let Err(e) = print_zip_contents(&path, "      ") {
-                            println!("      Error reading ZIP contents: {}", e);
-                        }
-                    }
-                }
-            }
-        }
-
-        println!("\n{}", "=".repeat(80));
-        println!("\n{}", style("✅ Package complete!").green().bold());
-        println!("   Output: {}\n", output_path.display());
-
-        // Publish to dist branch if requested
-        let branch = if let Some(ref b) = self.dist_branch {
-            Some(b.as_str())
-        } else if self.dist {
-            Some("dist")
-        } else {
-            None
-        };
-
-        if let Some(branch) = branch {
+        if let Some(branch) = get_dist_branch(self.dist_branch.as_deref(), self.dist) {
             let version_clean = version.strip_prefix('v').unwrap_or(&version);
             publish_to_dist_branch(
                 &project_dir,

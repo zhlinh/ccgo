@@ -346,13 +346,81 @@ fn cache_path(project_name: &str, version: &str) -> Result<PathBuf> {
         .join(version))
 }
 
+/// List installed packages under $CCGO_HOME/packages/<name>/<version>/
+fn list_installed_libs(packages_root: &Path, any_output: &mut bool) -> Result<()> {
+    if !packages_root.is_dir() {
+        return Ok(());
+    }
+
+    let mut packages: Vec<_> = std::fs::read_dir(packages_root)
+        .with_context(|| format!("Failed to read {}", packages_root.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+    packages.sort_by_key(|e| e.file_name());
+
+    for pkg_entry in packages {
+        let name = pkg_entry.file_name().to_string_lossy().to_string();
+        let mut versions: Vec<_> = match std::fs::read_dir(pkg_entry.path()) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_dir())
+                .collect(),
+            Err(_) => continue,
+        };
+        versions.sort_by_key(|e| e.file_name());
+
+        for ver_entry in versions {
+            let version = ver_entry.file_name().to_string_lossy().to_string();
+            let path = ver_entry.path();
+            println!(
+                "{} {} ({})",
+                style(&name).green().bold(),
+                style(&version).cyan(),
+                path.display()
+            );
+            describe_package_contents(&path);
+            *any_output = true;
+        }
+    }
+    Ok(())
+}
+
+/// List stray bins under $CCGO_HOME/bin/
+fn list_stray_bins(bin_root: &Path, any_output: &mut bool) -> Result<()> {
+    if !bin_root.is_dir() {
+        return Ok(());
+    }
+
+    let stray_bins: Vec<_> = std::fs::read_dir(bin_root)
+        .with_context(|| format!("Failed to read {}", bin_root.display()))?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file() || e.path().is_symlink())
+        .collect();
+
+    if stray_bins.is_empty() {
+        return Ok(());
+    }
+
+    println!("\nBins in {}:", bin_root.display());
+    for b in stray_bins {
+        let name = b.file_name().to_string_lossy().to_string();
+        let p = b.path();
+        if p.is_symlink() {
+            match std::fs::read_link(&p) {
+                Ok(target) => println!("    {} → {}", name, target.display()),
+                Err(_) => println!("    {}", name),
+            }
+        } else {
+            println!("    {}", name);
+        }
+        *any_output = true;
+    }
+    Ok(())
+}
+
 /// `ccgo install --list`: enumerate installed packages under
 /// $CCGO_HOME/packages/<name>/<version>/ and binaries under $CCGO_HOME/bin/.
-///
-/// Output mimics `cargo install --list`:
-///   <name> <version> (<path>)
-///       lib: include/, lib/{platforms…}/
-///       bin: foo → ~/.ccgo/bin/foo
 fn list_installed_packages() -> Result<()> {
     let home = ccgo_home_dir()?;
     let packages_root = home.join("packages");
@@ -360,65 +428,8 @@ fn list_installed_packages() -> Result<()> {
 
     let mut any_output = false;
 
-    // Packages -----------------------------------------------------------
-    if packages_root.is_dir() {
-        let mut packages: Vec<_> = std::fs::read_dir(&packages_root)
-            .with_context(|| format!("Failed to read {}", packages_root.display()))?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_dir())
-            .collect();
-        packages.sort_by_key(|e| e.file_name());
-
-        for pkg_entry in packages {
-            let name = pkg_entry.file_name().to_string_lossy().to_string();
-            let mut versions: Vec<_> = match std::fs::read_dir(pkg_entry.path()) {
-                Ok(rd) => rd
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.path().is_dir())
-                    .collect(),
-                Err(_) => continue,
-            };
-            versions.sort_by_key(|e| e.file_name());
-
-            for ver_entry in versions {
-                let version = ver_entry.file_name().to_string_lossy().to_string();
-                let path = ver_entry.path();
-                println!(
-                    "{} {} ({})",
-                    style(&name).green().bold(),
-                    style(&version).cyan(),
-                    path.display()
-                );
-                describe_package_contents(&path);
-                any_output = true;
-            }
-        }
-    }
-
-    // Stray bin symlinks (if any bins exist without a package dir) -------
-    if bin_root.is_dir() {
-        let stray_bins: Vec<_> = std::fs::read_dir(&bin_root)
-            .with_context(|| format!("Failed to read {}", bin_root.display()))?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file() || e.path().is_symlink())
-            .collect();
-        if !stray_bins.is_empty() {
-            println!("\nBins in {}:", bin_root.display());
-            for b in stray_bins {
-                let name = b.file_name().to_string_lossy().to_string();
-                let p = b.path();
-                if p.is_symlink() {
-                    match std::fs::read_link(&p) {
-                        Ok(target) => println!("    {} → {}", name, target.display()),
-                        Err(_) => println!("    {}", name),
-                    }
-                } else {
-                    println!("    {}", name);
-                }
-                any_output = true;
-            }
-        }
-    }
+    list_installed_libs(&packages_root, &mut any_output)?;
+    list_stray_bins(&bin_root, &mut any_output)?;
 
     if !any_output {
         println!("No packages installed under {}.", home.display());
