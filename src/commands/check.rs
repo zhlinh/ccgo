@@ -65,6 +65,8 @@ impl CheckCommand {
             all_features: self.all_features,
             cache: Some("none".to_string()),
             analytics: false,
+            linkage_default: None,
+            linkage_overrides: std::collections::HashMap::new(),
         };
 
         let ctx = BuildContext::new(current_dir.clone(), config.clone(), options);

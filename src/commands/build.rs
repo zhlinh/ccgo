@@ -118,6 +118,58 @@ pub fn normalize_arch_alias(raw: &str, target: &BuildTarget) -> String {
     }
 }
 
+/// Parse the repeated `--linkage` flag into a default + per-dep override map.
+///
+/// Each spec entry is one of:
+///   * `"<value>"`              — sets the project-wide default linkage.
+///   * `"<name>=<value>"`       — sets a single dep's linkage.
+///   * `"<a>,<b>,..."`          — comma-separated list of either form.
+///
+/// `<value>` is parsed via [`crate::config::Linkage::try_from`], so invalid
+/// values (including the disallowed `"shared-embedded"`) come back with the
+/// same friendly errors the TOML parser uses.
+///
+/// Returns `(default, per_dep_overrides)`. Later occurrences overwrite
+/// earlier ones — `--linkage stdcomm=A --linkage stdcomm=B` resolves to `B`.
+pub fn parse_linkage_arg(
+    specs: &[String],
+) -> anyhow::Result<(Option<crate::config::Linkage>, std::collections::HashMap<String, crate::config::Linkage>)> {
+    use crate::config::Linkage;
+
+    let mut default: Option<Linkage> = None;
+    let mut per_dep: std::collections::HashMap<String, Linkage> = std::collections::HashMap::new();
+
+    for spec in specs {
+        for token in spec.split(',') {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            match token.split_once('=') {
+                Some((name, value)) => {
+                    let name = name.trim();
+                    if name.is_empty() {
+                        anyhow::bail!(
+                            "--linkage '{token}' has empty dependency name; \
+                             expected '<name>=<value>' or '<value>'."
+                        );
+                    }
+                    let parsed = Linkage::try_from(value.trim().to_string())
+                        .map_err(|e| anyhow::anyhow!("--linkage {name}={value}: {e}"))?;
+                    per_dep.insert(name.to_string(), parsed); // last wins
+                }
+                None => {
+                    let parsed = Linkage::try_from(token.to_string())
+                        .map_err(|e| anyhow::anyhow!("--linkage {token}: {e}"))?;
+                    default = Some(parsed); // last wins
+                }
+            }
+        }
+    }
+
+    Ok((default, per_dep))
+}
+
 /// Library linking type
 #[derive(Debug, Clone, Default, ValueEnum, PartialEq)]
 pub enum LinkType {
@@ -211,6 +263,38 @@ pub struct BuildCommand {
     /// Link type
     #[arg(long, value_enum, default_value_t = LinkType::Both)]
     pub link_type: LinkType,
+
+    /// Per-dependency linkage strategy (overrides CCGO.toml).
+    ///
+    /// Each `--linkage` value is one of:
+    ///   * `<value>`              — project-wide default for all deps
+    ///                              (overrides `[build].default_dep_linkage`).
+    ///   * `<name>=<value>`       — single-dep override
+    ///                              (overrides that dep's `[[dependencies]].linkage`).
+    ///   * `<name>=<value>,<...>` — comma-separated list, mixing both shapes.
+    ///
+    /// `<value>` is one of `shared-external`, `static-embedded`, `static-external`.
+    /// Repeatable; later wins on duplicate keys (CLI semantics).
+    ///
+    /// Precedence (highest to lowest):
+    ///   1. `--linkage <name>=<value>`        (CLI per-dep)
+    ///   2. `--linkage <value>`               (CLI default)
+    ///   3. `[[dependencies]].linkage`        (toml per-dep)
+    ///   4. `[build].default_dep_linkage`     (toml default)
+    ///   5. resolver auto-pick from artifacts (no preference)
+    ///
+    /// Useful for size comparisons and quick experiments without editing
+    /// CCGO.toml:
+    ///
+    ///   ccgo build macos --linkage shared-external --release   # compare A
+    ///   ccgo build macos --linkage static-embedded --release   # compare B
+    ///   du -sh target/release/macos/*/lib                      # see the delta
+    ///
+    /// Mixed example:
+    ///   ccgo build macos --linkage shared-external --linkage stdcomm=static-embedded
+    ///   # default = shared-external for everything except stdcomm, which is embedded
+    #[arg(long, verbatim_doc_comment)]
+    pub linkage: Vec<String>,
 
     /// Build all workspace members
     #[arg(long)]
@@ -331,7 +415,7 @@ impl BuildCommand {
     }
 
     /// Create build options from command arguments
-    fn create_build_options(&self, verbose: bool) -> BuildOptions {
+    fn create_build_options(&self, verbose: bool) -> Result<BuildOptions> {
         let architectures = self
             .arch
             .clone()
@@ -339,8 +423,9 @@ impl BuildCommand {
             .unwrap_or_default();
 
         let use_docker = self.should_use_docker(&self.target);
+        let (linkage_default, linkage_overrides) = parse_linkage_arg(&self.linkage)?;
 
-        BuildOptions {
+        Ok(BuildOptions {
             target: self.target.clone(),
             architectures,
             link_type: self.link_type.clone(),
@@ -358,7 +443,9 @@ impl BuildCommand {
             all_features: self.all_features,
             cache: Some(self.cache.clone()),
             analytics: self.analytics,
-        }
+            linkage_default,
+            linkage_overrides,
+        })
     }
 
     /// Handle Docker build execution
@@ -490,7 +577,7 @@ impl BuildCommand {
             );
         }
 
-        let options = self.create_build_options(verbose);
+        let options = self.create_build_options(verbose)?;
         let ctx = BuildContext::new(project_root, config, options);
 
         if use_docker {
@@ -634,7 +721,7 @@ impl BuildCommand {
         let config = CcgoConfig::load_from(&config_path)?;
         let package = config.require_package()?.clone();
 
-        let options = self.create_build_options(verbose);
+        let options = self.create_build_options(verbose)?;
         let ctx = BuildContext::new(member_path.clone(), config, options);
 
         let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
@@ -855,11 +942,114 @@ impl BuildCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Linkage;
 
     #[test]
     fn preferred_single_collapses_both_to_shared() {
         assert_eq!(LinkType::Static.preferred_single(), LinkType::Static);
         assert_eq!(LinkType::Shared.preferred_single(), LinkType::Shared);
         assert_eq!(LinkType::Both.preferred_single(), LinkType::Shared);
+    }
+
+    #[test]
+    fn parse_linkage_arg_empty_input_is_noop() {
+        let (default, per_dep) = parse_linkage_arg(&[]).unwrap();
+        assert_eq!(default, None);
+        assert!(per_dep.is_empty());
+    }
+
+    #[test]
+    fn parse_linkage_arg_bare_value_sets_default() {
+        let (default, per_dep) =
+            parse_linkage_arg(&["shared-external".to_string()]).unwrap();
+        assert_eq!(default, Some(Linkage::SharedExternal));
+        assert!(per_dep.is_empty());
+    }
+
+    #[test]
+    fn parse_linkage_arg_kv_pair_sets_per_dep() {
+        let (default, per_dep) =
+            parse_linkage_arg(&["stdcomm=static-embedded".to_string()]).unwrap();
+        assert_eq!(default, None);
+        assert_eq!(per_dep.get("stdcomm"), Some(&Linkage::StaticEmbedded));
+    }
+
+    #[test]
+    fn parse_linkage_arg_mixed_default_and_per_dep() {
+        let (default, per_dep) = parse_linkage_arg(&[
+            "shared-external".to_string(),
+            "stdcomm=static-embedded".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(default, Some(Linkage::SharedExternal));
+        assert_eq!(per_dep.get("stdcomm"), Some(&Linkage::StaticEmbedded));
+    }
+
+    #[test]
+    fn parse_linkage_arg_comma_separated_list() {
+        let (default, per_dep) = parse_linkage_arg(&[
+            "stdcomm=static-embedded,foundrycomm=shared-external".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(default, None);
+        assert_eq!(per_dep.get("stdcomm"), Some(&Linkage::StaticEmbedded));
+        assert_eq!(per_dep.get("foundrycomm"), Some(&Linkage::SharedExternal));
+    }
+
+    #[test]
+    fn parse_linkage_arg_last_wins_on_duplicate_key() {
+        let (_, per_dep) = parse_linkage_arg(&[
+            "stdcomm=shared-external".to_string(),
+            "stdcomm=static-embedded".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(per_dep.get("stdcomm"), Some(&Linkage::StaticEmbedded));
+    }
+
+    #[test]
+    fn parse_linkage_arg_last_wins_on_duplicate_default() {
+        let (default, _) = parse_linkage_arg(&[
+            "shared-external".to_string(),
+            "static-embedded".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(default, Some(Linkage::StaticEmbedded));
+    }
+
+    #[test]
+    fn parse_linkage_arg_rejects_invalid_value() {
+        let err = parse_linkage_arg(&["wibble".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("wibble"));
+    }
+
+    #[test]
+    fn parse_linkage_arg_rejects_disallowed_shared_embedded() {
+        let err = parse_linkage_arg(&["shared-embedded".to_string()]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("shared-embedded"));
+        assert!(msg.contains("invalid"));
+    }
+
+    #[test]
+    fn parse_linkage_arg_rejects_empty_dep_name() {
+        let err = parse_linkage_arg(&["=shared-external".to_string()]).unwrap_err();
+        assert!(err.to_string().contains("empty dependency name"));
+    }
+
+    #[test]
+    fn parse_linkage_arg_rejects_invalid_per_dep_value() {
+        let err = parse_linkage_arg(&["stdcomm=wibble".to_string()]).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("stdcomm"));
+        assert!(msg.contains("wibble"));
+    }
+
+    #[test]
+    fn parse_linkage_arg_skips_empty_tokens_in_list() {
+        // Trailing/leading commas should be tolerated.
+        let (default, per_dep) =
+            parse_linkage_arg(&[",shared-external,,".to_string()]).unwrap();
+        assert_eq!(default, Some(Linkage::SharedExternal));
+        assert!(per_dep.is_empty());
     }
 }

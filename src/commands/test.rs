@@ -138,6 +138,8 @@ impl TestCommand {
             all_features: false,
             cache: Some("auto".to_string()),
             analytics: false,
+            linkage_default: None,
+            linkage_overrides: std::collections::HashMap::new(),
         };
 
         let ctx = BuildContext::new(project_root.clone(), config, options);

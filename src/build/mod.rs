@@ -82,6 +82,15 @@ pub struct BuildOptions {
     pub cache: Option<String>,
     /// Show build analytics summary
     pub analytics: bool,
+    /// CLI override for project-wide default linkage. Sits between
+    /// `[[dependencies]].linkage` (toml per-dep, lower priority) and
+    /// `--linkage <name>=<value>` (CLI per-dep, higher priority) in the
+    /// resolution chain. `None` falls through to `[build].default_dep_linkage`.
+    pub linkage_default: Option<crate::config::Linkage>,
+    /// CLI per-dependency linkage overrides. Highest priority — wins over
+    /// every CCGO.toml setting. Map keys are dep names exactly as they
+    /// appear in `[[dependencies]].name`.
+    pub linkage_overrides: std::collections::HashMap<String, crate::config::Linkage>,
 }
 
 impl Default for BuildOptions {
@@ -104,6 +113,8 @@ impl Default for BuildOptions {
             all_features: false,
             cache: None,
             analytics: false,
+            linkage_default: None,
+            linkage_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -445,17 +456,70 @@ impl BuildContext {
         // helper is resilient to whatever the caller passes.
         let platform = platform.to_lowercase();
 
+        // Warn about CLI per-dep overrides that reference a dep that isn't
+        // declared in [[dependencies]] — likely a user typo. Don't fail; the
+        // override just won't apply, same as cargo's behavior on unknown
+        // --features.
+        let declared: std::collections::HashSet<&str> = self
+            .config
+            .dependencies
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect();
+        for name in self.options.linkage_overrides.keys() {
+            if !declared.contains(name.as_str()) {
+                eprintln!(
+                    "warning: --linkage {name}=<...> referenced an unknown dependency. \
+                     '{name}' is not declared in [[dependencies]]; the override is ignored. \
+                     Declared deps: {}",
+                    if declared.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        let mut names: Vec<&&str> = declared.iter().collect();
+                        names.sort();
+                        names
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }
+                );
+            }
+        }
+
         let consumer = self.options.link_type.preferred_single();
-        let default_hint = self
+        let toml_default = self
             .config
             .build
             .as_ref()
             .and_then(|b| b.default_dep_linkage);
+        // CLI default sits between toml per-dep and toml default. CLI per-dep
+        // is at the very top — see `BuildOptions::linkage_overrides`.
+        let cli_default = self.options.linkage_default;
         let mut out = Vec::new();
         for dep in &self.config.dependencies {
             let dep_root = self.project_root.join(".ccgo/deps").join(&dep.name);
             let artifacts = detect_dep_artifacts(&dep_root, &platform);
-            let hint = dep.linkage.or(default_hint);
+            // Precedence (highest to lowest):
+            //   1. CLI per-dep   (--linkage <name>=<value>)   — most explicit
+            //   2. CLI default   (--linkage <value>)          — CLI beats toml so
+            //                                                   comparisons via
+            //                                                   `--linkage X` honestly
+            //                                                   flip every dep, even
+            //                                                   ones the toml pinned.
+            //   3. toml per-dep  ([[dependencies]].linkage)
+            //   4. toml default  ([build].default_dep_linkage)
+            //   5. None → resolver picks based on artifacts
+            //
+            // Pin-by-toml is recoverable via `--linkage <name>=<toml-value>`.
+            let hint = self
+                .options
+                .linkage_overrides
+                .get(&dep.name)
+                .copied()
+                .or(cli_default)
+                .or(dep.linkage)
+                .or(toml_default);
             let resolved = resolve_linkage(consumer.clone(), artifacts, hint, &dep.name)?;
             out.push((dep.name.clone(), resolved));
         }

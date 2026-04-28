@@ -92,3 +92,85 @@ fn static_embedded_does_embed_dep_symbols() {
          command when linkage = static-embedded. otool -L output:\n{load_cmds}"
     );
 }
+
+/// CLI `--linkage <value>` must override `[build].default_dep_linkage` from
+/// CCGO.toml. The consumer-static-embedded fixture has
+/// `default_dep_linkage = "static-embedded"` in its CCGO.toml; running
+/// with `--linkage shared-external` should flip the resolution so the
+/// leaf symbol is no longer archived in.
+///
+/// This is the central acceptance test for the size-comparison use case:
+/// the same project, the same CCGO.toml, but two different linkages
+/// chosen at build time.
+///
+/// Uses a dedicated `consumer-cli-override` fixture (a copy of
+/// consumer-static-embedded) so this test's `cmake_build/` doesn't collide
+/// in parallel with the sibling tests that target the shared-external and
+/// static-embedded fixtures. Cargo runs integration tests in parallel by
+/// default; one fixture per test gives clean isolation.
+#[cfg(target_os = "macos")]
+#[test]
+fn cli_linkage_default_overrides_toml_default() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/linkage/consumer-cli-override");
+
+    // Clean prior outputs so this test is order-independent.
+    let _ = std::fs::remove_dir_all(fixture.join("cmake_build"));
+    let _ = std::fs::remove_dir_all(fixture.join("target"));
+
+    // The fixture has `path = "../leaf"`, so ccgo fetch resolves the dep
+    // by symlinking ../leaf into .ccgo/deps/leaf. Run fetch first so the
+    // build sees the dep tree, regardless of fresh-clone state.
+    let fetch = std::process::Command::new(env!("CARGO_BIN_EXE_ccgo"))
+        .args(["fetch"])
+        .current_dir(&fixture)
+        .status()
+        .expect("ccgo fetch failed to spawn");
+    assert!(fetch.success(), "ccgo fetch did not succeed");
+
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_ccgo"))
+        .args([
+            "build",
+            "macos",
+            "--release",
+            "--linkage",
+            "shared-external",
+        ])
+        .current_dir(&fixture)
+        .status()
+        .expect("ccgo build failed to spawn");
+    assert!(
+        status.success(),
+        "build with --linkage shared-external did not succeed"
+    );
+
+    // After the override, the consumer dylib should record libleaf.dylib as
+    // an external load command — proof the CLI flag took effect even though
+    // CCGO.toml says static-embedded.
+    let dylib = fixture.join("cmake_build/release/macos/shared/arm64/libconsumer.dylib");
+    let otool_out = std::process::Command::new("otool")
+        .args(["-L"])
+        .arg(&dylib)
+        .output()
+        .expect("otool not found");
+    let load_cmds = String::from_utf8_lossy(&otool_out.stdout);
+    assert!(
+        load_cmds.contains("libleaf.dylib"),
+        "with --linkage shared-external, consumer.dylib should list \
+         libleaf.dylib as a load command even though CCGO.toml says \
+         static-embedded. otool -L output:\n{load_cmds}"
+    );
+
+    // And the leaf symbol should NOT be defined in the consumer dylib.
+    let nm_out = std::process::Command::new("nm")
+        .args(["-gU"])
+        .arg(&dylib)
+        .output()
+        .expect("nm not found");
+    let symbols = String::from_utf8_lossy(&nm_out.stdout);
+    assert!(
+        !symbols.contains("_leaf_version_marker"),
+        "with --linkage shared-external, consumer.dylib should not export \
+         leaf symbols. nm -gU output:\n{symbols}"
+    );
+}
