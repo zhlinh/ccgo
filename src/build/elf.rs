@@ -531,6 +531,14 @@ fn read_u64(data: &[u8], offset: usize, little_endian: bool) -> u64 {
     }
 }
 
+/// Lookup Mach-O CPU type name from the map
+fn lookup_macho_cpu_name(cputype: u32) -> Option<&'static str> {
+    MACHO_CPU_MAP
+            .iter()
+            .find(|(cpu, _)| *cpu == cputype)
+            .map(|(_, name)| *name)
+}
+
 /// Parse Mach-O file to get architecture
 fn parse_macho_arch(data: &[u8]) -> Option<String> {
     if data.len() < 8 {
@@ -540,44 +548,51 @@ fn parse_macho_arch(data: &[u8]) -> Option<String> {
     let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
 
     // Check for fat binary (universal)
-    if magic == 0xCAFEBABE || magic == 0xBEBAFECA {
-        if data.len() < 8 {
-            return None;
-        }
-        let nfat = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-        if nfat > 10 {
-            // Sanity check
-            return None;
-        }
-
-        let mut archs = Vec::new();
-        for i in 0..nfat as usize {
-            let offset = 8 + i * 20;
-            if offset + 8 > data.len() {
-                break;
-            }
-            let cputype =
-                u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
-            for (cpu, name) in MACHO_CPU_MAP {
-                if *cpu == cputype && !archs.contains(&name.to_string()) {
-                    archs.push(name.to_string());
-                }
-            }
-        }
-
-        return if archs.is_empty() {
-            None
-        } else {
-            Some(archs.join(", "))
-        };
+    if matches!(magic, 0xCAFEBABE | 0xBEBAFECA) {
+        return parse_fat_binary_arch(data);
     }
 
-    // Single architecture Mach-O
-    let (is_le, _is_64) = match magic {
-        0xFEEDFACE => (true, false),  // 32-bit LE
-        0xFEEDFACF => (true, true),   // 64-bit LE
-        0xCEFAEDFE => (false, false), // 32-bit BE
-        0xCFFAEDFE => (false, true),  // 64-bit BE
+    parse_single_macho_arch(data, magic)
+}
+
+/// Parse fat/universal Mach-O binary
+fn parse_fat_binary_arch(data: &[u8]) -> Option<String> {
+    if data.len() < 8 {
+        return None;
+    }
+    let nfat = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+    if nfat > 10 {
+        // Sanity check
+        return None;
+    }
+
+    let mut archs = Vec::new();
+    for i in 0..nfat as usize {
+        let offset = 8 + i * 20;
+        if offset + 8 > data.len() {
+            break;
+        }
+        let cputype =
+            u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        if let Some(name) = lookup_macho_cpu_name(cputype) {
+            if !archs.contains(&name.to_string()) {
+                archs.push(name.to_string());
+            }
+        }
+    }
+
+    if archs.is_empty() {
+        None
+    } else {
+        Some(archs.join(", "))
+    }
+}
+
+/// Parse single architecture Mach-O
+fn parse_single_macho_arch(data: &[u8], magic: u32) -> Option<String> {
+    let is_le = match magic {
+        0xFEEDFACE | 0xFEEDFACF => true,  // 32-bit or 64-bit LE
+        0xCEFAEDFE | 0xCFFAEDFE => false, // 32-bit or 64-bit BE
         _ => return None,
     };
 
@@ -591,13 +606,9 @@ fn parse_macho_arch(data: &[u8]) -> Option<String> {
         u32::from_be_bytes([data[4], data[5], data[6], data[7]])
     };
 
-    for (cpu, name) in MACHO_CPU_MAP {
-        if *cpu == cputype {
-            return Some(name.to_string());
-        }
-    }
-
-    Some(format!("unknown(0x{:X})", cputype))
+    lookup_macho_cpu_name(cputype)
+        .map(|s| s.to_string())
+        .or_else(|| Some(format!("unknown(0x{:X})", cputype)))
 }
 
 /// Parse PE file to get architecture
