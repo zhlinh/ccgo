@@ -42,21 +42,31 @@ pub struct AndroidNdkInfo {
 }
 
 /// Library information extracted from binary files
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LibraryInfo {
     pub arch: Option<String>,
     pub ndk_info: Option<AndroidNdkInfo>,
+    /// Maximum p_align across PT_LOAD program headers (ELF shared objects only).
+    /// Equivalent to `objdump -p <lib> | grep LOAD` → `align 2**N`.
+    /// Common values: 0x1000 (4KB), 0x4000 (16KB), 0x10000 (64KB).
+    pub page_align: Option<u64>,
 }
 
 impl LibraryInfo {
-    /// Format the library info as a display string
+    /// Format the library info as a display string.
     ///
-    /// Returns format like: " [aarch64, NDK r27, API 24]"
+    /// Returns format like: " [aarch64, 16KB-aligned, NDK r27, API 24]".
+    /// Alignment is placed after arch so readers can spot it without scanning
+    /// past the platform metadata.
     pub fn to_display_string(&self) -> String {
         let mut parts = Vec::new();
 
         if let Some(arch) = &self.arch {
             parts.push(arch.clone());
+        }
+
+        if let Some(align) = self.page_align {
+            parts.push(format_page_align(align));
         }
 
         if let Some(ndk) = &self.ndk_info {
@@ -73,6 +83,25 @@ impl LibraryInfo {
         } else {
             format!(" [{}]", parts.join(", "))
         }
+    }
+}
+
+/// Render a `p_align` value as a human-readable page-alignment label.
+///
+/// Examples: `4096 → "4KB-aligned"`, `16384 → "16KB-aligned"`,
+/// `65536 → "64KB-aligned"`. Non-KB multiples fall back to raw bytes.
+pub fn format_page_align(align: u64) -> String {
+    if align == 0 {
+        return "unaligned".to_string();
+    }
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    if align >= MB && align % MB == 0 {
+        format!("{}MB-aligned", align / MB)
+    } else if align >= KB && align % KB == 0 {
+        format!("{}KB-aligned", align / KB)
+    } else {
+        format!("{}B-aligned", align)
     }
 }
 
@@ -104,6 +133,77 @@ pub fn parse_elf_arch(data: &[u8]) -> Option<String> {
     }
 
     Some(format!("unknown(0x{:X})", e_machine))
+}
+
+/// Parse the maximum `p_align` across PT_LOAD program headers.
+///
+/// This is what `objdump -p <lib> | grep LOAD` reports as `align 2**N`.
+/// PT_LOAD (type 1) segments carry the runtime memory layout; their
+/// alignment constrains the page size the loader must use. For Android
+/// 16KB page-size compliance the value must be at least 0x4000 (16 KiB).
+pub fn parse_elf_load_align(data: &[u8]) -> Option<u64> {
+    if data.len() < 64 || &data[..4] != b"\x7fELF" {
+        return None;
+    }
+
+    let elf_class = data[4]; // 1 = 32-bit, 2 = 64-bit
+    let is_little_endian = data[5] == 1;
+
+    // e_phoff / e_phentsize / e_phnum live at different offsets per class.
+    let (e_phoff, e_phentsize, e_phnum) = if elf_class == 1 {
+        if data.len() < 52 {
+            return None;
+        }
+        let e_phoff = read_u32(data, 28, is_little_endian) as usize;
+        let e_phentsize = read_u16(data, 42, is_little_endian) as usize;
+        let e_phnum = read_u16(data, 44, is_little_endian) as usize;
+        (e_phoff, e_phentsize, e_phnum)
+    } else {
+        if data.len() < 64 {
+            return None;
+        }
+        let e_phoff = read_u64(data, 32, is_little_endian) as usize;
+        let e_phentsize = read_u16(data, 54, is_little_endian) as usize;
+        let e_phnum = read_u16(data, 56, is_little_endian) as usize;
+        (e_phoff, e_phentsize, e_phnum)
+    };
+
+    if e_phoff == 0 || e_phnum == 0 || e_phentsize == 0 {
+        return None;
+    }
+
+    const PT_LOAD: u32 = 1;
+    let mut max_align: u64 = 0;
+
+    for i in 0..e_phnum {
+        let ph_off = e_phoff + i * e_phentsize;
+        if ph_off + e_phentsize > data.len() {
+            break;
+        }
+
+        let p_type = read_u32(data, ph_off, is_little_endian);
+        if p_type != PT_LOAD {
+            continue;
+        }
+
+        // 32-bit program header: p_align is the last u32 (offset 28, size 32).
+        // 64-bit program header: p_align is the last u64 (offset 48, size 56).
+        let p_align = if elf_class == 1 {
+            read_u32(data, ph_off + 28, is_little_endian) as u64
+        } else {
+            read_u64(data, ph_off + 48, is_little_endian)
+        };
+
+        if p_align > max_align {
+            max_align = p_align;
+        }
+    }
+
+    if max_align == 0 {
+        None
+    } else {
+        Some(max_align)
+    }
 }
 
 /// Parse Android NDK info from ELF .note.android.ident section
@@ -301,10 +401,7 @@ fn parse_android_note(note_data: &[u8], is_little_endian: bool) -> Option<Androi
 /// Parses the binary to extract architecture info, and for Android .so files,
 /// also extracts NDK version and API level.
 pub fn get_library_info(data: &[u8], filename: &str, file_path: &str) -> LibraryInfo {
-    let mut info = LibraryInfo {
-        arch: None,
-        ndk_info: None,
-    };
+    let mut info = LibraryInfo::default();
 
     if data.len() < 4 {
         return info;
@@ -315,6 +412,13 @@ pub fn get_library_info(data: &[u8], filename: &str, file_path: &str) -> Library
     // ELF
     if magic == b"\x7fELF" {
         info.arch = parse_elf_arch(data);
+
+        // Page alignment is meaningful for shared objects (.so). Android in
+        // particular requires ≥16KB alignment on 16KB-page devices (Google
+        // Play enforces this as of Nov 2025).
+        if filename.ends_with(".so") {
+            info.page_align = parse_elf_load_align(data);
+        }
 
         // Check for Android .so files
         // Match paths containing "android" or "jni/" (AAR format uses jni/ for native libs)
@@ -591,19 +695,38 @@ mod tests {
                 ndk_version: Some("r27".to_string()),
                 api_level: Some(24),
             }),
+            page_align: Some(16 * 1024),
         };
-        assert_eq!(info.to_display_string(), " [aarch64, NDK r27, API 24]");
+        assert_eq!(
+            info.to_display_string(),
+            " [aarch64, 16KB-aligned, NDK r27, API 24]"
+        );
 
         let info2 = LibraryInfo {
             arch: Some("x86_64".to_string()),
             ndk_info: None,
+            page_align: Some(4096),
         };
-        assert_eq!(info2.to_display_string(), " [x86_64]");
+        assert_eq!(info2.to_display_string(), " [x86_64, 4KB-aligned]");
 
-        let info3 = LibraryInfo {
-            arch: None,
-            ndk_info: None,
-        };
+        let info3 = LibraryInfo::default();
         assert_eq!(info3.to_display_string(), "");
+
+        let info4 = LibraryInfo {
+            arch: Some("arm".to_string()),
+            ndk_info: None,
+            page_align: None,
+        };
+        assert_eq!(info4.to_display_string(), " [arm]");
+    }
+
+    #[test]
+    fn test_format_page_align() {
+        assert_eq!(format_page_align(4096), "4KB-aligned");
+        assert_eq!(format_page_align(16 * 1024), "16KB-aligned");
+        assert_eq!(format_page_align(64 * 1024), "64KB-aligned");
+        assert_eq!(format_page_align(1024 * 1024), "1MB-aligned");
+        assert_eq!(format_page_align(512), "512B-aligned");
+        assert_eq!(format_page_align(0), "unaligned");
     }
 }
