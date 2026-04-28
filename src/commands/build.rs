@@ -317,61 +317,17 @@ impl BuildCommand {
         false
     }
 
-    /// Execute the build command
-    pub fn execute(self, verbose: bool) -> Result<()> {
-        let current_dir = std::env::current_dir()?;
-
-        // Check for workspace context
-        if self.workspace || self.package.is_some() {
-            return self.execute_workspace_build(&current_dir, verbose);
-        }
-
-        // Check if we're in a workspace root but --workspace not specified
-        if Workspace::is_workspace(&current_dir) {
-            eprintln!(
-                "ℹ️  In workspace root. Use --workspace to build all members, \
-                 or --package <name> to build a specific member."
-            );
-        }
-
-        // Load project configuration
-        let config = CcgoConfig::load()?;
-
-        // Get project root (where CCGO.toml is located)
-        let project_root = current_dir;
-
-        // Get package info (required for builds)
-        let package = config.require_package()?;
-
-        if verbose {
-            eprintln!("Building {} for {} platform...", package.name, self.target);
-        }
-
-        // Check if we should use Docker (explicit or auto-detected)
-        let use_docker = self.should_use_docker(&self.target);
-
-        // If auto-docker detected Docker is needed, inform the user
-        if self.auto_docker && use_docker && !self.docker {
-            let host_os = std::env::consts::OS;
-            eprintln!(
-                "🐳 Auto-docker: {} cannot be built natively on {} - using Docker",
-                self.target, host_os
-            );
-        }
-
-        // Parse architectures from comma-separated string, normalizing
-        // shorthand aliases (v8/a64/v7/a32/x64/…) to the canonical names
-        // each platform's toolchain expects. `all` is a shorthand for the
-        // platform's full default set — resolved by returning an empty Vec
-        // so the builder falls back to `default_architectures()`.
+    /// Create build options from command arguments
+    fn create_build_options(&self, verbose: bool) -> BuildOptions {
         let architectures = self
             .arch
             .clone()
             .map(|s| parse_arch_arg(&s, &self.target))
             .unwrap_or_default();
 
-        // Create build options
-        let options = BuildOptions {
+        let use_docker = self.should_use_docker(&self.target);
+
+        BuildOptions {
             target: self.target.clone(),
             architectures,
             link_type: self.link_type.clone(),
@@ -389,64 +345,67 @@ impl BuildCommand {
             all_features: self.all_features,
             cache: Some(self.cache.clone()),
             analytics: self.analytics,
-        };
+        }
+    }
 
-        // Create build context
-        let ctx = BuildContext::new(project_root, config.clone(), options);
+    /// Handle Docker build execution
+    fn handle_docker_build(
+        &self,
+        ctx: BuildContext,
+        package: &crate::config::PackageInfo,
+        verbose: bool,
+    ) -> Result<()> {
+        use crate::build::docker::DockerBuilder;
 
-        // Check if Docker build is requested (explicit or auto-detected)
-        if use_docker {
-            use crate::build::docker::DockerBuilder;
-
-            // Docker builds only support specific platforms
-            match self.target {
-                BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
-                    if self.auto_docker {
-                        // For auto-docker with multi-platform targets, we should fall through
-                        // to native build which will handle Docker per-platform
-                        eprintln!(
-                            "ℹ Auto-docker with '{}' will build each platform with Docker as needed",
-                            self.target
-                        );
-                    } else {
-                        bail!(
-                            "Docker builds are not supported for '{}' target.\n\n\
-                             Docker builds support: linux, windows, macos, ios, tvos, watchos, android\n\
-                             Build these platforms individually with --docker flag.\n\
-                             Or use --auto-docker to automatically use Docker when needed.",
-                            self.target
-                        );
-                    }
-                }
-                _ => {
-                    // Save context info before ctx is moved
-                    let docker_project_root = ctx.project_root.clone();
-                    let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
-                    let jobs = ctx.jobs();
-                    let analytics = self.analytics;
-
-                    // Create Docker builder and execute
-                    let docker_builder = DockerBuilder::new(ctx)?;
-                    let result = docker_builder.execute()?;
-
-                    // Print results summary (same as non-Docker builds)
-                    Self::print_results(
-                        &package.name,
-                        &package.version,
-                        &self.target.to_string(),
-                        &docker_project_root,
-                        &[result],
-                        verbose,
-                        analytics,
-                        cache_tool.as_deref(),
-                        jobs,
+        match self.target {
+            BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
+                if self.auto_docker {
+                    eprintln!(
+                        "ℹ Auto-docker with '{}' will build each platform with Docker as needed",
+                        self.target
                     );
-                    return Ok(());
+                    Ok(())
+                } else {
+                    bail!(
+                        "Docker builds are not supported for '{}' target.\n\n\
+                         Docker builds support: linux, windows, macos, ios, tvos, watchos, android\n\
+                         Build these platforms individually with --docker flag.\n\
+                         Or use --auto-docker to automatically use Docker when needed.",
+                        self.target
+                    )
                 }
             }
-        }
+            _ => {
+                let docker_project_root = ctx.project_root.clone();
+                let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
+                let jobs = ctx.jobs();
 
-        // Check CCGO_CMAKE_DIR availability
+                let docker_builder = DockerBuilder::new(ctx)?;
+                let result = docker_builder.execute()?;
+
+                Self::print_results(
+                    &package.name,
+                    &package.version,
+                    &self.target.to_string(),
+                    &docker_project_root,
+                    &[result],
+                    verbose,
+                    self.analytics,
+                    cache_tool.as_deref(),
+                    jobs,
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Execute native build (non-Docker)
+    fn execute_native_build(
+        &self,
+        ctx: &BuildContext,
+        package: &crate::config::PackageInfo,
+        verbose: bool,
+    ) -> Result<()> {
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             if verbose {
                 eprintln!("Using CCGO cmake directory: {}", cmake_dir.display());
@@ -458,22 +417,18 @@ impl BuildCommand {
             );
         }
 
-        // Get cache info before build for analytics
         let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
         let jobs = ctx.jobs();
 
-        // Execute the build based on target
         let results = match self.target {
-            BuildTarget::All => build_all(&ctx)?,
-            BuildTarget::Apple => build_apple(&ctx)?,
+            BuildTarget::All => build_all(ctx)?,
+            BuildTarget::Apple => build_apple(ctx)?,
             _ => {
-                // Single platform build
                 let builder = get_builder(&self.target)?;
-                vec![builder.build(&ctx)?]
+                vec![builder.build(ctx)?]
             }
         };
 
-        // Print results summary
         Self::print_results(
             &package.name,
             &package.version,
@@ -487,6 +442,49 @@ impl BuildCommand {
         );
 
         Ok(())
+    }
+
+    /// Execute the build command
+    pub fn execute(self, verbose: bool) -> Result<()> {
+        let current_dir = std::env::current_dir()?;
+
+        if self.workspace || self.package.is_some() {
+            return self.execute_workspace_build(&current_dir, verbose);
+        }
+
+        if Workspace::is_workspace(&current_dir) {
+            eprintln!(
+                "ℹ️  In workspace root. Use --workspace to build all members, \
+                 or --package <name> to build a specific member."
+            );
+        }
+
+        let config = CcgoConfig::load()?;
+        let project_root = current_dir;
+        let package = config.require_package()?;
+
+        if verbose {
+            eprintln!("Building {} for {} platform...", package.name, self.target);
+        }
+
+        let use_docker = self.should_use_docker(&self.target);
+
+        if self.auto_docker && use_docker && !self.docker {
+            let host_os = std::env::consts::OS;
+            eprintln!(
+                "🐳 Auto-docker: {} cannot be built natively on {} - using Docker",
+                self.target, host_os
+            );
+        }
+
+        let options = self.create_build_options(verbose);
+        let ctx = BuildContext::new(project_root, config, options);
+
+        if use_docker {
+            return self.handle_docker_build(ctx, &package, verbose);
+        }
+
+        self.execute_native_build(&ctx, &package, verbose)
     }
 
     /// Execute build for workspace members
@@ -576,6 +574,37 @@ impl BuildCommand {
         Ok(())
     }
 
+    /// Execute build based on target
+    fn execute_build_by_target(&self, ctx: &BuildContext) -> Result<Vec<BuildResult>> {
+        match self.target {
+            BuildTarget::All => build_all(ctx),
+            BuildTarget::Apple => build_apple(ctx),
+            _ => {
+                let builder = get_builder(&self.target)?;
+                Ok(vec![builder.build(ctx)?])
+            }
+        }
+    }
+
+    /// Execute Docker or native build for workspace member
+    fn execute_member_build(&self, ctx: &BuildContext) -> Result<Vec<BuildResult>> {
+        if self.should_use_docker(&self.target) {
+            use crate::build::docker::DockerBuilder;
+
+            match self.target {
+                BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
+                    self.execute_build_by_target(ctx)
+                }
+                _ => {
+                    let docker_builder = DockerBuilder::new(ctx.clone())?;
+                    Ok(vec![docker_builder.execute()?])
+                }
+            }
+        } else {
+            self.execute_build_by_target(ctx)
+        }
+    }
+
     /// Build a single workspace member
     fn build_member(
         &self,
@@ -583,87 +612,19 @@ impl BuildCommand {
         member: &crate::workspace::WorkspaceMember,
         verbose: bool,
     ) -> Result<Vec<BuildResult>> {
-        // Construct member's directory path
         let member_path = workspace_root.join(&member.name);
-
-        // Load member's configuration
         let config_path = member_path.join("CCGO.toml");
         let config = CcgoConfig::load_from(&config_path)?;
-
-        // Get package info
         let package = config.require_package()?;
 
-        // Parse architectures (same alias expansion as the single-package path).
-        let architectures = self
-            .arch
-            .clone()
-            .map(|s| parse_arch_arg(&s, &self.target))
-            .unwrap_or_default();
+        let options = self.create_build_options(verbose);
+        let ctx = BuildContext::new(member_path.clone(), config, options);
 
-        // Check if we should use Docker
-        let use_docker = self.should_use_docker(&self.target);
-
-        // Create build options
-        let options = BuildOptions {
-            target: self.target.clone(),
-            architectures,
-            link_type: self.link_type.clone(),
-            use_docker,
-            auto_docker: self.auto_docker,
-            jobs: self.jobs,
-            ide_project: self.ide_project,
-            release: self.release,
-            native_only: self.native_only,
-            toolchain: self.toolchain.clone(),
-            verbose,
-            dev: self.dev,
-            features: self.features.clone(),
-            use_default_features: !self.no_default_features,
-            all_features: self.all_features,
-            cache: Some(self.cache.clone()),
-            analytics: self.analytics,
-        };
-
-        // Create build context with member's path
-        let ctx = BuildContext::new(member_path.clone(), config.clone(), options);
-
-        // Get cache info for analytics
         let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
         let jobs = ctx.jobs();
 
-        // Execute the build
-        let results = if use_docker {
-            use crate::build::docker::DockerBuilder;
+        let results = self.execute_member_build(&ctx)?;
 
-            match self.target {
-                BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
-                    // Fall through to native build for meta-targets
-                    match self.target {
-                        BuildTarget::All => build_all(&ctx)?,
-                        BuildTarget::Apple => build_apple(&ctx)?,
-                        _ => {
-                            let builder = get_builder(&self.target)?;
-                            vec![builder.build(&ctx)?]
-                        }
-                    }
-                }
-                _ => {
-                    let docker_builder = DockerBuilder::new(ctx)?;
-                    vec![docker_builder.execute()?]
-                }
-            }
-        } else {
-            match self.target {
-                BuildTarget::All => build_all(&ctx)?,
-                BuildTarget::Apple => build_apple(&ctx)?,
-                _ => {
-                    let builder = get_builder(&self.target)?;
-                    vec![builder.build(&ctx)?]
-                }
-            }
-        };
-
-        // Print results for this member
         Self::print_results(
             &package.name,
             &package.version,
@@ -677,6 +638,50 @@ impl BuildCommand {
         );
 
         Ok(results)
+    }
+
+    /// Print archive tree for a single result
+    fn print_archive_tree(result: &BuildResult) {
+        if let Err(e) = crate::build::archive::print_zip_tree(&result.sdk_archive, "      ") {
+            eprintln!("      Warning: Failed to print archive contents: {}", e);
+        }
+
+        if let Some(symbols_path) = &result.symbols_archive {
+            eprintln!("\n      Symbols archive:");
+            if let Err(e) = crate::build::archive::print_zip_tree(symbols_path, "      ") {
+                eprintln!("      Warning: Failed to print symbols archive contents: {}", e);
+            }
+        }
+
+        if let Some(archive_path) = &result.aar_archive {
+            let archive_type = if archive_path.extension().is_some_and(|e| e == "har") {
+                "HAR"
+            } else {
+                "AAR"
+            };
+            eprintln!("\n      {} contents:", archive_type);
+            if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
+                eprintln!("      Warning: Failed to print {} contents: {}", archive_type, e);
+            }
+        }
+    }
+
+    /// Print result details for a single build
+    fn print_result_details(result: &BuildResult) {
+        let is_ide_project = result.sdk_archive.is_dir();
+
+        if is_ide_project {
+            eprintln!("  IDE Project: {}", result.sdk_archive.display());
+        } else {
+            eprintln!("  SDK: {}", result.sdk_archive.display());
+            if let Some(symbols) = &result.symbols_archive {
+                eprintln!("  Symbols: {}", symbols.display());
+            }
+            if let Some(aar) = &result.aar_archive {
+                eprintln!("  AAR: {}", aar.display());
+            }
+            Self::print_archive_tree(result);
+        }
     }
 
     /// Print build results summary
@@ -711,79 +716,17 @@ impl BuildCommand {
             }
         }
 
-        // Print build info JSON before success message
         let build_info = create_build_info_full(lib_name, version, platform, project_root);
         print_build_info_json(&build_info);
 
-        eprintln!(
-            "\n✓ {} built successfully in {:.2}s",
-            lib_name, total_duration
-        );
+        eprintln!("\n✓ {} built successfully in {:.2}s", lib_name, total_duration);
 
-        // Print archive locations and contents
         for result in results {
-            // Check if this is an IDE project (directory) vs regular archive (zip file)
-            let is_ide_project = result.sdk_archive.is_dir();
-
-            if is_ide_project {
-                // IDE project - just show the directory path
-                eprintln!("  IDE Project: {}", result.sdk_archive.display());
-            } else {
-                // Regular build - show archive paths and contents
-                eprintln!("  SDK: {}", result.sdk_archive.display());
-                if let Some(symbols) = &result.symbols_archive {
-                    eprintln!("  Symbols: {}", symbols.display());
-                }
-                if let Some(aar) = &result.aar_archive {
-                    eprintln!("  AAR: {}", aar.display());
-                }
-
-                // Print archive tree structure
-                if let Err(e) = crate::build::archive::print_zip_tree(&result.sdk_archive, "      ")
-                {
-                    eprintln!("      Warning: Failed to print archive contents: {}", e);
-                }
-
-                // Print symbols archive tree if present
-                if let Some(symbols_path) = &result.symbols_archive {
-                    eprintln!("\n      Symbols archive:");
-                    if let Err(e) = crate::build::archive::print_zip_tree(symbols_path, "      ") {
-                        eprintln!(
-                            "      Warning: Failed to print symbols archive contents: {}",
-                            e
-                        );
-                    }
-                }
-
-                // Print AAR/HAR archive tree if present (Android/OHOS)
-                if let Some(archive_path) = &result.aar_archive {
-                    // Detect archive type from extension
-                    let archive_type = if archive_path.extension().is_some_and(|e| e == "har") {
-                        "HAR"
-                    } else {
-                        "AAR"
-                    };
-                    eprintln!("\n      {} contents:", archive_type);
-                    if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
-                        eprintln!(
-                            "      Warning: Failed to print {} contents: {}",
-                            archive_type, e
-                        );
-                    }
-                }
-            }
+            Self::print_result_details(result);
         }
 
-        // Show analytics summary if requested
         if show_analytics {
-            Self::collect_and_display_analytics(
-                lib_name,
-                platform,
-                project_root,
-                results,
-                cache_tool,
-                jobs,
-            );
+            Self::collect_and_display_analytics(lib_name, platform, project_root, results, cache_tool, jobs);
         }
     }
 

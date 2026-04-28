@@ -129,6 +129,49 @@ impl OhosBuilder {
         Ok(())
     }
 
+    /// Configure CMake with common variables
+    fn configure_cmake(
+        &self,
+        ctx: &BuildContext,
+        cmake: CMakeConfig,
+        build_shared: bool,
+        cmake_vars: Vec<(String, String)>,
+    ) -> CMakeConfig {
+        let mut cmake = cmake
+            .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
+            .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_LIB_NAME", ctx.lib_name())
+            .variable("CCGO_CONFIG_PRESET_VISIBILITY", ctx.symbol_visibility().to_string());
+
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
+        }
+
+        for (name, value) in cmake_vars {
+            cmake = cmake.variable(&name, &value);
+        }
+
+        if let Some(deps_map) = ctx.deps_map() {
+            cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
+        }
+
+        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
+            if !feature_defines.is_empty() {
+                cmake = cmake.feature_definitions(&feature_defines);
+                if ctx.options.verbose {
+                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                }
+            }
+        }
+
+        if let Some(cache) = ctx.compiler_cache() {
+            cmake = cmake.compiler_cache(cache);
+        }
+
+        cmake
+    }
+
     /// Build for a single ABI
     fn build_abi(
         &self,
@@ -144,70 +187,29 @@ impl OhosBuilder {
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
-
-        // Get OHOS SDK CMake variables for this ABI
         let cmake_vars = sdk.cmake_variables_for_abi(abi, min_sdk_version);
 
-        // Configure and build with CMake
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
-            .build_type(if ctx.options.release {
-                BuildType::Release
-            } else {
-                BuildType::Debug
-            })
+        let build_type = if ctx.options.release {
+            BuildType::Release
+        } else {
+            BuildType::Debug
+        };
+
+        let cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+            .build_type(build_type)
             .install_prefix(install_dir.clone())
-            .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
-            .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_LIB_NAME", ctx.lib_name())
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
-        // Add CCGO_CMAKE_DIR if available
-        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
-            cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
-        }
-
-        // Add OHOS SDK-specific variables
-        for (name, value) in cmake_vars {
-            cmake = cmake.variable(&name, &value);
-        }
-
-        // Add CCGO configuration variables
-        cmake = cmake.variable(
-            "CCGO_CONFIG_PRESET_VISIBILITY",
-            ctx.symbol_visibility().to_string(),
-        );
-
-        // Add submodule dependencies for shared library linking
-        if let Some(deps_map) = ctx.deps_map() {
-            cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
-        }
-
-        // Add feature definitions for conditional compilation
-        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
-            if !feature_defines.is_empty() {
-                cmake = cmake.feature_definitions(&feature_defines);
-                if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
-                }
-            }
-        }
-
-        // Add compiler cache if available
-        if let Some(cache) = ctx.compiler_cache() {
-            cmake = cmake.compiler_cache(cache);
-        }
+        let cmake = self.configure_cmake(ctx, cmake, build_shared, cmake_vars);
 
         cmake.configure_build_install()?;
 
-        // For static builds, merge module libs then third-party libs (e.g. libzstd.a)
         if !build_shared {
             self.merge_module_static_libs(sdk, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
             self.merge_third_party_static_libs(sdk, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
         }
 
-        // Return build_dir since CCGO cmake installs to build_dir/out/
         Ok(build_dir)
     }
 
@@ -482,26 +484,8 @@ impl OhosBuilder {
         Ok(())
     }
 
-    /// Build HAR package using hvigorw assembleHar task
-    fn build_har(
-        &self,
-        ctx: &BuildContext,
-        _abis: &[OhosAbi],
-        output_dir: &PathBuf,
-    ) -> Result<()> {
-        let ohos_project = ctx.project_root.join("ohos");
-        if !ohos_project.exists() {
-            bail!("OHOS Hvigor project not found at {}", ohos_project.display());
-        }
-
-        // Sync CCGO.toml version -> ohos/main_ohos_sdk/oh-package.json5 so hvigor produces
-        // a HAR whose version matches the canonical project version.
-        crate::utils::version_sync::sync_oh_package_version(
-            &ohos_project.join("main_ohos_sdk").join("oh-package.json5"),
-            ctx.version(),
-        );
-
-        // Try to find hvigorw - check local first, then system PATH
+    /// Find hvigorw command (local or system)
+    fn find_hvigorw_cmd(ctx: &BuildContext, ohos_project: &PathBuf) -> Result<String> {
         let hvigorw_name = if cfg!(target_os = "windows") {
             "hvigorw.bat"
         } else {
@@ -509,13 +493,11 @@ impl OhosBuilder {
         };
 
         let local_hvigorw = ohos_project.join(hvigorw_name);
-        let hvigorw_cmd = if local_hvigorw.exists() {
-            // Use local hvigorw
+        if local_hvigorw.exists() {
             if ctx.options.verbose {
                 eprintln!("  Using local hvigorw: {}", local_hvigorw.display());
             }
 
-            // On Unix systems, ensure local hvigorw is executable
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -533,37 +515,91 @@ impl OhosBuilder {
                 }
             }
 
-            local_hvigorw.to_string_lossy().to_string()
-        } else {
-            // Fall back to system hvigorw from PATH
+            return Ok(local_hvigorw.to_string_lossy().to_string());
+        }
+
+        // Fall back to system hvigorw from PATH
+        if ctx.options.verbose {
+            eprintln!("  Local hvigorw not found, using system hvigorw from PATH");
+        }
+
+        let which_result = std::process::Command::new("which")
+            .arg(hvigorw_name)
+            .output();
+
+        match which_result {
+            Ok(output) if output.status.success() => {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if ctx.options.verbose {
+                    eprintln!("  Found system hvigorw: {}", path);
+                }
+                Ok(hvigorw_name.to_string())
+            }
+            _ => {
+                bail!(
+                    "Hvigor wrapper not found. Please ensure hvigorw is in your PATH or \
+                     exists at {}",
+                    local_hvigorw.display()
+                );
+            }
+        }
+    }
+
+    /// Find HAR file and copy to output directory
+    fn find_and_copy_har_to_output(
+        ctx: &BuildContext,
+        ohos_project: &PathBuf,
+        output_dir: &PathBuf,
+    ) -> Result<()> {
+        let har_dir = ohos_project.join("main_ohos_sdk/build/default/outputs/default");
+
+        let har_glob_pattern = har_dir.join("*.har");
+        let har_files: Vec<_> = glob::glob(har_glob_pattern.to_str().unwrap())
+            .context("Failed to glob HAR files")?
+            .filter_map(|p| p.ok())
+            .collect();
+
+        if har_files.is_empty() {
+            bail!("No HAR file found after Hvigor assemble in {}", har_dir.display());
+        }
+
+        let project_name_upper = ctx.lib_name().to_uppercase();
+        let dest_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
+        let dest = output_dir.join(&dest_name);
+
+        if let Some(har_file) = har_files.first() {
+            std::fs::copy(har_file, &dest).with_context(|| {
+                format!("Failed to copy HAR from {} to {}", har_file.display(), dest.display())
+            })?;
+
             if ctx.options.verbose {
-                eprintln!("  Local hvigorw not found, using system hvigorw from PATH");
+                eprintln!("  HAR generated: {}", dest.display());
             }
+        }
 
-            // Check if system hvigorw is available
-            let which_result = std::process::Command::new("which")
-                .arg(hvigorw_name)
-                .output();
+        Ok(())
+    }
 
-            match which_result {
-                Ok(output) if output.status.success() => {
-                    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if ctx.options.verbose {
-                        eprintln!("  Found system hvigorw: {}", path);
-                    }
-                    hvigorw_name.to_string()
-                }
-                _ => {
-                    bail!(
-                        "Hvigor wrapper not found. Please ensure hvigorw is in your PATH or \
-                         exists at {}",
-                        local_hvigorw.display()
-                    );
-                }
-            }
-        };
+    /// Build HAR package using hvigorw assembleHar task
+    fn build_har(
+        &self,
+        ctx: &BuildContext,
+        _abis: &[OhosAbi],
+        output_dir: &PathBuf,
+    ) -> Result<()> {
+        let ohos_project = ctx.project_root.join("ohos");
+        if !ohos_project.exists() {
+            bail!("OHOS Hvigor project not found at {}", ohos_project.display());
+        }
 
-        // Use assembleHar task to build HAR package
+        // Sync CCGO.toml version -> ohos/main_ohos_sdk/oh-package.json5
+        crate::utils::version_sync::sync_oh_package_version(
+            &ohos_project.join("main_ohos_sdk").join("oh-package.json5"),
+            ctx.version(),
+        );
+
+        let hvigorw_cmd = Self::find_hvigorw_cmd(ctx, &ohos_project)?;
+
         eprintln!("  Running Hvigor assembleHar task...");
 
         let status = std::process::Command::new(&hvigorw_cmd)
@@ -578,41 +614,7 @@ impl OhosBuilder {
             bail!("Hvigor assembleHar failed with exit code: {:?}", status.code());
         }
 
-        // Find HAR from Hvigor build output directory
-        // Path: ohos/main_ohos_sdk/build/default/outputs/default/main_ohos_sdk.har
-        let har_dir = ohos_project
-            .join("main_ohos_sdk/build/default/outputs/default");
-
-        let har_glob_pattern = har_dir.join("*.har");
-        let har_files: Vec<_> = glob::glob(har_glob_pattern.to_str().unwrap())
-            .context("Failed to glob HAR files")?
-            .filter_map(|p| p.ok())
-            .collect();
-
-        if har_files.is_empty() {
-            bail!("No HAR file found after Hvigor assemble in {}", har_dir.display());
-        }
-
-        // Copy HAR to output_dir with versioned naming format
-        // Format: {PROJECT}_OHOS_SDK-{version}-{publish_suffix}.har
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let dest_name = format!(
-            "{}_OHOS_SDK-{}.har",
-            project_name_upper,
-            ctx.version()
-        );
-        let dest = output_dir.join(&dest_name);
-
-        // Copy the first HAR file
-        if let Some(har_file) = har_files.first() {
-            std::fs::copy(har_file, &dest).with_context(|| {
-                format!("Failed to copy HAR from {} to {}", har_file.display(), dest.display())
-            })?;
-
-            if ctx.options.verbose {
-                eprintln!("  HAR generated: {}", dest.display());
-            }
-        }
+        self.find_and_copy_har_to_output(ctx, &ohos_project, output_dir)?;
 
         Ok(())
     }
@@ -663,10 +665,138 @@ impl PlatformBuilder for OhosBuilder {
         Ok(())
     }
 
+    /// Resolve ABIs from build options
+    fn resolve_abis(ctx: &BuildContext) -> Result<Vec<OhosAbi>> {
+        if ctx.options.architectures.is_empty() {
+            Ok(vec![OhosAbi::Arm64V8a, OhosAbi::ArmeabiV7a, OhosAbi::X86_64])
+        } else {
+            ctx.options
+                .architectures
+                .iter()
+                .map(|s| Self::parse_abi(s))
+                .collect()
+        }
+    }
+
+    /// Build static and shared libraries, returning built link types
+    fn build_static_and_shared(
+        &self,
+        ctx: &BuildContext,
+        sdk: &OhosSdkToolchain,
+        abis: &[OhosAbi],
+        min_sdk_version: u32,
+        archive: &ArchiveBuilder,
+        symbols_staging: &PathBuf,
+    ) -> Result<Vec<&'static str>> {
+        let mut built_link_types = Vec::new();
+
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+            let results = self.build_link_type(ctx, sdk, "static", abis, min_sdk_version)?;
+            self.add_libraries_to_archive(archive, &results, "static", false, ctx.lib_name())?;
+            built_link_types.push("static");
+        }
+
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+            let results = self.build_link_type(ctx, sdk, "shared", abis, min_sdk_version)?;
+
+            if ctx.options.verbose {
+                eprintln!("Saving unstripped libraries to symbols staging...");
+            }
+            self.copy_unstripped_to_symbols(&results, ctx.lib_name(), symbols_staging, ctx.options.verbose)?;
+
+            if ctx.options.release {
+                if ctx.options.verbose {
+                    eprintln!("Stripping shared libraries...");
+                }
+                self.strip_shared_libraries(sdk, &results, ctx.lib_name(), ctx.options.verbose)?;
+            }
+
+            self.add_libraries_to_archive(archive, &results, "shared", true, ctx.lib_name())?;
+            built_link_types.push("shared");
+
+            if ctx.options.verbose {
+                eprintln!("Copying libraries to libs for Hvigor...");
+            }
+            self.copy_libraries_to_libs(ctx, abis, ctx.lib_name())?;
+        }
+
+        Ok(built_link_types)
+    }
+
+    /// Build HAR package with error handling
+    fn build_har_package(&self, ctx: &BuildContext, abis: &[OhosAbi]) {
+        if ctx.options.verbose {
+            eprintln!("Building HAR package...");
+        }
+        if let Err(e) = self.build_har(ctx, abis, &ctx.output_dir) {
+            eprintln!("Warning: Failed to build HAR: {}. Continuing without HAR.", e);
+            eprintln!("To build HAR manually, run: cd ohos && ./hvigorw assembleHar");
+        } else if ctx.options.verbose {
+            eprintln!("HAR package built successfully");
+        }
+    }
+
+    /// Add HAR to archive if it exists
+    fn add_har_to_archive_if_needed(&self, ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+        let project_name_upper = ctx.lib_name().to_uppercase();
+        let har_versioned_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
+        let har_path = ctx.output_dir.join(&har_versioned_name);
+
+        if har_path.exists() {
+            let har_dest = format!("haars/ohos/{}", har_versioned_name);
+            archive.add_file(&har_path, &har_dest)?;
+            if ctx.options.verbose {
+                eprintln!("Added HAR to archive: {}", har_dest);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create symbols archive if needed
+    fn create_symbols_archive_if_needed(
+        &self,
+        ctx: &BuildContext,
+        built_link_types: &[&str],
+        symbols_staging: &PathBuf,
+        archive: &ArchiveBuilder,
+    ) -> Result<Option<PathBuf>> {
+        if !built_link_types.contains(&"shared") {
+            return Ok(None);
+        }
+
+        let symbols_dir = symbols_staging.join("symbols");
+        let has_symbols = symbols_dir.exists() &&
+            std::fs::read_dir(&symbols_dir)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+
+        if has_symbols {
+            let sym_archive = self.create_symbols_archive_from_staging(archive, symbols_staging)?;
+            if ctx.options.verbose {
+                eprintln!("Created symbols archive: {}", sym_archive.display());
+            }
+            Ok(Some(sym_archive))
+        } else {
+            if ctx.options.verbose {
+                eprintln!("No symbols to archive (obj directory is empty)");
+            }
+            Ok(None)
+        }
+    }
+
+    /// Get HAR archive path if it exists
+    fn get_har_archive_path(ctx: &BuildContext) -> Option<PathBuf> {
+        let project_name_upper = ctx.lib_name().to_uppercase();
+        let har_versioned_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
+        let har_path = ctx.output_dir.join(&har_versioned_name);
+
+        if har_path.exists() { Some(har_path) } else { None }
+    }
+
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
         let start = Instant::now();
 
-        // Validate prerequisites first
         self.validate_prerequisites(ctx)?;
 
         let sdk = OhosSdkToolchain::detect()?;
@@ -675,24 +805,11 @@ impl PlatformBuilder for OhosBuilder {
             eprintln!("Building {} for OHOS...", ctx.lib_name());
         }
 
-        // Determine ABIs to build
-        let abis: Vec<OhosAbi> = if ctx.options.architectures.is_empty() {
-            vec![OhosAbi::Arm64V8a, OhosAbi::ArmeabiV7a, OhosAbi::X86_64]
-        } else {
-            ctx.options
-                .architectures
-                .iter()
-                .map(|s| Self::parse_abi(s))
-                .collect::<Result<Vec<_>>>()?
-        };
-
-        // Get minimum SDK version
+        let abis = Self::resolve_abis(ctx)?;
         let min_sdk_version = DEFAULT_MIN_SDK_VERSION;
 
-        // Create output directory
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        // Create archive builder
         let archive = ArchiveBuilder::new(
             ctx.lib_name(),
             ctx.version(),
@@ -702,49 +819,13 @@ impl PlatformBuilder for OhosBuilder {
             ctx.output_dir.clone(),
         )?;
 
-        // Create symbols staging directory
         let symbols_staging = ctx.output_dir.join(".symbols_staging");
         std::fs::create_dir_all(&symbols_staging)?;
 
-        let mut built_link_types = Vec::new();
-        let mut symbols_archive: Option<PathBuf> = None;
+        let built_link_types = self.build_static_and_shared(
+            ctx, &sdk, &abis, min_sdk_version, &archive, &symbols_staging
+        )?;
 
-        // Build static libraries
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
-            let results = self.build_link_type(ctx, &sdk, "static", &abis, min_sdk_version)?;
-            self.add_libraries_to_archive(&archive, &results, "static", false, ctx.lib_name())?;
-            built_link_types.push("static");
-        }
-
-        // Build shared libraries
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-            let results = self.build_link_type(ctx, &sdk, "shared", &abis, min_sdk_version)?;
-
-            // Save unstripped libraries to symbols staging
-            if ctx.options.verbose {
-                eprintln!("Saving unstripped libraries to symbols staging...");
-            }
-            self.copy_unstripped_to_symbols(&results, ctx.lib_name(), &symbols_staging, ctx.options.verbose)?;
-
-            // Strip symbols from shared libraries for release builds
-            if ctx.options.release {
-                if ctx.options.verbose {
-                    eprintln!("Stripping shared libraries...");
-                }
-                self.strip_shared_libraries(&sdk, &results, ctx.lib_name(), ctx.options.verbose)?;
-            }
-
-            self.add_libraries_to_archive(&archive, &results, "shared", true, ctx.lib_name())?;
-            built_link_types.push("shared");
-
-            // Copy shared libraries to libs for Hvigor HAR packaging
-            if ctx.options.verbose {
-                eprintln!("Copying libraries to libs for Hvigor...");
-            }
-            self.copy_libraries_to_libs(ctx, &abis, ctx.lib_name())?;
-        }
-
-        // Add include files from project's include directory (matching pyccgo behavior)
         let include_source = ctx.include_source_dir();
         if include_source.exists() {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
@@ -754,63 +835,20 @@ impl PlatformBuilder for OhosBuilder {
             }
         }
 
-        // Build HAR package if shared libraries were built
         if built_link_types.contains(&"shared") {
-            if ctx.options.verbose {
-                eprintln!("Building HAR package...");
-            }
-            if let Err(e) = self.build_har(ctx, &abis, &ctx.output_dir) {
-                eprintln!("Warning: Failed to build HAR: {}. Continuing without HAR.", e);
-                eprintln!("To build HAR manually, run: cd ohos && ./hvigorw assembleHar");
-            } else if ctx.options.verbose {
-                eprintln!("HAR package built successfully");
-            }
+            self.build_har_package(ctx, &abis);
         }
 
-        // Add HAR to archive if it exists
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let har_versioned_name = format!(
-            "{}_OHOS_SDK-{}.har",
-            project_name_upper,
-            ctx.version()
-        );
-        let har_path = ctx.output_dir.join(&har_versioned_name);
+        self.add_har_to_archive_if_needed(ctx, &archive)?;
 
-        if har_path.exists() {
-            // Add to haars/ohos/ subdirectory
-            let har_dest = format!("haars/ohos/{}", har_versioned_name);
-            archive.add_file(&har_path, &har_dest)?;
-            if ctx.options.verbose {
-                eprintln!("Added HAR to archive: {}", har_dest);
-            }
-        }
-
-        // Create the SDK archive
         let architectures: Vec<String> = abis.iter().map(|a| a.abi_string().to_string()).collect();
         let link_type_str = ctx.options.link_type.to_string();
         let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
 
-        // Create symbols archive if we have shared libraries
-        if built_link_types.contains(&"shared") {
-            // Check if symbols staging has content
-            let symbols_dir = symbols_staging.join("symbols");
-            let has_symbols = symbols_dir.exists() &&
-                std::fs::read_dir(&symbols_dir)
-                    .map(|mut d| d.next().is_some())
-                    .unwrap_or(false);
+        let symbols_archive = self.create_symbols_archive_if_needed(
+            ctx, &built_link_types, &symbols_staging, &archive
+        )?;
 
-            if has_symbols {
-                let sym_archive = self.create_symbols_archive_from_staging(&archive, &symbols_staging)?;
-                if ctx.options.verbose {
-                    eprintln!("Created symbols archive: {}", sym_archive.display());
-                }
-                symbols_archive = Some(sym_archive);
-            } else if ctx.options.verbose {
-                eprintln!("No symbols to archive (obj directory is empty)");
-            }
-        }
-
-        // Clean up symbols staging directory
         std::fs::remove_dir_all(&symbols_staging).ok();
 
         let duration = start.elapsed();
@@ -826,7 +864,7 @@ impl PlatformBuilder for OhosBuilder {
         Ok(BuildResult {
             sdk_archive,
             symbols_archive,
-            aar_archive: if har_path.exists() { Some(har_path) } else { None },
+            aar_archive: Self::get_har_archive_path(ctx),
             duration_secs: duration.as_secs_f64(),
             architectures,
         })

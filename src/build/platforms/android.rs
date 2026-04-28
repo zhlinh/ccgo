@@ -41,6 +41,56 @@ impl AndroidBuilder {
         })
     }
 
+    /// Configure CMake with common variables
+    fn configure_cmake(
+        &self,
+        ctx: &BuildContext,
+        cmake: CMakeConfig,
+        build_shared: bool,
+        cmake_vars: Vec<(String, String)>,
+    ) -> CMakeConfig {
+        let mut cmake = cmake
+            .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
+            .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable("CCGO_LIB_NAME", ctx.lib_name())
+            .variable("CCGO_CONFIG_PRESET_VISIBILITY", ctx.symbol_visibility().to_string());
+
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
+        }
+
+        for (name, value) in cmake_vars {
+            cmake = cmake.variable(&name, &value);
+        }
+
+        if ctx.options.release {
+            cmake = cmake
+                .variable("CMAKE_SKIP_INSTALL_RPATH", "ON")
+                .variable("CMAKE_BUILD_WITH_INSTALL_RPATH", "OFF")
+                .variable("CMAKE_STRIP", "");
+        }
+
+        if let Some(deps_map) = ctx.deps_map() {
+            cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
+        }
+
+        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
+            if !feature_defines.is_empty() {
+                cmake = cmake.feature_definitions(&feature_defines);
+                if ctx.options.verbose {
+                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                }
+            }
+        }
+
+        if let Some(cache) = ctx.compiler_cache() {
+            cmake = cmake.compiler_cache(cache);
+        }
+
+        cmake
+    }
+
     /// Build for a single ABI
     fn build_abi(
         &self,
@@ -56,76 +106,24 @@ impl AndroidBuilder {
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
-
-        // Get NDK CMake variables for this ABI
         let cmake_vars = ndk.cmake_variables_for_abi(abi, api_level);
 
-        // Configure and build with CMake
-        // For Release builds, use RelWithDebInfo to get debug symbols (-O2 -g -DNDEBUG)
-        // This ensures SYMBOLS.zip contains unstripped libraries with full debug info
         let build_type = if ctx.options.release {
             BuildType::RelWithDebInfo
         } else {
             BuildType::Debug
         };
 
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+        let cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .build_type(build_type)
             .install_prefix(install_dir.clone())
-            .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
-            .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_LIB_NAME", ctx.lib_name())
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
-        // Add CCGO_CMAKE_DIR if available
-        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
-            cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
-        }
-
-        // Add NDK-specific variables
-        for (name, value) in cmake_vars {
-            cmake = cmake.variable(&name, &value);
-        }
-
-        // Prevent CMake from stripping during install (we control stripping manually)
-        if ctx.options.release {
-            cmake = cmake
-                .variable("CMAKE_SKIP_INSTALL_RPATH", "ON")
-                .variable("CMAKE_BUILD_WITH_INSTALL_RPATH", "OFF")
-                .variable("CMAKE_STRIP", "");
-        }
-
-        // Add CCGO configuration variables
-        cmake = cmake.variable(
-            "CCGO_CONFIG_PRESET_VISIBILITY",
-            ctx.symbol_visibility().to_string(),
-        );
-
-        // Add submodule dependencies for shared library linking
-        if let Some(deps_map) = ctx.deps_map() {
-            cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
-        }
-
-        // Add feature definitions for conditional compilation
-        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
-            if !feature_defines.is_empty() {
-                cmake = cmake.feature_definitions(&feature_defines);
-                if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
-                }
-            }
-        }
-
-        // Add compiler cache if available
-        if let Some(cache) = ctx.compiler_cache() {
-            cmake = cmake.compiler_cache(cache);
-        }
+        let cmake = self.configure_cmake(ctx, cmake, build_shared, cmake_vars);
 
         cmake.configure_build_install()?;
 
-        // Return build_dir since CCGO cmake installs to build_dir/out/
         Ok(build_dir)
     }
 
@@ -332,14 +330,44 @@ impl AndroidBuilder {
         Ok(())
     }
 
+    /// Get merged_native_libs path for Gradle project
+    fn get_merged_libs_path(ctx: &BuildContext) -> PathBuf {
+        let android_project = ctx.project_root.join("android").join("main_android_sdk");
+        let flavor = if ctx.options.release { "prodRelease" } else { "prodDebug" };
+        let flavor_cap = if ctx.options.release { "ProdRelease" } else { "ProdDebug" };
+
+        android_project
+            .join("build/intermediates/merged_native_libs")
+            .join(flavor)
+            .join(format!("merge{}NativeLibs/out/lib", flavor_cap))
+    }
+
+    /// Copy .so files from a directory to symbols staging
+    fn copy_so_files_to_symbols(
+        abi_dir: &PathBuf,
+        symbols_abi_dir: &PathBuf,
+        verbose: bool,
+    ) -> Result<()> {
+        for entry in std::fs::read_dir(abi_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_file() && path.extension().map(|e| e == "so").unwrap_or(false) {
+                let lib_name = path.file_name().unwrap();
+                let dest = symbols_abi_dir.join(lib_name);
+                std::fs::copy(&path, &dest).with_context(|| {
+                    format!("Failed to copy {} to symbols", path.display())
+                })?;
+
+                if verbose {
+                    eprintln!("  Copied {} to symbols", lib_name.to_string_lossy());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Copy unstripped libraries from Gradle's obj/local/ directory to symbols staging
-    ///
-    /// Gradle's buildAAR task automatically places unstripped shared libraries in
-    /// android/main_android_sdk/obj/local/{arch}/. This method reads from that location
-    /// and copies to symbols_staging/obj/{arch}/ for SYMBOLS.zip packaging.
-    ///
-    /// This matches Python ccgo's behavior where symbols are collected from the
-    /// Gradle-generated merged_native_libs directory rather than manually copied during build.
     fn copy_obj_local_to_symbols(
         &self,
         ctx: &BuildContext,
@@ -350,18 +378,7 @@ impl AndroidBuilder {
             eprintln!("Copying unstripped libraries from merged_native_libs to symbols...");
         }
 
-        // Path to Gradle-generated merged_native_libs directory
-        let android_project = ctx.project_root.join("android").join("main_android_sdk");
-
-        // Determine flavor (prodRelease or prodDebug)
-        let flavor = if ctx.options.release { "prodRelease" } else { "prodDebug" };
-        let flavor_cap = if ctx.options.release { "ProdRelease" } else { "ProdDebug" };
-
-        // Path: build/intermediates/merged_native_libs/{flavor}/merge{FlavorCap}NativeLibs/out/lib
-        let merged_libs = android_project
-            .join("build/intermediates/merged_native_libs")
-            .join(flavor)
-            .join(format!("merge{}NativeLibs/out/lib", flavor_cap));
+        let merged_libs = Self::get_merged_libs_path(ctx);
 
         if !merged_libs.exists() {
             if ctx.options.verbose {
@@ -379,7 +396,6 @@ impl AndroidBuilder {
                 continue;
             }
 
-            // Create symbols directory for this ABI (symbols/android/obj/{arch}/)
             let symbols_abi_dir = symbols_staging
                 .join("symbols")
                 .join("android")
@@ -387,27 +403,7 @@ impl AndroidBuilder {
                 .join(abi.abi_string());
             std::fs::create_dir_all(&symbols_abi_dir)?;
 
-            // Copy all .so files from merged_native_libs/{arch}/
-            for entry in std::fs::read_dir(&abi_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == "so" {
-                            let lib_name = path.file_name().unwrap();
-                            let dest = symbols_abi_dir.join(lib_name);
-                            std::fs::copy(&path, &dest).with_context(|| {
-                                format!("Failed to copy {} to symbols", path.display())
-                            })?;
-
-                            if ctx.options.verbose {
-                                eprintln!("  Copied {} to symbols", lib_name.to_string_lossy());
-                            }
-                        }
-                    }
-                }
-            }
+            Self::copy_so_files_to_symbols(&abi_dir, &symbols_abi_dir, ctx.options.verbose)?;
         }
 
         Ok(())
@@ -498,6 +494,102 @@ impl AndroidBuilder {
         Ok(())
     }
 
+    /// Run Gradle assemble task to build AAR
+    fn run_gradle_assemble(&self, ctx: &BuildContext, android_project: &PathBuf) -> Result<()> {
+        let gradlew = if cfg!(target_os = "windows") {
+            "gradlew.bat"
+        } else {
+            "./gradlew"
+        };
+
+        let assemble_task = if ctx.options.release {
+            ":main_android_sdk:assembleProdRelease"
+        } else {
+            ":main_android_sdk:assembleProdDebug"
+        };
+
+        eprintln!("  Running Gradle {} task...", assemble_task);
+
+        let status = std::process::Command::new(gradlew)
+            .arg(assemble_task)
+            .arg("--no-daemon")
+            .current_dir(android_project)
+            .spawn()
+            .with_context(|| format!("Failed to spawn Gradle in {}", android_project.display()))?
+            .wait()
+            .with_context(|| "Failed to wait for Gradle process")?;
+
+        if !status.success() {
+            bail!("Gradle {} failed with exit code: {:?}", assemble_task, status.code());
+        }
+
+        Ok(())
+    }
+
+    /// Find built AAR and copy to output directory with versioned naming
+    fn find_and_copy_aar_to_output(
+        &self,
+        ctx: &BuildContext,
+        android_project: &PathBuf,
+        output_dir: &PathBuf,
+    ) -> Result<PathBuf> {
+        let flavor = if ctx.options.release { "release" } else { "debug" };
+        let aar_dir = android_project.join("main_android_sdk/build/outputs/aar");
+
+        let aar_glob_pattern = aar_dir.join(format!("*-prod-{}.aar", flavor));
+        let aar_files: Vec<_> = glob::glob(aar_glob_pattern.to_str().unwrap())
+            .context("Failed to glob AAR files")?
+            .filter_map(|p| p.ok())
+            .collect();
+
+        if aar_files.is_empty() {
+            bail!("No AAR file found after Gradle assemble in {}", aar_dir.display());
+        }
+
+        let project_name_upper = ctx.lib_name().to_uppercase();
+        let dest_name = format!("{}_ANDROID_SDK-{}.aar", project_name_upper, ctx.version());
+        let dest = output_dir.join(&dest_name);
+
+        if let Some(aar_file) = aar_files.first() {
+            std::fs::copy(aar_file, &dest).with_context(|| {
+                format!("Failed to copy AAR from {} to {}", aar_file.display(), dest.display())
+            })?;
+
+            if ctx.options.verbose {
+                eprintln!("  AAR generated: {}", dest.display());
+            }
+        }
+
+        Ok(dest)
+    }
+
+    /// Clean up old AAR files in output directory
+    fn cleanup_old_aar_files(&self, ctx: &BuildContext, output_dir: &PathBuf, current_aar: &PathBuf) -> Result<()> {
+        let old_aar = output_dir.join(format!("{}.aar", ctx.lib_name()));
+        if old_aar.exists() && old_aar != *current_aar {
+            let _ = std::fs::remove_file(&old_aar);
+        }
+
+        if output_dir.exists() {
+            for entry in std::fs::read_dir(output_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension() {
+                        if ext == "aar" && path != *current_aar {
+                            if ctx.options.verbose {
+                                eprintln!("  Removing old AAR: {}", path.display());
+                            }
+                            std::fs::remove_file(&path).ok();
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Build AAR package using Gradle buildAAR task
     ///
     /// Steps:
@@ -520,114 +612,20 @@ impl AndroidBuilder {
             bail!("Android Gradle project not found at {}", android_project.display());
         }
 
-        // Sync CCGO.toml version -> android/gradle/libs.versions.toml (commMainProject).
-        // Keeps the Gradle version catalog in lockstep with CCGO.toml without users having
-        // to update two places.
+        // Sync CCGO.toml version -> android/gradle/libs.versions.toml
         crate::utils::version_sync::sync_gradle_version_catalog(
             &android_project.join("gradle").join("libs.versions.toml"),
             ctx.version(),
         );
 
-        // Libraries should already be copied to jniLibs by copy_libraries_to_jnilibs()
-        // Just run Gradle buildAAR task
-        // The buildAAR task automatically:
-        // - Builds the AAR with correct flavor (prod)
-        // - Copies to target/{debug|release}/android/ with proper naming
-        // - Uses CCGO Gradle plugin's naming convention
-        let gradlew = if cfg!(target_os = "windows") {
-            "gradlew.bat"
-        } else {
-            "./gradlew"
-        };
+        // Run Gradle assemble
+        self.run_gradle_assemble(ctx, &android_project)?;
 
-        // Use standard Android assemble task instead of custom buildAAR
-        // This avoids triggering buildLibrariesForMain which would spawn new ccgo builds
-        // The assembleProdRelease/assembleProdDebug tasks just package jniLibs into AAR
-        let assemble_task = if ctx.options.release {
-            ":main_android_sdk:assembleProdRelease"
-        } else {
-            ":main_android_sdk:assembleProdDebug"
-        };
+        // Find and copy AAR to output directory
+        let dest = self.find_and_copy_aar_to_output(ctx, &android_project, output_dir)?;
 
-        eprintln!("  Running Gradle {} task...", assemble_task);
-
-        // Use spawn + wait to show real-time output instead of capturing it
-        let status = std::process::Command::new(gradlew)
-            .arg(assemble_task)
-            .arg("--no-daemon")
-            .current_dir(&android_project)
-            .spawn()
-            .with_context(|| format!("Failed to spawn Gradle in {}", android_project.display()))?
-            .wait()
-            .with_context(|| "Failed to wait for Gradle process")?;
-
-        if !status.success() {
-            bail!("Gradle {} failed with exit code: {:?}", assemble_task, status.code());
-        }
-
-        // Step 3: Find AAR from standard Android build output directory
-        // The assembleProd* tasks create AAR at:
-        // android/main_android_sdk/build/outputs/aar/main_android_sdk-prod-{release|debug}.aar
-        let flavor = if ctx.options.release { "release" } else { "debug" };
-        let aar_dir = android_project
-            .join("main_android_sdk/build/outputs/aar");
-
-        let aar_glob_pattern = aar_dir.join(format!("*-prod-{}.aar", flavor));
-        let aar_files: Vec<_> = glob::glob(aar_glob_pattern.to_str().unwrap())
-            .context("Failed to glob AAR files")?
-            .filter_map(|p| p.ok())
-            .collect();
-
-        if aar_files.is_empty() {
-            bail!("No AAR file found after Gradle assemble in {}", aar_dir.display());
-        }
-
-        // Copy AAR to output_dir with versioned naming format
-        // Format: {PROJECT}_ANDROID_SDK-{version}-{publish_suffix}.aar
-        // Example: CCGONOW_ANDROID_SDK-1.0.2-beta.18-dirty.aar
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let dest_name = format!(
-            "{}_ANDROID_SDK-{}.aar",
-            project_name_upper,
-            ctx.version()
-        );
-        let dest = output_dir.join(&dest_name);
-
-        // Copy the first AAR file (should only be one anyway)
-        if let Some(aar_file) = aar_files.first() {
-            std::fs::copy(aar_file, &dest).with_context(|| {
-                format!("Failed to copy AAR from {} to {}", aar_file.display(), dest.display())
-            })?;
-
-            if ctx.options.verbose {
-                eprintln!("  AAR generated: {}", dest.display());
-            }
-        }
-
-        // Clean up old simple-named AAR files if they exist
-        let old_aar = output_dir.join(format!("{}.aar", ctx.lib_name()));
-        if old_aar.exists() && old_aar != dest {
-            let _ = std::fs::remove_file(&old_aar);
-        }
-
-        // Clean up any other .aar files in output_dir (from previous builds)
-        // This ensures only the renamed AAR exists, matching Python ccgo behavior
-        if output_dir.exists() {
-            for entry in std::fs::read_dir(output_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == "aar" && path != dest {
-                            if ctx.options.verbose {
-                                eprintln!("  Removing old AAR: {}", path.display());
-                            }
-                            std::fs::remove_file(&path).ok();
-                        }
-                    }
-                }
-            }
-        }
+        // Clean up old AAR files
+        self.cleanup_old_aar_files(ctx, output_dir, &dest)?;
 
         Ok(())
     }
@@ -674,35 +672,175 @@ impl PlatformBuilder for AndroidBuilder {
         Ok(())
     }
 
+    /// Resolve ABIs from build options
+    fn resolve_abis(ctx: &BuildContext) -> Result<Vec<AndroidAbi>> {
+        if ctx.options.architectures.is_empty() {
+            Ok(vec![AndroidAbi::Arm64V8a, AndroidAbi::ArmeabiV7a, AndroidAbi::X86_64])
+        } else {
+            ctx.options.architectures
+                .iter()
+                .map(|s| Self::parse_abi(s))
+                .collect()
+        }
+    }
+
+    /// Build static and shared libraries, returning built link types
+    fn build_static_and_shared(
+        &self,
+        ctx: &BuildContext,
+        ndk: &AndroidNdkToolchain,
+        abis: &[AndroidAbi],
+        api_level: u32,
+        archive: &ArchiveBuilder,
+        symbols_staging: &PathBuf,
+    ) -> Result<Vec<&'static str>> {
+        let mut built_link_types = Vec::new();
+
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+            let results = self.build_link_type(ctx, ndk, "static", abis, api_level)?;
+            self.add_libraries_to_archive(archive, &results, "static", false)?;
+            built_link_types.push("static");
+        }
+
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+            let results = self.build_link_type(ctx, ndk, "shared", abis, api_level)?;
+
+            if ctx.options.release {
+                self.copy_unstripped_to_obj_local(ctx, &results)?;
+                self.strip_shared_libraries(ctx, ndk, &results, symbols_staging)?;
+            }
+
+            self.add_libraries_to_archive(archive, &results, "shared", true)?;
+            built_link_types.push("shared");
+
+            if ctx.options.verbose {
+                eprintln!("Copying libraries to jniLibs for Gradle...");
+            }
+            self.copy_libraries_to_jnilibs(ctx, abis)?;
+        }
+
+        Ok(built_link_types)
+    }
+
+    /// Add AAR to archive if it exists
+    fn add_aar_to_archive_if_needed(&self, ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+        if ctx.options.native_only {
+            return Ok(());
+        }
+
+        let project_name_upper = ctx.lib_name().to_uppercase();
+        let aar_versioned_name = format!("{}_ANDROID_SDK-{}.aar", project_name_upper, ctx.version());
+        let aar_path = ctx.output_dir.join(&aar_versioned_name);
+
+        if aar_path.exists() {
+            let aar_dest = format!("haars/android/{}", aar_versioned_name);
+            archive.add_file(&aar_path, &aar_dest)?;
+            if ctx.options.verbose {
+                eprintln!("Added AAR to archive: {}", aar_dest);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create symbols archive if needed
+    fn create_symbols_archive_if_needed(
+        &self,
+        ctx: &BuildContext,
+        built_link_types: &[&str],
+        symbols_staging: &PathBuf,
+        archive: &ArchiveBuilder,
+    ) -> Result<Option<PathBuf>> {
+        if !built_link_types.contains(&"shared") {
+            return Ok(None);
+        }
+
+        let symbols_dir = symbols_staging.join("symbols");
+        let has_symbols = symbols_dir.exists() &&
+            std::fs::read_dir(&symbols_dir)
+                .map(|mut d| d.next().is_some())
+                .unwrap_or(false);
+
+        if has_symbols {
+            let sym_archive = self.create_symbols_archive_from_staging(archive, symbols_staging)?;
+            if ctx.options.verbose {
+                eprintln!("Created symbols archive: {}", sym_archive.display());
+            }
+            Ok(Some(sym_archive))
+        } else {
+            if ctx.options.verbose {
+                eprintln!("No symbols to archive (obj directory is empty)");
+            }
+            Ok(None)
+        }
+    }
+
+    /// Get AAR archive path if it exists
+    fn get_aar_archive_path(ctx: &BuildContext) -> Option<PathBuf> {
+        if ctx.options.native_only {
+            return None;
+        }
+
+        let project_name_upper = ctx.lib_name().to_uppercase();
+        let aar_versioned_name = format!("{}_ANDROID_SDK-{}.aar", project_name_upper, ctx.version());
+        let aar_path = ctx.output_dir.join(&aar_versioned_name);
+
+        if aar_path.exists() { Some(aar_path) } else { None }
+    }
+
+    /// Add include files to archive if they exist
+    fn add_include_files_if_needed(&self, ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+        let include_source = ctx.include_source_dir();
+        if !include_source.exists() {
+            return Ok(());
+        }
+
+        let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+        archive.add_directory(&include_source, &include_path)?;
+        if ctx.options.verbose {
+            eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+        }
+        Ok(())
+    }
+
+    /// Build AAR and copy symbols if shared libraries were built
+    fn build_aar_and_symbols(
+        &self,
+        ctx: &BuildContext,
+        abis: &[AndroidAbi],
+        built_link_types: &[&str],
+        symbols_staging: &PathBuf,
+    ) -> Result<()> {
+        if !built_link_types.contains(&"shared") {
+            return Ok(());
+        }
+
+        if ctx.options.verbose {
+            eprintln!("Building AAR package...");
+        }
+        self.build_aar(ctx, abis, &ctx.output_dir)?;
+        if ctx.options.verbose {
+            eprintln!("AAR package built successfully");
+        }
+        self.copy_obj_local_to_symbols(ctx, abis, symbols_staging)?;
+        Ok(())
+    }
+
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
         let start = Instant::now();
 
-        // Validate prerequisites first
         self.validate_prerequisites(ctx)?;
-
         let ndk = AndroidNdkToolchain::detect()?;
 
         if ctx.options.verbose {
             eprintln!("Building {} for Android...", ctx.lib_name());
         }
 
-        // Determine ABIs to build
-        let abis: Vec<AndroidAbi> = if ctx.options.architectures.is_empty() {
-            vec![AndroidAbi::Arm64V8a, AndroidAbi::ArmeabiV7a, AndroidAbi::X86_64]
-        } else {
-            ctx.options.architectures
-                .iter()
-                .map(|s| Self::parse_abi(s))
-                .collect::<Result<Vec<_>>>()?
-        };
-
-        // Get API level (default to 24)
+        let abis = Self::resolve_abis(ctx)?;
         let api_level = DEFAULT_API_LEVEL;
 
-        // Create output directory
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        // Create archive builder with "Android" platform name (capital A to match Python)
         let archive = ArchiveBuilder::new(
             ctx.lib_name(),
             ctx.version(),
@@ -712,140 +850,28 @@ impl PlatformBuilder for AndroidBuilder {
             ctx.output_dir.clone(),
         )?;
 
-        // Create symbols staging directory for unstripped libraries
         let symbols_staging = ctx.cmake_build_dir.join("symbols_staging");
         std::fs::create_dir_all(&symbols_staging)?;
 
-        let mut built_link_types = Vec::new();
-        let mut symbols_archive: Option<PathBuf> = None;
+        let built_link_types = self.build_static_and_shared(
+            ctx, &ndk, &abis, api_level, &archive, &symbols_staging
+        )?;
 
-        // Build static libraries
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
-            let results = self.build_link_type(ctx, &ndk, "static", &abis, api_level)?;
-            self.add_libraries_to_archive(&archive, &results, "static", false)?;
-            built_link_types.push("static");
-        }
+        self.add_include_files_if_needed(ctx, &archive)?;
+        self.build_aar_and_symbols(ctx, &abis, &built_link_types, &symbols_staging)?;
+        self.add_aar_to_archive_if_needed(ctx, &archive)?;
 
-        // Build shared libraries
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-            let results = self.build_link_type(ctx, &ndk, "shared", &abis, api_level)?;
-
-            // For release builds: First copy unstripped to obj/local, then strip, then copy to jniLibs
-            // For debug builds: Just copy to jniLibs (Gradle will handle obj/local)
-            if ctx.options.release {
-                // Save unstripped libraries to android/main_android_sdk/obj/local/{arch}/
-                // before stripping (Python ccgo does this)
-                self.copy_unstripped_to_obj_local(ctx, &results)?;
-                // Now strip the libraries in cmake_build directory
-                self.strip_shared_libraries(ctx, &ndk, &results, &symbols_staging)?;
-            }
-
-            self.add_libraries_to_archive(&archive, &results, "shared", true)?;
-            built_link_types.push("shared");
-
-            // Copy shared libraries to jniLibs for Gradle AAR packaging
-            // This is needed for both native-only and full build modes
-            if ctx.options.verbose {
-                eprintln!("Copying libraries to jniLibs for Gradle...");
-            }
-            self.copy_libraries_to_jnilibs(ctx, &abis)?;
-        }
-
-        // Add include files from project's include directory (matching pyccgo behavior)
-        // Path: include/{lib_name}/ (if source has project subdir) or include/ (if not)
-        let include_source = ctx.include_source_dir();
-        if include_source.exists() {
-            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
-            archive.add_directory(&include_source, &include_path)?;
-            if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
-            }
-        }
-
-        // Build AAR package if shared libraries were built
-        // In native-only mode, we still build AAR since jniLibs are already populated
-        if built_link_types.contains(&"shared") {
-            if ctx.options.verbose {
-                eprintln!("Building AAR package...");
-            }
-            self.build_aar(ctx, &abis, &ctx.output_dir)?;
-            if ctx.options.verbose {
-                eprintln!("AAR package built successfully");
-            }
-            // After successful AAR build, copy unstripped libraries from obj/local/ to symbols
-            // This works for both release and debug builds
-            self.copy_obj_local_to_symbols(ctx, &abis, &symbols_staging)?;
-        }
-
-        // Add AAR to archive if it exists (not in native-only mode)
-        // Only add to haars/android/ subdirectory, not to root
-        if !ctx.options.native_only {
-            // AAR file now uses versioned naming from build_aar()
-            // Format: {PROJECT}_ANDROID_SDK-{version}-{publish_suffix}.aar
-            let project_name_upper = ctx.lib_name().to_uppercase();
-            let aar_versioned_name = format!(
-                "{}_ANDROID_SDK-{}.aar",
-                project_name_upper,
-                ctx.version()
-            );
-            let aar_path = ctx.output_dir.join(&aar_versioned_name);
-
-            if aar_path.exists() {
-                // Add to haars/android/ subdirectory only
-                let aar_dest = format!("haars/android/{}", aar_versioned_name);
-                archive.add_file(&aar_path, &aar_dest)?;
-                if ctx.options.verbose {
-                    eprintln!("Added AAR to archive: {}", aar_dest);
-                }
-            }
-        }
-
-        // Create the SDK archive
         let architectures: Vec<String> = abis.iter().map(|a| a.abi_string().to_string()).collect();
         let link_type_str = ctx.options.link_type.to_string();
         let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
 
-        // Create symbols archive if we have stripped libraries (for release shared builds)
-        if built_link_types.contains(&"shared") {
-            // Check if symbols staging has content
-            let symbols_dir = symbols_staging.join("symbols");
-            let has_symbols = symbols_dir.exists() &&
-                std::fs::read_dir(&symbols_dir)
-                    .map(|mut d| d.next().is_some())
-                    .unwrap_or(false);
+        let symbols_archive = self.create_symbols_archive_if_needed(
+            ctx, &built_link_types, &symbols_staging, &archive
+        )?;
 
-            if has_symbols {
-                let sym_archive = self.create_symbols_archive_from_staging(&archive, &symbols_staging)?;
-                if ctx.options.verbose {
-                    eprintln!("Created symbols archive: {}", sym_archive.display());
-                }
-                symbols_archive = Some(sym_archive);
-            } else if ctx.options.verbose {
-                eprintln!("No symbols to archive (obj directory is empty)");
-            }
-        }
-
-        // Clean up symbols staging directory
         std::fs::remove_dir_all(&symbols_staging).ok();
 
-        // Check if AAR was generated (not in native-only mode)
-        let aar_archive = if !ctx.options.native_only {
-            let project_name_upper = ctx.lib_name().to_uppercase();
-            let aar_versioned_name = format!(
-                "{}_ANDROID_SDK-{}.aar",
-                project_name_upper,
-                ctx.version()
-            );
-            let aar_path = ctx.output_dir.join(&aar_versioned_name);
-            if aar_path.exists() {
-                Some(aar_path)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
+        let aar_archive = Self::get_aar_archive_path(ctx);
         let duration = start.elapsed();
 
         if ctx.options.verbose {
