@@ -802,24 +802,28 @@ pub struct BuildConfig {
     #[serde(default)]
     pub submodule_deps: std::collections::HashMap<String, Vec<String>>,
 
-    /// Relative path (from project root) for the generated `verinfo_gen.h`.
-    /// Typically a header directory like `include/stdcomm/base/`.
+    /// Include-namespace subpath for the ccgo-generated verinfo header.
     ///
-    /// When unset, no generation happens at all. When set, also set
-    /// `verinfo_source_path` (or let it default) to ensure the generated
-    /// `.c` ends up in a directory the project's CMake actually compiles.
+    /// When set, `ccgo build` writes two files under the project's
+    /// `cmake_build/` tree (which every ccgo project already gitignores):
+    ///
+    /// * `cmake_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`
+    /// * `cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc`
+    ///
+    /// The `<verinfo_path>` segment controls only the `#include` path that
+    /// project code uses to pull in the `<PROJECT>_CCGO_PROJECT_VERIDENTITY`
+    /// macro and `<project>_ccgo_project_veridentity` symbol — e.g.
+    /// `verinfo_path = "stdcomm/base/"` lets project code write
+    /// `#include "stdcomm/base/verinfo_ccgo_gen.h"`. It is *not* a filesystem
+    /// output path; ccgo always writes under `cmake_build/`.
+    ///
+    /// When unset, no generation happens at all.
     ///
     /// The generated files embed a build identity:
     ///   `<PROJECT>_CCGO_PROJECT_VERIDENTITY=<version>-<ts>-<sha>[-dirty]`
     /// so operators can recover source state via
     /// `strings libfoo.so | grep VERIDENTITY=`.
     pub verinfo_path: Option<String>,
-
-    /// Relative path (from project root) for the generated `verinfo_gen.c`.
-    /// Defaults to `src/base/` when unset so it is picked up by ccgo's
-    /// default CMake source-glob layout. Override to match project layout,
-    /// e.g. `src/stdcomm/base/`.
-    pub verinfo_source_path: Option<String>,
 }
 
 /// Platform-specific configurations

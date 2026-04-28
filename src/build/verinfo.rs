@@ -1,20 +1,27 @@
 //! Build-time verinfo generator.
 //!
-//! When a project declares `[build].verinfo_path = "include/foo/base/"` in
-//! its `CCGO.toml`, ccgo writes two auto-generated files into that directory
-//! before each build:
+//! When a project declares `[build].verinfo_path = "<proj>/base/"` in its
+//! `CCGO.toml`, ccgo writes two auto-generated files into the current
+//! project's `cmake_build/ccgo_generated/` tree before each build:
 //!
-//! * `verinfo_gen.h` — C header with `#define <PROJECT>_VERIDENTITY "..."`.
-//! * `verinfo_gen.c` — translation unit that defines a `const char[]` symbol
-//!                     with `__attribute__((used))`, plus an optional ELF
-//!                     `.note.ccgo.project` note for structured readout.
+//! * `cmake_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`
+//!   — C header with `#define <PROJECT>_CCGO_PROJECT_VERIDENTITY "..."`.
+//! * `cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc`
+//!   — translation unit that defines a `const char[]` symbol with
+//!   `__attribute__((used))`, plus an optional ELF `.note.ccgo.project`
+//!   note for structured readout.
+//!
+//! The generated tree lives entirely under `cmake_build/`, which is
+//! gitignored by every ccgo-managed project. Nothing is written into the
+//! source tree — so the working copy stays clean across builds, even as the
+//! embedded identity changes on every `ccgo build`.
 //!
 //! The resulting artifact (`.so`/`.a`/`.dylib`/`.dll`) carries the build
 //! identity as an embedded string. Recover it from a shipped library with:
 //!
 //! ```text
 //! strings libfoo.so | grep VERIDENTITY=
-//! # → FOO_VERIDENTITY=25.2.9519653-20260414202500-a1b2c3d
+//! # → FOO_CCGO_PROJECT_VERIDENTITY=25.2.9519653-20260414202500-a1b2c3d
 //! ```
 //!
 //! Or, when ELF tooling is available:
@@ -26,111 +33,83 @@
 //! The version string itself (used for filenames, dependency resolution)
 //! stays strictly Cargo-style — sourced only from `[package].version`.
 //! VERIDENTITY is a separate build fingerprint and never affects filenames.
+//!
+//! The CMake template (`cmake/template/Root.CMakeLists.txt.in`) adds
+//! `cmake_build/ccgo_generated/include` to the global include path and
+//! appends `cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc` to each
+//! platform's `SELF_SRC_FILES`, guarded by `if(EXISTS ...)`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+/// Subdirectory under a project's `cmake_build/` where ccgo writes its
+/// generated sources. Kept in one place so the CMake template and the Rust
+/// generator stay in sync.
+const GENERATED_SUBDIR: &str = "cmake_build/ccgo_generated";
+
 /// Handle returned after generating the verinfo files. Callers that want to
-/// feed the generated `.c` into CMake can read `.source_c()`.
+/// feed the generated `.cc` into CMake can read `.source`.
 #[derive(Debug, Clone)]
 pub struct GeneratedVerinfo {
-    /// Absolute path to the generated C header (`verinfo_gen.h`).
+    /// Absolute path to the generated C header
+    /// (`cmake_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`).
     pub header: PathBuf,
-    /// Absolute path to the generated C source (`verinfo_gen.c`).
+    /// Absolute path to the generated C++ source
+    /// (`cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc`).
     pub source: PathBuf,
     /// The full VERIDENTITY string that was embedded (for logging).
     pub identity: String,
 }
 
-/// Generate `verinfo_gen.h` plus the platform-appropriate `verinfo_gen.{cc,mm}`
-/// translation units that ccgo's CMake template will pick up directly into
-/// the final shared library target (avoiding dead-strip when the symbol is
-/// linked through a static sub-archive).
+/// Generate `verinfo_ccgo_gen.h` + `verinfo_ccgo_gen.cc` under
+/// `<project_root>/cmake_build/ccgo_generated/`. The CMake template picks
+/// the generated `.cc` up via `list(APPEND SELF_SRC_FILES ...)` guarded by
+/// `if(EXISTS ...)`.
 ///
 /// * `project_root` — absolute project directory.
-/// * `header_dir_rel` — value of `[build].verinfo_path` (e.g.
-///   `"include/stdcomm/base/"`). Header lands here.
-/// * `source_dir_rel_override` — value of `[build].verinfo_source_path`. When
-///   set, that single path is used (no per-platform fan-out). When `None`,
-///   ccgo writes one source per supported `src/api/<platform>/` directory:
-///   * `src/api/apple/verinfo_gen.mm`   (matches Apple platforms' .mm glob)
-///   * `src/api/native/verinfo_gen.cc`  (matches Android/Linux/Windows/OHOS)
-///   * `src/api/windows/verinfo_gen.cc` (Windows-specific glob)
+/// * `header_include_subdir` — value of `[build].verinfo_path`. Controls
+///   the `#include` namespace of the generated header, e.g. `"stdcomm/base/"`
+///   produces `cmake_build/ccgo_generated/include/stdcomm/base/verinfo_ccgo_gen.h`
+///   which project code can pull in via
+///   `#include "stdcomm/base/verinfo_ccgo_gen.h"`.
 /// * `project_name` — used for the `<PROJECT>_CCGO_PROJECT_VERIDENTITY`
 ///   macro / symbol name.
 /// * `identity` — pre-computed `<ver>-<ts>-<sha>[-dirty]` string.
 pub fn generate(
     project_root: &Path,
-    header_dir_rel: &str,
-    source_dir_rel_override: Option<&str>,
+    header_include_subdir: &str,
     project_name: &str,
     identity: &str,
 ) -> Result<GeneratedVerinfo> {
-    let header_dir = project_root.join(header_dir_rel);
+    let generated_root = project_root.join(GENERATED_SUBDIR);
+    let header_dir = generated_root.join("include").join(header_include_subdir);
+    let source_dir = generated_root.join("src");
+
     fs::create_dir_all(&header_dir).with_context(|| {
         format!("Failed to create verinfo header dir {}", header_dir.display())
+    })?;
+    fs::create_dir_all(&source_dir).with_context(|| {
+        format!("Failed to create verinfo source dir {}", source_dir.display())
     })?;
 
     // `<PROJECT>_CCGO_PROJECT_VERIDENTITY` — namespaced to avoid colliding
     // with any `<PROJECT>_VERIDENTITY` the project may already define.
-    let macro_name = format!(
-        "{}_CCGO_PROJECT_VERIDENTITY",
-        project_name.to_uppercase()
-    );
-    let symbol_name = format!(
-        "{}_ccgo_project_veridentity",
-        project_name.to_lowercase()
-    );
+    let macro_name = format!("{}_CCGO_PROJECT_VERIDENTITY", project_name.to_uppercase());
+    let symbol_name = format!("{}_ccgo_project_veridentity", project_name.to_lowercase());
 
-    let header_path = header_dir.join("verinfo_gen.h");
+    let header_path = header_dir.join("verinfo_ccgo_gen.h");
     let header = render_header(&macro_name, &symbol_name, identity);
     write_if_changed(&header_path, &header)?;
 
+    let source_path = source_dir.join("verinfo_ccgo_gen.cc");
     let source = render_source(&macro_name, &symbol_name, identity, project_name);
-
-    // Pick destination(s).
-    let mut source_paths: Vec<PathBuf> = Vec::new();
-    if let Some(rel) = source_dir_rel_override {
-        let dir = project_root.join(rel);
-        fs::create_dir_all(&dir).with_context(|| {
-            format!("Failed to create verinfo source dir {}", dir.display())
-        })?;
-        // Heuristic: if the user-chosen dir matches an Apple convention,
-        // emit .mm; otherwise default to .cc.
-        let ext = if rel.contains("apple") || rel.contains("ios")
-            || rel.contains("macos") || rel.contains("tvos")
-            || rel.contains("watchos")
-        {
-            "mm"
-        } else {
-            "cc"
-        };
-        source_paths.push(dir.join(format!("verinfo_gen.{ext}")));
-    } else {
-        // Default: fan out to each platform-specific glob path so every
-        // `ccgo build <platform>` invocation can pick up the right TU.
-        for (rel, ext) in [
-            ("src/api/apple/", "mm"),
-            ("src/api/native/", "cc"),
-            ("src/api/windows/", "cc"),
-        ] {
-            let dir = project_root.join(rel);
-            fs::create_dir_all(&dir).with_context(|| {
-                format!("Failed to create verinfo source dir {}", dir.display())
-            })?;
-            source_paths.push(dir.join(format!("verinfo_gen.{ext}")));
-        }
-    }
-
-    for path in &source_paths {
-        write_if_changed(path, &source)?;
-    }
+    write_if_changed(&source_path, &source)?;
 
     Ok(GeneratedVerinfo {
         header: header_path,
-        source: source_paths.into_iter().next().unwrap(),
+        source: source_path,
         identity: identity.to_string(),
     })
 }
@@ -143,8 +122,8 @@ fn render_header(macro_name: &str, symbol_name: &str, identity: &str) -> String 
  *
  * Build identity macro + symbol declaration.
  */
-#ifndef CCGO_VERINFO_GEN_H_
-#define CCGO_VERINFO_GEN_H_
+#ifndef CCGO_VERINFO_CCGO_GEN_H_
+#define CCGO_VERINFO_CCGO_GEN_H_
 
 #define {macro_name}_STRING "{identity}"
 #define {macro_name} "{macro_name}=" {macro_name}_STRING
@@ -160,7 +139,7 @@ extern const char {symbol_name}[];
 }}
 #endif
 
-#endif  /* CCGO_VERINFO_GEN_H_ */
+#endif  /* CCGO_VERINFO_CCGO_GEN_H_ */
 "#
     )
 }
@@ -187,6 +166,10 @@ fn render_source(
  *
  * On ELF targets the identity is additionally placed in the
  * `.note.ccgo.project` section, which `readelf -n` can pretty-print.
+ *
+ * Compiled as C++ on every platform (Apple included) — the code body is
+ * pure C, so the .cc extension is safe everywhere and lets the CMake
+ * template pick up a single translation unit without per-platform fan-out.
  */
 #include <stddef.h>
 
@@ -283,17 +266,29 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let out = generate(
             tmp.path(),
-            "include/foo/base/",
-            Some("src/base/"),
+            "foo/base/",
             "foo",
             "1.2.3-20260101000000-abc1234",
         )
         .unwrap();
+
+        // Files land under cmake_build/ccgo_generated/, not in the source tree.
+        let expected_header = tmp
+            .path()
+            .join("cmake_build/ccgo_generated/include/foo/base/verinfo_ccgo_gen.h");
+        let expected_source = tmp
+            .path()
+            .join("cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc");
+        assert_eq!(out.header, expected_header);
+        assert_eq!(out.source, expected_source);
         assert!(out.header.is_file());
         assert!(out.source.is_file());
+
         let header = fs::read_to_string(&out.header).unwrap();
         assert!(header.contains("FOO_CCGO_PROJECT_VERIDENTITY_STRING"));
         assert!(header.contains("1.2.3-20260101000000-abc1234"));
+        assert!(header.contains("CCGO_VERINFO_CCGO_GEN_H_"));
+
         let source = fs::read_to_string(&out.source).unwrap();
         assert!(source.contains("foo_ccgo_project_veridentity"));
         assert!(source.contains(".note.ccgo.project"));

@@ -153,8 +153,9 @@ impl BuildContext {
             &package.version,
         ).ok();
 
-        // If [build].verinfo_path is set, regenerate verinfo_gen.{h,c} with
-        // the current build identity before the C/C++ build starts. Best-
+        // If [build].verinfo_path is set, regenerate the ccgo verinfo
+        // translation unit under cmake_build/ccgo_generated/ with the
+        // current build identity before the C/C++ build starts. Best-
         // effort — skipping on failure so verinfo trouble can't block builds.
         if let Some(header_rel) = config
             .build
@@ -163,14 +164,9 @@ impl BuildContext {
         {
             if let Some(gv) = git_version.as_ref() {
                 let identity = gv.veridentity(&package.version);
-                let source_rel = config
-                    .build
-                    .as_ref()
-                    .and_then(|b| b.verinfo_source_path.as_deref());
                 let _ = verinfo::generate(
                     &project_root,
                     header_rel,
-                    source_rel,
                     &package.name,
                     &identity,
                 );

@@ -52,6 +52,13 @@ include(${CCGO_CMAKE_DIR}/CMakeExtraFlags.cmake)   # Platform-specific compiler 
 # Add project root to include paths for header file resolution
 include_directories(./)
 
+# ccgo-generated verinfo headers (written by `ccgo build` into cmake_build/
+# when [build].verinfo_path is set in CCGO.toml). Guarded by EXISTS so
+# projects that don't use verinfo are unaffected.
+if(EXISTS "${CMAKE_SOURCE_DIR}/cmake_build/ccgo_generated/include")
+    include_directories("${CMAKE_SOURCE_DIR}/cmake_build/ccgo_generated/include")
+endif()
+
 ## Auto-discover CCGO dependencies from multiple directories
 # Dependencies are scanned from (in priority order):
 #   1. vendor/        - Vendored dependencies (committed to git)
@@ -422,6 +429,13 @@ else()
         file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/native/*.h src/api/native/*.cpp src/api/native/*.cc)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
 
+        # ccgo-generated verinfo source (optional — present only when [build].verinfo_path is set)
+        set(CCGO_VERINFO_GEN_SRC "${CMAKE_SOURCE_DIR}/cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc")
+        if(EXISTS "${CCGO_VERINFO_GEN_SRC}")
+            list(APPEND SELF_SRC_FILES "${CCGO_VERINFO_GEN_SRC}")
+            source_group(src\\api\\ccgo_generated FILES "${CCGO_VERINFO_GEN_SRC}")
+        endif()
+
         # Remove any test files from production build
         exclude_unittest_files(SELF_SRC_FILES)
 
@@ -560,6 +574,13 @@ else()
         file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/native/*.h src/api/native/*.cpp src/api/native/*.cc)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
 
+        # ccgo-generated verinfo source (optional — present only when [build].verinfo_path is set)
+        set(CCGO_VERINFO_GEN_SRC "${CMAKE_SOURCE_DIR}/cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc")
+        if(EXISTS "${CCGO_VERINFO_GEN_SRC}")
+            list(APPEND SELF_SRC_FILES "${CCGO_VERINFO_GEN_SRC}")
+            source_group(src\\api\\ccgo_generated FILES "${CCGO_VERINFO_GEN_SRC}")
+        endif()
+
         # Remove any test files from production build
         exclude_unittest_files(SELF_SRC_FILES)
 
@@ -697,6 +718,13 @@ else()
             src/api/ios/*.h src/api/ios/*.mm src/api/ios/*.m)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(src\\api FILES ${SELF_TEMP_SRC_FILES})
+
+        # ccgo-generated verinfo source (optional — present only when [build].verinfo_path is set)
+        set(CCGO_VERINFO_GEN_SRC "${CMAKE_SOURCE_DIR}/cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc")
+        if(EXISTS "${CCGO_VERINFO_GEN_SRC}")
+            list(APPEND SELF_SRC_FILES "${CCGO_VERINFO_GEN_SRC}")
+            source_group(src\\api\\ccgo_generated FILES "${CCGO_VERINFO_GEN_SRC}")
+        endif()
 
         # Ensure SELF_SRC_FILES is non-empty (required for add_library)
         if(NOT SELF_SRC_FILES)
@@ -865,6 +893,13 @@ else()
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(src\\api\\native FILES ${SELF_TEMP_SRC_FILES})
 
+        # ccgo-generated verinfo source (optional — present only when [build].verinfo_path is set)
+        set(CCGO_VERINFO_GEN_SRC "${CMAKE_SOURCE_DIR}/cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc")
+        if(EXISTS "${CCGO_VERINFO_GEN_SRC}")
+            list(APPEND SELF_SRC_FILES "${CCGO_VERINFO_GEN_SRC}")
+            source_group(src\\api\\ccgo_generated FILES "${CCGO_VERINFO_GEN_SRC}")
+        endif()
+
         # Collect third-party binaries and special linker flags
         set(TEMP_TARGET_SRC_LINKS "")
         set(TEMP_TARGET_LINK_FLAGS "")
@@ -962,6 +997,13 @@ else()
         file(GLOB SELF_TEMP_SRC_FILES RELATIVE ${PROJECT_SOURCE_DIR} src/api/native/*.h src/api/native/*.cpp src/api/native/*.cc)
         list(APPEND SELF_SRC_FILES ${SELF_TEMP_SRC_FILES})
         source_group(src\\api\\native FILES ${SELF_TEMP_SRC_FILES})
+
+        # ccgo-generated verinfo source (optional — present only when [build].verinfo_path is set)
+        set(CCGO_VERINFO_GEN_SRC "${CMAKE_SOURCE_DIR}/cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc")
+        if(EXISTS "${CCGO_VERINFO_GEN_SRC}")
+            list(APPEND SELF_SRC_FILES "${CCGO_VERINFO_GEN_SRC}")
+            source_group(src\\api\\ccgo_generated FILES "${CCGO_VERINFO_GEN_SRC}")
+        endif()
 
         # ========== Build Static Library ==========
         if(CCGO_BUILD_STATIC)
