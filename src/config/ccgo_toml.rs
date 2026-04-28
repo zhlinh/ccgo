@@ -279,6 +279,7 @@ impl SimplifiedDep {
                 SimplifiedDep::Version(_) => None,
                 SimplifiedDep::Full(spec) => spec.registry.clone(),
             },
+            linkage: None,
         }
     }
 }
@@ -486,6 +487,7 @@ impl WorkspaceDependency {
             default_features: self.default_features,
             workspace: false,
             registry: None,
+            linkage: None,
         }
     }
 }
@@ -553,6 +555,65 @@ pub struct ExampleConfig {
     pub path: Option<String>,
 }
 
+/// Per-dependency linkage strategy.
+///
+/// Encodes two orthogonal facets in one symbol:
+/// 1. **Form** — what kind of artifact the dep ultimately becomes in the
+///    consumer's link line (`shared` = `.so`/`.dylib`/`.dll`,
+///    `static` = `.a`/`.lib`).
+/// 2. **Relationship** — `external` keeps the dep as its own file (consumer
+///    references it via `DT_NEEDED` / dependent-lib record); `embedded`
+///    archives the dep's object code into the consumer's binary.
+///
+/// `shared-embedded` is intentionally absent: a shared library cannot be
+/// archived into another shared library at link time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum Linkage {
+    /// Dep stays as a separate `.so`/`.dylib`/`.dll`; consumer records a
+    /// dependency on it (DT_NEEDED on ELF). Default for shared consumers
+    /// when the dep can produce a shared artifact.
+    SharedExternal,
+    /// Dep's `.a` is archived into the consumer's binary. The consumer
+    /// becomes self-contained but bigger; multiple consumers with the same
+    /// dep all carry their own copy of its code and globals.
+    StaticEmbedded,
+    /// Dep stays as a separate `.a`; consumer (also `.a`) just records the
+    /// dependency, leaving symbol resolution to the final executable's
+    /// linker. The "thin chain" model.
+    StaticExternal,
+}
+
+impl std::fmt::Display for Linkage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Linkage::SharedExternal => "shared-external",
+            Linkage::StaticEmbedded => "static-embedded",
+            Linkage::StaticExternal => "static-external",
+        };
+        f.write_str(s)
+    }
+}
+
+impl TryFrom<String> for Linkage {
+    type Error = String;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.as_str() {
+            "shared-external" => Ok(Linkage::SharedExternal),
+            "static-embedded" => Ok(Linkage::StaticEmbedded),
+            "static-external" => Ok(Linkage::StaticExternal),
+            "shared-embedded" => Err("linkage = \"shared-embedded\" is invalid: a .so cannot be \
+                 archived into another .so. Use shared-external (DT_NEEDED) \
+                 or static-embedded (merge dep's .a into consumer)."
+                .to_string()),
+            other => Err(format!(
+                "linkage = \"{other}\" is not recognized. Valid values: \
+                 shared-external, static-embedded, static-external."
+            )),
+        }
+    }
+}
+
 /// Dependency configuration from [[dependencies]] array
 #[derive(Debug, Clone, Deserialize)]
 pub struct DependencyConfig {
@@ -577,6 +638,11 @@ pub struct DependencyConfig {
     /// Supports https:// URLs and relative/absolute local paths.
     /// Example: "https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"
     pub zip: Option<String>,
+
+    /// Per-dependency override for how this dep is linked into the consumer.
+    /// When `None`, falls back to `[build].default_dep_linkage`, then to a
+    /// platform-default chosen from the dep's available artifacts.
+    pub linkage: Option<Linkage>,
 
     /// Whether this dependency is optional (only included when a feature enables it)
     #[serde(default)]
@@ -732,7 +798,11 @@ impl FeaturesConfig {
     }
 
     /// Resolve multiple features and return the full set of enabled features
-    pub fn resolve_features(&self, requested: &[String], use_defaults: bool) -> Result<HashSet<String>> {
+    pub fn resolve_features(
+        &self,
+        requested: &[String],
+        use_defaults: bool,
+    ) -> Result<HashSet<String>> {
         let mut resolved = HashSet::new();
 
         // Include default features if requested
@@ -743,8 +813,11 @@ impl FeaturesConfig {
         // Resolve each requested feature
         for feature in requested {
             if !self.has_feature(feature) && !feature.contains('/') {
-                bail!("Unknown feature: '{}'. Available features: {:?}",
-                    feature, self.feature_names());
+                bail!(
+                    "Unknown feature: '{}'. Available features: {:?}",
+                    feature,
+                    self.feature_names()
+                );
             }
             self.resolve_feature(feature, &mut resolved)?;
         }
@@ -775,8 +848,12 @@ impl DependencyConfig {
     /// Validate the dependency configuration
     pub fn validate(&self) -> Result<()> {
         // Validate version requirement syntax
-        crate::version::VersionReq::parse(&self.version)
-            .with_context(|| format!("Invalid version requirement '{}' for dependency '{}'", self.version, self.name))?;
+        crate::version::VersionReq::parse(&self.version).with_context(|| {
+            format!(
+                "Invalid version requirement '{}' for dependency '{}'",
+                self.version, self.name
+            )
+        })?;
 
         Ok(())
     }
@@ -824,6 +901,14 @@ pub struct BuildConfig {
     /// so operators can recover source state via
     /// `strings libfoo.so | grep VERIDENTITY=`.
     pub verinfo_path: Option<String>,
+
+    /// Project-wide default for how dependencies are linked into this
+    /// project's output. Each `[[dependencies]]` entry may override via its
+    /// own `linkage` field. When this is also `None`, the platform builder
+    /// picks the natural default for the consumer's `link_type` (static
+    /// consumers always get thin static-external; shared consumers prefer
+    /// shared-external when the dep can produce a `.so`).
+    pub default_dep_linkage: Option<Linkage>,
 }
 
 /// Platform-specific configurations
@@ -932,7 +1017,8 @@ impl CcgoConfig {
         // Validate dependencies (only non-workspace dependencies need version validation)
         for dep in &config.dependencies {
             if !dep.workspace {
-                dep.validate().with_context(|| format!("Invalid dependency: {}", dep.name))?;
+                dep.validate()
+                    .with_context(|| format!("Invalid dependency: {}", dep.name))?;
             }
         }
 
@@ -949,10 +1035,8 @@ impl CcgoConfig {
         let simplified_configs = self.simplified_deps.to_dependency_configs();
 
         // Check for duplicates - collect existing names first
-        let existing_names: HashSet<String> = self.dependencies
-            .iter()
-            .map(|d| d.name.clone())
-            .collect();
+        let existing_names: HashSet<String> =
+            self.dependencies.iter().map(|d| d.name.clone()).collect();
 
         for config in simplified_configs {
             if !existing_names.contains(&config.name) {
@@ -1006,15 +1090,15 @@ impl CcgoConfig {
     pub fn require_package(&self) -> Result<&PackageConfig> {
         self.package.as_ref().context(
             "This operation requires a [package] section in CCGO.toml.\n\
-             Workspace-only configurations cannot be used for this operation."
+             Workspace-only configurations cannot be used for this operation.",
         )
     }
 
     /// Get workspace configuration, returning an error if not present
     pub fn require_workspace(&self) -> Result<&WorkspaceConfig> {
-        self.workspace.as_ref().context(
-            "This operation requires a [workspace] section in CCGO.toml."
-        )
+        self.workspace
+            .as_ref()
+            .context("This operation requires a [workspace] section in CCGO.toml.")
     }
 
     /// Find workspace root by searching up from the given directory
@@ -1061,7 +1145,8 @@ impl CcgoConfig {
                 // Check if it's a directory with CCGO.toml
                 if path.is_dir() && path.join("CCGO.toml").exists() {
                     // Check if excluded
-                    let relative = path.strip_prefix(workspace_root)
+                    let relative = path
+                        .strip_prefix(workspace_root)
                         .unwrap_or(&path)
                         .to_string_lossy();
 
@@ -1091,8 +1176,9 @@ impl CcgoConfig {
 
         for member_path in member_paths {
             let config_path = member_path.join("CCGO.toml");
-            let config = Self::load_from_path(&config_path)
-                .with_context(|| format!("Failed to load member config: {}", config_path.display()))?;
+            let config = Self::load_from_path(&config_path).with_context(|| {
+                format!("Failed to load member config: {}", config_path.display())
+            })?;
             members.push((member_path, config));
         }
 
@@ -1245,24 +1331,36 @@ logging = []
         let config = CcgoConfig::parse(toml).unwrap();
 
         // Test resolving single feature
-        let resolved = config.features.resolve_features(&["networking".to_string()], false).unwrap();
+        let resolved = config
+            .features
+            .resolve_features(&["networking".to_string()], false)
+            .unwrap();
         assert!(resolved.contains("networking"));
         assert!(resolved.contains("http-client"));
         assert!(!resolved.contains("std")); // No defaults
 
         // Test resolving with defaults
-        let resolved = config.features.resolve_features(&["networking".to_string()], true).unwrap();
+        let resolved = config
+            .features
+            .resolve_features(&["networking".to_string()], true)
+            .unwrap();
         assert!(resolved.contains("networking"));
         assert!(resolved.contains("std")); // Default included
 
         // Test resolving transitive features
-        let resolved = config.features.resolve_features(&["advanced".to_string()], false).unwrap();
+        let resolved = config
+            .features
+            .resolve_features(&["advanced".to_string()], false)
+            .unwrap();
         assert!(resolved.contains("advanced"));
         assert!(resolved.contains("networking"));
         assert!(resolved.contains("http-client"));
 
         // Test resolving complex feature
-        let resolved = config.features.resolve_features(&["full".to_string()], false).unwrap();
+        let resolved = config
+            .features
+            .resolve_features(&["full".to_string()], false)
+            .unwrap();
         assert!(resolved.contains("full"));
         assert!(resolved.contains("advanced"));
         assert!(resolved.contains("networking"));
@@ -1284,7 +1382,9 @@ std = []
         let config = CcgoConfig::parse(toml).unwrap();
 
         // Requesting unknown feature should error
-        let result = config.features.resolve_features(&["unknown".to_string()], false);
+        let result = config
+            .features
+            .resolve_features(&["unknown".to_string()], false);
         assert!(result.is_err());
     }
 
@@ -1317,13 +1417,20 @@ optional = true
 
         // Without networking feature, only non-optional deps
         let resolved = config.features.resolve_features(&[], false).unwrap();
-        let enabled_deps = config.features.get_enabled_optional_deps(&resolved, &config.dependencies);
+        let enabled_deps = config
+            .features
+            .get_enabled_optional_deps(&resolved, &config.dependencies);
         assert_eq!(enabled_deps.len(), 1);
         assert_eq!(enabled_deps[0].name, "fmt");
 
         // With networking feature, http-client should be enabled
-        let resolved = config.features.resolve_features(&["networking".to_string()], false).unwrap();
-        let enabled_deps = config.features.get_enabled_optional_deps(&resolved, &config.dependencies);
+        let resolved = config
+            .features
+            .resolve_features(&["networking".to_string()], false)
+            .unwrap();
+        let enabled_deps = config
+            .features
+            .get_enabled_optional_deps(&resolved, &config.dependencies);
         assert_eq!(enabled_deps.len(), 2);
         let names: Vec<_> = enabled_deps.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"fmt"));
@@ -1365,7 +1472,10 @@ derive = ["serde/derive"]
 
         let config = CcgoConfig::parse(toml).unwrap();
 
-        let resolved = config.features.resolve_features(&["derive".to_string()], false).unwrap();
+        let resolved = config
+            .features
+            .resolve_features(&["derive".to_string()], false)
+            .unwrap();
         assert!(resolved.contains("derive"));
         assert!(resolved.contains("serde/derive"));
     }
@@ -1456,12 +1566,17 @@ features = ["extra"]
         assert!(member_config.dependencies[0].version.is_empty());
 
         // Resolve workspace dependencies
-        member_config.resolve_workspace_dependencies(&ws_config).unwrap();
+        member_config
+            .resolve_workspace_dependencies(&ws_config)
+            .unwrap();
 
         // After resolution
         let dep = &member_config.dependencies[0];
         assert_eq!(dep.version, "^10.0");
-        assert_eq!(dep.git.as_ref().unwrap(), "https://github.com/fmtlib/fmt.git");
+        assert_eq!(
+            dep.git.as_ref().unwrap(),
+            "https://github.com/fmtlib/fmt.git"
+        );
         // Features should be merged (workspace + local)
         assert!(dep.features.contains(&"std".to_string()));
         assert!(dep.features.contains(&"extra".to_string()));
@@ -1535,7 +1650,10 @@ spdlog = { path = "../spdlog-local" }
 
         // Check crates-io patch
         let fmt_patch = config.patch.find_patch("fmt", None).unwrap();
-        assert_eq!(fmt_patch.git.as_ref().unwrap(), "https://github.com/myorg/fmt.git");
+        assert_eq!(
+            fmt_patch.git.as_ref().unwrap(),
+            "https://github.com/myorg/fmt.git"
+        );
         assert_eq!(fmt_patch.branch.as_ref().unwrap(), "custom-fix");
 
         // Check source-specific patch
@@ -1590,7 +1708,10 @@ zip = "https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"
         let config: CcgoConfig = toml::from_str(toml_str).unwrap();
         let dep = &config.dependencies[0];
         assert_eq!(dep.name, "foundrycomm");
-        assert_eq!(dep.zip.as_deref(), Some("https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"));
+        assert_eq!(
+            dep.zip.as_deref(),
+            Some("https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip")
+        );
         assert!(dep.git.is_none());
         assert!(dep.path.is_none());
     }
@@ -1610,5 +1731,125 @@ git = "https://github.com/example/somelib.git"
         let config: CcgoConfig = toml::from_str(toml_str).unwrap();
         let dep = &config.dependencies[0];
         assert!(dep.zip.is_none());
+    }
+
+    #[test]
+    fn parses_dependency_linkage_shared_external() {
+        let toml = r#"
+            [package]
+            name = "x"
+            version = "0.1.0"
+
+            [[dependencies]]
+            name = "stdcomm"
+            version = "1.0.0"
+            linkage = "shared-external"
+        "#;
+        let cfg: CcgoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.dependencies[0].linkage, Some(Linkage::SharedExternal));
+    }
+
+    #[test]
+    fn parses_dependency_linkage_static_embedded() {
+        let toml = r#"
+            [package]
+            name = "x"
+            version = "0.1.0"
+
+            [[dependencies]]
+            name = "stdcomm"
+            version = "1.0.0"
+            linkage = "static-embedded"
+        "#;
+        let cfg: CcgoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.dependencies[0].linkage, Some(Linkage::StaticEmbedded));
+    }
+
+    #[test]
+    fn parses_dependency_linkage_static_external() {
+        let toml = r#"
+            [package]
+            name = "x"
+            version = "0.1.0"
+
+            [[dependencies]]
+            name = "stdcomm"
+            version = "1.0.0"
+            linkage = "static-external"
+        "#;
+        let cfg: CcgoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.dependencies[0].linkage, Some(Linkage::StaticExternal));
+    }
+
+    #[test]
+    fn rejects_dependency_linkage_shared_embedded() {
+        // shared-embedded is intentionally not a valid combination — a .so cannot
+        // be archived into another .so.
+        let toml = r#"
+            [package]
+            name = "x"
+            version = "0.1.0"
+
+            [[dependencies]]
+            name = "stdcomm"
+            version = "1.0.0"
+            linkage = "shared-embedded"
+        "#;
+        let err = toml::from_str::<CcgoConfig>(toml).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("shared-embedded") && msg.contains("invalid"),
+            "expected error mentioning shared-embedded as invalid, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_dependency_linkage_garbage() {
+        let toml = r#"
+            [package]
+            name = "x"
+            version = "0.1.0"
+
+            [[dependencies]]
+            name = "stdcomm"
+            version = "1.0.0"
+            linkage = "wibble"
+        "#;
+        let err = toml::from_str::<CcgoConfig>(toml).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("wibble") && msg.contains("not recognized"),
+            "expected error mentioning 'wibble' as unrecognized, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn parses_build_default_dep_linkage() {
+        let toml = r#"
+            [package]
+            name = "x"
+            version = "0.1.0"
+
+            [build]
+            default_dep_linkage = "shared-external"
+        "#;
+        let cfg: CcgoConfig = toml::from_str(toml).unwrap();
+        let build = cfg.build.expect("build section missing");
+        assert_eq!(build.default_dep_linkage, Some(Linkage::SharedExternal));
+    }
+
+    #[test]
+    fn dependency_linkage_defaults_to_none() {
+        let toml = r#"
+            [package]
+            name = "x"
+            version = "0.1.0"
+
+            [[dependencies]]
+            name = "stdcomm"
+            version = "1.0.0"
+        "#;
+        let cfg: CcgoConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.dependencies[0].linkage, None);
     }
 }

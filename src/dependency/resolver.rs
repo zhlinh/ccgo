@@ -137,25 +137,7 @@ impl DependencyResolver {
         }
 
         // Check if already processed
-        if let Some(existing_version) = self.visited.get(&dep.name) {
-            // Already processed, check version compatibility using VersionResolver
-            if !existing_version.is_empty()
-                && !dep.version.is_empty()
-                && existing_version != &dep.version
-            {
-                // Try to parse versions and check compatibility
-                let existing_req = VersionRequirement::parse(existing_version);
-                let new_req = VersionRequirement::parse(&dep.version);
-
-                if let (Ok(existing), Ok(new)) = (existing_req, new_req) {
-                    if !existing.is_compatible_with(&new) {
-                        eprintln!(
-                            "   ⚠️  Version conflict for '{}': have {}, need {}",
-                            dep.name, existing_version, dep.version
-                        );
-                    }
-                }
-            }
+        if self.handle_visited_dependency(dep) {
             return Ok(());
         }
 
@@ -171,6 +153,42 @@ impl DependencyResolver {
         // Mark as visited with current version
         self.visited.insert(dep.name.clone(), dep.version.clone());
 
+        // Find and process the dependency's CCGO.toml
+        self.process_dependency_config(dep, depth)
+    }
+
+    /// Handle a dependency that has already been visited
+    fn handle_visited_dependency(&mut self, dep: &DependencyConfig) -> bool {
+        if let Some(existing_version) = self.visited.get(&dep.name) {
+            self.check_version_compatibility(dep, existing_version);
+            return true;
+        }
+        false
+    }
+
+    /// Check version compatibility for already-visited dependencies
+    fn check_version_compatibility(&self, dep: &DependencyConfig, existing_version: &str) {
+        if existing_version.is_empty() || dep.version.is_empty() || existing_version == &dep.version
+        {
+            return;
+        }
+
+        // Try to parse versions and check compatibility
+        let existing_req = VersionRequirement::parse(existing_version);
+        let new_req = VersionRequirement::parse(&dep.version);
+
+        if let (Ok(existing), Ok(new)) = (existing_req, new_req) {
+            if !existing.is_compatible_with(&new) {
+                eprintln!(
+                    "   ⚠️  Version conflict for '{}': have {}, need {}",
+                    dep.name, existing_version, dep.version
+                );
+            }
+        }
+    }
+
+    /// Process a dependency's configuration and its transitive dependencies
+    fn process_dependency_config(&mut self, dep: &DependencyConfig, depth: usize) -> Result<()> {
         // Find the dependency's CCGO.toml
         let dep_path = self.locate_dependency(dep)?;
 
@@ -185,14 +203,24 @@ impl DependencyResolver {
         let dep_config = CcgoConfig::load_from(&dep_config_path)
             .with_context(|| format!("Failed to load CCGO.toml for '{}'", dep.name))?;
 
-        // Get the dependency's dependencies
-        let mut transitive_deps = dep_config.dependencies;
+        // Resolve relative paths and process transitive dependencies
+        self.process_transitive_deps(dep, &dep_path, &dep_config, depth)
+    }
 
-        // Resolve relative paths in transitive dependencies relative to this dependency's directory
+    /// Process transitive dependencies after resolving relative paths
+    fn process_transitive_deps(
+        &mut self,
+        dep: &DependencyConfig,
+        dep_path: &Path,
+        dep_config: &CcgoConfig,
+        depth: usize,
+    ) -> Result<()> {
+        let mut transitive_deps = dep_config.dependencies.clone();
+
+        // Resolve relative paths in transitive dependencies
         for trans_dep in &mut transitive_deps {
             if let Some(ref path) = trans_dep.path {
                 if !Path::new(path).is_absolute() {
-                    // Resolve relative path from the current dependency's directory
                     let resolved_path = dep_path.join(path);
                     trans_dep.path = Some(resolved_path.to_string_lossy().to_string());
                 }
@@ -394,6 +422,7 @@ mod tests {
             default_features: Some(true),
             workspace: false,
             registry: None,
+            linkage: None,
         }
     }
 

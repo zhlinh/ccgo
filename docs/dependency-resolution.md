@@ -1,5 +1,7 @@
 # Transitive Dependency Resolution
 
+> **See also:** [`dependency-linkage.md`](dependency-linkage.md) for how each fetched dep is integrated into your build product (shared-external vs static-embedded vs static-external).
+
 ## Overview
 
 CCGO now supports automatic transitive dependency resolution. When you run `ccgo install`, it automatically discovers and installs dependencies of your dependencies, determines the correct build order, and detects circular dependencies.

@@ -116,17 +116,26 @@ impl TestSuiteResult {
 
     /// Count passed tests
     pub fn passed_count(&self) -> usize {
-        self.tests.iter().filter(|t| t.status == TestStatus::Passed).count()
+        self.tests
+            .iter()
+            .filter(|t| t.status == TestStatus::Passed)
+            .count()
     }
 
     /// Count failed tests
     pub fn failed_count(&self) -> usize {
-        self.tests.iter().filter(|t| t.status == TestStatus::Failed).count()
+        self.tests
+            .iter()
+            .filter(|t| t.status == TestStatus::Failed)
+            .count()
     }
 
     /// Count skipped tests
     pub fn skipped_count(&self) -> usize {
-        self.tests.iter().filter(|t| t.status == TestStatus::Skipped).count()
+        self.tests
+            .iter()
+            .filter(|t| t.status == TestStatus::Skipped)
+            .count()
     }
 
     /// Check if all tests passed
@@ -219,9 +228,13 @@ impl TestSummary {
 
         // Status bar
         let bar_width: usize = 40;
-        let passed_width = (self.passed as f64 / self.total.max(1) as f64 * bar_width as f64) as usize;
-        let failed_width = (self.failed as f64 / self.total.max(1) as f64 * bar_width as f64) as usize;
-        let skipped_width = bar_width.saturating_sub(passed_width).saturating_sub(failed_width);
+        let passed_width =
+            (self.passed as f64 / self.total.max(1) as f64 * bar_width as f64) as usize;
+        let failed_width =
+            (self.failed as f64 / self.total.max(1) as f64 * bar_width as f64) as usize;
+        let skipped_width = bar_width
+            .saturating_sub(passed_width)
+            .saturating_sub(failed_width);
 
         print!("[");
         print!("{}", "█".repeat(passed_width));
@@ -230,7 +243,11 @@ impl TestSummary {
         println!("]");
 
         println!();
-        println!("  ✓ Passed:  {:>4} ({:.1}%)", self.passed, self.pass_rate * 100.0);
+        println!(
+            "  ✓ Passed:  {:>4} ({:.1}%)",
+            self.passed,
+            self.pass_rate * 100.0
+        );
         println!("  ✗ Failed:  {:>4}", self.failed);
         println!("  ○ Skipped: {:>4}", self.skipped);
         if self.errors > 0 {
@@ -416,101 +433,141 @@ impl TestResultAggregator {
 
     /// Parse GoogleTest XML output
     fn parse_gtest_xml(&self, path: &Path) -> Result<Vec<TestSuiteResult>> {
-        let content = std::fs::read_to_string(path)
-            .context("Failed to read test result file")?;
+        let content = std::fs::read_to_string(path).context("Failed to read test result file")?;
 
-        let mut suites = Vec::new();
-        let mut current_suite: Option<TestSuiteResult> = None;
-        let mut in_failure = false;
-        let mut failure_message = String::new();
-        let mut current_test: Option<TestResult> = None;
+        let mut parser = GTestXmlParser::new();
+        parser.parse(&content)
+    }
+}
 
+/// Helper parser for GoogleTest XML
+struct GTestXmlParser {
+    suites: Vec<TestSuiteResult>,
+    current_suite: Option<TestSuiteResult>,
+    current_test: Option<TestResult>,
+    in_failure: bool,
+    failure_message: String,
+}
+
+impl GTestXmlParser {
+    fn new() -> Self {
+        Self {
+            suites: Vec::new(),
+            current_suite: None,
+            current_test: None,
+            in_failure: false,
+            failure_message: String::new(),
+        }
+    }
+
+    fn parse(&mut self, content: &str) -> Result<Vec<TestSuiteResult>> {
         for line in content.lines() {
             let line = line.trim();
-
-            // Parse testsuite
-            if line.starts_with("<testsuite ") || line.starts_with("<testsuite>") {
-                if let Some(suite) = current_suite.take() {
-                    suites.push(suite);
-                }
-
-                let name = extract_attr(line, "name").unwrap_or_else(|| "Unknown".to_string());
-                current_suite = Some(TestSuiteResult::new(&name));
-            }
-            // Parse testcase
-            else if line.starts_with("<testcase ") {
-                let name = extract_attr(line, "name").unwrap_or_else(|| "Unknown".to_string());
-                let classname = extract_attr(line, "classname").unwrap_or_else(|| "Unknown".to_string());
-                let time = extract_attr(line, "time")
-                    .and_then(|t| t.parse::<f64>().ok())
-                    .unwrap_or(0.0);
-
-                let test = TestResult::passed(&classname, &name, time);
-
-                // Check if self-closing (passed)
-                if line.ends_with("/>") {
-                    if let Some(ref mut suite) = current_suite {
-                        suite.add_test(test);
-                    }
-                } else {
-                    current_test = Some(test);
-                }
-            }
-            // Parse failure
-            else if line.starts_with("<failure") {
-                in_failure = true;
-                failure_message.clear();
-
-                if let Some(msg) = extract_attr(line, "message") {
-                    failure_message = msg;
-                }
-
-                if let Some(ref mut test) = current_test {
-                    test.status = TestStatus::Failed;
-                }
-            }
-            // End failure
-            else if line.contains("</failure>") {
-                in_failure = false;
-                if let Some(ref mut test) = current_test {
-                    test.message = Some(failure_message.clone());
-                }
-            }
-            // Parse skipped
-            else if line.contains("<skipped") {
-                if let Some(ref mut test) = current_test {
-                    test.status = TestStatus::Skipped;
-                }
-            }
-            // End testcase
-            else if line == "</testcase>" {
-                if let Some(test) = current_test.take() {
-                    if let Some(ref mut suite) = current_suite {
-                        suite.add_test(test);
-                    }
-                }
-            }
-            // End testsuite
-            else if line == "</testsuite>" {
-                if let Some(suite) = current_suite.take() {
-                    suites.push(suite);
-                }
-            }
-            // Collect failure content
-            else if in_failure {
-                if !failure_message.is_empty() {
-                    failure_message.push('\n');
-                }
-                failure_message.push_str(line);
-            }
+            self.parse_line(line);
         }
 
         // Don't forget last suite
-        if let Some(suite) = current_suite {
-            suites.push(suite);
+        if let Some(suite) = self.current_suite.take() {
+            self.suites.push(suite);
         }
 
-        Ok(suites)
+        Ok(std::mem::take(&mut self.suites))
+    }
+
+    fn parse_line(&mut self, line: &str) {
+        if line.starts_with("<testsuite ") || line.starts_with("<testsuite>") {
+            self.handle_testsuite_start(line);
+        } else if line.starts_with("<testcase ") {
+            self.handle_testcase_start(line);
+        } else if line.starts_with("<failure") {
+            self.handle_failure_start(line);
+        } else if line.contains("</failure>") {
+            self.handle_failure_end();
+        } else if line.contains("<skipped") {
+            self.handle_skipped();
+        } else if line == "</testcase>" {
+            self.handle_testcase_end();
+        } else if line == "</testsuite>" {
+            self.handle_testsuite_end();
+        } else if self.in_failure {
+            self.collect_failure_content(line);
+        }
+    }
+
+    fn handle_testsuite_start(&mut self, line: &str) {
+        if let Some(suite) = self.current_suite.take() {
+            self.suites.push(suite);
+        }
+
+        let name = extract_attr(line, "name").unwrap_or_else(|| "Unknown".to_string());
+        self.current_suite = Some(TestSuiteResult::new(&name));
+    }
+
+    fn handle_testcase_start(&mut self, line: &str) {
+        let name = extract_attr(line, "name").unwrap_or_else(|| "Unknown".to_string());
+        let classname =
+            extract_attr(line, "classname").unwrap_or_else(|| "Unknown".to_string());
+        let time = extract_attr(line, "time")
+            .and_then(|t| t.parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        let test = TestResult::passed(&classname, &name, time);
+
+        // Check if self-closing (passed)
+        if line.ends_with("/>") {
+            if let Some(ref mut suite) = self.current_suite {
+                suite.add_test(test);
+            }
+        } else {
+            self.current_test = Some(test);
+        }
+    }
+
+    fn handle_failure_start(&mut self, line: &str) {
+        self.in_failure = true;
+        self.failure_message.clear();
+
+        if let Some(msg) = extract_attr(line, "message") {
+            self.failure_message = msg;
+        }
+
+        if let Some(ref mut test) = self.current_test {
+            test.status = TestStatus::Failed;
+        }
+    }
+
+    fn handle_failure_end(&mut self) {
+        self.in_failure = false;
+        if let Some(ref mut test) = self.current_test {
+            test.message = Some(self.failure_message.clone());
+        }
+    }
+
+    fn handle_skipped(&mut self) {
+        if let Some(ref mut test) = self.current_test {
+            test.status = TestStatus::Skipped;
+        }
+    }
+
+    fn handle_testcase_end(&mut self) {
+        if let Some(test) = self.current_test.take() {
+            if let Some(ref mut suite) = self.current_suite {
+                suite.add_test(test);
+            }
+        }
+    }
+
+    fn handle_testsuite_end(&mut self) {
+        if let Some(suite) = self.current_suite.take() {
+            self.suites.push(suite);
+        }
+    }
+
+    fn collect_failure_content(&mut self, line: &str) {
+        if !self.failure_message.is_empty() {
+            self.failure_message.push('\n');
+        }
+        self.failure_message.push_str(line);
     }
 }
 

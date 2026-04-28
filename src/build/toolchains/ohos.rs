@@ -186,7 +186,10 @@ impl OhosSdkToolchain {
 
     /// Get the path to llvm-strip
     pub fn strip_path(&self) -> PathBuf {
-        self.native_path().join("llvm").join("bin").join("llvm-strip")
+        self.native_path()
+            .join("llvm")
+            .join("bin")
+            .join("llvm-strip")
     }
 
     /// Get the path to libc++_shared.so for a specific ABI
@@ -303,7 +306,10 @@ impl OhosSdkToolchain {
         std::fs::remove_dir_all(&temp_dir).ok();
 
         if !output.status.success() {
-            bail!("llvm-ar merge failed: {}", String::from_utf8_lossy(&output.stderr));
+            bail!(
+                "llvm-ar merge failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         Ok(())

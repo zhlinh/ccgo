@@ -366,6 +366,7 @@ mod tests {
                 default_features: Some(true),
                 workspace: false,
                 registry: None,
+                linkage: None,
             },
         }
     }

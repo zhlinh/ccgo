@@ -67,8 +67,7 @@ impl CacheConfig {
 
     /// Detect ccache
     pub fn detect_ccache() -> Result<Self> {
-        let path = which::which("ccache")
-            .context("ccache not found in PATH")?;
+        let path = which::which("ccache").context("ccache not found in PATH")?;
 
         // Verify ccache works
         let output = Command::new(&path)
@@ -88,8 +87,7 @@ impl CacheConfig {
 
     /// Detect sccache
     pub fn detect_sccache() -> Result<Self> {
-        let path = which::which("sccache")
-            .context("sccache not found in PATH")?;
+        let path = which::which("sccache").context("sccache not found in PATH")?;
 
         // Verify sccache works
         let output = Command::new(&path)
@@ -149,22 +147,20 @@ impl CacheConfig {
 
     /// Get cache statistics (if supported)
     pub fn get_stats(&self) -> Result<String> {
-        let path = self.executable_path.as_ref()
+        let path = self
+            .executable_path
+            .as_ref()
             .context("No cache executable available")?;
 
         let output = match self.cache_type {
-            CacheType::CCache => {
-                Command::new(path)
-                    .arg("-s")
-                    .output()
-                    .context("Failed to run ccache -s")?
-            }
-            CacheType::SCache => {
-                Command::new(path)
-                    .arg("--show-stats")
-                    .output()
-                    .context("Failed to run sccache --show-stats")?
-            }
+            CacheType::CCache => Command::new(path)
+                .arg("-s")
+                .output()
+                .context("Failed to run ccache -s")?,
+            CacheType::SCache => Command::new(path)
+                .arg("--show-stats")
+                .output()
+                .context("Failed to run sccache --show-stats")?,
             CacheType::None => anyhow::bail!("No cache enabled"),
         };
 
@@ -177,22 +173,20 @@ impl CacheConfig {
 
     /// Zero cache statistics (if supported)
     pub fn zero_stats(&self) -> Result<()> {
-        let path = self.executable_path.as_ref()
+        let path = self
+            .executable_path
+            .as_ref()
             .context("No cache executable available")?;
 
         let status = match self.cache_type {
-            CacheType::CCache => {
-                Command::new(path)
-                    .arg("-z")
-                    .status()
-                    .context("Failed to run ccache -z")?
-            }
-            CacheType::SCache => {
-                Command::new(path)
-                    .arg("--zero-stats")
-                    .status()
-                    .context("Failed to run sccache --zero-stats")?
-            }
+            CacheType::CCache => Command::new(path)
+                .arg("-z")
+                .status()
+                .context("Failed to run ccache -z")?,
+            CacheType::SCache => Command::new(path)
+                .arg("--zero-stats")
+                .status()
+                .context("Failed to run sccache --zero-stats")?,
             CacheType::None => anyhow::bail!("No cache enabled"),
         };
 

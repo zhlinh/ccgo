@@ -35,9 +35,42 @@ endif()
 set(TEMP_DIR_LIST "")
 get_third_party_src_directories(TEMP_DIR_LIST ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Parse per-dep linkage hints (passed from ccgo build as
+# CCGO_DEPENDENCY_LINKAGES = "name1=value1;name2=value2").
+# For each dep marked shared-external that already has pre-built shared
+# artifacts, skip source compilation — the linker will pick up the .dylib
+# (or .xcframework) via CCGO_DEPENDENCY_<NAME>_SHARED_LIBRARIES instead.
+set(_CCGO_SHARED_EXTERNAL_DEPS "")
+if(DEFINED CCGO_DEPENDENCY_LINKAGES)
+    foreach(_pair IN LISTS CCGO_DEPENDENCY_LINKAGES)
+        string(REGEX MATCH "^([^=]+)=(.+)$" _ "${_pair}")
+        set(_dep_name "${CMAKE_MATCH_1}")
+        set(_dep_value "${CMAKE_MATCH_2}")
+        if(_dep_value STREQUAL "shared-external")
+            string(TOUPPER "${_dep_name}" _dep_upper)
+            if(CCGO_DEPENDENCY_${_dep_upper}_SHARED_LIBRARIES)
+                list(APPEND _CCGO_SHARED_EXTERNAL_DEPS "${_dep_name}")
+                message(STATUS "[CCGO] ${_dep_name}: linkage=shared-external with pre-built .dylib — skipping source compilation")
+            endif()
+        endif()
+    endforeach()
+endif()
+
 # Collect include directories and source files from each dependency
 set(SELF_TEMP_INCLUDE_DIRS "")
 foreach(dir IN LISTS TEMP_DIR_LIST)
+    # Skip deps that are externally linked via a pre-built shared library
+    list(FIND _CCGO_SHARED_EXTERNAL_DEPS "${dir}" _skip_idx)
+    if(NOT _skip_idx EQUAL -1)
+        # Still add include directory so headers are available to the consumer
+        set(TEMP_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${dir}/include")
+        if(EXISTS "${TEMP_INCLUDE_PATH}")
+            list(APPEND SELF_TEMP_INCLUDE_DIRS ${TEMP_INCLUDE_PATH})
+        endif()
+        message(STATUS "Generating ThirdParty library [${TEMPLATE_SUB_LIB_NAME}] skipping source for [${dir}] (shared-external)")
+        continue()
+    endif()
+
     # Add include directory if it exists
     set(TEMP_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/${dir}/include")
     if(EXISTS "${TEMP_INCLUDE_PATH}")

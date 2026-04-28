@@ -171,12 +171,7 @@ impl BenchCommand {
     }
 
     /// Process benchmark results (save, compare, report)
-    fn process_results(
-        &self,
-        project_root: &Path,
-        build_dir: &Path,
-        verbose: bool,
-    ) -> Result<()> {
+    fn process_results(&self, project_root: &Path, build_dir: &Path, verbose: bool) -> Result<()> {
         let store = BenchmarkStore::new(project_root.join(".ccgo").join("benchmarks"));
 
         // Find the latest benchmark JSON output

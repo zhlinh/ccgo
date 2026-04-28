@@ -8,9 +8,9 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use super::benchmark::ComparisonReport;
 use super::coverage::CoverageReport;
 use super::results::TestSummary;
-use super::benchmark::ComparisonReport;
 
 /// CI output format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -129,7 +129,9 @@ impl CiReporter {
                 if let Some((file, line)) = parse_file_line(trace) {
                     println!(
                         "::error file={},line={}::Test failed: {}",
-                        file, line, test.full_name()
+                        file,
+                        line,
+                        test.full_name()
                     );
                     continue;
                 }
@@ -143,7 +145,10 @@ impl CiReporter {
 
         // Set overall status
         if !summary.all_passed() {
-            println!("::error::{} test(s) failed", summary.failed + summary.errors);
+            println!(
+                "::error::{} test(s) failed",
+                summary.failed + summary.errors
+            );
         }
     }
 

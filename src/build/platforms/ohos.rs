@@ -71,7 +71,11 @@ impl OhosBuilder {
         }
 
         if verbose {
-            eprintln!("    Merging {} module libraries into {}", module_libs.len(), main_lib_name);
+            eprintln!(
+                "    Merging {} module libraries into {}",
+                module_libs.len(),
+                main_lib_name
+            );
         }
 
         sdk.merge_static_libs(&module_libs, &main_lib_path)?;
@@ -79,52 +83,6 @@ impl OhosBuilder {
         for lib in &module_libs {
             let _ = std::fs::remove_file(lib);
         }
-
-        Ok(())
-    }
-
-    /// Merge third-party static libs (e.g. libzstd.a) from cmake build root into the main lib
-    fn merge_third_party_static_libs(
-        &self,
-        sdk: &OhosSdkToolchain,
-        build_dir: &PathBuf,
-        lib_name: &str,
-        verbose: bool,
-    ) -> Result<()> {
-        let out_dir = build_dir.join("out");
-        let main_lib_path = out_dir.join(format!("lib{}.a", lib_name));
-        if !main_lib_path.exists() {
-            return Ok(());
-        }
-
-        let placeholder_name = format!("lib{}.a", lib_name);
-        let mut third_party_libs: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(build_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "a" {
-                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
-                        if fname != placeholder_name {
-                            third_party_libs.push(path);
-                        }
-                    }
-                }
-            }
-        }
-
-        if third_party_libs.is_empty() {
-            return Ok(());
-        }
-
-        if verbose {
-            eprintln!("    Merging {} third-party libs into {}", third_party_libs.len(), placeholder_name);
-        }
-
-        let mut all_libs = vec![main_lib_path.clone()];
-        all_libs.extend(third_party_libs);
-        sdk.merge_static_libs(&all_libs, &main_lib_path)?;
 
         Ok(())
     }
@@ -140,9 +98,15 @@ impl OhosBuilder {
         let mut cmake = cmake
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable(
+                "CCGO_BUILD_SHARED_LIBS",
+                if build_shared { "ON" } else { "OFF" },
+            )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
-            .variable("CCGO_CONFIG_PRESET_VISIBILITY", ctx.symbol_visibility().to_string());
+            .variable(
+                "CCGO_CONFIG_PRESET_VISIBILITY",
+                ctx.symbol_visibility().to_string(),
+            );
 
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
@@ -160,7 +124,10 @@ impl OhosBuilder {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
                 if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                    eprintln!(
+                        "    Enabled features: {}",
+                        feature_defines.replace(';', ", ")
+                    );
                 }
             }
         }
@@ -201,13 +168,40 @@ impl OhosBuilder {
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
+        // Resolve and pass per-dep linkage as a semicolon-separated list of
+        // <NAME>=<VALUE> pairs. CMake parses this in FindCCGODependencies.cmake
+        // to populate CCGO_DEPENDENCY_<NAME>_LINKAGE for each dep, which then
+        // drives the choice between target_link_libraries(... shared) and
+        // target_link_libraries(... static) per dep.
+        let linkages = ctx.resolved_dep_linkages(self.platform_name())?;
+        let linkages_var = if linkages.is_empty() {
+            None
+        } else {
+            Some(
+                linkages
+                    .iter()
+                    .map(|(name, l)| format!("{name}={l}"))
+                    .collect::<Vec<_>>()
+                    .join(";"),
+            )
+        };
+
         let cmake = self.configure_cmake(ctx, cmake, build_shared, cmake_vars);
+
+        let cmake = if let Some(v) = linkages_var {
+            cmake.variable("CCGO_DEPENDENCY_LINKAGES", v)
+        } else {
+            cmake
+        };
 
         cmake.configure_build_install()?;
 
         if !build_shared {
+            // Static consumer = thin .a: merge intra-project module libs only.
+            // Third-party dep symbols are not archived in; the downstream linker
+            // resolves them. Per-dep static-embed (static-embedded linkage) is
+            // handled by the CMake template, not via Rust-side merging.
             self.merge_module_static_libs(sdk, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
-            self.merge_third_party_static_libs(sdk, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
         }
 
         Ok(build_dir)
@@ -229,7 +223,7 @@ impl OhosBuilder {
         // build_dir is already the per-ABI dir (e.g. cmake_build/debug/ohos/static/arm64-v8a),
         // so the merged library from merge_module_static_libs lives in build_dir/out/.
         let possible_dirs = vec![
-            build_dir.join("out"),           // Merged library — highest priority
+            build_dir.join("out"), // Merged library — highest priority
             build_dir.join("install/lib"),
             build_dir.join("lib"),
         ];
@@ -436,7 +430,10 @@ impl OhosBuilder {
         let ohos_project = ctx.project_root.join("ohos").join("main_ohos_sdk");
         if !ohos_project.exists() {
             if ctx.options.verbose {
-                eprintln!("Warning: OHOS project not found at {}", ohos_project.display());
+                eprintln!(
+                    "Warning: OHOS project not found at {}",
+                    ohos_project.display()
+                );
             }
             return Ok(());
         }
@@ -467,12 +464,15 @@ impl OhosBuilder {
             for lib in libs {
                 let lib_name = lib.file_name().unwrap();
                 let dest = abi_dir.join(lib_name);
-                std::fs::copy(&lib, &dest).with_context(|| {
-                    format!("Failed to copy {} to libs", lib.display())
-                })?;
+                std::fs::copy(&lib, &dest)
+                    .with_context(|| format!("Failed to copy {} to libs", lib.display()))?;
 
                 if ctx.options.verbose {
-                    eprintln!("  Copied {} to {}", lib_name.to_str().unwrap(), dest.display());
+                    eprintln!(
+                        "  Copied {} to {}",
+                        lib_name.to_str().unwrap(),
+                        dest.display()
+                    );
                 }
             }
         }
@@ -506,8 +506,9 @@ impl OhosBuilder {
                 let mode = permissions.mode();
                 if mode & 0o100 == 0 {
                     permissions.set_mode(mode | 0o100);
-                    std::fs::set_permissions(&local_hvigorw, permissions)
-                        .with_context(|| format!("Failed to make {} executable", local_hvigorw.display()))?;
+                    std::fs::set_permissions(&local_hvigorw, permissions).with_context(|| {
+                        format!("Failed to make {} executable", local_hvigorw.display())
+                    })?;
 
                     if ctx.options.verbose {
                         eprintln!("  Made {} executable", local_hvigorw.display());
@@ -560,7 +561,10 @@ impl OhosBuilder {
             .collect();
 
         if har_files.is_empty() {
-            bail!("No HAR file found after Hvigor assemble in {}", har_dir.display());
+            bail!(
+                "No HAR file found after Hvigor assemble in {}",
+                har_dir.display()
+            );
         }
 
         let project_name_upper = ctx.lib_name().to_uppercase();
@@ -569,7 +573,11 @@ impl OhosBuilder {
 
         if let Some(har_file) = har_files.first() {
             std::fs::copy(har_file, &dest).with_context(|| {
-                format!("Failed to copy HAR from {} to {}", har_file.display(), dest.display())
+                format!(
+                    "Failed to copy HAR from {} to {}",
+                    har_file.display(),
+                    dest.display()
+                )
             })?;
 
             if ctx.options.verbose {
@@ -581,15 +589,13 @@ impl OhosBuilder {
     }
 
     /// Build HAR package using hvigorw assembleHar task
-    fn build_har(
-        &self,
-        ctx: &BuildContext,
-        _abis: &[OhosAbi],
-        output_dir: &PathBuf,
-    ) -> Result<()> {
+    fn build_har(&self, ctx: &BuildContext, _abis: &[OhosAbi], output_dir: &PathBuf) -> Result<()> {
         let ohos_project = ctx.project_root.join("ohos");
         if !ohos_project.exists() {
-            bail!("OHOS Hvigor project not found at {}", ohos_project.display());
+            bail!(
+                "OHOS Hvigor project not found at {}",
+                ohos_project.display()
+            );
         }
 
         // Sync CCGO.toml version -> ohos/main_ohos_sdk/oh-package.json5
@@ -611,7 +617,10 @@ impl OhosBuilder {
             .with_context(|| "Failed to wait for Hvigor process")?;
 
         if !status.success() {
-            bail!("Hvigor assembleHar failed with exit code: {:?}", status.code());
+            bail!(
+                "Hvigor assembleHar failed with exit code: {:?}",
+                status.code()
+            );
         }
 
         OhosBuilder::find_and_copy_har_to_output(ctx, &ohos_project, output_dir)?;
@@ -649,8 +658,9 @@ impl PlatformBuilder for OhosBuilder {
         }
 
         // Check for OHOS SDK
-        let sdk = OhosSdkToolchain::detect()
-            .context("OHOS SDK is required. Please set OHOS_SDK_HOME or HOS_SDK_HOME environment variable.")?;
+        let sdk = OhosSdkToolchain::detect().context(
+            "OHOS SDK is required. Please set OHOS_SDK_HOME or HOS_SDK_HOME environment variable.",
+        )?;
 
         sdk.validate()?;
 
@@ -694,7 +704,12 @@ impl PlatformBuilder for OhosBuilder {
         std::fs::create_dir_all(&symbols_staging)?;
 
         let built_link_types = self.build_static_and_shared(
-            ctx, &sdk, &abis, min_sdk_version, &archive, &symbols_staging
+            ctx,
+            &sdk,
+            &abis,
+            min_sdk_version,
+            &archive,
+            &symbols_staging,
         )?;
 
         let include_source = ctx.include_source_dir();
@@ -702,7 +717,11 @@ impl PlatformBuilder for OhosBuilder {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
             if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
             }
         }
 
@@ -717,7 +736,10 @@ impl PlatformBuilder for OhosBuilder {
         let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
 
         let symbols_archive = self.create_symbols_archive_if_needed(
-            ctx, &built_link_types, &symbols_staging, &archive
+            ctx,
+            &built_link_types,
+            &symbols_staging,
+            &archive,
         )?;
 
         std::fs::remove_dir_all(&symbols_staging).ok();
@@ -744,7 +766,11 @@ impl PlatformBuilder for OhosBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/ohos
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("ohos");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("ohos");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
@@ -787,7 +813,11 @@ impl OhosBuilder {
     /// Resolve ABIs from build options
     fn resolve_abis(ctx: &BuildContext) -> Result<Vec<OhosAbi>> {
         if ctx.options.architectures.is_empty() {
-            Ok(vec![OhosAbi::Arm64V8a, OhosAbi::ArmeabiV7a, OhosAbi::X86_64])
+            Ok(vec![
+                OhosAbi::Arm64V8a,
+                OhosAbi::ArmeabiV7a,
+                OhosAbi::X86_64,
+            ])
         } else {
             ctx.options
                 .architectures
@@ -821,7 +851,12 @@ impl OhosBuilder {
             if ctx.options.verbose {
                 eprintln!("Saving unstripped libraries to symbols staging...");
             }
-            self.copy_unstripped_to_symbols(&results, ctx.lib_name(), symbols_staging, ctx.options.verbose)?;
+            self.copy_unstripped_to_symbols(
+                &results,
+                ctx.lib_name(),
+                symbols_staging,
+                ctx.options.verbose,
+            )?;
 
             if ctx.options.release {
                 if ctx.options.verbose {
@@ -848,7 +883,10 @@ impl OhosBuilder {
             eprintln!("Building HAR package...");
         }
         if let Err(e) = self.build_har(ctx, abis, &ctx.output_dir) {
-            eprintln!("Warning: Failed to build HAR: {}. Continuing without HAR.", e);
+            eprintln!(
+                "Warning: Failed to build HAR: {}. Continuing without HAR.",
+                e
+            );
             eprintln!("To build HAR manually, run: cd ohos && ./hvigorw assembleHar");
         } else if ctx.options.verbose {
             eprintln!("HAR package built successfully");
@@ -856,7 +894,11 @@ impl OhosBuilder {
     }
 
     /// Add HAR to archive if it exists
-    fn add_har_to_archive_if_needed(&self, ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+    fn add_har_to_archive_if_needed(
+        &self,
+        ctx: &BuildContext,
+        archive: &ArchiveBuilder,
+    ) -> Result<()> {
         let project_name_upper = ctx.lib_name().to_uppercase();
         let har_versioned_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
         let har_path = ctx.output_dir.join(&har_versioned_name);
@@ -885,8 +927,8 @@ impl OhosBuilder {
         }
 
         let symbols_dir = symbols_staging.join("symbols");
-        let has_symbols = symbols_dir.exists() &&
-            std::fs::read_dir(&symbols_dir)
+        let has_symbols = symbols_dir.exists()
+            && std::fs::read_dir(&symbols_dir)
                 .map(|mut d| d.next().is_some())
                 .unwrap_or(false);
 
@@ -910,7 +952,11 @@ impl OhosBuilder {
         let har_versioned_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
         let har_path = ctx.output_dir.join(&har_versioned_name);
 
-        if har_path.exists() { Some(har_path) } else { None }
+        if har_path.exists() {
+            Some(har_path)
+        } else {
+            None
+        }
     }
 }
 
@@ -919,3 +965,4 @@ impl Default for OhosBuilder {
         Self::new()
     }
 }
+

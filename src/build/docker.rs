@@ -80,12 +80,15 @@ impl PlatformDockerConfig {
                             dockerfile: "Dockerfile.windows-mingw",
                             dockerfile_content: DOCKERFILE_WINDOWS_MINGW,
                             image_name: "ccgo-builder-windows-mingw",
-                            remote_image: format!("{}/ccgo-builder-windows-mingw:latest", GHCR_REPO),
+                            remote_image: format!(
+                                "{}/ccgo-builder-windows-mingw:latest",
+                                GHCR_REPO
+                            ),
                             size_estimate: "~1.2GB",
                         })
                     }
                 }
-            },
+            }
             BuildTarget::Macos => Some(Self {
                 dockerfile: "Dockerfile.apple",
                 dockerfile_content: DOCKERFILE_APPLE,
@@ -132,8 +135,12 @@ pub struct DockerBuilder {
 impl DockerBuilder {
     /// Create a new Docker builder
     pub fn new(ctx: BuildContext) -> Result<Self> {
-        let config = PlatformDockerConfig::for_platform(&ctx.options)
-            .ok_or_else(|| anyhow::anyhow!("Platform {:?} does not support Docker builds", ctx.options.target))?;
+        let config = PlatformDockerConfig::for_platform(&ctx.options).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Platform {:?} does not support Docker builds",
+                ctx.options.target
+            )
+        })?;
 
         // Get or create the Docker cache directory with embedded Dockerfiles
         let docker_dir = Self::ensure_docker_dir(&config)?;
@@ -166,23 +173,33 @@ impl DockerBuilder {
         let docker_dir = Self::get_docker_cache_dir()?;
 
         // Create the directory if it doesn't exist
-        fs::create_dir_all(&docker_dir)
-            .with_context(|| format!("Failed to create Docker cache directory: {}", docker_dir.display()))?;
+        fs::create_dir_all(&docker_dir).with_context(|| {
+            format!(
+                "Failed to create Docker cache directory: {}",
+                docker_dir.display()
+            )
+        })?;
 
         // Write the embedded Dockerfile to the cache directory
         let dockerfile_path = docker_dir.join(config.dockerfile);
-        fs::write(&dockerfile_path, config.dockerfile_content)
-            .with_context(|| format!("Failed to write Dockerfile: {}", dockerfile_path.display()))?;
+        fs::write(&dockerfile_path, config.dockerfile_content).with_context(|| {
+            format!("Failed to write Dockerfile: {}", dockerfile_path.display())
+        })?;
 
         // Extract embedded CMake toolchain files for MSVC Docker builds
         if config.image_name == "ccgo-builder-windows-msvc" {
             let cmake_dir = docker_dir.join("cmake");
-            fs::create_dir_all(&cmake_dir)
-                .with_context(|| format!("Failed to create cmake directory: {}", cmake_dir.display()))?;
+            fs::create_dir_all(&cmake_dir).with_context(|| {
+                format!("Failed to create cmake directory: {}", cmake_dir.display())
+            })?;
 
             let toolchain_path = cmake_dir.join("windows-msvc.toolchain.cmake");
-            fs::write(&toolchain_path, CMAKE_TOOLCHAIN_WINDOWS_MSVC)
-                .with_context(|| format!("Failed to write toolchain file: {}", toolchain_path.display()))?;
+            fs::write(&toolchain_path, CMAKE_TOOLCHAIN_WINDOWS_MSVC).with_context(|| {
+                format!(
+                    "Failed to write toolchain file: {}",
+                    toolchain_path.display()
+                )
+            })?;
         }
 
         Ok(docker_dir)
@@ -240,7 +257,10 @@ impl DockerBuilder {
 
         if !output.status.success() {
             eprintln!("⚠ Could not pull prebuilt image from GHCR");
-            eprintln!("  Reason: {}", String::from_utf8_lossy(&output.stderr).trim());
+            eprintln!(
+                "  Reason: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
             return Ok(false);
         }
 
@@ -254,14 +274,20 @@ impl DockerBuilder {
             bail!("Failed to tag Docker image");
         }
 
-        eprintln!("✓ Successfully pulled prebuilt image: {}", self.config.remote_image);
+        eprintln!(
+            "✓ Successfully pulled prebuilt image: {}",
+            self.config.remote_image
+        );
         eprintln!("✓ Tagged as: {}", self.config.image_name);
         Ok(true)
     }
 
     /// Build Docker image if not exists
     pub fn build_image(&self, use_prebuilt: bool) -> Result<()> {
-        eprintln!("\n=== Preparing Docker image: {} ===", self.config.image_name);
+        eprintln!(
+            "\n=== Preparing Docker image: {} ===",
+            self.config.image_name
+        );
         eprintln!("Platform: {}", self.ctx.options.target);
 
         // Check if image already exists locally
@@ -271,7 +297,10 @@ impl DockerBuilder {
             .context("Failed to check Docker images")?;
 
         if !String::from_utf8_lossy(&output.stdout).trim().is_empty() {
-            eprintln!("✓ Image {} already exists locally (using cached image)", self.config.image_name);
+            eprintln!(
+                "✓ Image {} already exists locally (using cached image)",
+                self.config.image_name
+            );
             eprintln!("  To rebuild, run: docker rmi {}", self.config.image_name);
             return Ok(());
         }
@@ -345,7 +374,10 @@ impl DockerBuilder {
 
     /// Run build inside Docker container
     pub fn run_build(&self) -> Result<()> {
-        eprintln!("\n=== Running {} build in Docker container ===", self.ctx.options.target);
+        eprintln!(
+            "\n=== Running {} build in Docker container ===",
+            self.ctx.options.target
+        );
         eprintln!("Project directory: {}", self.ctx.project_root.display());
 
         // Clean target/{platform} directory before Docker build
@@ -358,17 +390,20 @@ impl DockerBuilder {
 
         // Build Docker run command
         let mut cmd = Command::new("docker");
-        cmd.arg("run")
-            .arg("--rm")
-            .arg("--entrypoint=");  // Clear the image's default entrypoint
+        cmd.arg("run").arg("--rm").arg("--entrypoint="); // Clear the image's default entrypoint
 
         // Mount project directory
-        cmd.arg("-v").arg(format!("{}:/workspace", self.ctx.project_root.display()));
+        cmd.arg("-v")
+            .arg(format!("{}:/workspace", self.ctx.project_root.display()));
 
         // Mount .git directory if found
         if let Some(git_dir) = self.find_git_root() {
-            cmd.arg("-v").arg(format!("{}:/workspace/.git:ro", git_dir.display()));
-            eprintln!("Git repository: {} (mounted .git to container)", git_dir.parent().unwrap().display());
+            cmd.arg("-v")
+                .arg(format!("{}:/workspace/.git:ro", git_dir.display()));
+            eprintln!(
+                "Git repository: {} (mounted .git to container)",
+                git_dir.parent().unwrap().display()
+            );
         } else {
             eprintln!("⚠ No git repository found (git info will be 'unknown')");
         }
@@ -401,7 +436,11 @@ impl DockerBuilder {
                     // Try to find ccgo source relative to current executable
                     if let Ok(exe) = std::env::current_exe() {
                         // Go up from target/debug/ccgo or target/release/ccgo to project root
-                        if let Some(root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+                        if let Some(root) = exe
+                            .parent()
+                            .and_then(|p| p.parent())
+                            .and_then(|p| p.parent())
+                        {
                             if root.join("Cargo.toml").exists() {
                                 return Ok(root.to_path_buf());
                             }
@@ -412,8 +451,14 @@ impl DockerBuilder {
 
             if let Ok(path) = ccgo_src_path {
                 if path.join("Cargo.toml").exists() {
-                    cmd.arg("-v").arg(format!("{}:/ccgo-src:ro", path.canonicalize().unwrap_or(path.clone()).display()));
-                    eprintln!("Using --dev mode: mounting local ccgo source from {}", path.display());
+                    cmd.arg("-v").arg(format!(
+                        "{}:/ccgo-src:ro",
+                        path.canonicalize().unwrap_or(path.clone()).display()
+                    ));
+                    eprintln!(
+                        "Using --dev mode: mounting local ccgo source from {}",
+                        path.display()
+                    );
 
                     // Mount cargo cache to speed up repeated builds
                     let cargo_cache_dir = Self::get_docker_cache_dir()
@@ -422,7 +467,10 @@ impl DockerBuilder {
                     if let Err(e) = fs::create_dir_all(&cargo_cache_dir) {
                         eprintln!("⚠ Could not create cargo cache directory: {}", e);
                     } else {
-                        cmd.arg("-v").arg(format!("{}:/usr/local/cargo/registry", cargo_cache_dir.display()));
+                        cmd.arg("-v").arg(format!(
+                            "{}:/usr/local/cargo/registry",
+                            cargo_cache_dir.display()
+                        ));
                         eprintln!("Using cargo cache: {}", cargo_cache_dir.display());
                     }
                     use_local_source = true;
@@ -476,12 +524,16 @@ impl DockerBuilder {
                  (echo 'ERROR: Failed to download ccgo from GitHub releases.' && \
                   echo 'No release found. Try without --dev flag to use pre-installed ccgo' && \
                   exit 1)".to_string();
-            (download_cmd, "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string())
+            (
+                download_cmd,
+                "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string(),
+            )
         } else {
             // Default: Use pre-installed ccgo from Docker image
             let setup_cmd = "command -v ccgo >/dev/null 2>&1 || \
                  (pip3 install -q ccgo) || \
-                 (echo 'ERROR: ccgo not found.' && exit 1)".to_string();
+                 (echo 'ERROR: ccgo not found.' && exit 1)"
+                .to_string();
             (setup_cmd, "ccgo".to_string())
         };
 
@@ -559,8 +611,17 @@ impl DockerBuilder {
         // - New structure: target/{release|debug}/{platform}/
         // - Old structure: target/{platform}/
         // We scan both to ensure compatibility
-        let release_subdir = if self.ctx.options.release { "release" } else { "debug" };
-        let new_scan_dir = self.ctx.project_root.join("target").join(release_subdir).join(&platform);
+        let release_subdir = if self.ctx.options.release {
+            "release"
+        } else {
+            "debug"
+        };
+        let new_scan_dir = self
+            .ctx
+            .project_root
+            .join("target")
+            .join(release_subdir)
+            .join(&platform);
         let old_scan_dir = self.ctx.project_root.join("target").join(&platform);
 
         // Scan output directory for generated archives
@@ -585,12 +646,13 @@ impl DockerBuilder {
                     continue;
                 }
 
-                let file_name = path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
                 // Look for SDK archive: {lib}_{platform}_SDK-{version}.zip (exclude -SYMBOLS.zip)
-                if file_name.contains("_SDK-") && file_name.ends_with(".zip") && !file_name.contains("-SYMBOLS.zip") {
+                if file_name.contains("_SDK-")
+                    && file_name.ends_with(".zip")
+                    && !file_name.contains("-SYMBOLS.zip")
+                {
                     sdk_archive = Some(path.clone());
 
                     // Extract architectures from archive name if present
@@ -627,11 +689,12 @@ impl DockerBuilder {
             }
         }
 
-        let sdk_archive = sdk_archive
-            .ok_or_else(|| anyhow::anyhow!(
+        let sdk_archive = sdk_archive.ok_or_else(|| {
+            anyhow::anyhow!(
                 "Docker build completed but SDK archive not found in {}",
                 scan_dir.display()
-            ))?;
+            )
+        })?;
 
         Ok(BuildResult {
             sdk_archive,

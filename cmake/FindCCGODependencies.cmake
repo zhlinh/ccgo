@@ -306,6 +306,18 @@ function(find_ccgo_dependencies)
         set(CCGO_DEPENDENCIES_FOUND FALSE PARENT_SCOPE)
         message(STATUS "CCGO Dependencies: No dependencies found for current platform")
     endif()
+
+    # Parse CCGO_DEPENDENCY_LINKAGES (passed by ccgo build) into per-dep variables.
+    # Format: "name1=value1;name2=value2"
+    if(DEFINED CCGO_DEPENDENCY_LINKAGES)
+        foreach(_pair IN LISTS CCGO_DEPENDENCY_LINKAGES)
+            string(REGEX MATCH "^([^=]+)=(.+)$" _ "${_pair}")
+            set(_name "${CMAKE_MATCH_1}")
+            set(_value "${CMAKE_MATCH_2}")
+            string(TOUPPER "${_name}" _name_upper)
+            set(CCGO_DEPENDENCY_${_name_upper}_LINKAGE "${_value}" PARENT_SCOPE)
+        endforeach()
+    endif()
 endfunction()
 
 # Helper function to link a dependency to a target

@@ -103,7 +103,10 @@ impl CompilerInfo {
     /// Get CMake variables for this compiler
     pub fn cmake_variables(&self) -> Vec<(String, String)> {
         vec![
-            ("CMAKE_C_COMPILER".to_string(), self.cc.display().to_string()),
+            (
+                "CMAKE_C_COMPILER".to_string(),
+                self.cc.display().to_string(),
+            ),
             (
                 "CMAKE_CXX_COMPILER".to_string(),
                 self.cxx.display().to_string(),

@@ -73,7 +73,11 @@ impl KmpBuilder {
         }
 
         // Check Rust ccgo path: cmake_build/{debug|release}/{platform}/static/
-        let mode = if ctx.options.release { "release" } else { "debug" };
+        let mode = if ctx.options.release {
+            "release"
+        } else {
+            "debug"
+        };
         let rust_path = cmake_build.join(mode).join(platform).join("static");
         if rust_path.exists() {
             let out_dir = rust_path.join("out");
@@ -129,13 +133,15 @@ impl KmpBuilder {
         }
 
         // Get the current executable path to call ccgo
-        let ccgo_exe = std::env::current_exe()
-            .unwrap_or_else(|_| PathBuf::from("ccgo"));
+        let ccgo_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ccgo"));
 
         for platform in platforms {
             // Check if native libraries already exist
             if self.native_libs_exist(ctx, platform) {
-                eprintln!("✅ {} native libraries already exist, skipping build.\n", platform);
+                eprintln!(
+                    "✅ {} native libraries already exist, skipping build.\n",
+                    platform
+                );
                 continue;
             }
 
@@ -191,7 +197,12 @@ impl KmpBuilder {
         let gradlew = Self::gradlew_cmd();
 
         if ctx.options.verbose {
-            eprintln!("Running: {} {} (in {})", gradlew, args.join(" "), kmp_dir.display());
+            eprintln!(
+                "Running: {} {} (in {})",
+                gradlew,
+                args.join(" "),
+                kmp_dir.display()
+            );
         }
 
         let mut cmd = Command::new(gradlew);
@@ -262,7 +273,11 @@ impl KmpBuilder {
 
     /// Collect klib artifacts from build/classes/kotlin/{target}/main/
     /// Returns tuples of (klib_path, target_name, klib_type) where klib_type is "klib" or "cinterop"
-    fn collect_klib_artifacts(&self, classes_dir: &PathBuf, outputs: &mut Vec<PathBuf>) -> Result<()> {
+    fn collect_klib_artifacts(
+        &self,
+        classes_dir: &PathBuf,
+        outputs: &mut Vec<PathBuf>,
+    ) -> Result<()> {
         if !classes_dir.exists() {
             return Ok(());
         }
@@ -335,9 +350,7 @@ impl KmpBuilder {
                     match ext_str {
                         "jar" | "aar" | "klib" => {
                             // Skip sources and javadoc jars
-                            let file_name = path.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("");
+                            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                             if !file_name.contains("-sources") && !file_name.contains("-javadoc") {
                                 outputs.push(path);
                             }
@@ -369,12 +382,8 @@ impl KmpBuilder {
 
         // Organize outputs by type (matching pyccgo structure)
         for output in outputs {
-            let file_name = output.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            let ext = output.extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let file_name = output.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
 
             // Get the path as string for analysis
             let path_str = output.to_string_lossy();
@@ -484,8 +493,8 @@ impl PlatformBuilder for KmpBuilder {
         }
 
         // Check if build.gradle.kts or build.gradle exists
-        let has_gradle_config = kmp_dir.join("build.gradle.kts").exists()
-            || kmp_dir.join("build.gradle").exists();
+        let has_gradle_config =
+            kmp_dir.join("build.gradle.kts").exists() || kmp_dir.join("build.gradle").exists();
         if !has_gradle_config {
             bail!(
                 "No Gradle build file found in KMP directory: {}\n\
@@ -546,10 +555,7 @@ impl PlatformBuilder for KmpBuilder {
 
         #[cfg(target_os = "linux")]
         {
-            tasks.extend([
-                "linuxX64MainKlibrary",
-                "linuxArm64MainKlibrary",
-            ]);
+            tasks.extend(["linuxX64MainKlibrary", "linuxArm64MainKlibrary"]);
         }
 
         // Run Gradle build with all tasks

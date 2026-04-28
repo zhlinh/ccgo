@@ -165,16 +165,10 @@ impl Toolchain for LinuxToolchain {
 
     fn validate(&self) -> Result<()> {
         if !self.compiler.cc.exists() {
-            bail!(
-                "C compiler not found at: {}",
-                self.compiler.cc.display()
-            );
+            bail!("C compiler not found at: {}", self.compiler.cc.display());
         }
         if !self.compiler.cxx.exists() {
-            bail!(
-                "C++ compiler not found at: {}",
-                self.compiler.cxx.display()
-            );
+            bail!("C++ compiler not found at: {}", self.compiler.cxx.display());
         }
         Ok(())
     }

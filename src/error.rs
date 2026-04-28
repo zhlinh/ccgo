@@ -4,7 +4,6 @@
 //! to help users quickly resolve common issues.
 #![allow(dead_code)]
 
-
 use thiserror::Error;
 
 /// Custom error types with helpful context and suggestions
@@ -90,10 +89,7 @@ impl CcgoError {
     }
 
     /// Create a dependency error
-    pub fn dependency_error(
-        dependency: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn dependency_error(dependency: impl Into<String>, message: impl Into<String>) -> Self {
         Self::Dependency {
             dependency: dependency.into(),
             message: message.into(),
@@ -130,10 +126,7 @@ impl CcgoError {
     }
 
     /// Create a build failure error
-    pub fn build_failure(
-        platform: impl Into<String>,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn build_failure(platform: impl Into<String>, message: impl Into<String>) -> Self {
         Self::BuildFailure {
             platform: platform.into(),
             message: message.into(),
@@ -173,10 +166,7 @@ impl CcgoError {
     }
 
     /// Create a version error
-    pub fn version_error(
-        message: impl Into<String>,
-        hint: impl Into<String>,
-    ) -> Self {
+    pub fn version_error(message: impl Into<String>, hint: impl Into<String>) -> Self {
         Self::Version {
             message: message.into(),
             current: None,
@@ -248,11 +238,7 @@ where
     E: std::error::Error + Send + Sync + 'static,
 {
     fn with_hint(self, hint: impl Into<String>) -> Result<T, CcgoError> {
-        self.map_err(|e| CcgoError::config_error_with_hint(
-            e.to_string(),
-            Some(e.into()),
-            hint,
-        ))
+        self.map_err(|e| CcgoError::config_error_with_hint(e.to_string(), Some(e.into()), hint))
     }
 
     fn context_with_hint(
@@ -260,11 +246,13 @@ where
         context: impl Into<String>,
         hint: impl Into<String>,
     ) -> Result<T, CcgoError> {
-        self.map_err(|e| CcgoError::config_error_with_hint(
-            format!("{}: {}", context.into(), e),
-            Some(e.into()),
-            hint,
-        ))
+        self.map_err(|e| {
+            CcgoError::config_error_with_hint(
+                format!("{}: {}", context.into(), e),
+                Some(e.into()),
+                hint,
+            )
+        })
     }
 }
 

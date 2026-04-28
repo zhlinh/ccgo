@@ -41,7 +41,9 @@ impl ApplePlatform {
             ApplePlatform::MacOS => "CMAKE_OSX_DEPLOYMENT_TARGET",
             ApplePlatform::IOS | ApplePlatform::IOSSimulator => "CMAKE_OSX_DEPLOYMENT_TARGET",
             ApplePlatform::TvOS | ApplePlatform::TvOSSimulator => "CMAKE_OSX_DEPLOYMENT_TARGET",
-            ApplePlatform::WatchOS | ApplePlatform::WatchOSSimulator => "CMAKE_OSX_DEPLOYMENT_TARGET",
+            ApplePlatform::WatchOS | ApplePlatform::WatchOSSimulator => {
+                "CMAKE_OSX_DEPLOYMENT_TARGET"
+            }
         }
     }
 
@@ -94,12 +96,13 @@ impl XcodeToolchain {
             bail!("xcode-select failed. Please run: xcode-select --install");
         }
 
-        let developer_dir = PathBuf::from(
-            String::from_utf8_lossy(&output.stdout).trim()
-        );
+        let developer_dir = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
 
         if !developer_dir.exists() {
-            bail!("Xcode developer directory not found: {}", developer_dir.display());
+            bail!(
+                "Xcode developer directory not found: {}",
+                developer_dir.display()
+            );
         }
 
         // Get Xcode version
@@ -185,11 +188,17 @@ impl XcodeToolchain {
     }
 
     /// Get CMake variables for a specific platform
-    pub fn cmake_variables_for_platform(&self, platform: ApplePlatform) -> Result<Vec<(String, String)>> {
+    pub fn cmake_variables_for_platform(
+        &self,
+        platform: ApplePlatform,
+    ) -> Result<Vec<(String, String)>> {
         let sdk_path = self.sdk_path(platform)?;
 
         let mut vars = vec![
-            ("CMAKE_OSX_SYSROOT".to_string(), sdk_path.display().to_string()),
+            (
+                "CMAKE_OSX_SYSROOT".to_string(),
+                sdk_path.display().to_string(),
+            ),
             (
                 platform.deployment_target_var().to_string(),
                 platform.min_deployment_target().to_string(),
@@ -218,11 +227,7 @@ impl XcodeToolchain {
     }
 
     /// Run lipo to create a universal binary
-    pub fn create_universal_binary(
-        &self,
-        input_libs: &[PathBuf],
-        output: &PathBuf,
-    ) -> Result<()> {
+    pub fn create_universal_binary(&self, input_libs: &[PathBuf], output: &PathBuf) -> Result<()> {
         let mut cmd = Command::new("lipo");
         cmd.arg("-create");
 
@@ -278,9 +283,9 @@ impl XcodeToolchain {
         // Use libtool to merge static libraries
         let mut cmd = Command::new("libtool");
         cmd.arg("-static")
-           .arg("-no_warning_for_no_symbols")
-           .arg("-o")
-           .arg(dst_lib);
+            .arg("-no_warning_for_no_symbols")
+            .arg("-o")
+            .arg(dst_lib);
 
         for lib in src_libs {
             cmd.arg(lib);
@@ -317,7 +322,9 @@ impl XcodeToolchain {
 
         cmd.arg("-output").arg(output);
 
-        let status = cmd.status().context("Failed to run xcodebuild -create-xcframework")?;
+        let status = cmd
+            .status()
+            .context("Failed to run xcodebuild -create-xcframework")?;
         if !status.success() {
             bail!("Failed to create XCFramework");
         }
@@ -348,7 +355,10 @@ impl Toolchain for XcodeToolchain {
     fn validate(&self) -> Result<()> {
         // Check that developer directory exists
         if !self.developer_dir.exists() {
-            bail!("Xcode developer directory not found: {}", self.developer_dir.display());
+            bail!(
+                "Xcode developer directory not found: {}",
+                self.developer_dir.display()
+            );
         }
 
         // Verify we can run xcodebuild
@@ -376,10 +386,7 @@ pub fn is_xcode_available() -> bool {
 
 /// Check if command line tools are installed (without full Xcode)
 pub fn is_command_line_tools_installed() -> bool {
-    let result = Command::new("xcode-select")
-        .arg("-p")
-        .output()
-        .ok();
+    let result = Command::new("xcode-select").arg("-p").output().ok();
 
     if let Some(output) = result {
         if output.status.success() {

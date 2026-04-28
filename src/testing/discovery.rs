@@ -131,9 +131,10 @@ impl TestDiscovery {
                     || file_name.contains("Test")
                     || file_name.contains("_googletest")
                     || file_name.contains("_catch2"))
-                    && self.is_executable(&path) {
-                        executables.push(path);
-                    }
+                    && self.is_executable(&path)
+                {
+                    executables.push(path);
+                }
             }
         }
 

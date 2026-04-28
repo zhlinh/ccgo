@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## Unreleased
+
+### Features
+
+* **Linkage strategy** (`[[dependencies]].linkage` / `[build].default_dep_linkage`): consumers building shared libraries can now keep dependencies external (`shared-external`, default) instead of archiving them in. Eliminates the per-consumer copy of every transitive dep that previously bloated APKs containing multiple sibling libraries. **OHOS** static consumers now produce thin `.a` files (skip the third-party merge); other platforms' static-build behavior is unchanged in this release.
+
+  Migration:
+  * Existing **shared-consumer** projects need no change unless they relied on shared consumers being self-contained (e.g. shipping a single `.so` to external app developers). Those projects should set `linkage = "static-embedded"` on the relevant deps to keep the old behavior.
+  * Existing **OHOS static-consumer** projects: if you shipped a `.a` that external code links directly and relied on third-party dep symbols being merged in, set `linkage = "static-embedded"` on those deps, or the resulting archive will no longer contain those symbols.
+
+  See [`docs/dependency-linkage.md`](docs/dependency-linkage.md) for the full decision matrix.
 
 ## [3.4.4] - 2026-04-20
 

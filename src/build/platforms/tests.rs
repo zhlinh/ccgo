@@ -21,8 +21,15 @@ impl TestsBuilder {
     /// Get build output directory
     fn build_dir(&self, ctx: &BuildContext) -> PathBuf {
         // Uses cmake_build/{release|debug}/tests/ structure
-        let release_subdir = if ctx.options.release { "release" } else { "debug" };
-        ctx.project_root.join("cmake_build").join(release_subdir).join("tests")
+        let release_subdir = if ctx.options.release {
+            "release"
+        } else {
+            "debug"
+        };
+        ctx.project_root
+            .join("cmake_build")
+            .join(release_subdir)
+            .join("tests")
     }
 
     /// Get install directory
@@ -43,9 +50,7 @@ impl TestsBuilder {
 
     /// Get CMake extra flags for tests
     fn cmake_extra_flags(&self, ctx: &BuildContext) -> Result<Vec<String>> {
-        let mut flags = vec![
-            "-DGOOGLETEST_SUPPORT=ON".to_string(),
-        ];
+        let mut flags = vec!["-DGOOGLETEST_SUPPORT=ON".to_string()];
 
         // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
@@ -119,7 +124,9 @@ impl TestsBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -170,7 +177,10 @@ impl TestsBuilder {
         let mut executables = Vec::new();
 
         if !install_dir.exists() {
-            bail!("Test install directory not found: {}", install_dir.display());
+            bail!(
+                "Test install directory not found: {}",
+                install_dir.display()
+            );
         }
 
         // Search for test executables
@@ -219,10 +229,8 @@ impl TestsBuilder {
         let now = chrono::Local::now();
         let timestamp = now.format("%Y%m%d_%H%M%S_%6f");
         let system_name = std::env::consts::OS;
-        let xml_output = build_dir.join(format!(
-            "tests_on_{}_result_{}.xml",
-            system_name, timestamp
-        ));
+        let xml_output =
+            build_dir.join(format!("tests_on_{}_result_{}.xml", system_name, timestamp));
 
         for exe in executables {
             eprintln!("\nRunning test: {}", exe.display());
@@ -241,9 +249,9 @@ impl TestsBuilder {
                 eprintln!("Executing: {:?}", cmd);
             }
 
-            let status = cmd.status().with_context(|| {
-                format!("Failed to run test executable {}", exe.display())
-            })?;
+            let status = cmd
+                .status()
+                .with_context(|| format!("Failed to run test executable {}", exe.display()))?;
 
             if !status.success() {
                 bail!("Test {} failed", exe.display());
@@ -293,7 +301,9 @@ impl TestsBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -325,7 +335,10 @@ impl TestsBuilder {
                     .status();
             }
         } else {
-            eprintln!("\n✓ IDE project files generated in: {}", build_dir.display());
+            eprintln!(
+                "\n✓ IDE project files generated in: {}",
+                build_dir.display()
+            );
         }
 
         Ok(())
@@ -383,7 +396,11 @@ impl PlatformBuilder for TestsBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/tests
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("tests");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("tests");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;

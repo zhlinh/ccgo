@@ -44,7 +44,9 @@ impl Workspace {
         let root_config = CcgoConfig::load_from(&config_path)
             .context("Failed to load workspace root CCGO.toml")?;
 
-        let workspace_config = root_config.workspace.clone()
+        let workspace_config = root_config
+            .workspace
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("CCGO.toml does not define a workspace"))?;
 
         // Discover workspace members
@@ -82,7 +84,8 @@ impl Workspace {
         if self.config.default_members.is_empty() {
             self.members.all()
         } else {
-            self.config.default_members
+            self.config
+                .default_members
                 .iter()
                 .filter_map(|name| self.members.get(name))
                 .collect()

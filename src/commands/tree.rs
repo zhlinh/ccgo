@@ -198,26 +198,11 @@ impl TreeCommand {
         }
 
         if config.dependencies.is_empty() {
-            if self.format == OutputFormat::Text {
-                println!("\n✓ No dependencies defined in CCGO.toml");
-            } else if self.format == OutputFormat::Json {
-                let tree = TreeJson {
-                    name: package.name.clone(),
-                    version: package.version.clone(),
-                    dependencies: vec![],
-                    conflicts: None,
-                };
-                println!("{}", serde_json::to_string_pretty(&tree)?);
-            }
-            return Ok(());
+            return self.handle_empty_dependencies(package);
         }
 
         // Load lock file if requested or available
-        let lock_info = if self.locked {
-            Some(Self::load_lock_file(&project_dir).context("Failed to load CCGO.toml.lock")?)
-        } else {
-            Self::load_lock_file(&project_dir).ok()
-        };
+        let lock_info = self.load_lock_info(&project_dir)?;
 
         // Resolve all dependencies into ResolvedDep tree
         let resolved = self.resolve_dependencies(&config.dependencies, &lock_info, &project_dir)?;
@@ -228,35 +213,84 @@ impl TreeCommand {
         }
 
         // Output based on format
+        self.output_by_format(package, &config, &resolved, &lock_info, &project_dir)
+    }
+
+    /// Handle the case when there are no dependencies
+    fn handle_empty_dependencies(&self, package: &crate::config::PackageConfig) -> Result<()> {
+        if self.format == OutputFormat::Text {
+            println!("\n✓ No dependencies defined in CCGO.toml");
+        } else if self.format == OutputFormat::Json {
+            let tree = TreeJson {
+                name: package.name.clone(),
+                version: package.version.clone(),
+                dependencies: vec![],
+                conflicts: None,
+            };
+            println!("{}", serde_json::to_string_pretty(&tree)?);
+        }
+        Ok(())
+    }
+
+    /// Load lock file info based on locked flag
+    fn load_lock_info(&self, project_dir: &Path) -> Result<Option<LockInfo>> {
+        if self.locked {
+            Self::load_lock_file(project_dir)
+                .context("Failed to load CCGO.toml.lock")
+                .map(Some)
+        } else {
+            Ok(Self::load_lock_file(project_dir).ok())
+        }
+    }
+
+    /// Output results based on the selected format
+    fn output_by_format(
+        &self,
+        package: &crate::config::PackageConfig,
+        config: &CcgoConfig,
+        resolved: &[ResolvedDep],
+        lock_info: &Option<LockInfo>,
+        project_dir: &Path,
+    ) -> Result<()> {
         match self.format {
             OutputFormat::Json => {
-                self.output_json(&package.name, &package.version, &config, &resolved)
+                self.output_json(&package.name, &package.version, config, resolved)
             }
-            OutputFormat::Dot => {
-                self.output_dot(&package.name, &package.version, &config, &resolved)
-            }
+            OutputFormat::Dot => self.output_dot(&package.name, &package.version, config, resolved),
             OutputFormat::Text => {
-                self.output_text(
-                    &package.name,
-                    &package.version,
-                    &config,
-                    &resolved,
-                    &lock_info,
-                    &project_dir,
-                )?;
-
-                // Show conflicts if requested
-                if self.conflicts {
-                    let conflicts = self.detect_conflicts(&resolved);
-                    if !conflicts.is_empty() {
-                        self.print_conflicts(&conflicts);
-                    } else {
-                        println!("\n✓ No version conflicts detected");
-                    }
-                }
-                Ok(())
+                self.output_text_and_conflicts(package, config, resolved, lock_info, project_dir)
             }
         }
+    }
+
+    /// Output text format and handle conflict detection
+    fn output_text_and_conflicts(
+        &self,
+        package: &crate::config::PackageConfig,
+        config: &CcgoConfig,
+        resolved: &[ResolvedDep],
+        lock_info: &Option<LockInfo>,
+        project_dir: &Path,
+    ) -> Result<()> {
+        self.output_text(
+            &package.name,
+            &package.version,
+            config,
+            resolved,
+            lock_info,
+            project_dir,
+        )?;
+
+        // Show conflicts if requested
+        if self.conflicts {
+            let conflicts = self.detect_conflicts(resolved);
+            if !conflicts.is_empty() {
+                self.print_conflicts(&conflicts);
+            } else {
+                println!("\n✓ No version conflicts detected");
+            }
+        }
+        Ok(())
     }
 
     // ========================================================================
@@ -416,69 +450,113 @@ impl TreeCommand {
         project_dir: &Path,
     ) -> Result<()> {
         // Check depth limit
-        if let Some(max_depth) = self.depth {
-            if current_depth >= max_depth {
-                return Ok(());
-            }
+        if self.exceeds_depth_limit(current_depth) {
+            return Ok(());
         }
 
-        // Get version from lock file or CCGO.toml
-        let version_info = if let Some(ref lock) = lock_info {
-            if let Some(locked_dep) = lock.dependencies.get(&dep.name) {
-                format!(" v{}", locked_dep.version)
-            } else {
-                format!(" v{}", dep.version)
-            }
-        } else {
-            format!(" v{}", dep.version)
-        };
-
-        // Get source info
+        // Get version and source info
+        let version_info = self.get_version_info(dep, lock_info);
         let source_info = self.format_source(dep);
 
         // Check if already shown (for deduplication)
         let dep_key = format!("{}{}", dep.name, version_info);
-        let already_shown = if let Some(ref mut set) = shown {
-            !set.insert(dep_key.clone())
-        } else {
-            false
-        };
+        let already_shown = self.mark_as_shown(shown, &dep_key);
 
         // Print this dependency
+        self.print_dep_line(dep, &version_info, &source_info, prefix, already_shown);
+
+        if already_shown {
+            return Ok(());
+        }
+
+        // Print children
+        self.print_children(
+            dep,
+            continue_prefix,
+            current_depth,
+            lock_info,
+            shown,
+            project_dir,
+        )
+    }
+
+    /// Check if current depth exceeds the limit
+    fn exceeds_depth_limit(&self, current_depth: usize) -> bool {
+        self.depth
+            .is_some_and(|max_depth| current_depth >= max_depth)
+    }
+
+    /// Get version info string from lock file or config
+    fn get_version_info(&self, dep: &DependencyConfig, lock_info: &Option<LockInfo>) -> String {
+        lock_info
+            .as_ref()
+            .and_then(|lock| lock.dependencies.get(&dep.name))
+            .map(|locked_dep| format!(" v{}", locked_dep.version))
+            .unwrap_or_else(|| format!(" v{}", dep.version))
+    }
+
+    /// Mark dependency as shown and return whether it was already shown
+    fn mark_as_shown(&self, shown: &mut Option<HashSet<String>>, dep_key: &str) -> bool {
+        shown
+            .as_mut()
+            .is_some_and(|set| !set.insert(dep_key.to_string()))
+    }
+
+    /// Print a single dependency line
+    fn print_dep_line(
+        &self,
+        dep: &DependencyConfig,
+        version_info: &str,
+        source_info: &str,
+        prefix: &str,
+        already_shown: bool,
+    ) {
         if already_shown {
             println!("{}{}{}{}  (*)", prefix, dep.name, version_info, source_info);
-            return Ok(());
         } else {
             println!("{}{}{}{}", prefix, dep.name, version_info, source_info);
         }
+    }
 
-        // Try to load this dependency's CCGO.toml to find its dependencies
+    /// Print child dependencies recursively
+    #[allow(clippy::too_many_arguments)]
+    fn print_children(
+        &self,
+        dep: &DependencyConfig,
+        continue_prefix: &str,
+        current_depth: usize,
+        lock_info: &Option<LockInfo>,
+        shown: &mut Option<HashSet<String>>,
+        project_dir: &Path,
+    ) -> Result<()> {
         let sub_deps = self.load_sub_dependencies(dep, lock_info, project_dir)?;
 
-        if !sub_deps.is_empty() {
-            for (idx, sub_dep) in sub_deps.iter().enumerate() {
-                let is_last = idx == sub_deps.len() - 1;
-                let sub_prefix = format!(
-                    "{}{}",
-                    continue_prefix,
-                    if is_last { "└── " } else { "├── " }
-                );
-                let sub_continue = format!(
-                    "{}{}",
-                    continue_prefix,
-                    if is_last { "    " } else { "│   " }
-                );
+        if sub_deps.is_empty() {
+            return Ok(());
+        }
 
-                self.print_dependency(
-                    sub_dep,
-                    &sub_prefix,
-                    &sub_continue,
-                    current_depth + 1,
-                    lock_info,
-                    shown,
-                    project_dir,
-                )?;
-            }
+        for (idx, sub_dep) in sub_deps.iter().enumerate() {
+            let is_last = idx == sub_deps.len() - 1;
+            let sub_prefix = format!(
+                "{}{}",
+                continue_prefix,
+                if is_last { "└── " } else { "├── " }
+            );
+            let sub_continue = format!(
+                "{}{}",
+                continue_prefix,
+                if is_last { "    " } else { "│   " }
+            );
+
+            self.print_dependency(
+                sub_dep,
+                &sub_prefix,
+                &sub_continue,
+                current_depth + 1,
+                lock_info,
+                shown,
+                project_dir,
+            )?;
         }
 
         Ok(())
@@ -558,70 +636,84 @@ impl TreeCommand {
             let line = lines[i].trim();
 
             // Look for [dependencies.xxx]
-            if line.starts_with("[dependencies.") && line.ends_with(']') {
-                let dep_name = line
-                    .trim_start_matches("[dependencies.")
-                    .trim_end_matches(']')
-                    .split('.')
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
-
-                if dep_name.is_empty() || dep_name == "git" {
-                    i += 1;
+            if let Some(dep_name) = Self::parse_dependency_section_header(line) {
+                if let Some((dep, next_i)) = Self::parse_dependency_section(&lines, i + 1) {
+                    dependencies.insert(dep_name, dep);
+                    i = next_i;
                     continue;
                 }
-
-                // Parse fields for this dependency
-                let mut version = String::new();
-                let mut source = String::new();
-                let mut install_path = String::new();
-
-                i += 1;
-                while i < lines.len() {
-                    let field_line = lines[i].trim();
-
-                    if field_line.is_empty() || field_line.starts_with('#') {
-                        i += 1;
-                        continue;
-                    }
-
-                    if field_line.starts_with('[') {
-                        // Next section
-                        break;
-                    }
-
-                    if let Some((key, value)) = field_line.split_once('=') {
-                        let key = key.trim();
-                        let value = value.trim().trim_matches('"');
-
-                        match key {
-                            "version" => version = value.to_string(),
-                            "source" => source = value.to_string(),
-                            "install_path" => install_path = value.to_string(),
-                            _ => {}
-                        }
-                    }
-
-                    i += 1;
-                }
-
-                if !version.is_empty() && !install_path.is_empty() {
-                    dependencies.insert(
-                        dep_name,
-                        LockedDep {
-                            version,
-                            source,
-                            install_path,
-                        },
-                    );
-                }
-            } else {
-                i += 1;
             }
+            i += 1;
         }
 
         Ok(LockInfo { dependencies })
+    }
+
+    /// Parse a dependency section header like [dependencies.xxx]
+    fn parse_dependency_section_header(line: &str) -> Option<String> {
+        if line.starts_with("[dependencies.") && line.ends_with(']') {
+            let dep_name = line
+                .trim_start_matches("[dependencies.")
+                .trim_end_matches(']')
+                .split('.')
+                .next()
+                .unwrap_or("")
+                .to_string();
+
+            if !dep_name.is_empty() && dep_name != "git" {
+                return Some(dep_name);
+            }
+        }
+        None
+    }
+
+    /// Parse a single dependency section and return the LockedDep and next line index
+    fn parse_dependency_section(lines: &[&str], start_i: usize) -> Option<(LockedDep, usize)> {
+        let mut version = String::new();
+        let mut source = String::new();
+        let mut install_path = String::new();
+        let mut i = start_i;
+
+        while i < lines.len() {
+            let field_line = lines[i].trim();
+
+            if field_line.is_empty() || field_line.starts_with('#') {
+                i += 1;
+                continue;
+            }
+
+            if field_line.starts_with('[') {
+                // Next section
+                break;
+            }
+
+            if let Some((key, value)) = field_line.split_once('=') {
+                let key = key.trim();
+                let value = value.trim().trim_matches('"');
+
+                match key {
+                    "version" => version = value.to_string(),
+                    "source" => source = value.to_string(),
+                    "install_path" => install_path = value.to_string(),
+                    _ => {}
+                }
+            }
+
+            i += 1;
+        }
+
+        if !version.is_empty() && !install_path.is_empty() {
+            Some((
+                LockedDep {
+                    version,
+                    source,
+                    install_path,
+                },
+                i,
+            ))
+        } else {
+            None
+        }
     }
 
     // ========================================================================
@@ -1021,6 +1113,7 @@ mod tests {
             default_features: None,
             workspace: false,
             registry: None,
+            linkage: None,
         };
 
         assert_eq!(cmd.format_source(&dep), "  (path: ../mylib)");
@@ -1042,6 +1135,7 @@ mod tests {
             default_features: None,
             workspace: false,
             registry: None,
+            linkage: None,
         };
 
         assert_eq!(
@@ -1064,6 +1158,7 @@ mod tests {
             default_features: None,
             workspace: false,
             registry: None,
+            linkage: None,
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1087,6 +1182,7 @@ mod tests {
             default_features: None,
             workspace: false,
             registry: None,
+            linkage: None,
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1113,6 +1209,7 @@ mod tests {
             default_features: None,
             workspace: false,
             registry: None,
+            linkage: None,
         };
 
         let source = DepSourceInfo::from(&dep);

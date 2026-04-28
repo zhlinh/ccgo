@@ -68,7 +68,9 @@ impl UninstallCommand {
                 if !path.is_symlink() {
                     continue;
                 }
-                let Ok(target) = std::fs::read_link(&path) else { continue };
+                let Ok(target) = std::fs::read_link(&path) else {
+                    continue;
+                };
                 // canonicalize absolutely; relative links resolve against bin_root
                 let abs_target = if target.is_absolute() {
                     target.clone()

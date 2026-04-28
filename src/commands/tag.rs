@@ -95,7 +95,10 @@ impl TagCommand {
         self.handle_existing_tag(&project_dir, &tag_version)?;
         self.run_git_tag(&project_dir, &tag_version, &tag_message)?;
 
-        eprintln!("✓ {}", &format!("Created {} tag: {}", self.tag_kind(), tag_version));
+        eprintln!(
+            "✓ {}",
+            &format!("Created {} tag: {}", self.tag_kind(), tag_version)
+        );
 
         self.show_tag_info(&project_dir, &tag_version);
         self.handle_push(&project_dir, &tag_version);
@@ -109,7 +112,11 @@ impl TagCommand {
 
     /// Return the human-readable tag kind label.
     fn tag_kind(&self) -> &'static str {
-        if self.lightweight { "lightweight" } else { "annotated" }
+        if self.lightweight {
+            "lightweight"
+        } else {
+            "annotated"
+        }
     }
 
     /// Print the tag message block for annotated tags.
@@ -136,11 +143,7 @@ impl TagCommand {
     }
 
     /// Handle the case where the tag already exists (error or force-delete).
-    fn handle_existing_tag(
-        &self,
-        project_dir: &std::path::Path,
-        tag_version: &str,
-    ) -> Result<()> {
+    fn handle_existing_tag(&self, project_dir: &std::path::Path, tag_version: &str) -> Result<()> {
         if !tag_exists(project_dir, tag_version)? {
             return Ok(());
         }
@@ -151,7 +154,10 @@ impl TagCommand {
         }
         eprintln!(
             "⚠ {}",
-            &format!("Tag '{}' already exists, will be replaced (--force)", tag_version)
+            &format!(
+                "Tag '{}' already exists, will be replaced (--force)",
+                tag_version
+            )
         );
         let _ = Command::new("git")
             .args(["tag", "-d", tag_version])

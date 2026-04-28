@@ -155,9 +155,10 @@ impl<'a> WorkspaceResolver<'a> {
         // Visit dependencies first
         for other_member in self.workspace.members.all() {
             if other_member.name != member.name
-                && self.depends_on_member(member, &other_member.name)? {
-                    self.visit_member(other_member, visited, visiting, order)?;
-                }
+                && self.depends_on_member(member, &other_member.name)?
+            {
+                self.visit_member(other_member, visited, visiting, order)?;
+            }
         }
 
         visiting.remove(&member.name);

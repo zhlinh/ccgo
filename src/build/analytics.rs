@@ -107,8 +107,7 @@ pub struct BuildAnalytics {
 impl BuildAnalytics {
     /// Get the analytics storage directory
     pub fn analytics_dir() -> Result<PathBuf> {
-        let base_dirs = directories::BaseDirs::new()
-            .context("Failed to get base directories")?;
+        let base_dirs = directories::BaseDirs::new().context("Failed to get base directories")?;
         let home = base_dirs.home_dir();
         let dir = home.join(".ccgo").join("analytics");
         std::fs::create_dir_all(&dir)?;
@@ -373,10 +372,7 @@ pub fn get_cache_stats(cache_tool: Option<&str>) -> Option<CacheStats> {
 fn get_ccache_stats() -> Option<CacheStats> {
     use std::process::Command;
 
-    let output = Command::new("ccache")
-        .arg("-s")
-        .output()
-        .ok()?;
+    let output = Command::new("ccache").arg("-s").output().ok()?;
 
     if !output.status.success() {
         return None;
@@ -422,10 +418,7 @@ fn get_ccache_stats() -> Option<CacheStats> {
 fn get_sccache_stats() -> Option<CacheStats> {
     use std::process::Command;
 
-    let output = Command::new("sccache")
-        .arg("--show-stats")
-        .output()
-        .ok()?;
+    let output = Command::new("sccache").arg("--show-stats").output().ok()?;
 
     if !output.status.success() {
         return None;
@@ -518,19 +511,12 @@ mod tests {
 
     #[test]
     fn test_phase_display() {
-        assert_eq!(
-            BuildPhase::Compilation.to_string(),
-            "Compilation"
-        );
+        assert_eq!(BuildPhase::Compilation.to_string(), "Compilation");
     }
 
     #[test]
     fn test_analytics_collector() {
-        let mut collector = AnalyticsCollector::new(
-            "test".to_string(),
-            "linux".to_string(),
-            4,
-        );
+        let mut collector = AnalyticsCollector::new("test".to_string(), "linux".to_string(), 4);
 
         collector.start_phase(BuildPhase::Compilation);
         std::thread::sleep(std::time::Duration::from_millis(10));

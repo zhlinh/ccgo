@@ -150,8 +150,12 @@ impl RunCommand {
 
     /// Find first example in examples directory
     fn find_first_example(&self, examples_dir: &Path) -> Result<Option<String>> {
-        let entries = std::fs::read_dir(examples_dir)
-            .with_context(|| format!("Failed to read examples directory: {}", examples_dir.display()))?;
+        let entries = std::fs::read_dir(examples_dir).with_context(|| {
+            format!(
+                "Failed to read examples directory: {}",
+                examples_dir.display()
+            )
+        })?;
 
         let mut examples: Vec<String> = Vec::new();
 
@@ -184,7 +188,12 @@ impl RunCommand {
     }
 
     /// Get the source file path for the target
-    fn get_source_path(&self, config: &CcgoConfig, project_root: &Path, target: &RunTarget) -> Result<PathBuf> {
+    fn get_source_path(
+        &self,
+        config: &CcgoConfig,
+        project_root: &Path,
+        target: &RunTarget,
+    ) -> Result<PathBuf> {
         match target {
             RunTarget::Example(name) => {
                 // Check configured examples first
@@ -235,7 +244,9 @@ impl RunCommand {
                      [[bin]]\n\
                      name = \"{}\"\n\
                      path = \"src/bin/{}.cpp\"",
-                    name, name, name
+                    name,
+                    name,
+                    name
                 );
             }
         }
@@ -252,8 +263,9 @@ impl RunCommand {
         verbose: bool,
     ) -> Result<PathBuf> {
         // Create build directory
-        std::fs::create_dir_all(build_dir)
-            .with_context(|| format!("Failed to create build directory: {}", build_dir.display()))?;
+        std::fs::create_dir_all(build_dir).with_context(|| {
+            format!("Failed to create build directory: {}", build_dir.display())
+        })?;
 
         // Detect compiler
         let compiler = detect_default_compiler()
@@ -265,7 +277,8 @@ impl RunCommand {
         }
 
         // Generate CMakeLists.txt
-        let cmake_content = self.generate_cmake(project_root, target_name, source_path, lib_name)?;
+        let cmake_content =
+            self.generate_cmake(project_root, target_name, source_path, lib_name)?;
         let cmake_path = build_dir.join("CMakeLists.txt");
         std::fs::write(&cmake_path, &cmake_content)
             .with_context(|| format!("Failed to write CMakeLists.txt: {}", cmake_path.display()))?;
@@ -288,7 +301,10 @@ impl RunCommand {
             .build_type(build_type)
             .variable("CMAKE_C_COMPILER", compiler.cc.display().to_string())
             .variable("CMAKE_CXX_COMPILER", compiler.cxx.display().to_string())
-            .variable("PROJECT_SOURCE_DIR_OVERRIDE", project_root.display().to_string())
+            .variable(
+                "PROJECT_SOURCE_DIR_OVERRIDE",
+                project_root.display().to_string(),
+            )
             .jobs(jobs)
             .verbose(verbose);
 
@@ -383,7 +399,9 @@ endif()
             build_dir.join("Debug").join(target_name),
             build_dir.join("Debug").join(format!("{}.exe", target_name)),
             build_dir.join("Release").join(target_name),
-            build_dir.join("Release").join(format!("{}.exe", target_name)),
+            build_dir
+                .join("Release")
+                .join(format!("{}.exe", target_name)),
         ];
 
         for path in &candidates {
@@ -405,7 +423,11 @@ endif()
     /// Run the executable with arguments
     fn run_executable(&self, executable: &Path, verbose: bool) -> Result<()> {
         if verbose {
-            eprintln!("\nRunning: {} {}", executable.display(), self.args.join(" "));
+            eprintln!(
+                "\nRunning: {} {}",
+                executable.display(),
+                self.args.join(" ")
+            );
             eprintln!("{}", "-".repeat(60));
         }
 
@@ -428,4 +450,3 @@ endif()
         Ok(())
     }
 }
-

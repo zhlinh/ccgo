@@ -22,7 +22,10 @@ impl PythonRunner {
     pub fn new() -> Result<Self> {
         let ccgo_path = Self::find_ccgo()?;
         let python_path = Self::find_python()?;
-        Ok(Self { ccgo_path, python_path })
+        Ok(Self {
+            ccgo_path,
+            python_path,
+        })
     }
 
     /// Find ccgo command
@@ -60,11 +63,7 @@ impl PythonRunner {
         full_args.extend(args.iter().cloned());
 
         if verbose {
-            eprintln!(
-                "Executing: {} {}",
-                self.ccgo_path,
-                full_args.join(" ")
-            );
+            eprintln!("Executing: {} {}", self.ccgo_path, full_args.join(" "));
         }
 
         run_command(&self.ccgo_path, &full_args, true, None)
@@ -82,11 +81,7 @@ impl PythonRunner {
         full_args.extend(args.iter().cloned());
 
         if verbose {
-            eprintln!(
-                "Executing: {} {}",
-                self.python_path,
-                full_args.join(" ")
-            );
+            eprintln!("Executing: {} {}", self.python_path, full_args.join(" "));
         }
 
         run_command(&self.python_path, &full_args, true, None)

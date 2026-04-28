@@ -336,7 +336,11 @@ impl CollectionManager {
     pub fn load_collection(&self, name: &str) -> Result<PackageCollection> {
         let cache_file = self.cache_file(name);
         if !cache_file.exists() {
-            bail!("Collection cache not found: {}. Try refreshing with 'ccgo collection refresh {}'", name, name);
+            bail!(
+                "Collection cache not found: {}. Try refreshing with 'ccgo collection refresh {}'",
+                name,
+                name
+            );
         }
 
         let content = fs::read_to_string(&cache_file).context("Failed to read cache file")?;

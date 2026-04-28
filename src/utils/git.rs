@@ -25,7 +25,9 @@ fn run_capture(cwd: &Path, args: &[&str]) -> Result<Option<String>> {
     if !output.status.success() {
         return Ok(None);
     }
-    Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
 }
 
 /// Run `git` with the given args in `cwd`, streaming stdout/stderr to the
@@ -62,7 +64,13 @@ pub fn current_branch(cwd: &Path) -> Result<String> {
 pub fn last_release_sha(cwd: &Path) -> Result<Option<String>> {
     let out = run_capture(
         cwd,
-        &["log", "--pretty=format:%H", "--grep=^chore: release v[0-9]", "-n", "1"],
+        &[
+            "log",
+            "--pretty=format:%H",
+            "--grep=^chore: release v[0-9]",
+            "-n",
+            "1",
+        ],
     )?;
     Ok(out.filter(|s| !s.is_empty()))
 }
@@ -81,8 +89,8 @@ pub fn first_commit_sha(cwd: &Path) -> Result<String> {
 /// List commit subjects (first line of each commit message) in `range`,
 /// excluding merges. Returns one subject per element.
 pub fn log_subjects(cwd: &Path, range: &str) -> Result<Vec<String>> {
-    let out = run_capture(cwd, &["log", "--no-merges", "--pretty=format:%s", range])?
-        .unwrap_or_default();
+    let out =
+        run_capture(cwd, &["log", "--no-merges", "--pretty=format:%s", range])?.unwrap_or_default();
     Ok(out.lines().map(|s| s.to_string()).collect())
 }
 

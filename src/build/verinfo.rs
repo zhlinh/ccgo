@@ -88,10 +88,16 @@ pub fn generate(
     let source_dir = generated_root.join("src");
 
     fs::create_dir_all(&header_dir).with_context(|| {
-        format!("Failed to create verinfo header dir {}", header_dir.display())
+        format!(
+            "Failed to create verinfo header dir {}",
+            header_dir.display()
+        )
     })?;
     fs::create_dir_all(&source_dir).with_context(|| {
-        format!("Failed to create verinfo source dir {}", source_dir.display())
+        format!(
+            "Failed to create verinfo source dir {}",
+            source_dir.display()
+        )
     })?;
 
     // `<PROJECT>_CCGO_PROJECT_VERIDENTITY` — namespaced to avoid colliding
@@ -251,8 +257,7 @@ fn write_if_changed(path: &Path, content: &str) -> Result<()> {
             return Ok(());
         }
     }
-    fs::write(path, content)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    fs::write(path, content).with_context(|| format!("Failed to write {}", path.display()))?;
     Ok(())
 }
 

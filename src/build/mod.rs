@@ -31,6 +31,7 @@ pub mod cmake_templates;
 pub mod docker;
 pub mod elf;
 pub mod incremental;
+pub mod linkage;
 pub mod platforms;
 pub mod toolchains;
 pub mod verinfo;
@@ -144,14 +145,17 @@ impl BuildContext {
             .join(&platform_name);
 
         // Get package info (required for builds)
-        let package = config.package.as_ref()
+        let package = config
+            .package
+            .as_ref()
             .expect("Build requires [package] section in CCGO.toml");
 
         // Calculate git version information (ignore errors - continue without git info)
         let git_version = crate::utils::git_version::GitVersion::from_project_root(
             &project_root,
             &package.version,
-        ).ok();
+        )
+        .ok();
 
         // If [build].verinfo_path is set, regenerate the ccgo verinfo
         // translation unit under cmake_build/ccgo_generated/ with the
@@ -164,12 +168,7 @@ impl BuildContext {
         {
             if let Some(gv) = git_version.as_ref() {
                 let identity = gv.veridentity(&package.version);
-                let _ = verinfo::generate(
-                    &project_root,
-                    header_rel,
-                    &package.name,
-                    &identity,
-                );
+                let _ = verinfo::generate(&project_root, header_rel, &package.name, &identity);
             }
         }
 
@@ -185,7 +184,10 @@ impl BuildContext {
 
     /// Get the library name from config
     pub fn lib_name(&self) -> &str {
-        &self.config.package.as_ref()
+        &self
+            .config
+            .package
+            .as_ref()
             .expect("Build requires [package] section")
             .name
     }
@@ -202,7 +204,10 @@ impl BuildContext {
 
     /// Get the version string
     pub fn version(&self) -> &str {
-        &self.config.package.as_ref()
+        &self
+            .config
+            .package
+            .as_ref()
             .expect("Build requires [package] section")
             .version
     }
@@ -234,7 +239,10 @@ impl BuildContext {
     /// This tells CMake which submodules depend on which other submodules
     /// for proper shared library linking.
     pub fn deps_map(&self) -> Option<String> {
-        let submodule_deps = self.config.build.as_ref()
+        let submodule_deps = self
+            .config
+            .build
+            .as_ref()
             .map(|b| &b.submodule_deps)
             .filter(|deps| !deps.is_empty())?;
 
@@ -255,7 +263,13 @@ impl BuildContext {
 
     /// Get the symbol visibility setting (0 = hidden, 1 = default)
     pub fn symbol_visibility(&self) -> u8 {
-        if self.config.build.as_ref().map(|b| b.symbol_visibility).unwrap_or(false) {
+        if self
+            .config
+            .build
+            .as_ref()
+            .map(|b| b.symbol_visibility)
+            .unwrap_or(false)
+        {
             1
         } else {
             0
@@ -282,10 +296,8 @@ impl BuildContext {
             Ok(all)
         } else {
             // Resolve requested features with/without defaults
-            features_config.resolve_features(
-                &self.options.features,
-                self.options.use_default_features,
-            )
+            features_config
+                .resolve_features(&self.options.features, self.options.use_default_features)
         }
     }
 
@@ -306,7 +318,10 @@ impl BuildContext {
     /// Get enabled dependencies (non-optional + enabled optional deps)
     pub fn enabled_dependencies(&self) -> Result<Vec<&crate::config::DependencyConfig>> {
         let resolved = self.resolved_features()?;
-        Ok(self.config.features.get_enabled_optional_deps(&resolved, &self.config.dependencies))
+        Ok(self
+            .config
+            .features
+            .get_enabled_optional_deps(&resolved, &self.config.dependencies))
     }
 
     /// Get the CCGO cmake directory path
@@ -333,7 +348,11 @@ impl BuildContext {
         // 3. Check relative to current executable (development mode)
         if let Ok(exe) = std::env::current_exe() {
             // Go up from ccgo-rs/target/debug/ccgo to ccgo-rs/../ccgo/ccgo/build_scripts/cmake
-            if let Some(ccgo_rs_root) = exe.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+            if let Some(ccgo_rs_root) = exe
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+            {
                 let cmake_dir = ccgo_rs_root
                     .parent()
                     .map(|p| p.join("ccgo/ccgo/build_scripts/cmake"));
@@ -355,8 +374,8 @@ impl BuildContext {
                 // Parse "Location: /path/to/site-packages"
                 for line in stdout.lines() {
                     if let Some(location) = line.strip_prefix("Location: ") {
-                        let cmake_dir = PathBuf::from(location.trim())
-                            .join("ccgo/build_scripts/cmake");
+                        let cmake_dir =
+                            PathBuf::from(location.trim()).join("ccgo/build_scripts/cmake");
                         if cmake_dir.exists() {
                             return Some(cmake_dir);
                         }
@@ -380,7 +399,10 @@ impl BuildContext {
             "ccache" => cache::CacheConfig::with_type(cache::CacheType::CCache).ok(),
             "sccache" => cache::CacheConfig::with_type(cache::CacheType::SCache).ok(),
             _ => {
-                eprintln!("⚠️  Unknown cache type '{}', using auto-detection", cache_option);
+                eprintln!(
+                    "⚠️  Unknown cache type '{}', using auto-detection",
+                    cache_option
+                );
                 cache::CacheConfig::auto().ok()
             }
         }
@@ -406,6 +428,38 @@ impl BuildContext {
             self.options.cache
         );
         incremental::BuildState::hash_options(&options_str)
+    }
+
+    /// Resolve the linkage for every entry in `[[dependencies]]` against the
+    /// dep's already-fetched artifacts in `.ccgo/deps/<name>/`. Returns
+    /// `(name, ResolvedLinkage)` pairs for CMake to consume.
+    pub fn resolved_dep_linkages(
+        &self,
+        platform: &str,
+    ) -> anyhow::Result<Vec<(String, crate::build::linkage::ResolvedLinkage)>> {
+        use crate::build::linkage::{detect_dep_artifacts, resolve_linkage};
+
+        // Normalize platform to lowercase: artifact paths (.ccgo/deps/<name>/lib/<platform>/)
+        // are always lowercase, but PlatformBuilder::platform_name() returns
+        // "Android" (capital A) for historical reasons. Lowercase here so the
+        // helper is resilient to whatever the caller passes.
+        let platform = platform.to_lowercase();
+
+        let consumer = self.options.link_type.preferred_single();
+        let default_hint = self
+            .config
+            .build
+            .as_ref()
+            .and_then(|b| b.default_dep_linkage);
+        let mut out = Vec::new();
+        for dep in &self.config.dependencies {
+            let dep_root = self.project_root.join(".ccgo/deps").join(&dep.name);
+            let artifacts = detect_dep_artifacts(&dep_root, &platform);
+            let hint = dep.linkage.or(default_hint);
+            let resolved = resolve_linkage(consumer.clone(), artifacts, hint, &dep.name)?;
+            out.push((dep.name.clone(), resolved));
+        }
+        Ok(out)
     }
 
     /// Create incremental build analyzer for a specific link type

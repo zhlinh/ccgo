@@ -42,8 +42,7 @@ impl InitCommand {
         let template_src = self.template.as_deref().unwrap_or(DEFAULT_TEMPLATE);
 
         // Get current directory name for project name
-        let current_dir = env::current_dir()
-            .context("Failed to get current directory")?;
+        let current_dir = env::current_dir().context("Failed to get current directory")?;
         let dir_name = current_dir
             .file_name()
             .context("Failed to get directory name")?
@@ -85,11 +84,14 @@ impl InitCommand {
         }
 
         // Execute copier
-        let result = run_command("copier", &args, true, None)
-            .context("Failed to execute copier")?;
+        let result =
+            run_command("copier", &args, true, None).context("Failed to execute copier")?;
 
         if !result.success {
-            bail!("Project initialization failed with exit code: {}", result.exit_code);
+            bail!(
+                "Project initialization failed with exit code: {}",
+                result.exit_code
+            );
         }
 
         if verbose {

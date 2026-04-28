@@ -48,14 +48,20 @@ impl Version {
         // Parse major.minor.patch
         let parts: Vec<&str> = numeric_part.split('.').collect();
         if parts.len() != 3 {
-            bail!("Invalid version format: '{}'. Expected 'major.minor.patch'", s);
+            bail!(
+                "Invalid version format: '{}'. Expected 'major.minor.patch'",
+                s
+            );
         }
 
-        let major = parts[0].parse::<u64>()
+        let major = parts[0]
+            .parse::<u64>()
             .with_context(|| format!("Invalid major version: '{}'", parts[0]))?;
-        let minor = parts[1].parse::<u64>()
+        let minor = parts[1]
+            .parse::<u64>()
             .with_context(|| format!("Invalid minor version: '{}'", parts[1]))?;
-        let patch = parts[2].parse::<u64>()
+        let patch = parts[2]
+            .parse::<u64>()
             .with_context(|| format!("Invalid patch version: '{}'", parts[2]))?;
 
         Ok(Version {
@@ -136,14 +142,14 @@ struct Comparator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op {
-    Exact,      // =1.2.3 or 1.2.3
-    Greater,    // >1.2.3
-    GreaterEq,  // >=1.2.3
-    Less,       // <1.2.3
-    LessEq,     // <=1.2.3
-    Tilde,      // ~1.2.3 (allow patch changes)
-    Caret,      // ^1.2.3 (allow minor/patch changes)
-    Wildcard,   // 1.* or 1.2.*
+    Exact,     // =1.2.3 or 1.2.3
+    Greater,   // >1.2.3
+    GreaterEq, // >=1.2.3
+    Less,      // <1.2.3
+    LessEq,    // <=1.2.3
+    Tilde,     // ~1.2.3 (allow patch changes)
+    Caret,     // ^1.2.3 (allow minor/patch changes)
+    Wildcard,  // 1.* or 1.2.*
 }
 
 impl VersionReq {
@@ -218,7 +224,8 @@ impl VersionReq {
         let major = if parts[0] == "*" {
             0
         } else {
-            parts[0].parse::<u64>()
+            parts[0]
+                .parse::<u64>()
                 .with_context(|| format!("Invalid major version: '{}'", parts[0]))?
         };
 
@@ -227,8 +234,11 @@ impl VersionReq {
             if parts[1] == "*" {
                 None
             } else {
-                Some(parts[1].parse::<u64>()
-                    .with_context(|| format!("Invalid minor version: '{}'", parts[1]))?)
+                Some(
+                    parts[1]
+                        .parse::<u64>()
+                        .with_context(|| format!("Invalid minor version: '{}'", parts[1]))?,
+                )
             }
         } else {
             None
@@ -239,8 +249,11 @@ impl VersionReq {
             if parts[2] == "*" {
                 None
             } else {
-                Some(parts[2].parse::<u64>()
-                    .with_context(|| format!("Invalid patch version: '{}'", parts[2]))?)
+                Some(
+                    parts[2]
+                        .parse::<u64>()
+                        .with_context(|| format!("Invalid patch version: '{}'", parts[2]))?,
+                )
             }
         } else {
             None
@@ -322,7 +335,7 @@ impl Comparator {
                     return false;
                 }
                 match self.patch {
-                    None => true, // ~1.2 allows 1.2.x
+                    None => true,                          // ~1.2 allows 1.2.x
                     Some(patch) => version.patch >= patch, // ~1.2.3 allows >=1.2.3, <1.3.0
                 }
             }

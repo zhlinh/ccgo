@@ -218,7 +218,11 @@ impl Lockfile {
             }
 
             if !package.dependencies.is_empty() {
-                let deps: Vec<String> = package.dependencies.iter().map(|d| format!("\"{}\"", d)).collect();
+                let deps: Vec<String> = package
+                    .dependencies
+                    .iter()
+                    .map(|d| format!("\"{}\"", d))
+                    .collect();
                 content.push_str(&format!("dependencies = [{}]\n", deps.join(", ")));
             }
 
@@ -240,8 +244,14 @@ impl Lockfile {
             }
 
             if let Some(ref patch) = package.patch {
-                content.push_str(&format!("patch.patched_source = \"{}\"\n", patch.patched_source));
-                content.push_str(&format!("patch.replacement_source = \"{}\"\n", patch.replacement_source));
+                content.push_str(&format!(
+                    "patch.patched_source = \"{}\"\n",
+                    patch.patched_source
+                ));
+                content.push_str(&format!(
+                    "patch.replacement_source = \"{}\"\n",
+                    patch.replacement_source
+                ));
                 if patch.is_path_patch {
                     content.push_str("patch.is_path_patch = true\n");
                 }
@@ -250,7 +260,8 @@ impl Lockfile {
             content.push('\n');
         }
 
-        fs::write(path, content).with_context(|| format!("Failed to write lockfile: {}", path.display()))?;
+        fs::write(path, content)
+            .with_context(|| format!("Failed to write lockfile: {}", path.display()))?;
 
         Ok(())
     }
@@ -259,7 +270,6 @@ impl Lockfile {
     pub fn get_package(&self, name: &str) -> Option<&LockedPackage> {
         self.packages.iter().find(|p| p.name == name)
     }
-
 
     /// Add or update a package in the lockfile
     pub fn upsert_package(&mut self, package: LockedPackage) {
@@ -272,7 +282,6 @@ impl Lockfile {
         // Keep packages sorted by name for deterministic output
         self.packages.sort_by(|a, b| a.name.cmp(&b.name));
     }
-
 
     /// Update metadata timestamp
     pub fn touch(&mut self) {
@@ -343,7 +352,6 @@ impl Lockfile {
 }
 
 impl LockedPackage {
-
     /// Parse the source string to extract type and location
     pub fn parse_source(&self) -> (SourceType, String) {
         if let Some(rest) = self.source.strip_prefix("git+") {
@@ -375,7 +383,6 @@ pub enum SourceType {
     Zip,
     Unknown,
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -332,7 +332,11 @@ impl PlatformChecker {
 
         // Validate Android SDK
         let sdk_well_formed = if let Some(ref home) = android_home {
-            if android_home_exists { self.validate_android_sdk(home) } else { false }
+            if android_home_exists {
+                self.validate_android_sdk(home)
+            } else {
+                false
+            }
         } else {
             false
         };
@@ -340,31 +344,31 @@ impl PlatformChecker {
         // Check Android NDK
         let (mut ndk_home_exists, _ndk_home) = self.check_env_var("ANDROID_NDK_HOME", true);
         if let Some(ref home) = android_home {
-        if !ndk_home_exists {
-            // Check if NDK is in default location
-            let default_ndk = Path::new(home).join("ndk");
-            if default_ndk.is_dir() {
-                if let Ok(entries) = fs::read_dir(&default_ndk) {
-                    let ndk_versions: Vec<String> = entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.path().is_dir())
-                        .filter_map(|e| e.file_name().to_str().map(String::from))
-                        .collect();
+            if !ndk_home_exists {
+                // Check if NDK is in default location
+                let default_ndk = Path::new(home).join("ndk");
+                if default_ndk.is_dir() {
+                    if let Ok(entries) = fs::read_dir(&default_ndk) {
+                        let ndk_versions: Vec<String> = entries
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.path().is_dir())
+                            .filter_map(|e| e.file_name().to_str().map(String::from))
+                            .collect();
 
-                    if !ndk_versions.is_empty() {
-                        self.print_warning(&format!(
-                            "ANDROID_NDK_HOME not set, but NDK found at {}",
-                            default_ndk.display()
-                        ));
-                        self.print_info(&format!(
-                            "Available NDK versions: {}",
-                            ndk_versions.join(", ")
-                        ));
-                        ndk_home_exists = true;
+                        if !ndk_versions.is_empty() {
+                            self.print_warning(&format!(
+                                "ANDROID_NDK_HOME not set, but NDK found at {}",
+                                default_ndk.display()
+                            ));
+                            self.print_info(&format!(
+                                "Available NDK versions: {}",
+                                ndk_versions.join(", ")
+                            ));
+                            ndk_home_exists = true;
+                        }
                     }
                 }
             }
-        }
         }
 
         // Check CMake
@@ -372,7 +376,11 @@ impl PlatformChecker {
 
         // Check cmdline-tools
         let cmdline_tools_exists = if let Some(ref home) = android_home {
-            if android_home_exists { self.check_android_cmdline_tools(home) } else { false }
+            if android_home_exists {
+                self.check_android_cmdline_tools(home)
+            } else {
+                false
+            }
         } else {
             false
         };
@@ -754,10 +762,7 @@ impl PlatformChecker {
                     native_sdk.display()
                 ));
             } else {
-                self.print_warning(&format!(
-                    "OHOS Native SDK not found in {}",
-                    sdk_path
-                ));
+                self.print_warning(&format!("OHOS Native SDK not found in {}", sdk_path));
             }
         }
 

@@ -1,0 +1,11 @@
+[package]
+name = "consumer"
+version = "0.1.0"
+
+[build]
+default_dep_linkage = "static-embedded"
+
+[[dependencies]]
+name = "leaf"
+version = "0.1.0"
+path = "../leaf"

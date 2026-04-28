@@ -109,10 +109,7 @@ impl SearchCommand {
 
         *total += results.len();
 
-        println!(
-            "\n📦 Registry results ({}):\n",
-            results.len()
-        );
+        println!("\n📦 Registry results ({}):\n", results.len());
 
         let remaining_limit = self.limit.saturating_sub(*displayed);
         for (idx, (registry_name, package)) in results.iter().take(remaining_limit).enumerate() {
@@ -131,7 +128,12 @@ impl SearchCommand {
                 .map(|v| v.version.as_str())
                 .unwrap_or("?");
 
-            println!("{}. {} v{}", *displayed + idx + 1, package.name, latest_version);
+            println!(
+                "{}. {} v{}",
+                *displayed + idx + 1,
+                package.name,
+                latest_version
+            );
             println!("   {}", package.description);
 
             if self.details {
@@ -184,14 +186,16 @@ impl SearchCommand {
 
         *total += results.len();
 
-        println!(
-            "\n📚 Collection results ({}):\n",
-            results.len()
-        );
+        println!("\n📚 Collection results ({}):\n", results.len());
 
         let remaining_limit = self.limit.saturating_sub(*displayed);
         for (idx, (collection_name, package)) in results.iter().take(remaining_limit).enumerate() {
-            println!("{}. {} v{}", *displayed + idx + 1, package.name, package.version);
+            println!(
+                "{}. {} v{}",
+                *displayed + idx + 1,
+                package.name,
+                package.version
+            );
             println!("   {}", package.summary);
 
             if self.details {

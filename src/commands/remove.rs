@@ -34,8 +34,7 @@ impl RemoveCommand {
             bail!("CCGO.toml not found in current directory.");
         }
 
-        let content = fs::read_to_string(config_path)
-            .context("Failed to read CCGO.toml")?;
+        let content = fs::read_to_string(config_path).context("Failed to read CCGO.toml")?;
 
         // Parse to validate and check existence
         let config = CcgoConfig::parse(&content)?;
@@ -47,8 +46,7 @@ impl RemoveCommand {
 
         // Remove dependency from TOML
         let new_content = self.remove_dependency_from_toml(&content)?;
-        fs::write(config_path, new_content)
-            .context("Failed to write CCGO.toml")?;
+        fs::write(config_path, new_content).context("Failed to write CCGO.toml")?;
 
         println!("   ✓ Removed '{}' from CCGO.toml", self.name);
 
@@ -58,22 +56,30 @@ impl RemoveCommand {
             if dep_path.exists() {
                 println!("\n🗑  Purging installed files...");
                 if dep_path.is_symlink() {
-                    fs::remove_file(&dep_path)
-                        .with_context(|| format!("Failed to remove symlink: {}", dep_path.display()))?;
+                    fs::remove_file(&dep_path).with_context(|| {
+                        format!("Failed to remove symlink: {}", dep_path.display())
+                    })?;
                 } else {
-                    fs::remove_dir_all(&dep_path)
-                        .with_context(|| format!("Failed to remove directory: {}", dep_path.display()))?;
+                    fs::remove_dir_all(&dep_path).with_context(|| {
+                        format!("Failed to remove directory: {}", dep_path.display())
+                    })?;
                 }
                 println!("   ✓ Removed {}", dep_path.display());
             } else {
-                println!("\n   ℹ️  No installed files found at {}", dep_path.display());
+                println!(
+                    "\n   ℹ️  No installed files found at {}",
+                    dep_path.display()
+                );
             }
 
             // Update lock file
             self.update_lock_file()?;
         } else {
             println!("\n💡 Run 'ccgo fetch --force' to update installed dependencies");
-            println!("   Or use 'ccgo remove {} --purge' to also delete installed files", self.name);
+            println!(
+                "   Or use 'ccgo remove {} --purge' to also delete installed files",
+                self.name
+            );
         }
 
         println!("\n✓ Dependency '{}' removed successfully", self.name);
@@ -101,7 +107,9 @@ impl RemoveCommand {
                     let next_line = lines[j].trim();
 
                     // Stop at next section
-                    if next_line.starts_with("[[") || next_line.starts_with('[') && !next_line.starts_with("[[dependencies]]") {
+                    if next_line.starts_with("[[")
+                        || next_line.starts_with('[') && !next_line.starts_with("[[dependencies]]")
+                    {
                         break;
                     }
 
@@ -123,7 +131,9 @@ impl RemoveCommand {
                     i = j + 1;
                     while i < lines.len() {
                         let skip_line = lines[i].trim();
-                        if skip_line.starts_with("[[") || (skip_line.starts_with('[') && !skip_line.is_empty()) {
+                        if skip_line.starts_with("[[")
+                            || (skip_line.starts_with('[') && !skip_line.is_empty())
+                        {
                             break;
                         }
                         if skip_line.is_empty() && i + 1 < lines.len() {
@@ -191,7 +201,8 @@ impl RemoveCommand {
                     .trim_start_matches("[dependencies.")
                     .trim_end_matches(']');
 
-                if section_name == self.name || section_name.starts_with(&format!("{}.", self.name)) {
+                if section_name == self.name || section_name.starts_with(&format!("{}.", self.name))
+                {
                     // Skip this section
                     i += 1;
                     while i < lines.len() {

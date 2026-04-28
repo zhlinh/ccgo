@@ -117,9 +117,7 @@ impl MsvcToolchain {
             .output()
             .map_err(|e| anyhow::anyhow!("Failed to run vswhere: {}", e))?;
 
-        let vs_path = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string();
+        let vs_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         if vs_path.is_empty() {
             bail!("No Visual Studio installation with C++ tools found");
@@ -228,12 +226,10 @@ impl Toolchain for MsvcToolchain {
     }
 
     fn cmake_variables(&self) -> Vec<(String, String)> {
-        let mut vars = vec![
-            (
-                "CMAKE_GENERATOR".to_string(),
-                self.cmake_generator().to_string(),
-            ),
-        ];
+        let mut vars = vec![(
+            "CMAKE_GENERATOR".to_string(),
+            self.cmake_generator().to_string(),
+        )];
 
         // Native Windows MSVC needs platform specification
         if !self.is_xwin() {
@@ -244,8 +240,8 @@ impl Toolchain for MsvcToolchain {
             let home = std::env::var("HOME")
                 .or_else(|_| std::env::var("USERPROFILE"))
                 .unwrap_or_default();
-            let toolchain_path = PathBuf::from(home)
-                .join(".ccgo/cmake/windows-msvc.toolchain.cmake");
+            let toolchain_path =
+                PathBuf::from(home).join(".ccgo/cmake/windows-msvc.toolchain.cmake");
             vars.push((
                 "CMAKE_TOOLCHAIN_FILE".to_string(),
                 toolchain_path.display().to_string(),

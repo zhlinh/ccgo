@@ -79,9 +79,7 @@ impl MingwToolchain {
         let gxx_name = format!("{}-g++", prefix);
         let gxx_path = find_executable(&gxx_posix)
             .or_else(|| find_executable(&gxx_name))
-            .ok_or_else(|| {
-                anyhow::anyhow!("MinGW-w64 C++ compiler not found: {}", gxx_name)
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("MinGW-w64 C++ compiler not found: {}", gxx_name))?;
 
         // Look for windres (optional)
         let windres_name = format!("{}-windres", prefix);
@@ -311,24 +309,16 @@ impl Toolchain for MingwToolchain {
     fn validate(&self) -> Result<()> {
         // Check gcc exists
         if !self.gcc_path.exists() {
-            bail!(
-                "MinGW GCC not found at: {}",
-                self.gcc_path.display()
-            );
+            bail!("MinGW GCC not found at: {}", self.gcc_path.display());
         }
 
         // Check g++ exists
         if !self.gxx_path.exists() {
-            bail!(
-                "MinGW G++ not found at: {}",
-                self.gxx_path.display()
-            );
+            bail!("MinGW G++ not found at: {}", self.gxx_path.display());
         }
 
         // Test compilation
-        let test_result = Command::new(&self.gcc_path)
-            .args(["--version"])
-            .output();
+        let test_result = Command::new(&self.gcc_path).args(["--version"]).output();
 
         if test_result.is_err() {
             bail!("MinGW GCC failed to execute");

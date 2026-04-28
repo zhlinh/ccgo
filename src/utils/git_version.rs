@@ -85,7 +85,11 @@ fn get_git_branch(project_root: &Path) -> Result<String> {
     }
 
     let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(if branch.is_empty() { "unknown".to_string() } else { branch })
+    Ok(if branch.is_empty() {
+        "unknown".to_string()
+    } else {
+        branch
+    })
 }
 
 /// Get current git revision (short commit hash)
@@ -101,7 +105,11 @@ fn get_git_revision(project_root: &Path) -> Result<String> {
     }
 
     let revision = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(if revision.is_empty() { "unknown".to_string() } else { revision })
+    Ok(if revision.is_empty() {
+        "unknown".to_string()
+    } else {
+        revision
+    })
 }
 
 /// Check if working directory has uncommitted changes
@@ -134,7 +142,9 @@ fn get_commits_since_tag(project_root: &Path) -> Result<u32> {
         return count_all_commits(project_root);
     }
 
-    let latest_tag = String::from_utf8_lossy(&tag_output.stdout).trim().to_string();
+    let latest_tag = String::from_utf8_lossy(&tag_output.stdout)
+        .trim()
+        .to_string();
     if latest_tag.is_empty() {
         return count_all_commits(project_root);
     }
@@ -150,7 +160,9 @@ fn get_commits_since_tag(project_root: &Path) -> Result<u32> {
         return Ok(0);
     }
 
-    let count_str = String::from_utf8_lossy(&count_output.stdout).trim().to_string();
+    let count_str = String::from_utf8_lossy(&count_output.stdout)
+        .trim()
+        .to_string();
     Ok(count_str.parse::<u32>().unwrap_or(0))
 }
 

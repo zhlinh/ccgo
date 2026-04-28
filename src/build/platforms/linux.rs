@@ -56,7 +56,10 @@ impl LinuxBuilder {
             if let Ok(metadata) = std::fs::metadata(&main_lib_path) {
                 if metadata.len() > 0 {
                     if verbose {
-                        eprintln!("    [merge] Main library {} already exists, skipping merge", main_lib_name);
+                        eprintln!(
+                            "    [merge] Main library {} already exists, skipping merge",
+                            main_lib_name
+                        );
                     }
                     // Clean up module libraries (keep output directory clean)
                     for entry in std::fs::read_dir(&out_dir)? {
@@ -104,7 +107,11 @@ impl LinuxBuilder {
         }
 
         // Check if we only have the main library (already merged or single module)
-        if module_libs.len() == 1 && module_libs[0].file_name().is_some_and(|n| n == main_lib_name.as_str()) {
+        if module_libs.len() == 1
+            && module_libs[0]
+                .file_name()
+                .is_some_and(|n| n == main_lib_name.as_str())
+        {
             if verbose {
                 eprintln!("    [merge] Only main library exists, skipping merge");
             }
@@ -115,7 +122,10 @@ impl LinuxBuilder {
         module_libs.retain(|p| p != &main_lib_path);
 
         if verbose {
-            eprintln!("    [merge] Module libraries to merge: {}", module_libs.len());
+            eprintln!(
+                "    [merge] Module libraries to merge: {}",
+                module_libs.len()
+            );
             for lib in &module_libs {
                 eprintln!("      - {}", lib.file_name().unwrap().to_string_lossy());
             }
@@ -145,11 +155,18 @@ impl LinuxBuilder {
                 match std::fs::remove_file(lib) {
                     Ok(_) => {
                         if verbose {
-                            eprintln!("      ✓ Removed: {}", lib.file_name().unwrap().to_string_lossy());
+                            eprintln!(
+                                "      ✓ Removed: {}",
+                                lib.file_name().unwrap().to_string_lossy()
+                            );
                         }
                     }
                     Err(e) => {
-                        eprintln!("      ⚠ Failed to remove {}: {}", lib.file_name().unwrap().to_string_lossy(), e);
+                        eprintln!(
+                            "      ⚠ Failed to remove {}: {}",
+                            lib.file_name().unwrap().to_string_lossy(),
+                            e
+                        );
                     }
                 }
             }
@@ -181,7 +198,11 @@ impl LinuxBuilder {
             if path.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == "a" {
-                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        let fname = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default();
                         if fname != placeholder_name {
                             third_party_libs.push(path);
                         }
@@ -195,7 +216,11 @@ impl LinuxBuilder {
         }
 
         if verbose {
-            eprintln!("    Merging {} third-party libs into {}", third_party_libs.len(), placeholder_name);
+            eprintln!(
+                "    Merging {} third-party libs into {}",
+                third_party_libs.len(),
+                placeholder_name
+            );
         }
 
         let toolchain = LinuxToolchain::detect()?;
@@ -224,7 +249,10 @@ impl LinuxBuilder {
             .install_prefix(install_dir.clone())
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable(
+                "CCGO_BUILD_SHARED_LIBS",
+                if build_shared { "ON" } else { "OFF" },
+            )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
@@ -250,7 +278,10 @@ impl LinuxBuilder {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
                 if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                    eprintln!(
+                        "    Enabled features: {}",
+                        feature_defines.replace(';', ", ")
+                    );
                 }
             }
         }
@@ -318,7 +349,9 @@ impl LinuxBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -339,7 +372,9 @@ impl LinuxBuilder {
                 "✓ compile_commands.json generated: {}",
                 compile_commands.display()
             );
-            eprintln!("   (Use with VS Code C/C++ extension, CLion, or other LSP-compatible editors)");
+            eprintln!(
+                "   (Use with VS Code C/C++ extension, CLion, or other LSP-compatible editors)"
+            );
 
             // Optionally symlink compile_commands.json to project root for VS Code
             let root_compile_commands = ctx.project_root.join("compile_commands.json");
@@ -376,8 +411,8 @@ impl LinuxBuilder {
         // e.g., static/out/libccgonow.a or shared/out/libccgonow.so
         // This is the preferred location as it contains only the final merged library
         let possible_dirs = vec![
-            build_dir.join("out"),           // Merged library (priority)
-            build_dir.join("install/lib"),   // Fallback: CMake install location
+            build_dir.join("out"),         // Merged library (priority)
+            build_dir.join("install/lib"), // Fallback: CMake install location
             build_dir.join("lib"),
         ];
 
@@ -504,7 +539,11 @@ impl PlatformBuilder for LinuxBuilder {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
             if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
             }
         }
 
@@ -517,7 +556,8 @@ impl PlatformBuilder for LinuxBuilder {
         let mut symbols_archive_result = None;
         if ctx.options.link_type != LinkType::Static {
             // For shared builds, collect unstripped .so files
-            let symbols_temp = std::env::temp_dir().join(format!("ccgo-symbols-{}", ctx.lib_name()));
+            let symbols_temp =
+                std::env::temp_dir().join(format!("ccgo-symbols-{}", ctx.lib_name()));
             std::fs::create_dir_all(&symbols_temp)?;
 
             // Create obj/linux/x86_64/ structure
@@ -577,7 +617,11 @@ impl PlatformBuilder for LinuxBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/linux
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("linux");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("linux");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;

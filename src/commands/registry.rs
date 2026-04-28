@@ -79,7 +79,9 @@ impl RegistryCommand {
             RegistryAction::Add { ref name, ref url } => Self::add_registry(name, url),
             RegistryAction::List { details } => Self::list_registries(details),
             RegistryAction::Remove { ref name } => Self::remove_registry(name),
-            RegistryAction::Update { ref name } => Self::update_registries(name.as_deref(), verbose),
+            RegistryAction::Update { ref name } => {
+                Self::update_registries(name.as_deref(), verbose)
+            }
             RegistryAction::Info { ref name } => Self::show_info(name),
             RegistryAction::Search {
                 ref query,
@@ -300,10 +302,7 @@ impl RegistryCommand {
 
         let results = if let Some(reg) = registry {
             let packages = index.search_packages(reg, query)?;
-            packages
-                .into_iter()
-                .map(|p| (reg.to_string(), p))
-                .collect()
+            packages.into_iter().map(|p| (reg.to_string(), p)).collect()
         } else {
             index.search_all(query)?
         };

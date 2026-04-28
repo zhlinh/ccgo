@@ -73,7 +73,11 @@ pub fn generate_section(cwd: &Path, version: &str, date: &str, range: &str) -> R
 /// with an optional `(scope)` between the prefix and the colon.
 fn filter<'a>(subjects: &[&'a str], prefix: &str) -> Vec<&'a str> {
     let re = Regex::new(&format!(r"^{prefix}(\([^)]+\))?:")).expect("static regex");
-    subjects.iter().copied().filter(|s| re.is_match(s)).collect()
+    subjects
+        .iter()
+        .copied()
+        .filter(|s| re.is_match(s))
+        .collect()
 }
 
 /// Filter "uncategorized" commits — anything that isn't one of the known
@@ -81,11 +85,13 @@ fn filter<'a>(subjects: &[&'a str], prefix: &str) -> Vec<&'a str> {
 fn filter_other<'a>(subjects: &[&'a str]) -> Vec<&'a str> {
     // Must mirror the bash rule: excludes feat/fix/perf/refactor/docs (shown elsewhere)
     // AND chore/style/test/build/ci (silently dropped).
-    let re = Regex::new(
-        r"^(feat|fix|perf|refactor|docs|chore|style|test|build|ci)(\([^)]+\))?:",
-    )
-    .expect("static regex");
-    subjects.iter().copied().filter(|s| !re.is_match(s)).collect()
+    let re = Regex::new(r"^(feat|fix|perf|refactor|docs|chore|style|test|build|ci)(\([^)]+\))?:")
+        .expect("static regex");
+    subjects
+        .iter()
+        .copied()
+        .filter(|s| !re.is_match(s))
+        .collect()
 }
 
 /// Append a `### Heading` block with one bullet per subject. When `strip_prefix`
@@ -279,7 +285,10 @@ mod tests {
         let new_idx = out.find("## [1.1.0]").unwrap();
         let old_idx = out.find("## [1.0.0]").unwrap();
         assert!(unrel_idx < new_idx);
-        assert!(new_idx < old_idx, "new section must land before the older one");
+        assert!(
+            new_idx < old_idx,
+            "new section must land before the older one"
+        );
     }
 
     #[test]

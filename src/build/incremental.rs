@@ -70,11 +70,11 @@ impl BuildState {
             return Ok(None);
         }
 
-        let content = std::fs::read_to_string(&state_file)
-            .context("Failed to read build state file")?;
+        let content =
+            std::fs::read_to_string(&state_file).context("Failed to read build state file")?;
 
-        let state: BuildState = serde_json::from_str(&content)
-            .context("Failed to parse build state")?;
+        let state: BuildState =
+            serde_json::from_str(&content).context("Failed to parse build state")?;
 
         Ok(Some(state))
     }
@@ -84,14 +84,11 @@ impl BuildState {
         let state_file = Self::state_file(build_dir);
 
         // Ensure build directory exists
-        std::fs::create_dir_all(build_dir)
-            .context("Failed to create build directory")?;
+        std::fs::create_dir_all(build_dir).context("Failed to create build directory")?;
 
-        let json = serde_json::to_string_pretty(self)
-            .context("Failed to serialize build state")?;
+        let json = serde_json::to_string_pretty(self).context("Failed to serialize build state")?;
 
-        std::fs::write(&state_file, json)
-            .context("Failed to write build state file")?;
+        std::fs::write(&state_file, json).context("Failed to write build state file")?;
 
         Ok(())
     }
@@ -144,7 +141,8 @@ impl BuildState {
                         ext_str.as_ref(),
                         "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx"
                     ) {
-                        let relative_path = path.strip_prefix(src_dir)
+                        let relative_path = path
+                            .strip_prefix(src_dir)
                             .unwrap_or(path)
                             .to_string_lossy()
                             .to_string();
@@ -213,7 +211,10 @@ impl IncrementalAnalyzer {
         let old_state = BuildState::load(build_dir)?;
         let new_state = BuildState::new(project, platform, link_type, config_hash, options_hash);
 
-        Ok(Self { old_state, new_state })
+        Ok(Self {
+            old_state,
+            new_state,
+        })
     }
 
     /// Check if incremental build is possible
@@ -273,7 +274,8 @@ impl IncrementalAnalyzer {
                             ext_str.as_ref(),
                             "c" | "cc" | "cpp" | "cxx" | "h" | "hh" | "hpp" | "hxx"
                         ) {
-                            let relative_path = path.strip_prefix(src_dir)
+                            let relative_path = path
+                                .strip_prefix(src_dir)
                                 .unwrap_or(path)
                                 .to_string_lossy()
                                 .to_string();
@@ -386,7 +388,10 @@ impl ChangeAnalysis {
             return;
         }
 
-        println!("   📊 Incremental build - {} files changed:", self.total_changes());
+        println!(
+            "   📊 Incremental build - {} files changed:",
+            self.total_changes()
+        );
 
         if !self.modified_files.is_empty() {
             println!("      Modified: {}", self.modified_files.len());

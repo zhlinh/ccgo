@@ -1,15 +1,15 @@
 //! Publish command implementation
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::{Args, ValueEnum};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
+use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::fs;
 
 use crate::config::CcgoConfig;
-use crate::registry::{PackageIndex, PackageEntry, VersionEntry, IndexMetadata};
+use crate::registry::{IndexMetadata, PackageEntry, PackageIndex, VersionEntry};
 
 /// Publish target
 #[derive(Debug, Clone, ValueEnum)]
@@ -152,7 +152,6 @@ pub struct PublishCommand {
     pub doc_open: bool,
 
     // Index-specific options
-
     /// Index repository URL or local path (for index target)
     #[arg(long)]
     pub index_repo: Option<String>,
@@ -193,12 +192,14 @@ impl PublishCommand {
     fn publish_android(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing Android to Maven ===\n");
 
-        let cwd = std::env::current_dir()
-            .context("Failed to get current directory")?;
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
         let android_dir = cwd.join("android");
 
         if !android_dir.exists() || !android_dir.is_dir() {
-            bail!("Error: android directory not found at {}", android_dir.display());
+            bail!(
+                "Error: android directory not found at {}",
+                android_dir.display()
+            );
         }
 
         // Map registry to Gradle task
@@ -225,11 +226,13 @@ impl PublishCommand {
             cmd.arg("--info");
         }
 
-        let status = cmd.status()
-            .context("Failed to execute gradlew")?;
+        let status = cmd.status().context("Failed to execute gradlew")?;
 
         if !status.success() {
-            bail!("Publish failed with exit code: {}", status.code().unwrap_or(-1));
+            bail!(
+                "Publish failed with exit code: {}",
+                status.code().unwrap_or(-1)
+            );
         }
 
         println!("\n✅ Publish completed successfully!");
@@ -239,8 +242,7 @@ impl PublishCommand {
     fn publish_ohos(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing OHOS to OHPM ===\n");
 
-        let cwd = std::env::current_dir()
-            .context("Failed to get current directory")?;
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
         let ohos_dir = cwd.join("ohos");
 
         if !ohos_dir.exists() || !ohos_dir.is_dir() {
@@ -272,11 +274,13 @@ impl PublishCommand {
             cmd.arg("--verbose");
         }
 
-        let status = cmd.status()
-            .context("Failed to execute ohpm")?;
+        let status = cmd.status().context("Failed to execute ohpm")?;
 
         if !status.success() {
-            bail!("Publish failed with exit code: {}", status.code().unwrap_or(-1));
+            bail!(
+                "Publish failed with exit code: {}",
+                status.code().unwrap_or(-1)
+            );
         }
 
         println!("\n✅ Publish completed successfully!");
@@ -286,8 +290,7 @@ impl PublishCommand {
     fn publish_kmp(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing KMP to Maven ===\n");
 
-        let cwd = std::env::current_dir()
-            .context("Failed to get current directory")?;
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
         let kmp_dir = cwd.join("kmp");
 
         if !kmp_dir.exists() || !kmp_dir.is_dir() {
@@ -314,11 +317,13 @@ impl PublishCommand {
             cmd.arg("--info");
         }
 
-        let status = cmd.status()
-            .context("Failed to execute gradlew")?;
+        let status = cmd.status().context("Failed to execute gradlew")?;
 
         if !status.success() {
-            bail!("Publish failed with exit code: {}", status.code().unwrap_or(-1));
+            bail!(
+                "Publish failed with exit code: {}",
+                status.code().unwrap_or(-1)
+            );
         }
 
         println!("\n✅ Publish completed successfully!");
@@ -328,8 +333,7 @@ impl PublishCommand {
     fn publish_conan(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing to Conan ===\n");
 
-        let cwd = std::env::current_dir()
-            .context("Failed to get current directory")?;
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
 
         // Find CCGO.toml
         let project_dir = Self::find_project_dir(&cwd)?;
@@ -346,8 +350,7 @@ impl PublishCommand {
                     cmd.arg("-vv");
                 }
 
-                let status = cmd.status()
-                    .context("Failed to execute conan export")?;
+                let status = cmd.status().context("Failed to execute conan export")?;
 
                 if !status.success() {
                     bail!("Conan export failed");
@@ -371,8 +374,7 @@ impl PublishCommand {
                 cmd.current_dir(&project_dir);
                 cmd.args(["export", ".", "--user=ccgo", "--channel=stable"]);
 
-                let status = cmd.status()
-                    .context("Failed to execute conan export")?;
+                let status = cmd.status().context("Failed to execute conan export")?;
 
                 if !status.success() {
                     bail!("Conan export failed");
@@ -387,8 +389,7 @@ impl PublishCommand {
                     cmd.arg("-vv");
                 }
 
-                let status = cmd.status()
-                    .context("Failed to execute conan upload")?;
+                let status = cmd.status().context("Failed to execute conan upload")?;
 
                 if !status.success() {
                     bail!("Conan upload failed");
@@ -403,8 +404,7 @@ impl PublishCommand {
     fn publish_apple(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing Apple platforms ===\n");
 
-        let cwd = std::env::current_dir()
-            .context("Failed to get current directory")?;
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
 
         match self.manager {
             AppleManager::Cocoapods | AppleManager::All => {
@@ -446,8 +446,7 @@ impl PublishCommand {
                     cmd.arg("--verbose");
                 }
 
-                let status = cmd.status()
-                    .context("Failed to execute pod lib lint")?;
+                let status = cmd.status().context("Failed to execute pod lib lint")?;
 
                 if !status.success() {
                     bail!("Pod validation failed");
@@ -468,8 +467,7 @@ impl PublishCommand {
                     cmd.arg("--verbose");
                 }
 
-                let status = cmd.status()
-                    .context("Failed to execute pod trunk push")?;
+                let status = cmd.status().context("Failed to execute pod trunk push")?;
 
                 if !status.success() {
                     bail!("Pod trunk push failed");
@@ -491,8 +489,7 @@ impl PublishCommand {
                         cmd.arg("--verbose");
                     }
 
-                    let status = cmd.status()
-                        .context("Failed to execute pod repo push")?;
+                    let status = cmd.status().context("Failed to execute pod repo push")?;
 
                     if !status.success() {
                         bail!("Pod repo push failed");
@@ -526,8 +523,7 @@ impl PublishCommand {
             cmd.current_dir(project_dir);
             cmd.args(["tag", &version]);
 
-            let status = cmd.status()
-                .context("Failed to create git tag")?;
+            let status = cmd.status().context("Failed to create git tag")?;
 
             if !status.success() {
                 eprintln!("Warning: Tag creation failed (may already exist)");
@@ -537,8 +533,7 @@ impl PublishCommand {
             cmd.current_dir(project_dir);
             cmd.args(["push", "origin", &version]);
 
-            let status = cmd.status()
-                .context("Failed to push git tag")?;
+            let status = cmd.status().context("Failed to push git tag")?;
 
             if !status.success() {
                 bail!("Failed to push git tag");
@@ -555,8 +550,7 @@ impl PublishCommand {
     fn publish_doc(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing Documentation ===\n");
 
-        let cwd = std::env::current_dir()
-            .context("Failed to get current directory")?;
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
 
         // Check if docs are built
         let docs_dir = cwd.join("site");
@@ -571,8 +565,7 @@ impl PublishCommand {
                 cmd.arg("--verbose");
             }
 
-            let status = cmd.status()
-                .context("Failed to build documentation")?;
+            let status = cmd.status().context("Failed to build documentation")?;
 
             if !status.success() {
                 bail!("Documentation build failed");
@@ -594,8 +587,7 @@ impl PublishCommand {
             cmd.arg("--verbose");
         }
 
-        let status = cmd.status()
-            .context("Failed to deploy documentation")?;
+        let status = cmd.status().context("Failed to deploy documentation")?;
 
         if !status.success() {
             bail!("Documentation deployment failed");
@@ -625,20 +617,24 @@ impl PublishCommand {
     fn publish_index(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing to Package Index ===\n");
 
-        let cwd = std::env::current_dir()
-            .context("Failed to get current directory")?;
+        let cwd = std::env::current_dir().context("Failed to get current directory")?;
 
         // Find and load CCGO.toml
         let project_dir = Self::find_project_dir(&cwd)?;
         let config_path = project_dir.join("CCGO.toml");
-        let config = CcgoConfig::load_from_path(&config_path)
-            .context("Failed to load CCGO.toml")?;
+        let config =
+            CcgoConfig::load_from_path(&config_path).context("Failed to load CCGO.toml")?;
 
-        let package = config.package.as_ref()
+        let package = config
+            .package
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No [package] section in CCGO.toml"))?;
 
         println!("📦 Package: {}", package.name);
-        println!("📝 Description: {}", package.description.as_deref().unwrap_or("No description"));
+        println!(
+            "📝 Description: {}",
+            package.description.as_deref().unwrap_or("No description")
+        );
 
         // Get Git repository URL
         let git_url = self.get_git_remote_url(&project_dir)?;
@@ -683,7 +679,9 @@ impl PublishCommand {
             bail!("Please specify --index-repo <url> for the index repository");
         };
 
-        let index_name = self.index_name.clone()
+        let index_name = self
+            .index_name
+            .clone()
             .unwrap_or_else(|| "custom-index".to_string());
 
         println!("\n📂 Index repository: {}", index_repo);
@@ -697,15 +695,13 @@ impl PublishCommand {
 
         // Create parent directories
         if let Some(parent) = package_file.parent() {
-            fs::create_dir_all(parent)
-                .context("Failed to create package directory")?;
+            fs::create_dir_all(parent).context("Failed to create package directory")?;
         }
 
         // Write package entry
         let json = serde_json::to_string_pretty(&package_entry)
             .context("Failed to serialize package entry")?;
-        fs::write(&package_file, &json)
-            .context("Failed to write package file")?;
+        fs::write(&package_file, &json).context("Failed to write package file")?;
 
         println!("✅ Written: {}", package_rel_path.display());
 
@@ -713,10 +709,17 @@ impl PublishCommand {
         self.update_index_metadata(&index_path)?;
 
         // Commit changes
-        let commit_message = self.index_message.clone()
-            .unwrap_or_else(|| format!("Update {} to {}",
+        let commit_message = self.index_message.clone().unwrap_or_else(|| {
+            format!(
+                "Update {} to {}",
                 package.name,
-                package_entry.versions.first().map(|v| v.version.as_str()).unwrap_or("unknown")));
+                package_entry
+                    .versions
+                    .first()
+                    .map(|v| v.version.as_str())
+                    .unwrap_or("unknown")
+            )
+        });
 
         self.commit_index_changes(&index_path, &commit_message, verbose)?;
 
@@ -731,10 +734,20 @@ impl PublishCommand {
 
         println!("\n✅ Package index updated successfully!");
         println!("\n📋 To use this package:");
-        println!("   1. Add registry: ccgo registry add {} {}", index_name, index_repo);
+        println!(
+            "   1. Add registry: ccgo registry add {} {}",
+            index_name, index_repo
+        );
         println!("   2. Add dependency: [dependencies]");
-        println!("      {} = \"^{}\"", package.name,
-            package_entry.versions.first().map(|v| v.version.as_str()).unwrap_or("1.0.0"));
+        println!(
+            "      {} = \"^{}\"",
+            package.name,
+            package_entry
+                .versions
+                .first()
+                .map(|v| v.version.as_str())
+                .unwrap_or("1.0.0")
+        );
 
         Ok(())
     }
@@ -761,7 +774,12 @@ impl PublishCommand {
         }
     }
 
-    fn discover_git_versions(&self, project_dir: &Path, compute_checksum: bool, verbose: bool) -> Result<Vec<VersionEntry>> {
+    fn discover_git_versions(
+        &self,
+        project_dir: &Path,
+        compute_checksum: bool,
+        verbose: bool,
+    ) -> Result<Vec<VersionEntry>> {
         let output = Command::new("git")
             .current_dir(project_dir)
             .args(["tag", "-l", "--sort=-v:refname"])
@@ -824,7 +842,9 @@ impl PublishCommand {
             .spawn()
             .context("Failed to run git archive")?;
 
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| anyhow::anyhow!("Failed to capture git archive output"))?;
 
         // Compute SHA-256 hash
@@ -833,7 +853,8 @@ impl PublishCommand {
         let mut buffer = [0u8; 8192];
 
         loop {
-            let bytes_read = reader.read(&mut buffer)
+            let bytes_read = reader
+                .read(&mut buffer)
                 .context("Failed to read git archive output")?;
             if bytes_read == 0 {
                 break;
@@ -841,8 +862,7 @@ impl PublishCommand {
             hasher.update(&buffer[..bytes_read]);
         }
 
-        let status = child.wait()
-            .context("Failed to wait for git archive")?;
+        let status = child.wait().context("Failed to wait for git archive")?;
 
         if !status.success() {
             bail!("git archive failed for tag {}", tag);
@@ -921,8 +941,7 @@ impl PublishCommand {
                 cmd.stderr(std::process::Stdio::null());
             }
 
-            let status = cmd.status()
-                .context("Failed to pull index repository")?;
+            let status = cmd.status().context("Failed to pull index repository")?;
 
             if !status.success() {
                 // Try fresh clone if pull fails
@@ -936,15 +955,20 @@ impl PublishCommand {
             fs::create_dir_all(index_work_dir.parent().unwrap())?;
 
             let mut cmd = Command::new("git");
-            cmd.args(["clone", "--depth", "1", repo_url, index_work_dir.to_str().unwrap()]);
+            cmd.args([
+                "clone",
+                "--depth",
+                "1",
+                repo_url,
+                index_work_dir.to_str().unwrap(),
+            ]);
 
             if !verbose {
                 cmd.stdout(std::process::Stdio::null());
                 cmd.stderr(std::process::Stdio::null());
             }
 
-            let status = cmd.status()
-                .context("Failed to clone index repository")?;
+            let status = cmd.status().context("Failed to clone index repository")?;
 
             if !status.success() {
                 // Maybe it's a new repo, try to initialize
@@ -996,7 +1020,10 @@ impl PublishCommand {
         } else {
             IndexMetadata {
                 version: 1,
-                name: self.index_name.clone().unwrap_or_else(|| "ccgo-packages".to_string()),
+                name: self
+                    .index_name
+                    .clone()
+                    .unwrap_or_else(|| "ccgo-packages".to_string()),
                 description: "Package index".to_string(),
                 homepage: None,
                 package_count: 0,
@@ -1118,7 +1145,9 @@ impl PublishCommand {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some(extension.trim_start_matches('.')) {
+                if path.extension().and_then(|s| s.to_str())
+                    == Some(extension.trim_start_matches('.'))
+                {
                     return Ok(path);
                 }
             }
@@ -1128,8 +1157,7 @@ impl PublishCommand {
 
     fn get_project_version(&self, project_dir: &Path) -> Result<String> {
         let toml_path = project_dir.join("CCGO.toml");
-        let content = fs::read_to_string(toml_path)
-            .context("Failed to read CCGO.toml")?;
+        let content = fs::read_to_string(toml_path).context("Failed to read CCGO.toml")?;
 
         // Parse version from TOML
         for line in content.lines() {
@@ -1176,7 +1204,8 @@ impl PublishCommand {
     fn git_url_to_pages_url(&self, git_url: &str) -> Option<String> {
         // Convert git@github.com:user/repo.git to https://user.github.io/repo/
         if git_url.starts_with("git@github.com:") {
-            let parts: Vec<&str> = git_url.trim_end_matches(".git")
+            let parts: Vec<&str> = git_url
+                .trim_end_matches(".git")
                 .trim_start_matches("git@github.com:")
                 .split('/')
                 .collect();
@@ -1186,7 +1215,8 @@ impl PublishCommand {
         }
         // Convert https://github.com/user/repo.git to https://user.github.io/repo/
         else if git_url.starts_with("https://github.com/") {
-            let parts: Vec<&str> = git_url.trim_end_matches(".git")
+            let parts: Vec<&str> = git_url
+                .trim_end_matches(".git")
                 .trim_start_matches("https://github.com/")
                 .split('/')
                 .collect();

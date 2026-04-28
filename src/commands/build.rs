@@ -140,6 +140,19 @@ impl std::fmt::Display for LinkType {
     }
 }
 
+impl LinkType {
+    /// When the user requested both static and shared, dependency resolution
+    /// uses the shared form (because anything that works for shared also
+    /// works for static — but not vice versa). Static-only collapses to
+    /// Static; Shared-only and Both both collapse to Shared.
+    pub fn preferred_single(&self) -> LinkType {
+        match self {
+            LinkType::Static => LinkType::Static,
+            LinkType::Shared | LinkType::Both => LinkType::Shared,
+        }
+    }
+}
+
 /// Windows toolchain selection
 #[derive(Debug, Clone, Default, ValueEnum)]
 pub enum WindowsToolchain {
@@ -653,7 +666,10 @@ impl BuildCommand {
         if let Some(symbols_path) = &result.symbols_archive {
             eprintln!("\n      Symbols archive:");
             if let Err(e) = crate::build::archive::print_zip_tree(symbols_path, "      ") {
-                eprintln!("      Warning: Failed to print symbols archive contents: {}", e);
+                eprintln!(
+                    "      Warning: Failed to print symbols archive contents: {}",
+                    e
+                );
             }
         }
 
@@ -665,7 +681,10 @@ impl BuildCommand {
             };
             eprintln!("\n      {} contents:", archive_type);
             if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
-                eprintln!("      Warning: Failed to print {} contents: {}", archive_type, e);
+                eprintln!(
+                    "      Warning: Failed to print {} contents: {}",
+                    archive_type, e
+                );
             }
         }
     }
@@ -723,14 +742,24 @@ impl BuildCommand {
         let build_info = create_build_info_full(lib_name, version, platform, project_root);
         print_build_info_json(&build_info);
 
-        eprintln!("\n✓ {} built successfully in {:.2}s", lib_name, total_duration);
+        eprintln!(
+            "\n✓ {} built successfully in {:.2}s",
+            lib_name, total_duration
+        );
 
         for result in results {
             Self::print_result_details(result);
         }
 
         if show_analytics {
-            Self::collect_and_display_analytics(lib_name, platform, project_root, results, cache_tool, jobs);
+            Self::collect_and_display_analytics(
+                lib_name,
+                platform,
+                project_root,
+                results,
+                cache_tool,
+                jobs,
+            );
         }
     }
 
@@ -820,5 +849,17 @@ impl BuildCommand {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preferred_single_collapses_both_to_shared() {
+        assert_eq!(LinkType::Static.preferred_single(), LinkType::Static);
+        assert_eq!(LinkType::Shared.preferred_single(), LinkType::Shared);
+        assert_eq!(LinkType::Both.preferred_single(), LinkType::Shared);
     }
 }

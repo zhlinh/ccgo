@@ -273,12 +273,7 @@ impl TestCommand {
     }
 
     /// Collect code coverage
-    fn collect_coverage(
-        &self,
-        project_root: &Path,
-        build_dir: &Path,
-        verbose: bool,
-    ) -> Result<()> {
+    fn collect_coverage(&self, project_root: &Path, build_dir: &Path, verbose: bool) -> Result<()> {
         eprintln!("\n📊 Collecting code coverage...");
 
         let config = CoverageConfig {

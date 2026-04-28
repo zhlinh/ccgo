@@ -21,8 +21,15 @@ impl BenchesBuilder {
     /// Get build output directory
     fn build_dir(&self, ctx: &BuildContext) -> PathBuf {
         // Uses cmake_build/{release|debug}/benches/ structure
-        let release_subdir = if ctx.options.release { "release" } else { "debug" };
-        ctx.project_root.join("cmake_build").join(release_subdir).join("benches")
+        let release_subdir = if ctx.options.release {
+            "release"
+        } else {
+            "debug"
+        };
+        ctx.project_root
+            .join("cmake_build")
+            .join(release_subdir)
+            .join("benches")
     }
 
     /// Get install directory
@@ -43,9 +50,7 @@ impl BenchesBuilder {
 
     /// Get CMake extra flags for benchmarks
     fn cmake_extra_flags(&self, ctx: &BuildContext) -> Result<Vec<String>> {
-        let mut flags = vec![
-            "-DBENCHMARK_SUPPORT=ON".to_string(),
-        ];
+        let mut flags = vec!["-DBENCHMARK_SUPPORT=ON".to_string()];
 
         // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
@@ -119,7 +124,9 @@ impl BenchesBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -172,7 +179,10 @@ impl BenchesBuilder {
         let mut executables = Vec::new();
 
         if !install_dir.exists() {
-            bail!("Benchmark install directory not found: {}", install_dir.display());
+            bail!(
+                "Benchmark install directory not found: {}",
+                install_dir.display()
+            );
         }
 
         // Search for benchmark executables
@@ -206,7 +216,10 @@ impl BenchesBuilder {
         }
 
         if executables.is_empty() {
-            bail!("No benchmark executables found in {}", install_dir.display());
+            bail!(
+                "No benchmark executables found in {}",
+                install_dir.display()
+            );
         }
 
         Ok(executables)
@@ -250,9 +263,9 @@ impl BenchesBuilder {
                 eprintln!("Executing: {:?}", cmd);
             }
 
-            let status = cmd.status().with_context(|| {
-                format!("Failed to run benchmark executable {}", exe.display())
-            })?;
+            let status = cmd
+                .status()
+                .with_context(|| format!("Failed to run benchmark executable {}", exe.display()))?;
 
             if !status.success() {
                 bail!("Benchmark {} failed", exe.display());
@@ -302,7 +315,9 @@ impl BenchesBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -334,7 +349,10 @@ impl BenchesBuilder {
                     .status();
             }
         } else {
-            eprintln!("\n✓ IDE project files generated in: {}", build_dir.display());
+            eprintln!(
+                "\n✓ IDE project files generated in: {}",
+                build_dir.display()
+            );
         }
 
         Ok(())
@@ -379,7 +397,11 @@ impl PlatformBuilder for BenchesBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/benches
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("benches");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("benches");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;

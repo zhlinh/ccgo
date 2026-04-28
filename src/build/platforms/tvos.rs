@@ -146,7 +146,10 @@ impl TvosBuilder {
             .install_prefix(install_dir.clone())
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable(
+                "CCGO_BUILD_SHARED_LIBS",
+                if build_shared { "ON" } else { "OFF" },
+            )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
             .variable("CMAKE_OSX_ARCHITECTURES", arch)
             .jobs(ctx.jobs())
@@ -180,7 +183,10 @@ impl TvosBuilder {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
                 if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                    eprintln!(
+                        "    Enabled features: {}",
+                        feature_defines.replace(';', ", ")
+                    );
                 }
             }
         }
@@ -232,10 +238,7 @@ impl TvosBuilder {
         if device_main_lib.exists() {
             cmd.arg("-library").arg(&device_main_lib);
         } else {
-            bail!(
-                "Device library not found: {}",
-                device_main_lib.display()
-            );
+            bail!("Device library not found: {}", device_main_lib.display());
         }
 
         // Find simulator library
@@ -244,10 +247,7 @@ impl TvosBuilder {
         if sim_main_lib.exists() {
             cmd.arg("-library").arg(&sim_main_lib);
         } else {
-            bail!(
-                "Simulator library not found: {}",
-                sim_main_lib.display()
-            );
+            bail!("Simulator library not found: {}", sim_main_lib.display());
         }
 
         cmd.arg("-output").arg(output);
@@ -444,7 +444,11 @@ impl PlatformBuilder for TvosBuilder {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
             if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
             }
         }
 
@@ -474,7 +478,11 @@ impl PlatformBuilder for TvosBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/tvos
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("tvos");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("tvos");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;

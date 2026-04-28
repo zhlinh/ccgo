@@ -288,7 +288,8 @@ pub fn create_archive_info(
 
 /// Write archive_info.json to a file
 pub fn write_archive_info(archive_info: &ArchiveInfo, path: &Path) -> Result<()> {
-    let json = serde_json::to_string_pretty(archive_info).context("Failed to serialize archive_info")?;
+    let json =
+        serde_json::to_string_pretty(archive_info).context("Failed to serialize archive_info")?;
     std::fs::write(path, json)
         .with_context(|| format!("Failed to write archive_info.json to {}", path.display()))?;
     Ok(())
@@ -296,7 +297,8 @@ pub fn write_archive_info(archive_info: &ArchiveInfo, path: &Path) -> Result<()>
 
 /// Write build_info.json to a file
 pub fn write_build_info(build_info: &BuildInfo, path: &Path) -> Result<()> {
-    let json = serde_json::to_string_pretty(build_info).context("Failed to serialize build_info")?;
+    let json =
+        serde_json::to_string_pretty(build_info).context("Failed to serialize build_info")?;
     std::fs::write(path, json)
         .with_context(|| format!("Failed to write build_info.json to {}", path.display()))?;
     Ok(())
@@ -353,7 +355,8 @@ pub fn create_build_info_full(
 fn get_git_info_full(project_root: &Path) -> GitInfo {
     let branch = get_git_branch_from_path(project_root).unwrap_or_default();
     let revision = get_git_commit_from_path(project_root).unwrap_or_default();
-    let revision_full = get_git_commit_full_from_path(project_root).unwrap_or_else(|| revision.clone());
+    let revision_full =
+        get_git_commit_full_from_path(project_root).unwrap_or_else(|| revision.clone());
     let tag = get_git_tag_from_path(project_root).unwrap_or_default();
     let is_dirty = check_git_dirty(project_root);
     let remote_url = get_git_remote_url(project_root).unwrap_or_default();
@@ -452,7 +455,8 @@ fn anonymize_git_url(url: &str) -> String {
                 let suffix = &rest[slash_idx..];
 
                 if username.len() > 4 {
-                    let masked = format!("/{}***{}", &username[..2], &username[username.len() - 1..]);
+                    let masked =
+                        format!("/{}***{}", &username[..2], &username[username.len() - 1..]);
                     return format!("{}{}", masked, suffix);
                 } else if !username.is_empty() {
                     return format!("/{}***{}", &username[..1], suffix);
@@ -473,7 +477,8 @@ fn anonymize_git_url(url: &str) -> String {
                 let suffix = &path[slash_idx..];
 
                 if username.len() > 4 {
-                    let masked = format!("/{}***{}", &username[..2], &username[username.len() - 1..]);
+                    let masked =
+                        format!("/{}***{}", &username[..2], &username[username.len() - 1..]);
                     return format!("{}{}", masked, suffix);
                 } else if !username.is_empty() {
                     return format!("/{}***{}", &username[..1], suffix);
@@ -716,7 +721,8 @@ impl ArchiveBuilder {
                     }
                 }
                 // Also check if filename contains .ext (for versioned libs like .so.1)
-                file_name.contains(&format!(".{}.", ext)) || file_name.contains(&format!(".{}", ext))
+                file_name.contains(&format!(".{}.", ext))
+                    || file_name.contains(&format!(".{}", ext))
             });
 
             if matches {
@@ -913,7 +919,8 @@ fn copy_dir_filtered(src: &Path, dst: &Path, extensions: &[&str]) -> Result<()> 
                     }
                 }
                 // Also check if filename contains .ext (for versioned libs like .so.1)
-                file_name.contains(&format!(".{}.", ext)) || file_name.contains(&format!(".{}", ext))
+                file_name.contains(&format!(".{}.", ext))
+                    || file_name.contains(&format!(".{}", ext))
             });
 
             if matches {
@@ -926,8 +933,8 @@ fn copy_dir_filtered(src: &Path, dst: &Path, extensions: &[&str]) -> Result<()> 
 
 /// Detect archive format by reading magic bytes
 fn detect_archive_format(path: &Path) -> Result<ArchiveFormat> {
-    let mut file = File::open(path)
-        .with_context(|| format!("Failed to open archive: {}", path.display()))?;
+    let mut file =
+        File::open(path).with_context(|| format!("Failed to open archive: {}", path.display()))?;
     let mut header = [0u8; 4];
     file.read_exact(&mut header).ok();
 
@@ -1079,7 +1086,10 @@ fn print_zip_tree_impl(archive_path: &Path, indent: &str) -> Result<()> {
 /// Tree node type for directory structure
 enum TreeNode {
     /// File with size and optional library info string (e.g., " [aarch64, NDK r27, API 24]")
-    File { size: u64, lib_info: String },
+    File {
+        size: u64,
+        lib_info: String,
+    },
     Dir(BTreeMap<String, TreeNode>),
 }
 

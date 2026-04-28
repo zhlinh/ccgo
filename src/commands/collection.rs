@@ -181,7 +181,9 @@ impl CollectionCommand {
             // Refresh all collections
             println!("\n🔄 Refreshing all collections...");
 
-            let results = manager.refresh_all().context("Failed to refresh collections")?;
+            let results = manager
+                .refresh_all()
+                .context("Failed to refresh collections")?;
 
             if results.is_empty() {
                 println!("\n✓ No collections to refresh");

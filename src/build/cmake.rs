@@ -7,7 +7,6 @@ use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 
-
 /// CMake build type
 #[derive(Debug, Clone, Copy, Default)]
 pub enum BuildType {
@@ -197,10 +196,7 @@ impl CMakeConfig {
 
         // Toolchain file
         if let Some(toolchain) = &self.toolchain_file {
-            cmd.arg(format!(
-                "-DCMAKE_TOOLCHAIN_FILE={}",
-                toolchain.display()
-            ));
+            cmd.arg(format!("-DCMAKE_TOOLCHAIN_FILE={}", toolchain.display()));
         }
 
         // Variables
@@ -217,7 +213,10 @@ impl CMakeConfig {
         if let Some(cache) = &self.compiler_cache {
             if cache.is_enabled() {
                 // Print cache info
-                println!("   🚀 Using {} for compilation caching", cache.cache_type().name());
+                println!(
+                    "   🚀 Using {} for compilation caching",
+                    cache.cache_type().name()
+                );
 
                 // Add CMake compiler launcher variables
                 for (name, value) in cache.cmake_variables() {
@@ -243,10 +242,7 @@ impl CMakeConfig {
             .context("Failed to run CMake configure")?;
 
         if !status.success() {
-            bail!(
-                "CMake configure failed with exit code: {:?}",
-                status.code()
-            );
+            bail!("CMake configure failed with exit code: {:?}", status.code());
         }
 
         Ok(())

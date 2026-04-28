@@ -32,7 +32,9 @@ impl WorkspaceMember {
         let config = CcgoConfig::load_from(&config_path)
             .with_context(|| format!("Failed to load member at {}", path.display()))?;
 
-        let package = config.package.as_ref()
+        let package = config
+            .package
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Workspace member must have [package] section"))?;
 
         Ok(Self {
@@ -83,7 +85,10 @@ impl WorkspaceMembers {
     }
 
     /// Expand glob patterns in workspace members
-    fn expand_member_patterns(workspace_root: &Path, config: &WorkspaceConfig) -> Result<Vec<PathBuf>> {
+    fn expand_member_patterns(
+        workspace_root: &Path,
+        config: &WorkspaceConfig,
+    ) -> Result<Vec<PathBuf>> {
         let mut paths = Vec::new();
 
         for pattern in &config.members {

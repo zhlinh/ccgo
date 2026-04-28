@@ -28,7 +28,12 @@ pub struct CommandResult {
 
 impl CommandResult {
     /// Create a CommandResult from an exit status
-    pub fn from_status(status: ExitStatus, stdout: String, stderr: String, duration: Duration) -> Self {
+    pub fn from_status(
+        status: ExitStatus,
+        stdout: String,
+        stderr: String,
+        duration: Duration,
+    ) -> Self {
         let exit_code = status.code().unwrap_or(-1);
         Self {
             success: status.success(),

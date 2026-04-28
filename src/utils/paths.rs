@@ -48,9 +48,16 @@ pub fn get_cmake_build_dir_with_mode(project_root: &Path, release: bool) -> Path
 
 /// Get the cmake build directory for a specific platform and build mode
 /// Returns cmake_build/{release|debug}/{platform} path
-pub fn get_cmake_build_dir_for_platform(project_root: &Path, platform: &str, release: bool) -> PathBuf {
+pub fn get_cmake_build_dir_for_platform(
+    project_root: &Path,
+    platform: &str,
+    release: bool,
+) -> PathBuf {
     let subdir = if release { "release" } else { "debug" };
-    project_root.join("cmake_build").join(subdir).join(platform.to_lowercase())
+    project_root
+        .join("cmake_build")
+        .join(subdir)
+        .join(platform.to_lowercase())
 }
 
 /// Ensure a directory exists

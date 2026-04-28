@@ -86,7 +86,11 @@ impl IosBuilder {
 
         // Check if we only have the main library (already merged or single module)
         let main_lib_name = format!("lib{}.a", lib_name);
-        if module_libs.len() == 1 && module_libs[0].file_name().is_some_and(|n| n == main_lib_name.as_str()) {
+        if module_libs.len() == 1
+            && module_libs[0]
+                .file_name()
+                .is_some_and(|n| n == main_lib_name.as_str())
+        {
             // Already a single main library, nothing to merge
             return Ok(());
         }
@@ -142,7 +146,11 @@ impl IosBuilder {
             if path.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == "a" {
-                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        let fname = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default();
                         if fname != placeholder_name {
                             third_party_libs.push(path);
                         }
@@ -175,9 +183,9 @@ impl IosBuilder {
         arch: &str,
         link_type: &str,
     ) -> Result<PathBuf> {
-        let build_dir = ctx
-            .cmake_build_dir
-            .join(format!("{}/{}/{}", link_type, target.name(), arch));
+        let build_dir =
+            ctx.cmake_build_dir
+                .join(format!("{}/{}/{}", link_type, target.name(), arch));
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
@@ -195,7 +203,10 @@ impl IosBuilder {
             .install_prefix(install_dir.clone())
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable(
+                "CCGO_BUILD_SHARED_LIBS",
+                if build_shared { "ON" } else { "OFF" },
+            )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
             .variable("CMAKE_OSX_ARCHITECTURES", arch)
             .variable("CMAKE_SYSTEM_NAME", "iOS")
@@ -230,7 +241,10 @@ impl IosBuilder {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
                 if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                    eprintln!(
+                        "    Enabled features: {}",
+                        feature_defines.replace(';', ", ")
+                    );
                 }
             }
         }
@@ -246,7 +260,12 @@ impl IosBuilder {
         // This is essential for KMP cinterop which expects a single complete library
         if !build_shared {
             self.merge_module_static_libs(xcode, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
-            self.merge_third_party_static_libs(xcode, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+            self.merge_third_party_static_libs(
+                xcode,
+                &build_dir,
+                ctx.lib_name(),
+                ctx.options.verbose,
+            )?;
         }
 
         // Return build_dir since CCGO cmake installs to build_dir/out/
@@ -278,7 +297,10 @@ impl IosBuilder {
                     if let Some(ext) = path.extension() {
                         if ext == extension {
                             // Avoid duplicates
-                            if !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name()) {
+                            if !libs
+                                .iter()
+                                .any(|p: &PathBuf| p.file_name() == path.file_name())
+                            {
                                 libs.push(path);
                             }
                         }
@@ -329,7 +351,8 @@ impl IosBuilder {
         if ctx.options.verbose {
             eprintln!("  Building for device (arm64)...");
         }
-        let device_install = self.build_target_arch(ctx, xcode, IosTarget::Device, "arm64", link_type)?;
+        let device_install =
+            self.build_target_arch(ctx, xcode, IosTarget::Device, "arm64", link_type)?;
 
         // Build simulator architectures
         let sim_archs = vec!["arm64", "x86_64"];
@@ -339,12 +362,15 @@ impl IosBuilder {
             if ctx.options.verbose {
                 eprintln!("  Building for simulator ({})...", arch);
             }
-            let install = self.build_target_arch(ctx, xcode, IosTarget::Simulator, arch, link_type)?;
+            let install =
+                self.build_target_arch(ctx, xcode, IosTarget::Simulator, arch, link_type)?;
             sim_arch_installs.push((arch.to_string(), install));
         }
 
         // Create universal simulator library
-        let sim_universal_dir = ctx.cmake_build_dir.join(format!("{}/simulator-universal", link_type));
+        let sim_universal_dir = ctx
+            .cmake_build_dir
+            .join(format!("{}/simulator-universal", link_type));
         let sim_lib_dir = sim_universal_dir.join("lib");
         std::fs::create_dir_all(&sim_lib_dir)?;
 
@@ -396,7 +422,11 @@ impl IosBuilder {
         ];
 
         for dir in possible_dirs {
-            if dir.exists() && std::fs::read_dir(&dir).map(|d| d.count() > 0).unwrap_or(false) {
+            if dir.exists()
+                && std::fs::read_dir(&dir)
+                    .map(|d| d.count() > 0)
+                    .unwrap_or(false)
+            {
                 return Some(dir);
             }
         }
@@ -424,9 +454,11 @@ impl IosBuilder {
         let main_lib_name = format!("lib{}.{}", lib_name, extension);
 
         // Find the library directories (check multiple possible locations)
-        let device_lib_dir = self.find_lib_dir(device_lib)
+        let device_lib_dir = self
+            .find_lib_dir(device_lib)
             .ok_or_else(|| anyhow::anyhow!("Device library directory not found"))?;
-        let sim_lib_dir = self.find_lib_dir(simulator_lib)
+        let sim_lib_dir = self
+            .find_lib_dir(simulator_lib)
             .ok_or_else(|| anyhow::anyhow!("Simulator library directory not found"))?;
 
         let mut inputs: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
@@ -496,7 +528,10 @@ impl IosBuilder {
         std::fs::create_dir_all(&build_dir)
             .with_context(|| format!("Failed to create {}", build_dir.display()))?;
 
-        eprintln!("Generating Xcode project for iOS in {}...", build_dir.display());
+        eprintln!(
+            "Generating Xcode project for iOS in {}...",
+            build_dir.display()
+        );
 
         // Detect Xcode toolchain
         let xcode = XcodeToolchain::detect()?;
@@ -530,7 +565,9 @@ impl IosBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -546,7 +583,10 @@ impl IosBuilder {
                 let _ = Command::new("open").arg(&project_file).status();
             }
         } else {
-            eprintln!("\n✓ IDE project files generated in: {}", build_dir.display());
+            eprintln!(
+                "\n✓ IDE project files generated in: {}",
+                build_dir.display()
+            );
         }
 
         // Return a placeholder result for IDE generation
@@ -568,8 +608,8 @@ impl PlatformBuilder for IosBuilder {
     fn default_architectures(&self) -> Vec<String> {
         // iOS builds are organized by target, not individual architectures
         vec![
-            "arm64".to_string(),           // Device
-            "arm64-simulator".to_string(), // Simulator (Apple Silicon)
+            "arm64".to_string(),            // Device
+            "arm64-simulator".to_string(),  // Simulator (Apple Silicon)
             "x86_64-simulator".to_string(), // Simulator (Intel)
         ]
     }
@@ -661,7 +701,14 @@ impl PlatformBuilder for IosBuilder {
             // Create XCFramework
             let xcframework_path = ctx.cmake_build_dir.join("static/xcframework");
             let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            self.create_xcframework(&xcode, &device_dir, &sim_dir, &xcframework, false, ctx.lib_name())?;
+            self.create_xcframework(
+                &xcode,
+                &device_dir,
+                &sim_dir,
+                &xcframework,
+                false,
+                ctx.lib_name(),
+            )?;
 
             // Add to archive: lib/ios/static/{lib_name}.xcframework
             if xcframework.exists() {
@@ -684,7 +731,14 @@ impl PlatformBuilder for IosBuilder {
             // Create XCFramework
             let xcframework_path = ctx.cmake_build_dir.join("shared/xcframework");
             let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            self.create_xcframework(&xcode, &device_dir, &sim_dir, &xcframework, true, ctx.lib_name())?;
+            self.create_xcframework(
+                &xcode,
+                &device_dir,
+                &sim_dir,
+                &xcframework,
+                true,
+                ctx.lib_name(),
+            )?;
 
             // Add to archive: lib/ios/shared/{lib_name}.xcframework
             if xcframework.exists() {
@@ -706,7 +760,11 @@ impl PlatformBuilder for IosBuilder {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
             if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
             }
         }
 
@@ -741,7 +799,11 @@ impl PlatformBuilder for IosBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/ios
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("ios");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("ios");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;

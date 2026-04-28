@@ -100,7 +100,10 @@ impl WindowsBuilder {
         // Check if the main library already exists and is non-empty (CMake merged it)
         if Self::main_lib_already_merged(&main_lib_path) {
             if verbose {
-                eprintln!("    Main library {} already exists, skipping merge", main_lib_name);
+                eprintln!(
+                    "    Main library {} already exists, skipping merge",
+                    main_lib_name
+                );
             }
             Self::cleanup_module_libs(&out_dir, &main_lib_path)?;
             return Ok(());
@@ -115,7 +118,9 @@ impl WindowsBuilder {
 
         // If the only file is already the main library, nothing to merge
         if module_libs.len() == 1
-            && module_libs[0].file_name().is_some_and(|n| n == main_lib_name.as_str())
+            && module_libs[0]
+                .file_name()
+                .is_some_and(|n| n == main_lib_name.as_str())
         {
             return Ok(());
         }
@@ -200,8 +205,11 @@ impl WindowsBuilder {
             if path.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == "a" {
-                        let fname =
-                            path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        let fname = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default();
                         if fname != exclude_name {
                             libs.push(path);
                         }
@@ -240,7 +248,10 @@ impl WindowsBuilder {
         let mut cmake = cmake
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable(
+                "CCGO_BUILD_SHARED_LIBS",
+                if build_shared { "ON" } else { "OFF" },
+            )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
@@ -262,7 +273,10 @@ impl WindowsBuilder {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
                 if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                    eprintln!(
+                        "    Enabled features: {}",
+                        feature_defines.replace(';', ", ")
+                    );
                 }
             }
         }
@@ -289,7 +303,11 @@ impl WindowsBuilder {
 
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .generator("Unix Makefiles")
-            .build_type(if ctx.options.release { BuildType::Release } else { BuildType::Debug })
+            .build_type(if ctx.options.release {
+                BuildType::Release
+            } else {
+                BuildType::Debug
+            })
             .install_prefix(install_dir.clone());
 
         cmake = Self::apply_common_cmake_options(cmake, ctx, build_shared)?;
@@ -333,7 +351,11 @@ impl WindowsBuilder {
 
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .generator(msvc.cmake_generator())
-            .build_type(if ctx.options.release { BuildType::Release } else { BuildType::Debug })
+            .build_type(if ctx.options.release {
+                BuildType::Release
+            } else {
+                BuildType::Debug
+            })
             .install_prefix(install_dir.clone());
 
         for (name, value) in msvc.cmake_variables() {
@@ -359,7 +381,10 @@ impl WindowsBuilder {
             if path.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == extension {
-                        if !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name()) {
+                        if !libs
+                            .iter()
+                            .any(|p: &PathBuf| p.file_name() == path.file_name())
+                        {
                             libs.push(path);
                         }
                     }
@@ -381,7 +406,9 @@ impl WindowsBuilder {
             if path.is_file() {
                 let name = path.file_name().unwrap().to_str().unwrap();
                 if name.ends_with(import_ext)
-                    && !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name())
+                    && !libs
+                        .iter()
+                        .any(|p: &PathBuf| p.file_name() == path.file_name())
                 {
                     libs.push(path);
                 }
@@ -500,11 +527,7 @@ impl WindowsBuilder {
     }
 
     /// Run `cmake -S … -B … -G …` and return the exit status
-    fn run_cmake_configure(
-        ctx: &BuildContext,
-        build_dir: &PathBuf,
-        generator: &str,
-    ) -> Result<()> {
+    fn run_cmake_configure(ctx: &BuildContext, build_dir: &PathBuf, generator: &str) -> Result<()> {
         use std::process::Command;
 
         let mut cmake_cmd = Command::new("cmake");
@@ -527,7 +550,9 @@ impl WindowsBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -541,7 +566,10 @@ impl WindowsBuilder {
         let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
 
         if sln_file.exists() {
-            eprintln!("\n✓ Visual Studio solution generated: {}", sln_file.display());
+            eprintln!(
+                "\n✓ Visual Studio solution generated: {}",
+                sln_file.display()
+            );
 
             #[cfg(target_os = "windows")]
             {
@@ -551,9 +579,15 @@ impl WindowsBuilder {
                     .status();
             }
         } else if workspace_file.exists() {
-            eprintln!("\n✓ CodeLite workspace generated: {}", workspace_file.display());
+            eprintln!(
+                "\n✓ CodeLite workspace generated: {}",
+                workspace_file.display()
+            );
         } else {
-            eprintln!("\n✓ IDE project files generated in: {}", build_dir.display());
+            eprintln!(
+                "\n✓ IDE project files generated in: {}",
+                build_dir.display()
+            );
         }
 
         let compile_commands = build_dir.join("compile_commands.json");

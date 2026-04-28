@@ -4,7 +4,6 @@
 //! from ELF binaries, including Android NDK version and API level
 //! from the .note.android.ident section.
 
-
 /// ELF e_machine values to architecture names
 const ELF_MACHINE_MAP: &[(u16, &str)] = &[
     (0x03, "x86"),
@@ -437,7 +436,7 @@ pub fn get_library_info(data: &[u8], filename: &str, file_path: &str) -> Library
             | b"\xce\xfa\xed\xfe"  // 32-bit reversed
             | b"\xcf\xfa\xed\xfe"  // 64-bit reversed
             | b"\xca\xfe\xba\xbe"  // FAT binary
-            | b"\xbe\xba\xfe\xca"  // FAT binary reversed
+            | b"\xbe\xba\xfe\xca" // FAT binary reversed
     ) {
         info.arch = parse_macho_arch(data);
     }
@@ -496,9 +495,19 @@ fn read_u32(data: &[u8], offset: usize, little_endian: bool) -> u32 {
         return 0;
     }
     if little_endian {
-        u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+        u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ])
     } else {
-        u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+        u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ])
     }
 }
 
@@ -534,9 +543,9 @@ fn read_u64(data: &[u8], offset: usize, little_endian: bool) -> u64 {
 /// Lookup Mach-O CPU type name from the map
 fn lookup_macho_cpu_name(cputype: u32) -> Option<&'static str> {
     MACHO_CPU_MAP
-            .iter()
-            .find(|(cpu, _)| *cpu == cputype)
-            .map(|(_, name)| *name)
+        .iter()
+        .find(|(cpu, _)| *cpu == cputype)
+        .map(|(_, name)| *name)
 }
 
 /// Parse Mach-O file to get architecture
@@ -572,8 +581,12 @@ fn parse_fat_binary_arch(data: &[u8]) -> Option<String> {
         if offset + 8 > data.len() {
             break;
         }
-        let cputype =
-            u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        let cputype = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
         if let Some(name) = lookup_macho_cpu_name(cputype) {
             if !archs.contains(&name.to_string()) {
                 archs.push(name.to_string());
@@ -690,9 +703,15 @@ mod tests {
 
     #[test]
     fn test_is_library_file() {
-        assert!(is_library_file("libfoo.so", "lib/android/shared/arm64-v8a/libfoo.so"));
+        assert!(is_library_file(
+            "libfoo.so",
+            "lib/android/shared/arm64-v8a/libfoo.so"
+        ));
         assert!(is_library_file("libfoo.so", "jni/arm64-v8a/libfoo.so"));
-        assert!(is_library_file("libfoo.a", "lib/android/static/arm64-v8a/libfoo.a"));
+        assert!(is_library_file(
+            "libfoo.a",
+            "lib/android/static/arm64-v8a/libfoo.a"
+        ));
         assert!(is_library_file("foo.dylib", "lib/macos/shared/foo.dylib"));
         assert!(!is_library_file("foo.txt", "lib/android/foo.txt"));
         assert!(!is_library_file("libfoo.so", "src/libfoo.so"));

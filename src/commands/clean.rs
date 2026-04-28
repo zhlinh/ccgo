@@ -146,11 +146,10 @@ impl ProjectCleaner {
             return;
         }
 
-        if !self.dry_run && !self.skip_confirm
-            && !self.confirm_clean("  Remove bin/ directory?") {
-                println!("  ⏭️  Skipped");
-                return;
-            }
+        if !self.dry_run && !self.skip_confirm && !self.confirm_clean("  Remove bin/ directory?") {
+            println!("  ⏭️  Skipped");
+            return;
+        }
 
         self.remove_directory(&bin_dir, Some("bin/"));
     }
@@ -167,11 +166,13 @@ impl ProjectCleaner {
             return;
         }
 
-        if !self.dry_run && !self.skip_confirm
-            && !self.confirm_clean("  Remove cmake_build/ directory?") {
-                println!("  ⏭️  Skipped");
-                return;
-            }
+        if !self.dry_run
+            && !self.skip_confirm
+            && !self.confirm_clean("  Remove cmake_build/ directory?")
+        {
+            println!("  ⏭️  Skipped");
+            return;
+        }
 
         self.remove_directory(&cmake_dir, Some("cmake_build/"));
     }
@@ -373,11 +374,13 @@ impl ProjectCleaner {
         println!("  Cleaning ALL build artifacts and caches");
         println!("{}", "=".repeat(60));
 
-        if !self.dry_run && !self.skip_confirm
-            && !self.confirm_clean("\n⚠️  This will remove ALL build artifacts. Continue?") {
-                println!("  ⏭️  Aborted");
-                return;
-            }
+        if !self.dry_run
+            && !self.skip_confirm
+            && !self.confirm_clean("\n⚠️  This will remove ALL build artifacts. Continue?")
+        {
+            println!("  ⏭️  Aborted");
+            return;
+        }
 
         // Clean in order
         self.clean_bin();

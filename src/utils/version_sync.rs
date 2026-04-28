@@ -65,13 +65,20 @@ fn sync_regex_value(path: &Path, pattern: &str, new_value: &str, label: &str) {
         return;
     }
 
-    let new_content = re.replace(&content, format!("${{1}}{new_value}${{2}}")).to_string();
+    let new_content = re
+        .replace(&content, format!("${{1}}{new_value}${{2}}"))
+        .to_string();
     if new_content == content {
         return;
     }
 
     if let Err(e) = std::fs::write(path, new_content) {
-        eprintln!("Warning: failed to sync {} -> {}: {}", path.display(), new_value, e);
+        eprintln!(
+            "Warning: failed to sync {} -> {}: {}",
+            path.display(),
+            new_value,
+            e
+        );
         return;
     }
     eprintln!("Synced {} {label} -> {}", path.display(), new_value);

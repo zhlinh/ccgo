@@ -1,0 +1,6 @@
+[package]
+name = "leaf"
+version = "0.1.0"
+
+[build]
+verinfo_path = "leaf/base/"

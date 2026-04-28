@@ -58,11 +58,12 @@ fn find_ccgo_toml(start_dir: &Path) -> Result<PathBuf> {
 
 /// Get project name from CCGO.toml
 fn get_project_name(config_file: &Path) -> Result<String> {
-    let content = fs::read_to_string(config_file)
-        .context("Failed to read CCGO.toml")?;
-    let config: crate::config::CcgoConfig = toml::from_str(&content)
-        .context("Failed to parse CCGO.toml")?;
-    let pkg = config.package.context("CCGO.toml must have a [package] section")?;
+    let content = fs::read_to_string(config_file).context("Failed to read CCGO.toml")?;
+    let config: crate::config::CcgoConfig =
+        toml::from_str(&content).context("Failed to parse CCGO.toml")?;
+    let pkg = config
+        .package
+        .context("CCGO.toml must have a [package] section")?;
     Ok(pkg.name)
 }
 
@@ -156,20 +157,20 @@ fn find_platform_zips(project_dir: &Path, platform: &str, release: bool) -> Vec<
 /// Generate a minimal CCGO.toml string to embed at the ZIP root.
 /// Contains [package] metadata and only zip-sourced [[dependencies]].
 fn generate_embedded_ccgo_toml(config_file: &Path) -> Result<String> {
-    let content = fs::read_to_string(config_file)
-        .context("Failed to read CCGO.toml")?;
+    let content = fs::read_to_string(config_file).context("Failed to read CCGO.toml")?;
 
     // Use the full config parser to access dependencies
-    let config: crate::config::CcgoConfig = toml::from_str(&content)
-        .context("Failed to parse CCGO.toml")?;
+    let config: crate::config::CcgoConfig =
+        toml::from_str(&content).context("Failed to parse CCGO.toml")?;
 
-    let pkg = config.package.as_ref()
+    let pkg = config
+        .package
+        .as_ref()
         .context("CCGO.toml must have a [package] section")?;
 
     let mut out = format!(
         "[package]\nname = \"{}\"\nversion = \"{}\"\n",
-        pkg.name,
-        pkg.version
+        pkg.name, pkg.version
     );
 
     if let Some(ref desc) = pkg.description {
@@ -193,8 +194,8 @@ fn generate_embedded_ccgo_toml(config_file: &Path) -> Result<String> {
 fn detect_platform_from_filename(filename: &str) -> Option<String> {
     let fname_lower = filename.to_lowercase();
     for plat in &[
-        "android", "ios", "macos", "watchos", "tvos", "windows", "linux", "ohos", "kmp",
-        "conan", "include",
+        "android", "ios", "macos", "watchos", "tvos", "windows", "linux", "ohos", "kmp", "conan",
+        "include",
     ] {
         if fname_lower.contains(plat) {
             return Some(plat.to_string());
@@ -331,8 +332,8 @@ fn embed_ccgo_toml(zip_path: &Path, config_file: &Path) -> Result<()> {
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name().to_string();
-        let options = zip::write::SimpleFileOptions::default()
-            .compression_method(entry.compression());
+        let options =
+            zip::write::SimpleFileOptions::default().compression_method(entry.compression());
         zip.start_file(&name, options)?;
         let mut buffer = Vec::new();
         std::io::Read::read_to_end(&mut entry, &mut buffer)?;
@@ -384,7 +385,9 @@ fn get_git_repo_root(project_dir: &Path) -> Result<PathBuf> {
         return Err(anyhow!("Not inside a git repository"));
     }
 
-    let git_dir_out = String::from_utf8_lossy(&git_check.stdout).trim().to_string();
+    let git_dir_out = String::from_utf8_lossy(&git_check.stdout)
+        .trim()
+        .to_string();
     let git_dir = if Path::new(&git_dir_out).is_absolute() {
         PathBuf::from(&git_dir_out)
     } else {
@@ -401,7 +404,12 @@ fn remove_stale_worktree(project_dir: &Path, worktree_path: &Path) -> Result<()>
     println!("   🧹 Removing stale worktree...");
     let _ = Command::new("git")
         .current_dir(project_dir)
-        .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+        .args([
+            "worktree",
+            "remove",
+            "--force",
+            worktree_path.to_str().unwrap(),
+        ])
         .status();
     if worktree_path.exists() {
         fs::remove_dir_all(worktree_path)?;
@@ -420,7 +428,11 @@ fn branch_exists_locally(project_dir: &Path, branch: &str) -> bool {
 }
 
 /// Create worktree for existing branch or new orphan branch
-fn create_worktree_for_branch(project_dir: &Path, worktree_path: &Path, branch: &str) -> Result<()> {
+fn create_worktree_for_branch(
+    project_dir: &Path,
+    worktree_path: &Path,
+    branch: &str,
+) -> Result<()> {
     if branch_exists_locally(project_dir, branch) {
         println!("   📂 Checking out existing branch '{}'...", branch);
         let status = Command::new("git")
@@ -435,7 +447,14 @@ fn create_worktree_for_branch(project_dir: &Path, worktree_path: &Path, branch: 
         println!("   📂 Creating new orphan branch '{}'...", branch);
         let status = Command::new("git")
             .current_dir(project_dir)
-            .args(["worktree", "add", "--orphan", "-b", branch, worktree_path.to_str().unwrap()])
+            .args([
+                "worktree",
+                "add",
+                "--orphan",
+                "-b",
+                branch,
+                worktree_path.to_str().unwrap(),
+            ])
             .status()
             .context("Failed to create git worktree with orphan branch")?;
         if !status.success() {
@@ -553,7 +572,12 @@ fn publish_to_dist_branch(
     if copied == 0 {
         let _ = Command::new("git")
             .current_dir(project_dir)
-            .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+            .args([
+                "worktree",
+                "remove",
+                "--force",
+                worktree_path.to_str().unwrap(),
+            ])
             .status();
         return Err(anyhow!("No artifacts found in package directory"));
     }
@@ -562,7 +586,12 @@ fn publish_to_dist_branch(
 
     let _ = Command::new("git")
         .current_dir(project_dir)
-        .args(["worktree", "remove", "--force", worktree_path.to_str().unwrap()])
+        .args([
+            "worktree",
+            "remove",
+            "--force",
+            worktree_path.to_str().unwrap(),
+        ])
         .status();
 
     println!("\n   ✅ Artifacts committed to branch '{}'", branch);
@@ -664,7 +693,10 @@ fn print_no_artifacts_help(build_mode: &str, release: bool) {
     println!("\n{}", "=".repeat(80));
     println!("⚠️  WARNING: No platform artifacts found!");
     println!("{}", "=".repeat(80));
-    println!("\nIt looks like no platforms have been built yet in {} mode.", build_mode);
+    println!(
+        "\nIt looks like no platforms have been built yet in {} mode.",
+        build_mode
+    );
     println!("\nTo build platforms, use:");
     if release {
         println!("  ccgo build android --release");
@@ -675,7 +707,10 @@ fn print_no_artifacts_help(build_mode: &str, release: bool) {
         println!("  ccgo build ios");
         println!("  ccgo build all");
     }
-    println!("\nThen run 'ccgo package{}' again.\n", if release { " --release" } else { "" });
+    println!(
+        "\nThen run 'ccgo package{}' again.\n",
+        if release { " --release" } else { "" }
+    );
 }
 
 /// Handle merged mode packaging
@@ -695,7 +730,13 @@ fn handle_merged_mode(
     );
     let sdk_zip_path = output_path.join(&sdk_zip_name);
 
-    merge_zips(all_zip_files, &sdk_zip_path, project_name, version, config_file)?;
+    merge_zips(
+        all_zip_files,
+        &sdk_zip_path,
+        project_name,
+        version,
+        config_file,
+    )?;
 
     println!("\n{}", "=".repeat(80));
     println!("Package Summary");
@@ -811,7 +852,13 @@ fn get_dist_branch(dist_branch: Option<&str>, dist: bool) -> Option<&'static str
 }
 
 /// Print package header info
-fn print_package_header(project_name: &str, version: &str, build_mode: &str, output_path: &Path, merge_mode: bool) {
+fn print_package_header(
+    project_name: &str,
+    version: &str,
+    build_mode: &str,
+    output_path: &Path,
+    merge_mode: bool,
+) {
     let mode_str = if merge_mode {
         "Merge into unified SDK"
     } else {
@@ -842,8 +889,8 @@ impl PackageCommand {
         println!("CCGO Package - Collect Build Artifacts");
         println!("{}", "=".repeat(80));
 
-        let project_dir = std::env::current_dir()
-            .context("Failed to get current working directory")?;
+        let project_dir =
+            std::env::current_dir().context("Failed to get current working directory")?;
 
         let config_file = find_ccgo_toml(&project_dir)?;
 
@@ -862,14 +909,22 @@ impl PackageCommand {
 
         let merge_mode = !self.no_merge;
 
-        print_package_header(&project_name, &version, build_mode, &output_path, merge_mode);
+        print_package_header(
+            &project_name,
+            &version,
+            build_mode,
+            &output_path,
+            merge_mode,
+        );
         setup_output_directory(&output_path)?;
 
         println!("\n{}", "=".repeat(80));
         println!("Scanning Build Artifacts");
         println!("{}", "=".repeat(80));
 
-        let platforms: Vec<String> = self.platforms.as_ref()
+        let platforms: Vec<String> = self
+            .platforms
+            .as_ref()
             .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
             .unwrap_or_else(get_default_platforms);
 
@@ -877,7 +932,10 @@ impl PackageCommand {
 
         if artifacts.collected.is_empty() {
             print_no_artifacts_help(build_mode, self.release);
-            return Err(anyhow!("No platform artifacts found in {} mode", build_mode));
+            return Err(anyhow!(
+                "No platform artifacts found in {} mode",
+                build_mode
+            ));
         }
 
         if merge_mode {
@@ -1097,7 +1155,9 @@ mod tests {
     fn test_generate_embedded_ccgo_toml_with_zip_deps() {
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("CCGO.toml");
-        fs::write(&config_path, r#"
+        fs::write(
+            &config_path,
+            r#"
 [package]
 name = "netcomm"
 version = "1.2.3"
@@ -1112,7 +1172,9 @@ zip = "https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip"
 name = "locallib"
 version = "0.5.0"
 git = "https://github.com/example/locallib.git"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let result = generate_embedded_ccgo_toml(&config_path).unwrap();
         assert!(result.contains("[package]"));
@@ -1121,7 +1183,9 @@ git = "https://github.com/example/locallib.git"
         assert!(result.contains("description = \"netcomm SDK\""));
         // Only zip deps included
         assert!(result.contains("foundrycomm"));
-        assert!(result.contains("zip = \"https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip\""));
+        assert!(
+            result.contains("zip = \"https://cdn.example.com/foundrycomm_CCGO_PACKAGE-1.0.0.zip\"")
+        );
         // git deps NOT included
         assert!(!result.contains("locallib"));
     }
@@ -1130,11 +1194,15 @@ git = "https://github.com/example/locallib.git"
     fn test_generate_embedded_ccgo_toml_no_deps() {
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("CCGO.toml");
-        fs::write(&config_path, r#"
+        fs::write(
+            &config_path,
+            r#"
 [package]
 name = "standalone"
 version = "2.0.0"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let result = generate_embedded_ccgo_toml(&config_path).unwrap();
         assert!(result.contains("name = \"standalone\""));

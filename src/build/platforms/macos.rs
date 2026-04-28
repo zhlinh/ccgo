@@ -121,9 +121,7 @@ impl MacosBuilder {
         arch: &str,
         link_type: &str,
     ) -> Result<PathBuf> {
-        let build_dir = ctx
-            .cmake_build_dir
-            .join(format!("{}/{}", link_type, arch));
+        let build_dir = ctx.cmake_build_dir.join(format!("{}/{}", link_type, arch));
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
@@ -141,7 +139,10 @@ impl MacosBuilder {
             .install_prefix(install_dir.clone())
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable(
+                "CCGO_BUILD_SHARED_LIBS",
+                if build_shared { "ON" } else { "OFF" },
+            )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
             .variable("CMAKE_OSX_ARCHITECTURES", arch)
             .jobs(ctx.jobs())
@@ -176,7 +177,10 @@ impl MacosBuilder {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
                 if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                    eprintln!(
+                        "    Enabled features: {}",
+                        feature_defines.replace(';', ", ")
+                    );
                 }
             }
         }
@@ -186,13 +190,33 @@ impl MacosBuilder {
             cmake = cmake.compiler_cache(cache);
         }
 
+        // Resolve and pass per-dep linkage as a semicolon-separated list of
+        // <NAME>=<VALUE> pairs. CMake parses this in FindCCGODependencies.cmake
+        // to populate CCGO_DEPENDENCY_<NAME>_LINKAGE for each dep, which then
+        // drives the choice between target_link_libraries(... shared) and
+        // target_link_libraries(... static) per dep.
+        let linkages = ctx.resolved_dep_linkages(self.platform_name())?;
+        if !linkages.is_empty() {
+            let linkages_val = linkages
+                .iter()
+                .map(|(name, l)| format!("{name}={l}"))
+                .collect::<Vec<_>>()
+                .join(";");
+            cmake = cmake.variable("CCGO_DEPENDENCY_LINKAGES", linkages_val);
+        }
+
         cmake.configure_build_install()?;
 
         // For static builds, merge all module libraries into a single library
         // This is essential for KMP cinterop which expects a single complete library
         if !build_shared {
             self.merge_module_static_libs(xcode, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
-            self.merge_third_party_static_libs(xcode, &build_dir, ctx.lib_name(), ctx.options.verbose)?;
+            self.merge_third_party_static_libs(
+                xcode,
+                &build_dir,
+                ctx.lib_name(),
+                ctx.options.verbose,
+            )?;
         }
 
         // Return build_dir since CCGO cmake installs to build_dir/out/
@@ -224,7 +248,11 @@ impl MacosBuilder {
             if path.is_file() {
                 if let Some(ext) = path.extension() {
                     if ext == "a" {
-                        let fname = path.file_name().unwrap_or_default().to_str().unwrap_or_default();
+                        let fname = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default();
                         // Skip the placeholder main lib (which is near-empty)
                         if fname != placeholder_name {
                             third_party_libs.push(path);
@@ -298,7 +326,10 @@ impl MacosBuilder {
                     if let Some(ext) = path.extension() {
                         if ext == extension {
                             // Avoid duplicates
-                            if !libs.iter().any(|p: &PathBuf| p.file_name() == path.file_name()) {
+                            if !libs
+                                .iter()
+                                .any(|p: &PathBuf| p.file_name() == path.file_name())
+                            {
                                 libs.push(path);
                             }
                         }
@@ -394,7 +425,11 @@ impl MacosBuilder {
         ];
 
         for dir in possible_dirs {
-            if dir.exists() && std::fs::read_dir(&dir).map(|d| d.count() > 0).unwrap_or(false) {
+            if dir.exists()
+                && std::fs::read_dir(&dir)
+                    .map(|d| d.count() > 0)
+                    .unwrap_or(false)
+            {
                 return Some(dir);
             }
         }
@@ -427,13 +462,17 @@ impl MacosBuilder {
             .args(["--find", "clang"])
             .output()
             .context("Failed to find clang via xcrun")?;
-        let cc = String::from_utf8_lossy(&cc_output.stdout).trim().to_string();
+        let cc = String::from_utf8_lossy(&cc_output.stdout)
+            .trim()
+            .to_string();
 
         let cxx_output = Command::new("xcrun")
             .args(["--find", "clang++"])
             .output()
             .context("Failed to find clang++ via xcrun")?;
-        let cxx = String::from_utf8_lossy(&cxx_output.stdout).trim().to_string();
+        let cxx = String::from_utf8_lossy(&cxx_output.stdout)
+            .trim()
+            .to_string();
 
         // Configure with CMake using Xcode generator
         // For macOS native builds, let Xcode handle SDK detection automatically
@@ -466,7 +505,9 @@ impl MacosBuilder {
             eprintln!("CMake configure: {:?}", cmake_cmd);
         }
 
-        let status = cmake_cmd.status().context("Failed to run CMake configure")?;
+        let status = cmake_cmd
+            .status()
+            .context("Failed to run CMake configure")?;
         if !status.success() {
             bail!("CMake configure failed");
         }
@@ -518,7 +559,8 @@ impl MacosBuilder {
         let main_lib_name = format!("lib{}.{}", lib_name, extension);
 
         // Find the library directory (check multiple possible locations)
-        let lib_dir = self.find_lib_dir(universal_dir)
+        let lib_dir = self
+            .find_lib_dir(universal_dir)
             .ok_or_else(|| anyhow::anyhow!("Universal library directory not found"))?;
 
         // Find main library - prefer exact name match
@@ -541,7 +583,11 @@ impl MacosBuilder {
                 }
             }
             if !found {
-                bail!("Main library {} not found in {}", main_lib_name, lib_dir.display());
+                bail!(
+                    "Main library {} not found in {}",
+                    main_lib_name,
+                    lib_dir.display()
+                );
             }
         } else {
             // Create XCFramework with main library
@@ -650,7 +696,13 @@ impl PlatformBuilder for MacosBuilder {
             // Create XCFramework
             let xcframework_path = ctx.cmake_build_dir.join("static/xcframework");
             let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(&xcode, &universal_dir, &xcframework, false, ctx.lib_name())?;
+            builder.create_xcframework(
+                &xcode,
+                &universal_dir,
+                &xcframework,
+                false,
+                ctx.lib_name(),
+            )?;
 
             // Add to archive: frameworks/macos/static/{lib_name}.xcframework
             if xcframework.exists() {
@@ -676,7 +728,13 @@ impl PlatformBuilder for MacosBuilder {
             // Create XCFramework
             let xcframework_path = ctx.cmake_build_dir.join("shared/xcframework");
             let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(&xcode, &universal_dir, &xcframework, true, ctx.lib_name())?;
+            builder.create_xcframework(
+                &xcode,
+                &universal_dir,
+                &xcframework,
+                true,
+                ctx.lib_name(),
+            )?;
 
             // Add to archive: frameworks/macos/shared/{lib_name}.xcframework
             if xcframework.exists() {
@@ -698,7 +756,11 @@ impl PlatformBuilder for MacosBuilder {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
             if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
             }
         }
 
@@ -728,7 +790,11 @@ impl PlatformBuilder for MacosBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean new directory structure: cmake_build/{release|debug}/macos
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("macos");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("macos");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;

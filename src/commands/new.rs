@@ -78,11 +78,14 @@ impl NewCommand {
         }
 
         // Execute copier
-        let result = run_command("copier", &args, true, None)
-            .context("Failed to execute copier")?;
+        let result =
+            run_command("copier", &args, true, None).context("Failed to execute copier")?;
 
         if !result.success {
-            bail!("Project creation failed with exit code: {}", result.exit_code);
+            bail!(
+                "Project creation failed with exit code: {}",
+                result.exit_code
+            );
         }
 
         if verbose {

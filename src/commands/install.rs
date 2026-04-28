@@ -100,12 +100,17 @@ impl InstallCommand {
 
         let ctx = InstallContext::load()?;
         let release = !self.debug;
-        let package_output = ctx.project_root.join("target").join(if release { "release" } else { "debug" }).join("package");
+        let package_output = ctx
+            .project_root
+            .join("target")
+            .join(if release { "release" } else { "debug" })
+            .join("package");
 
         self.ensure_packaged(&ctx, &package_output, release, verbose)?;
 
         let zip_prefix = format!("{}_CCGO_PACKAGE-", ctx.project_name.to_uppercase());
-        let version_clean = self.resolve_version(&package_output, &zip_prefix, &ctx.package_version);
+        let version_clean =
+            self.resolve_version(&package_output, &zip_prefix, &ctx.package_version);
 
         let plan = self.plan_install(&ctx.bins);
         self.install_lib_part(&ctx, &package_output, &version_clean, &plan)?;
@@ -153,7 +158,12 @@ impl InstallCommand {
 
     /// Prefer explicit `--version`, else parse the produced zip filename, else
     /// fall back to CCGO.toml's `[package].version`. Strips a leading `v`.
-    fn resolve_version(&self, package_output: &Path, zip_prefix: &str, toml_version: &str) -> String {
+    fn resolve_version(
+        &self,
+        package_output: &Path,
+        zip_prefix: &str,
+        toml_version: &str,
+    ) -> String {
         let version = self
             .version
             .clone()
@@ -165,11 +175,7 @@ impl InstallCommand {
     fn plan_install(&self, bins: &[BinConfig]) -> InstallPlan {
         let has_bin_config = !bins.is_empty();
         let user_selected_bin = !self.bin.is_empty() || self.bins;
-        let install_lib = if self.lib {
-            true
-        } else {
-            !user_selected_bin
-        };
+        let install_lib = if self.lib { true } else { !user_selected_bin };
         let install_bins = if self.lib && !user_selected_bin {
             false
         } else if user_selected_bin {

@@ -171,10 +171,7 @@ impl AndroidNdkToolchain {
         }
 
         // Check common installation paths
-        let common_paths = [
-            "/opt/android-ndk",
-            "/usr/local/android-ndk",
-        ];
+        let common_paths = ["/opt/android-ndk", "/usr/local/android-ndk"];
 
         for path in common_paths {
             let path = PathBuf::from(path);
@@ -304,9 +301,14 @@ impl AndroidNdkToolchain {
     }
 
     /// Get CMake variables for a specific ABI and API level
-    pub fn cmake_variables_for_abi(&self, abi: AndroidAbi, api_level: u32) -> Vec<(String, String)> {
+    pub fn cmake_variables_for_abi(
+        &self,
+        abi: AndroidAbi,
+        api_level: u32,
+    ) -> Vec<(String, String)> {
         let host_tag = Self::host_tag();
-        let toolchain_prefix = self.ndk_path
+        let toolchain_prefix = self
+            .ndk_path
             .join("toolchains/llvm/prebuilt")
             .join(host_tag);
 
@@ -315,22 +317,34 @@ impl AndroidNdkToolchain {
         let clangxx = toolchain_prefix.join("bin/clang++");
 
         let mut vars = vec![
-            ("ANDROID_NDK".to_string(), self.ndk_path.display().to_string()),
+            (
+                "ANDROID_NDK".to_string(),
+                self.ndk_path.display().to_string(),
+            ),
             (
                 "CMAKE_TOOLCHAIN_FILE".to_string(),
                 self.cmake_toolchain_file().display().to_string(),
             ),
             ("ANDROID_ABI".to_string(), abi.abi_string().to_string()),
-            ("ANDROID_PLATFORM".to_string(), format!("android-{}", api_level)),
+            (
+                "ANDROID_PLATFORM".to_string(),
+                format!("android-{}", api_level),
+            ),
             ("ANDROID_STL".to_string(), "c++_shared".to_string()),
             // Explicitly set compilers to avoid detection issues
             ("CMAKE_C_COMPILER".to_string(), clang.display().to_string()),
-            ("CMAKE_CXX_COMPILER".to_string(), clangxx.display().to_string()),
+            (
+                "CMAKE_CXX_COMPILER".to_string(),
+                clangxx.display().to_string(),
+            ),
         ];
 
         // For newer NDKs (r23+), use the unified headers
         if self.major_version() >= 23 {
-            vars.push(("ANDROID_USE_LEGACY_TOOLCHAIN_FILE".to_string(), "OFF".to_string()));
+            vars.push((
+                "ANDROID_USE_LEGACY_TOOLCHAIN_FILE".to_string(),
+                "OFF".to_string(),
+            ));
         }
 
         vars
@@ -375,7 +389,9 @@ impl AndroidNdkToolchain {
         if api_level < min {
             bail!(
                 "API level {} is too low for {}: minimum is {}",
-                api_level, abi, min
+                api_level,
+                abi,
+                min
             );
         }
         Ok(())
@@ -393,7 +409,7 @@ impl AndroidNdkToolchain {
             .join("toolchains/llvm/prebuilt")
             .join(host_tag)
             .join("sysroot/usr/lib")
-            .join(abi.stl_lib_dir())  // Use stl_lib_dir() instead of llvm_triple()
+            .join(abi.stl_lib_dir()) // Use stl_lib_dir() instead of llvm_triple()
             .join("libc++_shared.so")
     }
 
@@ -471,7 +487,10 @@ impl Toolchain for AndroidNdkToolchain {
     fn validate(&self) -> Result<()> {
         // Check NDK path exists
         if !self.ndk_path.exists() {
-            bail!("Android NDK path does not exist: {}", self.ndk_path.display());
+            bail!(
+                "Android NDK path does not exist: {}",
+                self.ndk_path.display()
+            );
         }
 
         // Check toolchain file exists

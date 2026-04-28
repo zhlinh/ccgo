@@ -7,9 +7,8 @@
 //! - Benchmark result comparison
 //! - CI service integration
 
+pub mod benchmark;
+pub mod ci;
 pub mod coverage;
 pub mod discovery;
 pub mod results;
-pub mod benchmark;
-pub mod ci;
-

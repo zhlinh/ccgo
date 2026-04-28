@@ -138,7 +138,11 @@ fn run_update(method: &InstallMethod) -> Result<()> {
         InstallMethod::Pipx => run_command("pipx", &["upgrade", "ccgo"]),
         InstallMethod::Uv => run_command("uv", &["tool", "upgrade", "ccgo"]),
         InstallMethod::Pip => {
-            let pip = if which::which("pip3").is_ok() { "pip3" } else { "pip" };
+            let pip = if which::which("pip3").is_ok() {
+                "pip3"
+            } else {
+                "pip"
+            };
             run_command(pip, &["install", "--upgrade", "ccgo"])
         }
     }

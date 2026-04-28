@@ -221,7 +221,10 @@ fn print_build_error(stdout: &str, stderr: &str) {
     if !stderr.is_empty() {
         let stderr_lines: Vec<&str> = stderr.lines().collect();
         let start = stderr_lines.len().saturating_sub(10);
-        eprintln!("   Error output (last {} lines):", stderr_lines.len().min(10));
+        eprintln!(
+            "   Error output (last {} lines):",
+            stderr_lines.len().min(10)
+        );
         for line in &stderr_lines[start..] {
             eprintln!("   | {}", line);
         }
@@ -245,14 +248,16 @@ fn print_build_error(stdout: &str, stderr: &str) {
 ///
 /// Each platform is built in a subprocess to isolate output and prevent interleaving.
 pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
-    let all_platforms = [BuildTarget::Linux,
+    let all_platforms = [
+        BuildTarget::Linux,
         BuildTarget::Windows,
         BuildTarget::Ohos,
         BuildTarget::Ios,
         BuildTarget::Macos,
         BuildTarget::Tvos,
         BuildTarget::Watchos,
-        BuildTarget::Android];
+        BuildTarget::Android,
+    ];
 
     // Define platform groups
     let apple_platforms: HashSet<_> = [
@@ -369,7 +374,11 @@ pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
             let status = if result.success { "✅" } else { "❌" };
             let platform_upper = result.platform.to_uppercase();
             let duration_str = format_duration(result.duration_secs);
-            let status_text = if result.success { "completed" } else { "failed" };
+            let status_text = if result.success {
+                "completed"
+            } else {
+                "failed"
+            };
 
             eprintln!(
                 "{} [{}/{}] {} {} ({})",
@@ -455,15 +464,7 @@ pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
         let total = total_platforms;
 
         handles.push(thread::spawn(move || {
-            build_and_report(
-                target,
-                args,
-                root,
-                completed,
-                in_prog,
-                results_ref,
-                total,
-            );
+            build_and_report(target, args, root, completed, in_prog, results_ref, total);
         }));
     }
 
@@ -490,7 +491,11 @@ pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
     }
 
     // Calculate total duration
-    let total_duration: f64 = all_results.iter().map(|r| r.duration_secs).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(0.0);
+    let total_duration: f64 = all_results
+        .iter()
+        .map(|r| r.duration_secs)
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap_or(0.0);
 
     // Print summary
     eprintln!("\n{}", "=".repeat(80));
@@ -515,7 +520,10 @@ pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
         }
     }
 
-    eprintln!("\n⏱️  Build completed in {}", format_duration(total_duration));
+    eprintln!(
+        "\n⏱️  Build completed in {}",
+        format_duration(total_duration)
+    );
 
     if failed.is_empty() {
         eprintln!("\n🎉 All platforms built successfully!");
@@ -537,10 +545,12 @@ pub fn build_all(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
 /// Apple platforms share Xcode toolchain and must be built sequentially
 /// to avoid conflicts. Uses subprocess to isolate output.
 pub fn build_apple(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
-    let platforms = [BuildTarget::Ios,
+    let platforms = [
+        BuildTarget::Ios,
         BuildTarget::Macos,
         BuildTarget::Tvos,
-        BuildTarget::Watchos];
+        BuildTarget::Watchos,
+    ];
 
     let total_platforms = platforms.len();
 
@@ -605,7 +615,11 @@ pub fn build_apple(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
     }
 
     // Calculate total duration
-    let total_duration: f64 = successful.iter().chain(failed.iter()).map(|(_, d)| *d).sum();
+    let total_duration: f64 = successful
+        .iter()
+        .chain(failed.iter())
+        .map(|(_, d)| *d)
+        .sum();
 
     // Print summary
     eprintln!("\n{}", "=".repeat(80));
@@ -629,13 +643,13 @@ pub fn build_apple(ctx: &BuildContext) -> Result<Vec<BuildResult>> {
         }
     }
 
-    eprintln!("\n⏱️  Build completed in {}", format_duration(total_duration));
+    eprintln!(
+        "\n⏱️  Build completed in {}",
+        format_duration(total_duration)
+    );
 
     if !failed.is_empty() {
-        bail!(
-            "{} Apple platform(s) failed to build",
-            failed.len()
-        );
+        bail!("{} Apple platform(s) failed to build", failed.len());
     }
 
     eprintln!("\n🎉 All Apple platforms built successfully!");

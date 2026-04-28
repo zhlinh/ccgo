@@ -9,7 +9,9 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_SHARED, ARCHIVE_DIR_STATIC};
+use crate::build::archive::{
+    get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_SHARED, ARCHIVE_DIR_STATIC,
+};
 use crate::build::cmake::{BuildType, CMakeConfig};
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
@@ -62,7 +64,11 @@ impl ConanBuilder {
         std::fs::create_dir_all(&install_dir)?;
 
         let build_shared = link_type == "shared";
-        let build_type = if ctx.options.release { "Release" } else { "Debug" };
+        let build_type = if ctx.options.release {
+            "Release"
+        } else {
+            "Debug"
+        };
 
         // Check if conanfile.py exists in project root or conan/ subdirectory
         let conanfile = if ctx.project_root.join("conanfile.py").exists() {
@@ -115,7 +121,10 @@ impl ConanBuilder {
         install_cmd.env("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" });
 
         if ctx.options.verbose {
-            eprintln!("Running: conan install {:?}", install_cmd.get_args().collect::<Vec<_>>());
+            eprintln!(
+                "Running: conan install {:?}",
+                install_cmd.get_args().collect::<Vec<_>>()
+            );
         }
 
         let status = install_cmd
@@ -146,12 +155,13 @@ impl ConanBuilder {
         build_cmd.env("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" });
 
         if ctx.options.verbose {
-            eprintln!("Running: conan build {:?}", build_cmd.get_args().collect::<Vec<_>>());
+            eprintln!(
+                "Running: conan build {:?}",
+                build_cmd.get_args().collect::<Vec<_>>()
+            );
         }
 
-        let status = build_cmd
-            .status()
-            .context("Failed to run conan build")?;
+        let status = build_cmd.status().context("Failed to run conan build")?;
 
         if !status.success() {
             bail!("conan build failed");
@@ -177,7 +187,10 @@ impl ConanBuilder {
             .install_prefix(install_dir.clone())
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
-            .variable("CCGO_BUILD_SHARED_LIBS", if build_shared { "ON" } else { "OFF" })
+            .variable(
+                "CCGO_BUILD_SHARED_LIBS",
+                if build_shared { "ON" } else { "OFF" },
+            )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
@@ -203,7 +216,10 @@ impl ConanBuilder {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
                 if ctx.options.verbose {
-                    eprintln!("    Enabled features: {}", feature_defines.replace(';', ", "));
+                    eprintln!(
+                        "    Enabled features: {}",
+                        feature_defines.replace(';', ", ")
+                    );
                 }
             }
         }
@@ -219,12 +235,12 @@ impl ConanBuilder {
         // Conan 2.x with cmake_layout puts libraries directly in build/Release or build/Debug
         // Always check Release first since Conan often builds Release even for debug configs
         let possible_dirs = vec![
-            build_dir.join("out"),                          // CCGO cmake output
-            build_dir.join("build/Release"),                // Conan Release build (most common)
-            build_dir.join("build/Debug"),                  // Conan Debug build
-            build_dir.join("install/lib"),                  // CMake install
-            build_dir.join("lib"),                          // Direct lib output
-            build_dir.join("build/lib"),                    // Conan build output
+            build_dir.join("out"),           // CCGO cmake output
+            build_dir.join("build/Release"), // Conan Release build (most common)
+            build_dir.join("build/Debug"),   // Conan Debug build
+            build_dir.join("install/lib"),   // CMake install
+            build_dir.join("lib"),           // Direct lib output
+            build_dir.join("build/lib"),     // Conan build output
         ];
 
         // Library extensions to look for
@@ -280,8 +296,8 @@ impl PlatformBuilder for ConanBuilder {
 
     fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
         // Check if Conan is installed
-        let version = Self::check_conan_installed()
-            .context("Conan build requires Conan to be installed")?;
+        let version =
+            Self::check_conan_installed().context("Conan build requires Conan to be installed")?;
 
         if ctx.options.verbose {
             eprintln!("Found {}", version);
@@ -373,7 +389,11 @@ impl PlatformBuilder for ConanBuilder {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
             archive.add_directory(&include_source, &include_path)?;
             if ctx.options.verbose {
-                eprintln!("Added include files from {} to {}", include_source.display(), include_path);
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
             }
         }
 
@@ -403,7 +423,11 @@ impl PlatformBuilder for ConanBuilder {
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean cmake_build/{release|debug}/conan
         for subdir in &["release", "debug"] {
-            let build_dir = ctx.project_root.join("cmake_build").join(subdir).join("conan");
+            let build_dir = ctx
+                .project_root
+                .join("cmake_build")
+                .join(subdir)
+                .join("conan");
             if build_dir.exists() {
                 std::fs::remove_dir_all(&build_dir)
                     .with_context(|| format!("Failed to clean {}", build_dir.display()))?;

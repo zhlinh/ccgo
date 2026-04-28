@@ -42,10 +42,7 @@ impl CheckCommand {
         let config = CcgoConfig::load()?;
         let package = config.require_package()?;
 
-        eprintln!(
-            "🔍 Checking {} for compilation errors...\n",
-            package.name
-        );
+        eprintln!("🔍 Checking {} for compilation errors...\n", package.name);
 
         let start = Instant::now();
 
