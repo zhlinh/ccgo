@@ -6,6 +6,39 @@
 
 CCGO now supports automatic transitive dependency resolution. When you run `ccgo install`, it automatically discovers and installs dependencies of your dependencies, determines the correct build order, and detects circular dependencies.
 
+## Resolution priority
+
+For each `[[dependencies]]` entry, `ccgo fetch` decides where the bytes
+come from by walking these source kinds in order. The first one that
+matches the dep's declared fields wins:
+
+1. **`path = "..."`** — local path dependency. Symlinked or copied
+   from the relative/absolute path in the consumer's tree.
+2. **`git = "..."` (with `branch` / `tag` / `rev`)** — Git dependency.
+   Cloned shallowly into `~/.ccgo/git/<repo>/`.
+3. **`zip = "..."`** — archive dependency. Downloaded (`https://`) or
+   read (`file://`, local path) and extracted into `.ccgo/deps/<name>/`.
+4. **Registry resolution** — when `[registries]` is non-empty AND the
+   dep has no `path`/`git`/`zip` source. ccgo walks declared registries
+   (or just the one named by `[[dependencies]].registry`) in TOML
+   declaration order, takes the first non-yanked exact-version match,
+   downloads its `archive_url`, verifies SHA-256, and extracts. See
+   [`features/registry.md`](features/registry.md) for the index schema
+   and the `[registries]` configuration syntax.
+5. **Version-only local cache fallback** — when nothing above resolves
+   AND the dep has a non-empty `version`. ccgo looks under
+   `~/.ccgo/packages/<name>/<version>/` (the cache populated by
+   `ccgo install` in the source project) and copies that into
+   `.ccgo/deps/<name>/`. This mirrors the Cargo / Maven workflow where
+   the dep is identified by name+version and the location lives entirely
+   in a developer-machine cache.
+
+When step 4 returns "no match" it falls through cleanly to step 5 —
+existing `version`-only deps that don't appear in any configured registry
+keep working unchanged. When `[registries]` is empty, step 4 is skipped
+entirely. This is what makes the registry tier opt-in and incremental:
+older `git`/`zip` declarations stay valid forever.
+
 ## Features
 
 ### 1. Transitive Dependency Discovery

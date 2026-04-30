@@ -31,13 +31,17 @@
 //!    spdlog = "1.12.0"
 //!    ```
 
+pub mod cache;
 mod index;
+pub mod resolve;
 mod shorthand;
 mod version_discovery;
 
+pub use cache::RegistryCache;
 pub use index::{
     generate_package_entry, IndexMetadata, PackageEntry, PackageIndex, RegistryConfig,
     ResolvedPackage, UpdateResult, VersionEntry, DEFAULT_REGISTRY, DEFAULT_REGISTRY_URL,
 };
+pub use resolve::{resolve_dep, ResolvedRegistryDep};
 pub use shorthand::{expand_git_shorthand, GitProvider, ShorthandSpec};
 pub use version_discovery::{discover_latest_version, GitTagInfo, SemVer, VersionDiscovery};

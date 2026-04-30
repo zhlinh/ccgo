@@ -13,6 +13,79 @@ Following Swift Package Manager's approach, CCGO uses Git repositories as packag
 - Naturally supports private packages
 - Works offline once cached
 
+## Two-tier model
+
+CCGO splits "what packages exist" from "where the bytes live":
+
+**Tier 1 — Discovery (the index repo).** A Git repository whose JSON files
+list every published package and version. Browseable on the web, auditable
+via `git log`, queryable with `ccgo registry search`. Publishers run
+`ccgo publish index` to append a new `VersionEntry` whenever they ship.
+Because the index is just text in Git, code review, branch protection, and
+signed commits all apply for free.
+
+**Tier 2 — Resolution (the artifact archive).** Each `VersionEntry` may
+record an `archive_url` pointing at a packaged build (zip or tar.gz) on a
+CDN, artifactory, or release page, plus a SHA-256 `checksum`. When a
+consumer's `ccgo fetch` resolves a `version`-only dependency through the
+index, ccgo downloads that archive directly, verifies the checksum, and
+extracts it into `.ccgo/deps/<name>/`. No git history transfer, no
+post-clone build step, no source compilation on the consumer side.
+
+The consumer's `CCGO.toml` carries no URL — only `version = "1.0.0"` plus
+an optional `registry = "name"` selector. The index and the
+`[registries]` table together resolve the rest.
+
+## Configuration
+
+Declare one or more registries in the project's `CCGO.toml`. The map key
+is the registry name; the value is the index repository's Git URL.
+
+```toml
+[registries]
+mna = "git@git.example.com:org/ccgo-index.git"
+public = "https://github.com/example-org/ccgo-packages.git"
+
+[[dependencies]]
+name = "stdcomm"
+version = "25.2.9519653"
+registry = "mna"           # explicit selector
+
+[[dependencies]]
+name = "fmt"
+version = "10.2.1"
+# no registry = ... — ccgo walks all declared registries in declaration order,
+# first match wins
+```
+
+The `[[dependencies]].registry` field is optional. When set, it pins the
+lookup to a single registry (and errors if the name is not in
+`[registries]`). When absent, ccgo iterates registries in TOML declaration
+order and takes the first match — same precedence rule as Cargo.
+
+## Publisher CI workflow
+
+A typical publish step bakes the archive URL into each `VersionEntry` so
+consumers can resolve a version without ever touching the source repo:
+
+```bash
+ccgo build all --release
+ccgo package --release        # produces NAME_CCGO_PACKAGE-VERSION.zip
+# upload zip to your CDN/artifactory  (your script)
+ccgo publish index \
+  --index-repo git@example.com:org/index.git \
+  --index-name org-index \
+  --archive-url-template "https://artifacts.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" \
+  --checksum \
+  --index-push
+```
+
+The placeholders `{name}`, `{version}`, and `{tag}` are substituted into
+the template per-version. With `--checksum`, each entry also carries a
+SHA-256 of the corresponding archive — so consumer-side fetch verifies
+integrity before extraction. See [Publishing to Index](#publishing-to-index)
+below for the full flag reference.
+
 ## Registry Index Format
 
 A registry is a Git repository containing JSON files that describe available packages.
@@ -75,19 +148,27 @@ This directory structure:
   "versions": [
     {
       "version": "10.2.1",
-      "git_tag": "10.2.1",
+      "tag": "v10.2.1",
       "checksum": "sha256:...",
+      "archive_url": "https://artifacts.example.com/fmt/fmt_CCGO_PACKAGE-10.2.1.zip",
+      "archive_format": "zip",
       "yanked": false
     },
     {
       "version": "10.1.1",
-      "git_tag": "10.1.1",
+      "tag": "v10.1.1",
       "checksum": "sha256:...",
       "yanked": false
     }
   ]
 }
 ```
+
+`archive_url` and `archive_format` are optional; entries that omit them
+remain valid and are simply skipped by the registry-resolution path
+(consumers must then declare an explicit `git`/`zip` source for those
+versions). `archive_format` defaults to `"zip"` when an `archive_url` is
+present without a format hint; `"tar.gz"` is also supported.
 
 ## Configuration
 
@@ -298,13 +379,26 @@ To create your own package registry:
 
 ## Version Resolution
 
-When resolving a package from the registry:
+When `ccgo fetch` resolves a `version`-only dependency through `[registries]`:
 
-1. Find the package in the specified registry (or default)
-2. Filter versions matching the version requirement
-3. Exclude yanked versions
-4. Select the highest matching version
-5. Use the `git_tag` to clone the repository
+1. Walk declared registries in TOML declaration order (or the single
+   registry named by `[[dependencies]].registry`).
+2. For each registry, ensure the index is cloned into
+   `~/.ccgo/registries/<name>/` (or pulled if already present).
+3. Look up the package's sharded JSON entry.
+4. Filter the entry's `versions[]` to non-yanked exact-version matches.
+5. **First match wins.** Take the first `VersionEntry` with a matching
+   `version`; subsequent registries are not consulted.
+6. If the entry has an `archive_url`, download it, verify
+   SHA-256 against `checksum` (when present), and extract to
+   `.ccgo/deps/<name>/`.
+7. The lockfile records `source = "registry+<index-url>"` plus the
+   `checksum`, so `ccgo fetch --locked` reproduces the same bytes
+   without re-resolving.
+
+Note: this iteration does **not** parse semver requirements like `^1.0`
+or `~2.1`. The `version = "x.y.z"` value is matched as an exact string
+against `VersionEntry.version`. Range support is a planned follow-up.
 
 ## Publishing to Index
 
@@ -349,6 +443,8 @@ ccgo publish index \
 | `--index-push` | Push changes to remote after commit |
 | `--index-message <msg>` | Custom commit message |
 | `--checksum` | Generate SHA-256 checksums using git archive |
+| `--archive-url-template <T>` | URL template baked into each `VersionEntry.archive_url`. Placeholders: `{name}`, `{version}`, `{tag}`. |
+| `--archive-format <fmt>` | Archive format hint stored in `VersionEntry.archive_format` (default `zip`; also `tar.gz`). Only applies when `--archive-url-template` is set. |
 
 ### Example Output
 
@@ -391,4 +487,6 @@ ccgo publish index \
 
 - [Git Shorthand](git-shorthand.md)
 - [Dependency Management](dependency-management.md)
+- [Migrating to a Registry-Based Setup](../guides/migrating-to-registry.md)
+- [Dependency Resolution](../dependency-resolution.md)
 - [CCGO.toml Reference](../reference/ccgo-toml.md)

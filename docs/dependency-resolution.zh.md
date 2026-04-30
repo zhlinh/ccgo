@@ -6,6 +6,34 @@
 
 CCGO 现在支持自动传递依赖解析。运行 `ccgo install` 时，它会自动发现并安装依赖的依赖、确定正确的构建顺序，并检测循环依赖。
 
+## 解析优先级
+
+对每个 `[[dependencies]]` 条目，`ccgo fetch` 按下列源类型顺序决定字节
+来源。第一个与依赖声明字段匹配的种类胜出：
+
+1. **`path = "..."`** —— 本地路径依赖。从消费者目录中的相对/绝对路径
+   软链或拷贝过来。
+2. **`git = "..."`（搭配 `branch` / `tag` / `rev`）** —— Git 依赖。
+   浅克隆到 `~/.ccgo/git/<repo>/`。
+3. **`zip = "..."`** —— 归档依赖。`https://` 直接下载，`file://` 或本地
+   路径直接读取，再解压到 `.ccgo/deps/<name>/`。
+4. **注册表解析** —— 当 `[registries]` 非空、且该依赖未写
+   `path`/`git`/`zip` 源时启用。ccgo 按 TOML 声明顺序遍历所有注册表
+   （或 `[[dependencies]].registry` 指定的那一个），取首个未 yanked、
+   版本号精确匹配的 `VersionEntry`，下载其 `archive_url`，校验 SHA-256
+   后解压。索引 schema 与 `[registries]` 配置详见
+   [`features/registry.zh.md`](features/registry.zh.md)。
+5. **仅版本号的本地缓存回退** —— 当上面四种都没解析成功，且依赖的
+   `version` 字段非空时，ccgo 查 `~/.ccgo/packages/<name>/<version>/`
+   （由源项目里的 `ccgo install` 写入的缓存），把其中内容拷贝到
+   `.ccgo/deps/<name>/`。这与 Cargo / Maven 的工作流一致 —— 依赖以
+   名称+版本号识别，位置完全在开发机缓存里。
+
+当第 4 步返回"未命中"时会平滑落到第 5 步 —— 已有的、不在任何已配置
+注册表中的 `version`-only 依赖仍可正常工作。`[registries]` 为空时，
+第 4 步整段跳过。这就是注册表层既可选又可渐进的原因：旧的
+`git`/`zip` 声明永远有效。
+
 ## 功能
 
 ### 1. 传递依赖发现

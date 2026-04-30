@@ -127,6 +127,14 @@ pub struct VersionEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
 
+    /// Direct URL to the artifact archive (optional)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_url: Option<String>,
+
+    /// Archive format ("zip" or "tar.gz"); defaults to "zip" when absent
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_format: Option<String>,
+
     /// Release date (RFC 3339)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub released_at: Option<String>,
@@ -138,6 +146,13 @@ pub struct VersionEntry {
     /// Yanked reason
     #[serde(skip_serializing_if = "Option::is_none")]
     pub yanked_reason: Option<String>,
+}
+
+impl VersionEntry {
+    /// Get the archive format, defaulting to "zip" when not specified
+    pub fn archive_format(&self) -> &str {
+        self.archive_format.as_deref().unwrap_or("zip")
+    }
 }
 
 /// Registry configuration
@@ -674,6 +689,8 @@ pub fn generate_package_entry(
                 version,
                 tag,
                 checksum: None,
+                archive_url: None,
+                archive_format: None,
                 released_at: None,
                 yanked: false,
                 yanked_reason: None,
@@ -725,6 +742,8 @@ mod tests {
             version: "1.0.0".to_string(),
             tag: "v1.0.0".to_string(),
             checksum: None,
+            archive_url: None,
+            archive_format: None,
             released_at: None,
             yanked: true,
             yanked_reason: Some("Security vulnerability".to_string()),
@@ -732,6 +751,55 @@ mod tests {
 
         assert!(entry.yanked);
         assert!(entry.yanked_reason.is_some());
+    }
+
+    #[test]
+    fn version_entry_serializes_archive_url_when_present() {
+        let entry = VersionEntry {
+            version: "1.0.0".to_string(),
+            tag: "v1.0.0".to_string(),
+            checksum: None,
+            archive_url: Some(
+                "https://github.com/example/repo/archive/refs/tags/v1.0.0.tar.gz".to_string(),
+            ),
+            archive_format: Some("tar.gz".to_string()),
+            released_at: None,
+            yanked: false,
+            yanked_reason: None,
+        };
+
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"archive_url\""));
+        assert!(json.contains("https://github.com/example/repo/archive/refs/tags/v1.0.0.tar.gz"));
+        assert!(json.contains("\"archive_format\""));
+        assert!(json.contains("tar.gz"));
+    }
+
+    #[test]
+    fn version_entry_deserializes_legacy_without_archive_fields() {
+        let legacy = r#"{"version":"1.0.0","tag":"v1.0.0"}"#;
+        let entry: VersionEntry = serde_json::from_str(legacy).unwrap();
+
+        assert_eq!(entry.version, "1.0.0");
+        assert_eq!(entry.tag, "v1.0.0");
+        assert!(entry.archive_url.is_none());
+        assert!(entry.archive_format.is_none());
+    }
+
+    #[test]
+    fn version_entry_archive_format_defaults_to_zip() {
+        let entry = VersionEntry {
+            version: "1.0.0".to_string(),
+            tag: "v1.0.0".to_string(),
+            checksum: None,
+            archive_url: None,
+            archive_format: None,
+            released_at: None,
+            yanked: false,
+            yanked_reason: None,
+        };
+
+        assert_eq!(entry.archive_format(), "zip");
     }
 
     #[test]

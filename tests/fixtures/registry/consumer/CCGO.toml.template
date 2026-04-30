@@ -1,0 +1,31 @@
+# Test-fixture template. The real `CCGO.toml` is generated per-test-run by
+# tests/registry_smoke.rs (which substitutes ABS_PATH_TO_INDEX with an
+# absolute file:// URL pointing at tests/fixtures/registry/index/) and is
+# gitignored. To debug `ccgo fetch` manually against this fixture, copy this
+# file to `CCGO.toml` and replace ABS_PATH_TO_INDEX with the index path.
+
+[project]
+name = "consumer-reg"
+version = "0.1.0"
+description = "Consumer of leaf via registry resolution"
+group_id = "com.ccgo.test.consumer-reg"
+license = "MIT"
+
+[build]
+output_dir = "cmake_build"
+
+[apple]
+export_headers = [
+    { src = "include/consumer-reg/consumer-reg.h", dest = "" },
+]
+
+[include]
+src = "include"
+
+[registries]
+test = "file://ABS_PATH_TO_INDEX"
+
+[[dependencies]]
+name = "leaf"
+version = "1.0.0"
+registry = "test"

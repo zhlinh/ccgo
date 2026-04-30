@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+* **Index-driven dependency resolution**: `ccgo fetch` now resolves
+  `version`-only dependencies through the registries declared in
+  `[registries]`. Each registry is a Git-cloned index repo that lists
+  every published version with its archive URL and SHA-256 checksum.
+  Consumers no longer need to write `git`/`zip` source URLs in
+  `CCGO.toml` — `version = "x.y.z"` plus an optional
+  `registry = "name"` selector is enough.
+
+  Publishers expose archives via
+  `ccgo publish index --archive-url-template "https://cdn.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" --checksum`,
+  which bakes the URL and SHA-256 into each `VersionEntry`. When both
+  flags are set, `--checksum` hashes the local
+  `target/release/package/<NAME>_CCGO_PACKAGE-<version>.zip` (the same
+  bytes consumers will download), so the checksum the index records is
+  the one that `verify_archive_checksum` validates at fetch time. The new
+  `[[dependencies]].registry` field pins lookup to a specific registry;
+  without it, ccgo walks all declared registries in TOML declaration
+  order and takes the first non-yanked exact-version match.
+
+  The lockfile records `source = "registry+<index-url>"` plus the
+  checksum, so `ccgo fetch --locked` reproduces the same bytes without
+  re-resolving. Registry resolution slots between the existing `zip`
+  branch and the version-only local cache fallback in
+  [`docs/dependency-resolution.md`](docs/dependency-resolution.md#resolution-priority);
+  it only fires when `[registries]` is non-empty and the dep has no
+  explicit `path`/`git`/`zip` source.
+
+  See [`docs/guides/migrating-to-registry.md`](docs/guides/migrating-to-registry.md)
+  for a step-by-step migration of an existing project tree.
+
+### Changed
+
+* `VersionEntry` JSON in registry indexes gained two optional fields
+  (`archive_url`, `archive_format`). The schema change is
+  **non-breaking** — older index repos without these fields continue to
+  parse cleanly; the registry-resolution path simply falls through when
+  `archive_url` is absent, and consumers depending on those packages
+  must keep using `git` / `zip` declarations until the publisher
+  re-publishes with `--archive-url-template`. No re-publish is forced
+  by this release.
+
 ### Features
 
 * **Linkage strategy** (`[[dependencies]].linkage` / `[build].default_dep_linkage`): consumers building shared libraries can now keep dependencies external (`shared-external`, default) instead of archiving them in. Eliminates the per-consumer copy of every transitive dep that previously bloated APKs containing multiple sibling libraries. **OHOS** static consumers now produce thin `.a` files (skip the third-party merge); other platforms' static-build behavior is unchanged in this release.

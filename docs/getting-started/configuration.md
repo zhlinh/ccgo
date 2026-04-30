@@ -298,6 +298,46 @@ common = { path = "/opt/libs/common" }
 core = { path = "./libs/core" }
 ```
 
+### Registry Dependencies
+
+Declare a Git-backed package index in `[registries]`, then reference its
+packages by name + version in `[[dependencies]]`:
+
+```toml
+[registries]
+# Map key = registry name, value = index repository URL
+mna = "git@git.example.com:org/ccgo-index.git"
+public = "https://github.com/example-org/ccgo-packages.git"
+
+[[dependencies]]
+name = "stdcomm"
+version = "25.2.9519653"
+registry = "mna"          # Pin lookup to a specific registry
+
+[[dependencies]]
+name = "fmt"
+version = "10.2.1"
+# No `registry = ...` — ccgo walks all declared registries in
+# TOML declaration order; first match wins.
+```
+
+`ccgo fetch` clones each registry index into `~/.ccgo/registries/<name>/`,
+finds the requested `version` in the package's JSON entry, downloads the
+recorded `archive_url`, verifies the SHA-256 checksum, and extracts the
+archive into `.ccgo/deps/<name>/`. The consumer's CCGO.toml needs no
+`git` URL or `zip` URL — the index supplies them.
+
+**Field reference:**
+
+| Key | Where | Type | Notes |
+|---|---|---|---|
+| `[registries]` | top-level table | `name = "git-url"` map | Each entry is a Git index repo. |
+| `[[dependencies]].registry` | per-dep | optional `String` | Pins lookup to one named registry. Errors if the name is not in `[registries]`. |
+| `[[dependencies]].version` | per-dep | required when using a registry | Exact-string match against `VersionEntry.version` in the index. Range syntax (`^1.0`, `~2.1`) is not yet parsed. |
+
+See [Package Registry](../features/registry.md) for the index JSON
+schema, the publisher CI snippet, and the resolution priority list.
+
 ### Optional Dependencies
 
 ```toml

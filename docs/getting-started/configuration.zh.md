@@ -298,6 +298,45 @@ common = { path = "/opt/libs/common" }
 core = { path = "./libs/core" }
 ```
 
+### 注册表依赖
+
+在 `[registries]` 中声明一个 Git 索引，然后用名称 + 版本在
+`[[dependencies]]` 中引用其中的包：
+
+```toml
+[registries]
+# map 的键 = 注册表名称，值 = 索引仓库 URL
+mna = "git@git.example.com:org/ccgo-index.git"
+public = "https://github.com/example-org/ccgo-packages.git"
+
+[[dependencies]]
+name = "stdcomm"
+version = "25.2.9519653"
+registry = "mna"          # 把查找钉到指定注册表
+
+[[dependencies]]
+name = "fmt"
+version = "10.2.1"
+# 不写 `registry = ...` —— ccgo 按 TOML 声明顺序遍历所有注册表，
+# 命中即取
+```
+
+`ccgo fetch` 会把每个注册表索引克隆到 `~/.ccgo/registries/<name>/`，
+在该包的 JSON 条目里找指定 `version`，下载记录的 `archive_url`，
+校验 SHA-256，再把归档解压到 `.ccgo/deps/<name>/`。消费方的 CCGO.toml
+不再需要 `git` URL 或 `zip` URL —— 索引会把这些信息送过来。
+
+**字段参考：**
+
+| 键 | 位置 | 类型 | 说明 |
+|---|---|---|---|
+| `[registries]` | 顶层表 | `name = "git-url"` map | 每个条目是一个 Git 索引仓库。|
+| `[[dependencies]].registry` | 单个依赖 | 可选 `String` | 把查找钉到具名注册表。如果该名称不在 `[registries]` 里会报错。|
+| `[[dependencies]].version` | 单个依赖 | 通过注册表解析时必填 | 与索引中 `VersionEntry.version` 做字符串精确匹配。当前不解析 `^1.0`、`~2.1` 这类区间语法。|
+
+索引 JSON schema、发布方 CI 片段、解析优先级见
+[包注册表](../features/registry.zh.md)。
+
 ### 可选依赖
 
 ```toml

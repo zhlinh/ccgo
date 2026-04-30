@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::config::{CcgoConfig, DependencyConfig};
 use crate::dependency::resolver::resolve_dependencies_with_strategy;
@@ -470,6 +471,10 @@ impl FetchCommand {
         } else if let Some(ref zip_url) = dep.zip {
             // Archive dependency (zip or tar.gz, https:// URL or local path)
             self.install_from_archive(&dep.name, &dep.version, zip_url, project_dir, &install_path)?
+        } else if let Some(resolved) = self.try_resolve_registry(dep, &config)? {
+            // Resolved through a [registries] index — download + extract the
+            // published archive (preferred over the local-cache fallback below).
+            self.install_from_registry(dep, &resolved, &install_path)?
         } else if !dep.version.is_empty() {
             // Name + version only. Resolve from the global packages cache
             // populated by `ccgo install` in the source project. This mirrors
@@ -673,6 +678,177 @@ impl FetchCommand {
             installed_at: Some(chrono::Local::now().to_rfc3339()),
             patch: None,
         })
+    }
+
+    /// Try to resolve a `version`-only dependency through the project's
+    /// `[registries]`. Returns `Ok(None)` when no registries are declared
+    /// (preserving legacy behavior for projects that don't use the index),
+    /// or when no declared registry has a non-yanked exact-version match.
+    ///
+    /// When `dep.registry` is set, lookup is restricted to that single named
+    /// registry. Otherwise all declared registries are walked in iteration
+    /// order. Each cache is `ensure_synced` once before resolution.
+    fn try_resolve_registry(
+        &self,
+        dep: &DependencyConfig,
+        config: &CcgoConfig,
+    ) -> Result<Option<crate::registry::ResolvedRegistryDep>> {
+        use crate::registry::{resolve_dep, RegistryCache};
+
+        if config.registries.is_empty() {
+            return Ok(None);
+        }
+
+        // Build (name, cache) candidates. If dep.registry is set, restrict to
+        // that one; otherwise walk every declared registry in iter order.
+        let candidates: Vec<(String, RegistryCache)> = if let Some(name) = &dep.registry {
+            let url = config.registries.get(name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "dependency '{}' references unknown registry '{}' (not in [registries])",
+                    dep.name,
+                    name
+                )
+            })?;
+            vec![(name.clone(), RegistryCache::new(name.clone(), url.clone()))]
+        } else {
+            config
+                .registries
+                .iter()
+                .map(|(name, url)| (name.clone(), RegistryCache::new(name.clone(), url.clone())))
+                .collect()
+        };
+
+        // Pre-warm caches once so resolve_dep can stay I/O-free at the
+        // network level and just read sharded JSON files.
+        for (_, cache) in &candidates {
+            cache.ensure_synced(false)?;
+        }
+
+        resolve_dep(&dep.name, &dep.version, &candidates)
+    }
+
+    /// Install a dependency that has been resolved through a `[registries]`
+    /// index. Downloads the published archive (https or file://), verifies
+    /// the SHA-256 checksum recorded in the index when present, and extracts
+    /// into `install_path`.
+    ///
+    /// NOTE: Task 5 only supports `zip` archives. The index also records
+    /// `archive_format`, but we always dispatch to `extract_zip` here. A
+    /// later task can branch on `archive_format` to add tar.gz support.
+    fn install_from_registry(
+        &self,
+        dep: &DependencyConfig,
+        resolved: &crate::registry::ResolvedRegistryDep,
+        install_path: &Path,
+    ) -> Result<LockedPackage> {
+        let archive_url = resolved
+            .version_entry
+            .archive_url
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "registry '{}' has no archive_url for {} {}; \
+                     publisher must run `ccgo publish index --archive-url-template ...`",
+                    resolved.registry_name,
+                    resolved.package_name,
+                    resolved.version_entry.version
+                )
+            })?;
+
+        println!(
+            "📦 Resolving {} {} via registry '{}'",
+            resolved.package_name, resolved.version_entry.version, resolved.registry_name
+        );
+        println!("   Archive: {}", archive_url);
+
+        let bytes = Self::fetch_archive_bytes(archive_url)?;
+        Self::verify_archive_checksum(resolved, &bytes)?;
+        Self::clean_install_path(install_path)?;
+        std::fs::create_dir_all(install_path)?;
+        Self::extract_zip(&bytes, install_path)?;
+
+        println!("   ✓ Installed to {}", install_path.display());
+
+        Ok(LockedPackage {
+            name: dep.name.clone(),
+            version: resolved.version_entry.version.clone(),
+            source: format!("registry+{}", resolved.registry_url),
+            checksum: resolved.version_entry.checksum.clone(),
+            dependencies: vec![],
+            git: None,
+            installed_at: Some(chrono::Local::now().to_rfc3339()),
+            patch: None,
+        })
+    }
+
+    /// Fetch raw archive bytes from an `archive_url`. Supports `https://`,
+    /// `http://`, and `file://` schemes.
+    fn fetch_archive_bytes(archive_url: &str) -> Result<Vec<u8>> {
+        if archive_url.starts_with("http://") || archive_url.starts_with("https://") {
+            Self::download_zip(archive_url)
+        } else if let Some(path_str) = archive_url.strip_prefix("file://") {
+            // Reject relative paths early: `file://relative/foo.zip` would
+            // silently resolve against the process cwd and read a wrong
+            // file. The index publisher must always emit absolute paths
+            // (or http(s) URLs) — there is no useful base path to resolve
+            // against here, since `archive_url` flows through the index
+            // entry without any context about who wrote it.
+            let path = Path::new(path_str);
+            if !path.is_absolute() {
+                anyhow::bail!(
+                    "file:// archive_url must be an absolute path; got: {} \
+                     (the index publisher should emit a path starting with /)",
+                    archive_url
+                );
+            }
+            std::fs::read(path)
+                .with_context(|| format!("failed to read {}", path.display()))
+        } else {
+            anyhow::bail!("unsupported archive_url scheme: {}", archive_url);
+        }
+    }
+
+    /// Verify the SHA-256 checksum recorded in the index against the
+    /// downloaded archive bytes. No-op when the index doesn't record one.
+    fn verify_archive_checksum(
+        resolved: &crate::registry::ResolvedRegistryDep,
+        bytes: &[u8],
+    ) -> Result<()> {
+        let Some(expected) = &resolved.version_entry.checksum else {
+            return Ok(());
+        };
+        let actual = format!("sha256:{:x}", Sha256::digest(bytes));
+        if &actual != expected {
+            anyhow::bail!(
+                "checksum mismatch for {} {}: index says {}, downloaded {}",
+                resolved.package_name,
+                resolved.version_entry.version,
+                expected,
+                actual
+            );
+        }
+        Ok(())
+    }
+
+    /// Remove any prior installation at `install_path`. Tolerates regular
+    /// dirs, live symlinks, AND dangling symlinks. Idempotent — re-running
+    /// `ccgo fetch` must safely re-extract over a previous extraction.
+    ///
+    /// Uses `symlink_metadata()` rather than `exists()` because the latter
+    /// follows symlinks: a dangling symlink left over from a wiped target
+    /// returns `false` from `exists()` and would otherwise be silently
+    /// preserved, causing the subsequent extract to fail with a confusing
+    /// "file exists" error.
+    fn clean_install_path(install_path: &Path) -> Result<()> {
+        if install_path.symlink_metadata().is_err() {
+            return Ok(());
+        }
+        if install_path.is_symlink() {
+            std::fs::remove_file(install_path)?;
+        } else {
+            std::fs::remove_dir_all(install_path)?;
+        }
+        Ok(())
     }
 
     /// Download a ZIP from a URL, returning its bytes

@@ -1,0 +1,8 @@
+index/
+leaf-archive/
+consumer/.ccgo/
+consumer/cmake_build/
+consumer/target/
+consumer/CCGO.lock
+consumer/CCGO.toml
+consumer/.ccgo_materialize_*.fingerprint

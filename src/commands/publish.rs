@@ -168,9 +168,47 @@ pub struct PublishCommand {
     #[arg(long)]
     pub index_message: Option<String>,
 
-    /// Generate SHA-256 checksums for each version (uses git archive)
+    /// Generate SHA-256 checksums for each version recorded in the index.
+    ///
+    /// Behavior depends on whether `--archive-url-template` is set:
+    ///
+    /// * **With** `--archive-url-template`: hash the local published
+    ///   `target/release/package/<NAME>_CCGO_PACKAGE-<version>.zip`. This
+    ///   is what consumers will download, so it's what we must hash.
+    ///   Versions whose local zip is absent (typical for historical tags)
+    ///   silently get `None` — consumers skip verification for those.
+    ///
+    /// * **Without** `--archive-url-template`: hash the git source
+    ///   tarball at the tag (legacy behavior; informational only since
+    ///   no fetch path verifies against it today).
     #[arg(long)]
     pub checksum: bool,
+
+    /// URL template for VersionEntry.archive_url in published index entries.
+    ///
+    /// Placeholders: `{name}`, `{version}`, `{tag}` are substituted at publish
+    /// time. Without this flag, archive_url stays None and consumers must
+    /// supply git/zip URLs explicitly in their CCGO.toml.
+    ///
+    /// Example:
+    ///   --archive-url-template "https://artifacts.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip"
+    #[arg(long)]
+    pub archive_url_template: Option<String>,
+
+    /// Archive format recorded in VersionEntry.archive_format. Only "zip" and
+    /// "tar.gz" are supported by the resolver today.
+    #[arg(long, default_value = "zip")]
+    pub archive_format: String,
+}
+
+/// Replace `{name}`, `{version}`, and `{tag}` placeholders in a template
+/// string. Order matters: `{name}` is replaced first so `{name}-{version}`
+/// won't accidentally consume part of a versioned-name pattern.
+fn substitute_archive_url(template: &str, name: &str, version: &str, tag: &str) -> String {
+    template
+        .replace("{name}", name)
+        .replace("{version}", version)
+        .replace("{tag}", tag)
 }
 
 impl PublishCommand {
@@ -645,7 +683,8 @@ impl PublishCommand {
         if self.checksum {
             println!("   (computing SHA-256 checksums)");
         }
-        let versions = self.discover_git_versions(&project_dir, self.checksum, verbose)?;
+        let versions =
+            self.discover_git_versions(&project_dir, &package.name, self.checksum, verbose)?;
 
         if versions.is_empty() {
             bail!("No version tags found. Create tags with: git tag v1.0.0");
@@ -777,6 +816,7 @@ impl PublishCommand {
     fn discover_git_versions(
         &self,
         project_dir: &Path,
+        package_name: &str,
         compute_checksum: bool,
         verbose: bool,
     ) -> Result<Vec<VersionEntry>> {
@@ -808,12 +848,34 @@ impl PublishCommand {
 
             // Validate it looks like a semver
             if crate::registry::SemVer::parse(version).is_some() {
-                // Compute checksum if requested
+                let archive_url = self
+                    .archive_url_template
+                    .as_deref()
+                    .map(|tpl| substitute_archive_url(tpl, package_name, version, tag));
+                let archive_format = archive_url.as_ref().map(|_| self.archive_format.clone());
+
+                // Pick the right checksum source:
+                //   * `--archive-url-template` set → consumers will verify the
+                //     downloaded zip's bytes via `verify_archive_checksum` in
+                //     fetch, so we MUST hash the same zip artifact, not the
+                //     git source tarball. We look for it at the standard
+                //     `ccgo package --release` output path; if absent (e.g.
+                //     historical tags whose zip isn't in target/) we fall
+                //     through to None for that version — consumers will skip
+                //     verification rather than failing.
+                //   * No template → legacy mode. `--checksum` is informational
+                //     only (no fetch path consults it for verification today),
+                //     so the source-tarball hash via `git archive` is fine.
                 let checksum = if compute_checksum {
                     if verbose {
                         println!("   Computing checksum for {}...", tag);
                     }
-                    self.compute_tag_checksum(project_dir, tag).ok()
+                    if archive_url.is_some() {
+                        self.compute_archive_zip_checksum(project_dir, package_name, version)
+                            .ok()
+                    } else {
+                        self.compute_tag_checksum(project_dir, tag).ok()
+                    }
                 } else {
                     None
                 };
@@ -822,6 +884,8 @@ impl PublishCommand {
                     version: version.to_string(),
                     tag: tag.to_string(),
                     checksum,
+                    archive_url,
+                    archive_format,
                     released_at: self.get_tag_date(project_dir, tag).ok(),
                     yanked: false,
                     yanked_reason: None,
@@ -830,6 +894,46 @@ impl PublishCommand {
         }
 
         Ok(versions)
+    }
+
+    /// Compute SHA-256 of the published archive zip for a given version.
+    ///
+    /// Looks at `target/release/package/<NAME>_CCGO_PACKAGE-<version>.zip`
+    /// — the standard output of `ccgo package --release`. This path is
+    /// expected to match what was uploaded to the CDN that the index
+    /// `archive_url` points at. Hashing the SAME bytes that consumers
+    /// will download is what makes `verify_archive_checksum` work.
+    ///
+    /// Errors when the local zip is absent. Caller swallows the error
+    /// via `.ok()` so historical tags (whose zip isn't in `target/`)
+    /// just get a `None` checksum — consumers skip verification for
+    /// those rather than failing the build.
+    fn compute_archive_zip_checksum(
+        &self,
+        project_dir: &Path,
+        package_name: &str,
+        version: &str,
+    ) -> Result<String> {
+        let zip_name = format!(
+            "{}_CCGO_PACKAGE-{}.zip",
+            package_name.to_uppercase(),
+            version
+        );
+        let zip_path = project_dir
+            .join("target")
+            .join("release")
+            .join("package")
+            .join(&zip_name);
+        if !zip_path.is_file() {
+            anyhow::bail!(
+                "expected archive at {} for index checksum; \
+                 run `ccgo package --release` first or skip this tag",
+                zip_path.display()
+            );
+        }
+        let bytes = std::fs::read(&zip_path)
+            .with_context(|| format!("failed to read {}", zip_path.display()))?;
+        Ok(format!("sha256:{:x}", Sha256::digest(&bytes)))
     }
 
     /// Compute SHA-256 checksum for a git tag using git archive
@@ -1225,5 +1329,125 @@ impl PublishCommand {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substitute_archive_url_replaces_all_placeholders() {
+        let template = "https://cdn.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip";
+        let result = substitute_archive_url(template, "stdcomm", "1.0.0", "v1.0.0");
+        assert_eq!(
+            result,
+            "https://cdn.example.com/stdcomm/stdcomm_CCGO_PACKAGE-1.0.0.zip"
+        );
+    }
+
+    #[test]
+    fn substitute_archive_url_with_tag_placeholder() {
+        let template =
+            "https://gh.example.com/{name}/releases/download/{tag}/{name}-{version}.tar.gz";
+        let result = substitute_archive_url(template, "leaf", "1.0.0", "v1.0.0");
+        assert_eq!(
+            result,
+            "https://gh.example.com/leaf/releases/download/v1.0.0/leaf-1.0.0.tar.gz"
+        );
+    }
+
+    #[test]
+    fn compute_archive_zip_checksum_hashes_local_package_zip() {
+        // Regression: --checksum + --archive-url-template must hash the
+        // SAME bytes consumers will download (the published zip), not the
+        // git source tarball. The fix is verified by writing a synthetic
+        // zip at the standard target/release/package/<NAME>_CCGO_PACKAGE-<ver>.zip
+        // path and asserting the function returns the sha256 of those bytes.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let project_dir = tmp.path();
+        let pkg_dir = project_dir.join("target/release/package");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        let payload = b"synthetic-zip-bytes-for-checksum-test";
+        std::fs::write(
+            pkg_dir.join("STDCOMM_CCGO_PACKAGE-1.0.0.zip"),
+            payload,
+        )
+        .unwrap();
+
+        let cmd = PublishCommand {
+            target: PublishTarget::Index,
+            registry: RegistryType::Local,
+            url: None,
+            remote_name: None,
+            skip_build: false,
+            yes: true,
+            manager: AppleManager::All,
+            push: false,
+            platform: None,
+            allow_warnings: true,
+            profile: "default".into(),
+            link_type: "both".into(),
+            doc_branch: "gh-pages".into(),
+            doc_force: false,
+            doc_open: false,
+            index_repo: None,
+            index_name: None,
+            index_push: false,
+            index_message: None,
+            checksum: true,
+            archive_url_template: None,
+            archive_format: "zip".into(),
+        };
+
+        let got = cmd
+            .compute_archive_zip_checksum(project_dir, "stdcomm", "1.0.0")
+            .expect("local zip should be hashable");
+
+        let expected = format!("sha256:{:x}", Sha256::digest(payload));
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn compute_archive_zip_checksum_errors_when_local_zip_missing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+
+        let cmd = PublishCommand {
+            target: PublishTarget::Index,
+            registry: RegistryType::Local,
+            url: None,
+            remote_name: None,
+            skip_build: false,
+            yes: true,
+            manager: AppleManager::All,
+            push: false,
+            platform: None,
+            allow_warnings: true,
+            profile: "default".into(),
+            link_type: "both".into(),
+            doc_branch: "gh-pages".into(),
+            doc_force: false,
+            doc_open: false,
+            index_repo: None,
+            index_name: None,
+            index_push: false,
+            index_message: None,
+            checksum: true,
+            archive_url_template: None,
+            archive_format: "zip".into(),
+        };
+
+        let err = cmd
+            .compute_archive_zip_checksum(tmp.path(), "stdcomm", "9.9.9")
+            .expect_err("missing local zip should error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("STDCOMM_CCGO_PACKAGE-9.9.9.zip"),
+            "expected expected-path in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("ccgo package --release"),
+            "expected reproduction hint in error, got: {msg}"
+        );
     }
 }

@@ -467,4 +467,28 @@ mod tests {
         assert_eq!(src_type, SourceType::Path);
         assert_eq!(path, "../local");
     }
+
+    #[test]
+    fn locked_package_round_trip_for_registry_source() {
+        let pkg = LockedPackage {
+            name: "leaf".into(),
+            version: "1.0.0".into(),
+            source: "registry+git@example.com:my/index.git".into(),
+            checksum: Some("sha256:abc123".into()),
+            dependencies: vec![],
+            git: None,
+            installed_at: None,
+            patch: None,
+        };
+        let serialized = toml::to_string(&pkg).expect("LockedPackage should serialize");
+        let parsed: LockedPackage = toml::from_str(&serialized).expect("should round-trip");
+        assert_eq!(parsed.name, "leaf");
+        assert_eq!(parsed.version, "1.0.0");
+        assert_eq!(parsed.source, "registry+git@example.com:my/index.git");
+        assert_eq!(parsed.checksum.as_deref(), Some("sha256:abc123"));
+
+        let (kind, url) = parsed.parse_source();
+        assert_eq!(kind, SourceType::Registry);
+        assert_eq!(url, "git@example.com:my/index.git");
+    }
 }
