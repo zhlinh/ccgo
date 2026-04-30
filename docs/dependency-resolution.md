@@ -22,9 +22,18 @@ matches the dep's declared fields wins:
    dep has no `path`/`git`/`zip` source. ccgo walks declared registries
    (or just the one named by `[[dependencies]].registry`) in TOML
    declaration order, takes the first non-yanked exact-version match,
-   downloads its `archive_url`, verifies SHA-256, and extracts. See
-   [`features/registry.md`](features/registry.md) for the index schema
-   and the `[registries]` configuration syntax.
+   then chooses one of two sub-paths:
+   * **Archive** — when the matched `VersionEntry.archive_url` is set:
+     download those bytes, SHA-256-verify, extract.
+   * **Git+tag fallback** — when `archive_url` is absent but
+     `PackageEntry.repository` is set (which `ccgo publish index`
+     always populates from the project's `git remote`): `git clone
+     --branch <tag>` the source repo. The lockfile records
+     `source = "registry+<index-url>"` and `locked.git.revision` for
+     deterministic re-fetch.
+
+   See [`features/registry.md`](features/registry.md) for the index
+   schema and the `[registries]` configuration syntax.
 5. **Version-only local cache fallback** — when nothing above resolves
    AND the dep has a non-empty `version`. ccgo looks under
    `~/.ccgo/packages/<name>/<version>/` (the cache populated by

@@ -473,8 +473,10 @@ impl FetchCommand {
             self.install_from_archive(&dep.name, &dep.version, zip_url, project_dir, &install_path)?
         } else if let Some(resolved) = self.try_resolve_registry(dep, &config)? {
             // Resolved through a [registries] index — download + extract the
-            // published archive (preferred over the local-cache fallback below).
-            self.install_from_registry(dep, &resolved, &install_path)?
+            // published archive (or fall back to git+tag clone when the index
+            // entry has no archive_url). Preferred over the local-cache
+            // fallback below.
+            self.install_from_registry(dep, &resolved, &install_path, ccgo_home)?
         } else if !dep.version.is_empty() {
             // Name + version only. Resolve from the global packages cache
             // populated by `ccgo install` in the source project. This mirrors
@@ -732,31 +734,64 @@ impl FetchCommand {
     /// the SHA-256 checksum recorded in the index when present, and extracts
     /// into `install_path`.
     ///
-    /// NOTE: Task 5 only supports `zip` archives. The index also records
-    /// `archive_format`, but we always dispatch to `extract_zip` here. A
-    /// later task can branch on `archive_format` to add tar.gz support.
+    /// Install a registry-resolved dep. Two paths:
+    ///
+    /// 1. **Binary archive** — when the index records `archive_url`, download
+    ///    those bytes, SHA-256-verify, and `extract_zip`. Fastest path, byte-
+    ///    deterministic.
+    ///
+    /// 2. **Git source fallback** — when `archive_url` is absent but
+    ///    `package_repository` is set, `git clone --branch <tag>` the source
+    ///    repo. Useful while a project is bootstrapping its index (no zip
+    ///    artifact CDN yet) or for source-only projects that prefer git as
+    ///    the source of truth. The lockfile's `source` stays `registry+...`
+    ///    so re-fetch goes through the registry again, but `locked.git`
+    ///    carries the resolved commit SHA for `--locked` reproducibility.
+    ///
+    /// Errors when both fields are absent (the index publisher hasn't
+    /// supplied either route to the artifact).
+    ///
+    /// NOTE: archive path only supports zip today; tar.gz is a future task.
     fn install_from_registry(
         &self,
         dep: &DependencyConfig,
         resolved: &crate::registry::ResolvedRegistryDep,
         install_path: &Path,
+        ccgo_home: &Path,
     ) -> Result<LockedPackage> {
-        let archive_url = resolved
-            .version_entry
-            .archive_url
-            .as_deref()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "registry '{}' has no archive_url for {} {}; \
-                     publisher must run `ccgo publish index --archive-url-template ...`",
-                    resolved.registry_name,
-                    resolved.package_name,
-                    resolved.version_entry.version
-                )
-            })?;
+        if let Some(archive_url) = resolved.version_entry.archive_url.as_deref() {
+            return self.install_from_registry_archive(
+                dep,
+                resolved,
+                archive_url,
+                install_path,
+            );
+        }
 
+        if !resolved.package_repository.is_empty() {
+            return self.install_from_registry_git(dep, resolved, install_path, ccgo_home);
+        }
+
+        anyhow::bail!(
+            "registry '{}' has neither archive_url nor repository for {} {}; \
+             publisher must either upload an artifact and re-run \
+             `ccgo publish index --archive-url-template ...`, or ensure the \
+             package's git URL is recorded in the index entry",
+            resolved.registry_name,
+            resolved.package_name,
+            resolved.version_entry.version
+        )
+    }
+
+    fn install_from_registry_archive(
+        &self,
+        dep: &DependencyConfig,
+        resolved: &crate::registry::ResolvedRegistryDep,
+        archive_url: &str,
+        install_path: &Path,
+    ) -> Result<LockedPackage> {
         println!(
-            "📦 Resolving {} {} via registry '{}'",
+            "📦 Resolving {} {} via registry '{}' (archive)",
             resolved.package_name, resolved.version_entry.version, resolved.registry_name
         );
         println!("   Archive: {}", archive_url);
@@ -779,6 +814,49 @@ impl FetchCommand {
             installed_at: Some(chrono::Local::now().to_rfc3339()),
             patch: None,
         })
+    }
+
+    fn install_from_registry_git(
+        &self,
+        dep: &DependencyConfig,
+        resolved: &crate::registry::ResolvedRegistryDep,
+        install_path: &Path,
+        ccgo_home: &Path,
+    ) -> Result<LockedPackage> {
+        let git_url = &resolved.package_repository;
+        let tag = &resolved.version_entry.tag;
+
+        println!(
+            "📦 Resolving {} {} via registry '{}' (git+tag)",
+            resolved.package_name, resolved.version_entry.version, resolved.registry_name
+        );
+        println!("   Repository: {}", git_url);
+        println!("   Tag: {}", tag);
+
+        // install_from_git accepts `branch` — `git clone --branch <name>`
+        // works for tags too (it's a ref, not specifically a branch). Pass
+        // the version-entry tag through and let git handle it.
+        let mut locked = self.install_from_git(
+            &dep.name,
+            &resolved.version_entry.version,
+            git_url,
+            Some(tag),
+            None, // no locked rev: registry resolution writes the commit SHA below
+            install_path,
+            ccgo_home,
+        )?;
+
+        // Override the source to mark this as registry-resolved. The
+        // `locked.git` field that install_from_git populated stays — its
+        // commit SHA is what `ccgo fetch --locked` checks for byte
+        // reproducibility on subsequent runs.
+        locked.source = format!("registry+{}", resolved.registry_url);
+        // Index-recorded checksum (if any) is over the source tarball,
+        // which doesn't match what we've cloned. Drop it; the commit SHA
+        // is the deterministic anchor for git-resolved deps.
+        locked.checksum = None;
+
+        Ok(locked)
     }
 
     /// Fetch raw archive bytes from an `archive_url`. Supports `https://`,

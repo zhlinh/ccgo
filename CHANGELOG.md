@@ -39,16 +39,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   See [`docs/guides/migrating-to-registry.md`](docs/guides/migrating-to-registry.md)
   for a step-by-step migration of an existing project tree.
 
+* **Registry git+tag fallback**: when a `VersionEntry` has no
+  `archive_url` but the `PackageEntry.repository` URL is set (which
+  `ccgo publish index` always populates from `git remote get-url`),
+  `ccgo fetch` falls back to `git clone --branch <tag>` of the source
+  repo at the recorded tag. The `source` field still records
+  `registry+<index-url>` and `locked.git.revision` carries the resolved
+  commit SHA — so `ccgo fetch --locked` is byte-deterministic via the
+  commit hash. This unblocks bootstrapping a registry before any zip
+  CDN is in place: just `ccgo publish index` from each project's CI,
+  and consumers immediately get `version + registry` resolution via
+  git. Switch to the faster zip path later by adding
+  `--archive-url-template` to the publish command.
+
 ### Changed
 
 * `VersionEntry` JSON in registry indexes gained two optional fields
   (`archive_url`, `archive_format`). The schema change is
   **non-breaking** — older index repos without these fields continue to
-  parse cleanly; the registry-resolution path simply falls through when
-  `archive_url` is absent, and consumers depending on those packages
-  must keep using `git` / `zip` declarations until the publisher
-  re-publishes with `--archive-url-template`. No re-publish is forced
-  by this release.
+  parse cleanly; the registry-resolution path falls back to git+tag
+  cloning when `archive_url` is absent (provided `repository` is set
+  on the package), so no re-publish is forced by this release.
 
 ### Features
 

@@ -10,12 +10,18 @@ use super::cache::RegistryCache;
 use super::index::VersionEntry;
 
 /// A successful version resolution: the registry it came from, the package
-/// name, and the matched [`VersionEntry`].
+/// name, the matched [`VersionEntry`], and the package's source git URL.
+///
+/// `package_repository` is propagated from `PackageEntry.repository` so the
+/// fetch path can fall back to `git clone --branch <tag>` when the
+/// `VersionEntry` has no `archive_url` (i.e. the publisher hasn't uploaded
+/// a binary archive yet but the source git repo + tag are known).
 #[derive(Debug, Clone)]
 pub struct ResolvedRegistryDep {
     pub registry_name: String,
     pub registry_url: String,
     pub package_name: String,
+    pub package_repository: String,
     pub version_entry: VersionEntry,
 }
 
@@ -49,6 +55,7 @@ pub fn resolve_dep(
                     registry_name: name.clone(),
                     registry_url: cache.url().to_string(),
                     package_name: dep_name.to_string(),
+                    package_repository: entry.repository.clone(),
                     version_entry: v.clone(),
                 }));
             }
@@ -156,5 +163,32 @@ mod tests {
             r.is_none(),
             "yanked-only entry must not satisfy resolution"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resolved_carries_package_repository_for_git_fallback() {
+        // The fetch path falls back to `git clone --branch <tag>` when the
+        // VersionEntry has no archive_url. To do that it needs the git URL,
+        // which lives at the package level (PackageEntry.repository) — not
+        // per-version. Pin that the resolver propagates it onto
+        // ResolvedRegistryDep.package_repository so install_from_registry
+        // can reach it without a second cache lookup.
+        let pkg_json = r#"{
+            "name": "leaf",
+            "description": "x",
+            "repository": "git@example.com:org/leaf.git",
+            "license": "MIT",
+            "platforms": [],
+            "versions": [{"version":"1.0.0","tag":"v1.0.0"}]
+        }"#;
+        let (_g, cache) = make_test_cache("test", pkg_json, "leaf");
+        let registries = vec![("test".to_string(), cache)];
+        let r = resolve_dep("leaf", "1.0.0", &registries)
+            .unwrap()
+            .expect("should resolve");
+        assert_eq!(r.package_repository, "git@example.com:org/leaf.git");
+        assert_eq!(r.version_entry.tag, "v1.0.0");
+        assert!(r.version_entry.archive_url.is_none());
     }
 }
