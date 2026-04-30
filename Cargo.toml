@@ -9,6 +9,14 @@ repository = "https://github.com/zhlinh/ccgo"
 keywords = ["cli", "cpp", "cross-platform", "build", "cmake"]
 categories = ["command-line-utilities", "development-tools::build-utils"]
 
+# Test fixtures contain hand-committed xcframework symlinks that point into
+# `cmake_build/` (gitignored) and dangle on a fresh checkout — `cargo publish`
+# can't archive a dangling symlink and would fail. The fixtures are only
+# consumed by integration tests in this repo's CI; downstream crate consumers
+# don't need them. Excluding the whole subtree keeps the published tarball
+# small and the publish step robust.
+exclude = ["tests/fixtures/"]
+
 [dependencies]
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
