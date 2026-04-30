@@ -17,16 +17,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CCGO.toml` — `version = "x.y.z"` plus an optional
   `registry = "name"` selector is enough.
 
-  Publishers expose archives via
-  `ccgo publish index --archive-url-template "https://cdn.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" --checksum`,
-  which bakes the URL and SHA-256 into each `VersionEntry`. When both
-  flags are set, `--checksum` hashes the local
+  Publishers append one version per `ccgo publish index` invocation
+  via the new mandatory `--index-version` and/or `--index-tag` flags
+  (CocoaPods `pod repo push` model — append-only, never bulk re-import):
+
+      ccgo publish index --index-repo ... --index-name ... \
+        --index-version 25.2.9519653 \
+        --archive-url-template "https://cdn.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" \
+        --checksum --index-push
+
+  When only one flag is given, the other is derived (`--index-tag v1.0.0`
+  → version `1.0.0`; `--index-version 1.0.0` → tag `v1.0.0`). For non-
+  conventional tag prefixes pass both explicitly. The new version is
+  validated to exist in the local git repo (`git rev-parse --verify`)
+  and merged into the index entry's existing `versions` array; re-
+  publishing the same version is rejected to keep the index immutable.
+
+  When `--archive-url-template` is set, `--checksum` hashes the local
   `target/release/package/<NAME>_CCGO_PACKAGE-<version>.zip` (the same
   bytes consumers will download), so the checksum the index records is
-  the one that `verify_archive_checksum` validates at fetch time. The new
-  `[[dependencies]].registry` field pins lookup to a specific registry;
-  without it, ccgo walks all declared registries in TOML declaration
-  order and takes the first non-yanked exact-version match.
+  the one that `verify_archive_checksum` validates at fetch time. The
+  `[[dependencies]].registry` field on the consumer side pins lookup
+  to a specific registry; without it, ccgo walks all declared
+  registries in TOML declaration order and takes the first non-yanked
+  exact-version match.
 
   The lockfile records `source = "registry+<index-url>"` plus the
   checksum, so `ccgo fetch --locked` reproduces the same bytes without

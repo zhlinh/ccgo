@@ -61,24 +61,43 @@ TOML 中的声明顺序遍历注册表，取第一个命中的版本 —— 与 
 
 ## 发布方 CI 工作流
 
-典型的发布步骤会把归档 URL 烤进每个 `VersionEntry`，这样消费方解析版本时
-完全不必接触源码仓库：
+`ccgo publish index` 是 **append-only、单版本一次** 的(对标 CocoaPods
+`pod repo push`)。每次调用只往 index 里追加一条 `VersionEntry`,重
+复发布同一版本会被拒绝。用 `--index-version` 和/或 `--index-tag` 指定
+要发布的版本:
 
 ```bash
 ccgo build all --release
 ccgo package --release        # 产出 NAME_CCGO_PACKAGE-VERSION.zip
-# 上传 zip 到你的 CDN/artifactory（你的脚本）
+# 上传 zip 到你的 CDN/artifactory(你的脚本)
 ccgo publish index \
   --index-repo git@example.com:org/index.git \
   --index-name org-index \
+  --index-version 25.2.9519653 \
   --archive-url-template "https://artifacts.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" \
   --checksum \
   --index-push
 ```
 
-占位符 `{name}`、`{version}`、`{tag}` 会被逐版本替换进模板。再加上
-`--checksum`，每个条目还会带上对应归档的 SHA-256 —— 消费侧 fetch 在解压
-之前就会先做完整性校验。完整的标志参考见下面的[发布到索引](#发布到索引)。
+只传 `--index-tag v1.0.0` 时,version 会自动剥前缀(`v`/`V`)推导出
+`1.0.0`。只传 `--index-version 1.0.0` 时,tag 默认补成 `v1.0.0`。对
+不遵循 `v<version>` 约定的 tag(比如 `release-v1.0.0`,或 monorepo
+前缀 `stdcomm-v1.0.0`),两个 flag 都显式传:
+
+```bash
+ccgo publish index ... --index-version 1.0.0 --index-tag stdcomm-v1.0.0
+```
+
+发布前 ccgo 会跑 `git rev-parse --verify <tag>` 验证 tag 真实存在。
+新 `VersionEntry` 被追加进 `<index>/<sharded>/<name>.json` 已有的
+`versions` 数组,然后按版本号字符串降序排序。
+
+`{name}`、`{version}`、`{tag}` 占位符替换进 `--archive-url-template`。
+`--checksum` 和 template 同时给的话,SHA-256 哈希的是本地
+`target/release/package/<NAME>_CCGO_PACKAGE-<version>.zip` —— 跟消费方
+fetch 时下到的 CDN 字节流是同一份。
+
+完整的标志参考见下面的[发布到索引](#发布到索引)。
 
 ## 注册表索引格式
 

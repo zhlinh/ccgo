@@ -168,6 +168,29 @@ pub struct PublishCommand {
     #[arg(long)]
     pub index_message: Option<String>,
 
+    /// Publish a SINGLE explicit version into the index (append-only,
+    /// CocoaPods `pod repo push`-style).
+    ///
+    /// When set, the index entry's existing `versions` array is preserved
+    /// and the new version is appended. Re-publishing the same version
+    /// is rejected. When ABSENT, the legacy auto-walk behavior runs and
+    /// the entry is rebuilt from `git tag -l`.
+    ///
+    /// `--index-version` is the SemVer string written into
+    /// `VersionEntry.version`. `--index-tag` is the actual git tag to
+    /// validate via `git rev-parse --verify`. Either can be derived
+    /// from the other:
+    ///   * `--index-tag v1.0.0` alone → version stripped to `1.0.0`
+    ///   * `--index-version 1.0.0` alone → tag defaults to `v1.0.0`
+    ///
+    /// Pass both explicitly when your tag convention isn't `v<version>`.
+    #[arg(long)]
+    pub index_version: Option<String>,
+
+    /// Git tag for the single-version publish — see `--index-version`.
+    #[arg(long)]
+    pub index_tag: Option<String>,
+
     /// Generate SHA-256 checksums for each version recorded in the index.
     ///
     /// Behavior depends on whether `--archive-url-template` is set:
@@ -209,6 +232,44 @@ fn substitute_archive_url(template: &str, name: &str, version: &str, tag: &str) 
         .replace("{name}", name)
         .replace("{version}", version)
         .replace("{tag}", tag)
+}
+
+/// Strip a single leading `v` or `V` from a git tag to derive a SemVer
+/// string. Used by `--index-tag` when `--index-version` is omitted.
+fn derive_version_from_tag(tag: &str) -> String {
+    tag.strip_prefix('v')
+        .or_else(|| tag.strip_prefix('V'))
+        .unwrap_or(tag)
+        .to_string()
+}
+
+/// Default tag form `v<version>`. Used by `--index-version` when
+/// `--index-tag` is omitted. Most projects follow this convention; pass
+/// `--index-tag` explicitly when yours doesn't.
+fn default_tag_for_version(version: &str) -> String {
+    format!("v{}", version)
+}
+
+/// Append a new VersionEntry to an existing list. Rejects duplicates so
+/// re-publishing the same version surfaces a clear error rather than
+/// silently rewriting history. Result is sorted descending by version
+/// string (matches `git tag -l --sort=-v:refname`).
+fn merge_version_entry(
+    mut existing: Vec<VersionEntry>,
+    new: VersionEntry,
+) -> Result<Vec<VersionEntry>> {
+    if let Some(dup) = existing.iter().find(|v| v.version == new.version) {
+        anyhow::bail!(
+            "version '{}' is already in the index (tag '{}'); the index is \
+             append-only by design. Yank or hand-edit the JSON first if you \
+             really intend to overwrite.",
+            new.version,
+            dup.tag
+        );
+    }
+    existing.push(new);
+    existing.sort_by(|a, b| b.version.cmp(&a.version));
+    Ok(existing)
 }
 
 impl PublishCommand {
@@ -678,43 +739,39 @@ impl PublishCommand {
         let git_url = self.get_git_remote_url(&project_dir)?;
         println!("🔗 Repository: {}", git_url);
 
-        // Discover versions from Git tags
-        println!("\n🔍 Discovering versions from Git tags...");
-        if self.checksum {
-            println!("   (computing SHA-256 checksums)");
-        }
-        let versions =
-            self.discover_git_versions(&project_dir, &package.name, self.checksum, verbose)?;
-
-        if versions.is_empty() {
-            bail!("No version tags found. Create tags with: git tag v1.0.0");
-        }
-
-        println!("   Found {} version(s):", versions.len());
-        for v in versions.iter().take(5) {
-            println!("   - {}", v.version);
-        }
-        if versions.len() > 5 {
-            println!("   ... and {} more", versions.len() - 5);
-        }
-
-        // Create package entry
-        let package_entry = PackageEntry {
-            name: package.name.clone(),
-            description: package.description.clone().unwrap_or_default(),
-            repository: git_url.clone(),
-            homepage: package.repository.clone(), // Use repository as homepage
-            license: package.license.clone(),
-            keywords: Vec::new(), // PackageConfig doesn't have keywords
-            platforms: self.get_supported_platforms(&config),
-            versions,
+        // Resolve the (version, tag) pair to publish — one entry per
+        // invocation, append-only. Mirrors `pod repo push`.
+        let (version, tag) = match (&self.index_version, &self.index_tag) {
+            (Some(v), Some(t)) => (v.clone(), t.clone()),
+            (Some(v), None) => (v.clone(), default_tag_for_version(v)),
+            (None, Some(t)) => (derive_version_from_tag(t), t.clone()),
+            (None, None) => bail!(
+                "ccgo publish index requires --index-version and/or --index-tag.\n\n\
+                 The index is append-only — each invocation publishes exactly \
+                 one version. Examples:\n  \
+                   ccgo publish index --index-version 1.0.0\n  \
+                   ccgo publish index --index-tag v1.0.0\n  \
+                   ccgo publish index --index-version 1.0.0 --index-tag custom-prefix-v1.0.0"
+            ),
         };
+
+        println!("\n🔖 Publishing single version:");
+        println!("   version: {}", version);
+        println!("   tag:     {}", tag);
+
+        self.validate_tag_exists(&project_dir, &tag)?;
+        let new_version_entry = self.build_single_version_entry(
+            &project_dir,
+            &package.name,
+            &version,
+            &tag,
+            verbose,
+        )?;
 
         // Determine index repository
         let index_repo = if let Some(repo) = &self.index_repo {
             repo.clone()
         } else {
-            // Use default or ask user
             bail!("Please specify --index-repo <url> for the index repository");
         };
 
@@ -728,16 +785,28 @@ impl PublishCommand {
         // Clone or update index repository
         let index_path = self.prepare_index_repo(&index_repo, &index_name, verbose)?;
 
-        // Write package JSON
+        // Read existing entry (if any), append our new version, sort.
         let package_rel_path = PackageIndex::package_index_path(&package.name);
         let package_file = index_path.join(&package_rel_path);
 
-        // Create parent directories
         if let Some(parent) = package_file.parent() {
             fs::create_dir_all(parent).context("Failed to create package directory")?;
         }
 
-        // Write package entry
+        let existing_versions = Self::read_existing_versions(&package_file)?;
+        let merged_versions = merge_version_entry(existing_versions, new_version_entry)?;
+
+        let package_entry = PackageEntry {
+            name: package.name.clone(),
+            description: package.description.clone().unwrap_or_default(),
+            repository: git_url.clone(),
+            homepage: package.repository.clone(),
+            license: package.license.clone(),
+            keywords: Vec::new(),
+            platforms: self.get_supported_platforms(&config),
+            versions: merged_versions,
+        };
+
         let json = serde_json::to_string_pretty(&package_entry)
             .context("Failed to serialize package entry")?;
         fs::write(&package_file, &json).context("Failed to write package file")?;
@@ -813,87 +882,92 @@ impl PublishCommand {
         }
     }
 
-    fn discover_git_versions(
+    /// Verify that `tag` exists in the project's local git repo. Catches
+    /// typos in `--index-tag` before we go through the rest of the publish
+    /// dance and write a phantom tag into the index.
+    fn validate_tag_exists(&self, project_dir: &Path, tag: &str) -> Result<()> {
+        let refspec = format!("refs/tags/{}", tag);
+        let output = Command::new("git")
+            .current_dir(project_dir)
+            .args(["rev-parse", "--verify", "--quiet", &refspec])
+            .output()
+            .context("Failed to spawn `git rev-parse`")?;
+        if !output.status.success() {
+            bail!(
+                "git tag '{}' not found in {}. Create the tag locally with \
+                 `git tag {}` (and `git push --tags`) before publishing it \
+                 to the index.",
+                tag,
+                project_dir.display(),
+                tag
+            );
+        }
+        Ok(())
+    }
+
+    /// Build a single VersionEntry for the explicit `(version, tag)` pair.
+    /// Populates `archive_url` from `--archive-url-template` and computes
+    /// the right checksum (archive-zip when archive_url is set, git-source
+    /// tarball as a legacy fallback otherwise).
+    fn build_single_version_entry(
         &self,
         project_dir: &Path,
         package_name: &str,
-        compute_checksum: bool,
+        version: &str,
+        tag: &str,
         verbose: bool,
-    ) -> Result<Vec<VersionEntry>> {
-        let output = Command::new("git")
-            .current_dir(project_dir)
-            .args(["tag", "-l", "--sort=-v:refname"])
-            .output()
-            .context("Failed to list git tags")?;
+    ) -> Result<VersionEntry> {
+        let archive_url = self
+            .archive_url_template
+            .as_deref()
+            .map(|tpl| substitute_archive_url(tpl, package_name, version, tag));
+        let archive_format = archive_url.as_ref().map(|_| self.archive_format.clone());
 
-        if !output.status.success() {
-            bail!("Failed to list git tags");
-        }
-
-        let tags_str = String::from_utf8_lossy(&output.stdout);
-        let mut versions = Vec::new();
-
-        for line in tags_str.lines() {
-            let tag = line.trim();
-            if tag.is_empty() {
-                continue;
+        let checksum = if self.checksum {
+            if verbose {
+                println!("   Computing checksum for {}...", tag);
             }
-
-            // Parse version from tag (strip 'v' prefix if present)
-            let version = if tag.starts_with('v') || tag.starts_with('V') {
-                &tag[1..]
+            if archive_url.is_some() {
+                // Archive-mode: hash the zip consumers will download.
+                self.compute_archive_zip_checksum(project_dir, package_name, version)
+                    .ok()
             } else {
-                tag
-            };
-
-            // Validate it looks like a semver
-            if crate::registry::SemVer::parse(version).is_some() {
-                let archive_url = self
-                    .archive_url_template
-                    .as_deref()
-                    .map(|tpl| substitute_archive_url(tpl, package_name, version, tag));
-                let archive_format = archive_url.as_ref().map(|_| self.archive_format.clone());
-
-                // Pick the right checksum source:
-                //   * `--archive-url-template` set → consumers will verify the
-                //     downloaded zip's bytes via `verify_archive_checksum` in
-                //     fetch, so we MUST hash the same zip artifact, not the
-                //     git source tarball. We look for it at the standard
-                //     `ccgo package --release` output path; if absent (e.g.
-                //     historical tags whose zip isn't in target/) we fall
-                //     through to None for that version — consumers will skip
-                //     verification rather than failing.
-                //   * No template → legacy mode. `--checksum` is informational
-                //     only (no fetch path consults it for verification today),
-                //     so the source-tarball hash via `git archive` is fine.
-                let checksum = if compute_checksum {
-                    if verbose {
-                        println!("   Computing checksum for {}...", tag);
-                    }
-                    if archive_url.is_some() {
-                        self.compute_archive_zip_checksum(project_dir, package_name, version)
-                            .ok()
-                    } else {
-                        self.compute_tag_checksum(project_dir, tag).ok()
-                    }
-                } else {
-                    None
-                };
-
-                versions.push(VersionEntry {
-                    version: version.to_string(),
-                    tag: tag.to_string(),
-                    checksum,
-                    archive_url,
-                    archive_format,
-                    released_at: self.get_tag_date(project_dir, tag).ok(),
-                    yanked: false,
-                    yanked_reason: None,
-                });
+                // Legacy git-source hash. Informational only — no fetch
+                // path verifies against this today.
+                self.compute_tag_checksum(project_dir, tag).ok()
             }
-        }
+        } else {
+            None
+        };
 
-        Ok(versions)
+        Ok(VersionEntry {
+            version: version.to_string(),
+            tag: tag.to_string(),
+            checksum,
+            archive_url,
+            archive_format,
+            released_at: self.get_tag_date(project_dir, tag).ok(),
+            yanked: false,
+            yanked_reason: None,
+        })
+    }
+
+    /// Read the existing `versions` array out of `<index>/<sharded>/<name>.json`,
+    /// returning `Vec::new()` if the file doesn't exist yet (first publish
+    /// of this package). Errors only on read or JSON-parse failures.
+    fn read_existing_versions(package_file: &Path) -> Result<Vec<VersionEntry>> {
+        if !package_file.exists() {
+            return Ok(Vec::new());
+        }
+        let bytes = std::fs::read_to_string(package_file)
+            .with_context(|| format!("failed to read {}", package_file.display()))?;
+        let entry: PackageEntry = serde_json::from_str(&bytes).with_context(|| {
+            format!(
+                "failed to parse existing index entry at {}",
+                package_file.display()
+            )
+        })?;
+        Ok(entry.versions)
     }
 
     /// Compute SHA-256 of the published archive zip for a given version.
@@ -1398,6 +1472,8 @@ mod tests {
             checksum: true,
             archive_url_template: None,
             archive_format: "zip".into(),
+            index_version: None,
+            index_tag: None,
         };
 
         let got = cmd
@@ -1435,6 +1511,8 @@ mod tests {
             checksum: true,
             archive_url_template: None,
             archive_format: "zip".into(),
+            index_version: None,
+            index_tag: None,
         };
 
         let err = cmd
@@ -1448,6 +1526,74 @@ mod tests {
         assert!(
             msg.contains("ccgo package --release"),
             "expected reproduction hint in error, got: {msg}"
+        );
+    }
+
+    fn entry(version: &str, tag: &str) -> VersionEntry {
+        VersionEntry {
+            version: version.into(),
+            tag: tag.into(),
+            checksum: None,
+            archive_url: None,
+            archive_format: None,
+            released_at: None,
+            yanked: false,
+            yanked_reason: None,
+        }
+    }
+
+    #[test]
+    fn derive_version_strips_v_prefix() {
+        assert_eq!(derive_version_from_tag("v1.0.0"), "1.0.0");
+        assert_eq!(derive_version_from_tag("V25.2.9519653"), "25.2.9519653");
+    }
+
+    #[test]
+    fn derive_version_keeps_tag_without_v_prefix_unchanged() {
+        assert_eq!(derive_version_from_tag("1.0.0"), "1.0.0");
+    }
+
+    #[test]
+    fn derive_version_does_not_touch_tags_with_other_prefixes() {
+        // We don't auto-strip random prefixes; if you want to publish a
+        // tag like `release-1.0.0`, pass --index-version explicitly.
+        assert_eq!(derive_version_from_tag("release-1.0.0"), "release-1.0.0");
+    }
+
+    #[test]
+    fn default_tag_prepends_v() {
+        assert_eq!(default_tag_for_version("1.0.0"), "v1.0.0");
+        assert_eq!(
+            default_tag_for_version("25.2.9519653"),
+            "v25.2.9519653"
+        );
+    }
+
+    #[test]
+    fn merge_appends_to_empty_existing_versions() {
+        let merged = merge_version_entry(Vec::new(), entry("1.0.0", "v1.0.0")).unwrap();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].version, "1.0.0");
+    }
+
+    #[test]
+    fn merge_appends_to_existing_and_sorts_descending() {
+        let existing = vec![entry("1.0.0", "v1.0.0"), entry("0.9.0", "v0.9.0")];
+        let merged = merge_version_entry(existing, entry("2.0.0", "v2.0.0")).unwrap();
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].version, "2.0.0");
+        assert_eq!(merged[1].version, "1.0.0");
+        assert_eq!(merged[2].version, "0.9.0");
+    }
+
+    #[test]
+    fn merge_rejects_duplicate_version() {
+        let existing = vec![entry("1.0.0", "v1.0.0")];
+        let err = merge_version_entry(existing, entry("1.0.0", "v1.0.0")).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'1.0.0'") && msg.contains("already in the index"),
+            "expected duplicate-version error, got: {msg}"
         );
     }
 }

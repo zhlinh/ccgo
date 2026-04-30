@@ -65,8 +65,10 @@ order and takes the first match — same precedence rule as Cargo.
 
 ## Publisher CI workflow
 
-A typical publish step bakes the archive URL into each `VersionEntry` so
-consumers can resolve a version without ever touching the source repo:
+`ccgo publish index` is **append-only and per-version** (CocoaPods
+`pod repo push`-style). One invocation publishes exactly one tag into
+the index — re-publishing the same version is rejected. Pass
+`--index-version` and/or `--index-tag` to identify the version:
 
 ```bash
 ccgo build all --release
@@ -75,16 +77,36 @@ ccgo package --release        # produces NAME_CCGO_PACKAGE-VERSION.zip
 ccgo publish index \
   --index-repo git@example.com:org/index.git \
   --index-name org-index \
+  --index-version 25.2.9519653 \
   --archive-url-template "https://artifacts.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" \
   --checksum \
   --index-push
 ```
 
-The placeholders `{name}`, `{version}`, and `{tag}` are substituted into
-the template per-version. With `--checksum`, each entry also carries a
-SHA-256 of the corresponding archive — so consumer-side fetch verifies
-integrity before extraction. See [Publishing to Index](#publishing-to-index)
-below for the full flag reference.
+When you pass only `--index-tag v1.0.0`, version is auto-derived as
+`1.0.0` (leading `v`/`V` stripped). When you pass only
+`--index-version 1.0.0`, the tag defaults to `v1.0.0`. For tags that
+don't follow the `v<version>` convention (e.g. `release-v1.0.0`, or a
+monorepo prefix like `stdcomm-v1.0.0`), pass both flags explicitly:
+
+```bash
+ccgo publish index ... --index-version 1.0.0 --index-tag stdcomm-v1.0.0
+```
+
+Before publishing, ccgo runs `git rev-parse --verify <tag>` to make
+sure the tag actually exists in the project's local repo. The new
+`VersionEntry` is then appended to the existing `versions` array of
+`<index>/<sharded>/<name>.json` and the array is sorted descending by
+version string.
+
+The placeholders `{name}`, `{version}`, and `{tag}` are substituted
+into `--archive-url-template` for the new entry. With `--checksum` AND
+a template, the SHA-256 hashes the local
+`target/release/package/<NAME>_CCGO_PACKAGE-<version>.zip` so
+consumer-side fetch verifies the same bytes the CDN serves.
+
+See [Publishing to Index](#publishing-to-index) below for the full
+flag reference.
 
 ## Registry Index Format
 

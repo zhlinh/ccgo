@@ -104,18 +104,21 @@ ccgo package --release
 your-upload-script target/release/macos/STDCOMM_CCGO_PACKAGE-25.2.9519653.zip \
   https://artifacts.example.com/stdcomm/
 
-# 4. 把新版本追加到共享索引里，把归档 URL + SHA-256 烤进
-#    VersionEntry。
+# 4. 把新版本追加到共享索引里。每次 `ccgo publish index` 仅发布
+#    一个版本(append-only,重复版本会被拒绝)。用 `--index-version`
+#    指定版本号(tag 约定不是 `v<version>` 时再加 `--index-tag`)。
 ccgo publish index \
   --index-repo git@git.example.com:org/ccgo-index.git \
   --index-name org-index \
+  --index-version 25.2.9519653 \
   --archive-url-template "https://artifacts.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" \
   --checksum \
   --index-push
 ```
 
-`{name}`、`{version}`、`{tag}` 占位符会按版本逐个替换。集合里每个库都
-跑这条命令；索引仓库会自然累积条目。
+`{name}`、`{version}`、`{tag}` 占位符按模板逐个替换。集合里每个库每次
+发布新版本时都跑这条命令;索引仓库会自然累积条目 —— ccgo 只追加和排序,
+旧版本跨多次 publish 都保留。
 
 ## 第三步 —— 迁移消费方 CCGO.toml
 

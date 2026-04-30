@@ -29,18 +29,17 @@ mkdir -p "$INDEX_DIR/le/af"
 REPO_ROOT="$(cd "$HERE/../../.." && pwd)"
 CCGO_BIN=""
 for candidate in \
-    "$REPO_ROOT/target/debug/ccgo" \
-    "$REPO_ROOT/target/release/ccgo"
-do
-    if [ -x "$candidate" ]; then
-        CCGO_BIN="$candidate"
-        break
-    fi
+	"$REPO_ROOT/target/debug/ccgo" \
+	"$REPO_ROOT/target/release/ccgo"; do
+	if [ -x "$candidate" ]; then
+		CCGO_BIN="$candidate"
+		break
+	fi
 done
 if [ -z "$CCGO_BIN" ]; then
-    if command -v ccgo >/dev/null 2>&1; then
-        CCGO_BIN="$(command -v ccgo)"
-    fi
+	if command -v ccgo >/dev/null 2>&1; then
+		CCGO_BIN="$(command -v ccgo)"
+	fi
 fi
 
 # Build the leaf fixture if no merged-package zip exists yet. We need the
@@ -51,15 +50,15 @@ fi
 # CCGO.toml and are unsuitable as a dep archive.
 LATEST_ZIP=""
 if [ -d "$LINKAGE_LEAF/target/release/package" ]; then
-    LATEST_ZIP="$(ls -t "$LINKAGE_LEAF"/target/release/package/LEAF_CCGO_PACKAGE-*.zip 2>/dev/null | head -1 || true)"
+	LATEST_ZIP="$(ls -t "$LINKAGE_LEAF"/target/release/package/LEAF_CCGO_PACKAGE-*.zip 2>/dev/null | head -1 || true)"
 fi
 if [ -z "$LATEST_ZIP" ] || [ ! -f "$LATEST_ZIP" ]; then
-    if [ -z "$CCGO_BIN" ]; then
-        echo "bootstrap.sh: ccgo binary not found; build with 'cargo build' first" >&2
-        exit 1
-    fi
-    ( cd "$LINKAGE_LEAF" && "$CCGO_BIN" package --release )
-    LATEST_ZIP="$(ls -t "$LINKAGE_LEAF"/target/release/package/LEAF_CCGO_PACKAGE-*.zip | head -1)"
+	if [ -z "$CCGO_BIN" ]; then
+		echo "bootstrap.sh: ccgo binary not found; build with 'cargo build' first" >&2
+		exit 1
+	fi
+	(cd "$LINKAGE_LEAF" && "$CCGO_BIN" package --release)
+	LATEST_ZIP="$(ls -t "$LINKAGE_LEAF"/target/release/package/LEAF_CCGO_PACKAGE-*.zip | head -1)"
 fi
 
 cp "$LATEST_ZIP" "$ARCHIVE_DIR/leaf-1.0.0.zip"
@@ -73,7 +72,7 @@ ARCHIVE_URL="file://$ARCHIVE_DIR/leaf-1.0.0.zip"
 rm -rf "$INDEX_DIR/.git"
 mkdir -p "$INDEX_DIR/le/af"
 
-cat > "$INDEX_DIR/index.json" <<EOF
+cat >"$INDEX_DIR/index.json" <<EOF
 {
   "name": "test-registry",
   "version": "1",
@@ -82,7 +81,7 @@ cat > "$INDEX_DIR/index.json" <<EOF
 }
 EOF
 
-cat > "$INDEX_DIR/le/af/leaf.json" <<EOF
+cat >"$INDEX_DIR/le/af/leaf.json" <<EOF
 {
   "name": "leaf",
   "description": "Synthetic leaf for ccgo registry-resolution tests",
@@ -102,15 +101,15 @@ cat > "$INDEX_DIR/le/af/leaf.json" <<EOF
 EOF
 
 (
-    cd "$INDEX_DIR"
-    git init -q
-    git config user.email "test@example.com"
-    git config user.name "ccgo-registry-test"
-    git add -A
-    # --no-verify insulates the inner repo from any user-side commit-msg /
-    # pre-commit hooks (linthis, conventional-commits enforcement, etc.) —
-    # the inner repo is a test fixture, not real source control.
-    git commit -m "init" -q --no-verify
+	cd "$INDEX_DIR"
+	git init -q
+	git config user.email "test@example.com"
+	git config user.name "ccgo-registry-test"
+	git add -A
+	# --no-verify insulates the inner repo from any user-side commit-msg /
+	# pre-commit hooks (linthis, conventional-commits enforcement, etc.) —
+	# the inner repo is a test fixture, not real source control.
+	git commit -m "init" -q --no-verify
 )
 
 echo "[bootstrap] index:    $INDEX_DIR"

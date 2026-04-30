@@ -111,19 +111,23 @@ ccgo package --release
 your-upload-script target/release/macos/STDCOMM_CCGO_PACKAGE-25.2.9519653.zip \
   https://artifacts.example.com/stdcomm/
 
-# 4. Append the new version to the shared index, with archive URL +
-#    SHA-256 baked into the VersionEntry.
+# 4. Append the new version to the shared index. Each `ccgo publish index`
+#    call publishes EXACTLY ONE version (append-only — duplicates are
+#    rejected). Use `--index-version` (and/or `--index-tag` when your tag
+#    convention isn't `v<version>`).
 ccgo publish index \
   --index-repo git@git.example.com:org/ccgo-index.git \
   --index-name org-index \
+  --index-version 25.2.9519653 \
   --archive-url-template "https://artifacts.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip" \
   --checksum \
   --index-push
 ```
 
-The `{name}`, `{version}`, and `{tag}` placeholders are substituted
-per-version. Run this same command from every library in the collection;
-the index repo accumulates entries naturally.
+The `{name}`, `{version}`, and `{tag}` placeholders are substituted in
+the template. Run this same command from every library each time it
+ships a new release; the index repo accumulates entries naturally — old
+versions are preserved across publishes, ccgo only appends and sorts.
 
 ## Step 3 — Migrate consumer CCGO.toml
 
