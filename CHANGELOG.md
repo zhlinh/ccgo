@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+* **`ccgo yank`** (top-level command, parallel to `ccgo publish`): flips
+  the `yanked` flag on an existing `VersionEntry` in a registry index
+  repo. Default target is the package described by the local CCGO.toml;
+  `--package` overrides for cross-project use. Mirrors `cargo yank`:
+
+      ccgo yank --vers 25.2.9519653 \
+        --index-repo git@example.com:org/index.git \
+        --index-name org-index \
+        --reason "broken bytes; use 25.2.9519654 instead" \
+        --push
+
+      ccgo yank --vers 25.2.9519653 --undo \
+        --index-repo ... --index-name ... --push
+
+  Yanking is an audit-trail-bearing operation: `--reason` is required
+  when yanking and rejected with `--undo`. Re-yanking an already-yanked
+  version (or unyanking a never-yanked version) errors loudly rather
+  than silently no-op'ing. The original `archive_url` and `checksum` are
+  preserved — `CCGO.lock`-pinned consumers continue to fetch the same
+  bytes; only fresh `ccgo fetch` resolutions skip the yanked entry via
+  `resolve_dep`.
+
+  Internals: the clone-edit-commit-push helpers shared with
+  `ccgo publish index` are now in a dedicated `crate::registry::index_writer`
+  module; both commands use the same code path. The CLI is `--vers`
+  (not `--version`) for the same reason cargo's is — clap's
+  auto-generated `--version` flag would otherwise collide.
+
 * **Index-driven dependency resolution**: `ccgo fetch` now resolves
   `version`-only dependencies through the registries declared in
   `[registries]`. Each registry is a Git-cloned index repo that lists

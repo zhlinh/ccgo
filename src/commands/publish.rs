@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::config::CcgoConfig;
-use crate::registry::{IndexMetadata, PackageEntry, PackageIndex, VersionEntry};
+use crate::registry::{PackageEntry, PackageIndex, VersionEntry};
 
 /// Publish target
 #[derive(Debug, Clone, ValueEnum)]
@@ -783,7 +783,8 @@ impl PublishCommand {
         println!("\n📂 Index repository: {}", index_repo);
 
         // Clone or update index repository
-        let index_path = self.prepare_index_repo(&index_repo, &index_name, verbose)?;
+        let index_path =
+            crate::registry::index_writer::prepare_index_repo(&index_repo, &index_name, verbose)?;
 
         // Read existing entry (if any), append our new version, sort.
         let package_rel_path = PackageIndex::package_index_path(&package.name);
@@ -814,7 +815,7 @@ impl PublishCommand {
         println!("✅ Written: {}", package_rel_path.display());
 
         // Update index.json metadata
-        self.update_index_metadata(&index_path)?;
+        crate::registry::index_writer::update_index_metadata(&index_path, &index_name)?;
 
         // Commit changes
         let commit_message = self.index_message.clone().unwrap_or_else(|| {
@@ -829,12 +830,12 @@ impl PublishCommand {
             )
         });
 
-        self.commit_index_changes(&index_path, &commit_message, verbose)?;
+        crate::registry::index_writer::commit_changes(&index_path, &commit_message, verbose)?;
 
         // Push if requested
         if self.index_push {
             println!("\n📤 Pushing to remote...");
-            self.push_index_changes(&index_path, verbose)?;
+            crate::registry::index_writer::push_changes(&index_path, verbose)?;
             println!("✅ Pushed successfully!");
         } else {
             println!("\n💡 Changes committed locally. Use --index-push to push to remote.");
@@ -1101,196 +1102,6 @@ impl PublishCommand {
         }
 
         platforms
-    }
-
-    fn prepare_index_repo(&self, repo_url: &str, name: &str, verbose: bool) -> Result<PathBuf> {
-        let ccgo_home = PackageIndex::new().ccgo_home_path();
-        let index_work_dir = ccgo_home.join("registry").join("publish").join(name);
-
-        if index_work_dir.exists() {
-            // Pull latest changes
-            println!("📥 Updating existing index clone...");
-            let mut cmd = Command::new("git");
-            cmd.current_dir(&index_work_dir);
-            cmd.args(["pull", "--rebase"]);
-
-            if !verbose {
-                cmd.stdout(std::process::Stdio::null());
-                cmd.stderr(std::process::Stdio::null());
-            }
-
-            let status = cmd.status().context("Failed to pull index repository")?;
-
-            if !status.success() {
-                // Try fresh clone if pull fails
-                println!("⚠️  Pull failed, re-cloning...");
-                fs::remove_dir_all(&index_work_dir)?;
-                return self.prepare_index_repo(repo_url, name, verbose);
-            }
-        } else {
-            // Clone the repository
-            println!("📥 Cloning index repository...");
-            fs::create_dir_all(index_work_dir.parent().unwrap())?;
-
-            let mut cmd = Command::new("git");
-            cmd.args([
-                "clone",
-                "--depth",
-                "1",
-                repo_url,
-                index_work_dir.to_str().unwrap(),
-            ]);
-
-            if !verbose {
-                cmd.stdout(std::process::Stdio::null());
-                cmd.stderr(std::process::Stdio::null());
-            }
-
-            let status = cmd.status().context("Failed to clone index repository")?;
-
-            if !status.success() {
-                // Maybe it's a new repo, try to initialize
-                println!("📝 Initializing new index repository...");
-                fs::create_dir_all(&index_work_dir)?;
-
-                Command::new("git")
-                    .current_dir(&index_work_dir)
-                    .args(["init"])
-                    .status()
-                    .context("Failed to init git repository")?;
-
-                Command::new("git")
-                    .current_dir(&index_work_dir)
-                    .args(["remote", "add", "origin", repo_url])
-                    .status()
-                    .context("Failed to add git remote")?;
-
-                // Create initial index.json
-                let metadata = IndexMetadata {
-                    version: 1,
-                    name: name.to_string(),
-                    description: format!("{} package index", name),
-                    homepage: None,
-                    package_count: 0,
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                };
-                let json = serde_json::to_string_pretty(&metadata)?;
-                fs::write(index_work_dir.join("index.json"), json)?;
-            }
-        }
-
-        Ok(index_work_dir)
-    }
-
-    fn update_index_metadata(&self, index_path: &Path) -> Result<()> {
-        let metadata_path = index_path.join("index.json");
-
-        let mut metadata: IndexMetadata = if metadata_path.exists() {
-            let content = fs::read_to_string(&metadata_path)?;
-            serde_json::from_str(&content).unwrap_or_else(|_| IndexMetadata {
-                version: 1,
-                name: "ccgo-packages".to_string(),
-                description: "Package index".to_string(),
-                homepage: None,
-                package_count: 0,
-                updated_at: String::new(),
-            })
-        } else {
-            IndexMetadata {
-                version: 1,
-                name: self
-                    .index_name
-                    .clone()
-                    .unwrap_or_else(|| "ccgo-packages".to_string()),
-                description: "Package index".to_string(),
-                homepage: None,
-                package_count: 0,
-                updated_at: String::new(),
-            }
-        };
-
-        // Count packages
-        let mut count = 0;
-        for entry in walkdir::WalkDir::new(index_path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if entry.path().extension().and_then(|s| s.to_str()) == Some("json")
-                && entry.file_name() != "index.json"
-            {
-                count += 1;
-            }
-        }
-
-        metadata.package_count = count;
-        metadata.updated_at = chrono::Utc::now().to_rfc3339();
-
-        let json = serde_json::to_string_pretty(&metadata)?;
-        fs::write(metadata_path, json)?;
-
-        println!("📊 Index metadata updated: {} package(s)", count);
-
-        Ok(())
-    }
-
-    fn commit_index_changes(&self, index_path: &Path, message: &str, verbose: bool) -> Result<()> {
-        // Add all changes
-        let mut cmd = Command::new("git");
-        cmd.current_dir(index_path);
-        cmd.args(["add", "-A"]);
-
-        if !verbose {
-            cmd.stdout(std::process::Stdio::null());
-        }
-
-        cmd.status().context("Failed to stage changes")?;
-
-        // Check if there are changes to commit
-        let output = Command::new("git")
-            .current_dir(index_path)
-            .args(["status", "--porcelain"])
-            .output()
-            .context("Failed to check git status")?;
-
-        if output.stdout.is_empty() {
-            println!("ℹ️  No changes to commit");
-            return Ok(());
-        }
-
-        // Commit
-        let mut cmd = Command::new("git");
-        cmd.current_dir(index_path);
-        cmd.args(["commit", "-m", message]);
-
-        if !verbose {
-            cmd.stdout(std::process::Stdio::null());
-        }
-
-        let status = cmd.status().context("Failed to commit changes")?;
-
-        if status.success() {
-            println!("✅ Committed: {}", message);
-        }
-
-        Ok(())
-    }
-
-    fn push_index_changes(&self, index_path: &Path, verbose: bool) -> Result<()> {
-        let mut cmd = Command::new("git");
-        cmd.current_dir(index_path);
-        cmd.args(["push", "origin", "HEAD"]);
-
-        if !verbose {
-            cmd.stderr(std::process::Stdio::null());
-        }
-
-        let status = cmd.status().context("Failed to push changes")?;
-
-        if !status.success() {
-            bail!("Failed to push to remote");
-        }
-
-        Ok(())
     }
 
     // Helper functions

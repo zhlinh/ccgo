@@ -11,6 +11,7 @@ use crate::commands::{
     release::ReleaseCommand, remove::RemoveCommand, run::RunCommand, search::SearchCommand,
     self_cmd::SelfCmdCommand, tag::TagCommand, test::TestCommand, tree::TreeCommand,
     uninstall::UninstallCommand, update::UpdateCommand, vendor::VendorCommand,
+    yank::YankCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -59,6 +60,9 @@ pub enum Commands {
 
     /// Publish library to repository
     Publish(PublishCommand),
+
+    /// Yank or unyank a published version in a registry index
+    Yank(YankCommand),
 
     /// Check compilation without generating binaries
     Check(CheckCommand),
@@ -146,6 +150,7 @@ fn dispatch_command(command: Commands, verbose: bool) -> Result<()> {
         Commands::Bench(cmd) => cmd.execute(verbose),
         Commands::Doc(cmd) => cmd.execute(verbose),
         Commands::Publish(cmd) => cmd.execute(verbose),
+        Commands::Yank(cmd) => cmd.execute(verbose),
         Commands::Check(cmd) => cmd.execute(verbose),
         Commands::Doctor(cmd) => cmd.execute(verbose),
         Commands::Clean(cmd) => cmd.execute(verbose),

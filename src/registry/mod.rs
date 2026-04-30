@@ -33,6 +33,7 @@
 
 pub mod cache;
 mod index;
+pub mod index_writer;
 pub mod resolve;
 mod shorthand;
 mod version_discovery;
