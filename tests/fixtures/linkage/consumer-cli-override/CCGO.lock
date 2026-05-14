@@ -5,8 +5,8 @@
 version = 1
 
 [metadata]
-generated_at = "2026-04-28T12:22:40.810299+08:00"
-ccgo_version = "3.4.4"
+generated_at = "2026-05-14T14:13:31.498517+08:00"
+ccgo_version = "3.6.0"
 
 [[package]]
 name = "leaf"

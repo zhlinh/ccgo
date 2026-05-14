@@ -67,6 +67,7 @@ impl CheckCommand {
             analytics: false,
             linkage_default: None,
             linkage_overrides: std::collections::HashMap::new(),
+            ..crate::build::BuildOptions::default()
         };
 
         let ctx = BuildContext::new(current_dir.clone(), config.clone(), options);

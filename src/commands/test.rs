@@ -140,6 +140,7 @@ impl TestCommand {
             analytics: false,
             linkage_default: None,
             linkage_overrides: std::collections::HashMap::new(),
+            ..BuildOptions::default()
         };
 
         let ctx = BuildContext::new(project_root.clone(), config, options);

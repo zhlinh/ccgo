@@ -168,7 +168,7 @@ impl DependencyResolver {
 
     /// Check version compatibility for already-visited dependencies
     fn check_version_compatibility(&self, dep: &DependencyConfig, existing_version: &str) {
-        if existing_version.is_empty() || dep.version.is_empty() || existing_version == &dep.version
+        if existing_version.is_empty() || dep.version.is_empty() || existing_version == dep.version
         {
             return;
         }
@@ -413,16 +413,9 @@ mod tests {
         DependencyConfig {
             name: name.to_string(),
             version: "1.0.0".to_string(),
-            git: None,
-            branch: None,
             path: Some(format!("./{}", name)),
-            zip: None,
-            optional: false,
-            features: vec![],
             default_features: Some(true),
-            workspace: false,
-            registry: None,
-            linkage: None,
+            ..Default::default()
         }
     }
 

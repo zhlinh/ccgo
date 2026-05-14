@@ -1105,15 +1105,7 @@ mod tests {
             name: "mylib".to_string(),
             version: "1.0.0".to_string(),
             path: Some("../mylib".to_string()),
-            git: None,
-            branch: None,
-            zip: None,
-            optional: false,
-            features: vec![],
-            default_features: None,
-            workspace: false,
-            registry: None,
-            linkage: None,
+            ..Default::default()
         };
 
         assert_eq!(cmd.format_source(&dep), "  (path: ../mylib)");
@@ -1126,16 +1118,9 @@ mod tests {
         let dep = DependencyConfig {
             name: "mylib".to_string(),
             version: "1.0.0".to_string(),
-            path: None,
             git: Some("https://github.com/user/repo.git".to_string()),
             branch: Some("main".to_string()),
-            zip: None,
-            optional: false,
-            features: vec![],
-            default_features: None,
-            workspace: false,
-            registry: None,
-            linkage: None,
+            ..Default::default()
         };
 
         assert_eq!(
@@ -1150,15 +1135,7 @@ mod tests {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
             path: Some("../test".to_string()),
-            git: None,
-            branch: None,
-            zip: None,
-            optional: false,
-            features: vec![],
-            default_features: None,
-            workspace: false,
-            registry: None,
-            linkage: None,
+            ..Default::default()
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1173,16 +1150,9 @@ mod tests {
         let dep = DependencyConfig {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
-            path: None,
             git: Some("https://github.com/test/repo.git".to_string()),
             branch: Some("main".to_string()),
-            zip: None,
-            optional: false,
-            features: vec![],
-            default_features: None,
-            workspace: false,
-            registry: None,
-            linkage: None,
+            ..Default::default()
         };
 
         let source = DepSourceInfo::from(&dep);
@@ -1200,16 +1170,7 @@ mod tests {
         let dep = DependencyConfig {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
-            path: None,
-            git: None,
-            branch: None,
-            zip: None,
-            optional: false,
-            features: vec![],
-            default_features: None,
-            workspace: false,
-            registry: None,
-            linkage: None,
+            ..Default::default()
         };
 
         let source = DepSourceInfo::from(&dep);

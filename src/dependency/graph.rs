@@ -358,15 +358,8 @@ mod tests {
                 name: name.to_string(),
                 version: version.to_string(),
                 git: Some(format!("https://github.com/test/{}", name)),
-                branch: None,
-                path: None,
-                zip: None,
-                optional: false,
-                features: vec![],
                 default_features: Some(true),
-                workspace: false,
-                registry: None,
-                linkage: None,
+                ..Default::default()
             },
         }
     }

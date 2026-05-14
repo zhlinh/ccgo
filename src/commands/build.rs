@@ -133,7 +133,10 @@ pub fn normalize_arch_alias(raw: &str, target: &BuildTarget) -> String {
 /// earlier ones — `--linkage stdcomm=A --linkage stdcomm=B` resolves to `B`.
 pub fn parse_linkage_arg(
     specs: &[String],
-) -> anyhow::Result<(Option<crate::config::Linkage>, std::collections::HashMap<String, crate::config::Linkage>)> {
+) -> anyhow::Result<(
+    Option<crate::config::Linkage>,
+    std::collections::HashMap<String, crate::config::Linkage>,
+)> {
     use crate::config::Linkage;
 
     let mut default: Option<Linkage> = None;
@@ -273,21 +276,28 @@ pub struct BuildCommand {
     /// Per-dependency linkage strategy (overrides CCGO.toml).
     ///
     /// Each `--linkage` value is one of:
-    ///   * `<value>`              — project-wide default for all deps
-    ///                              (overrides `[build].default_dep_linkage`).
-    ///   * `<name>=<value>`       — single-dep override
-    ///                              (overrides that dep's `[[dependencies]].linkage`).
-    ///   * `<name>=<value>,<...>` — comma-separated list, mixing both shapes.
+    ///
+    ///   - `<value>` — project-wide default (overrides `[build].default_dep_linkage`)
+    ///   - `<name>=<value>` — single-dep override (overrides `[[dependencies]].linkage`)
+    ///   - `<name>=<value>,<...>` — comma-separated list, mixing both shapes
     ///
     /// `<value>` is one of `shared-external`, `static-embedded`, `static-external`.
     /// Repeatable; later wins on duplicate keys (CLI semantics).
     ///
     /// Precedence (highest to lowest):
-    ///   1. `--linkage <name>=<value>`        (CLI per-dep)
-    ///   2. `--linkage <value>`               (CLI default)
-    ///   3. `[[dependencies]].linkage`        (toml per-dep)
-    ///   4. `[build].default_dep_linkage`     (toml default)
-    ///   5. resolver auto-pick from artifacts (no preference)
+    ///   1. `--linkage <name>=<value>`                  (CLI per-dep)
+    ///   2. `--linkage <value>`                         (CLI default)
+    ///   3. `--linkage-on-shared/static <name>=<value>` (CLI build-as per-dep)
+    ///   4. `--linkage-on-shared/static <value>`        (CLI build-as default)
+    ///   5. `[[dependencies]].<platform>.linkage_on_*`  (toml platform+dep+build-as)
+    ///   6. `[[dependencies]].linkage_on_*`             (toml dep+build-as)
+    ///   7. `[[dependencies]].<platform>.linkage`       (toml platform+dep)
+    ///   8. `[[dependencies]].linkage`                  (toml per-dep)
+    ///   9. `[platforms.X].dep_linkage_on_*`            (toml global platform+build-as)
+    ///  10. `[build].dep_linkage_on_*`                  (toml global build-as)
+    ///  11. `[platforms.X].default_dep_linkage`         (toml global platform)
+    ///  12. `[build].default_dep_linkage`               (toml global default)
+    ///  13. resolver auto-pick from artifacts           (no preference)
     ///
     /// Useful for size comparisons and quick experiments without editing
     /// CCGO.toml:
@@ -301,6 +311,26 @@ pub struct BuildCommand {
     ///   # default = shared-external for everything except stdcomm, which is embedded
     #[arg(long, verbatim_doc_comment)]
     pub linkage: Vec<String>,
+
+    /// Same as `--linkage` but only applies when the consumer builds as **shared**.
+    ///
+    /// Overrides `[[dependencies]].linkage_on_shared` and
+    /// `[build].dep_linkage_on_shared` from CCGO.toml. Useful when
+    /// `--build-as both` is active and shared/static consumers need different
+    /// dependency linkage.
+    ///
+    ///   ccgo build android --build-as both \
+    ///     --linkage-on-shared shared-external \
+    ///     --linkage-on-static static-embedded
+    #[arg(long = "linkage-on-shared", verbatim_doc_comment)]
+    pub linkage_on_shared: Vec<String>,
+
+    /// Same as `--linkage` but only applies when the consumer builds as **static**.
+    ///
+    /// Overrides `[[dependencies]].linkage_on_static` and
+    /// `[build].dep_linkage_on_static` from CCGO.toml.
+    #[arg(long = "linkage-on-static", verbatim_doc_comment)]
+    pub linkage_on_static: Vec<String>,
 
     /// Build all workspace members
     #[arg(long)]
@@ -430,6 +460,12 @@ impl BuildCommand {
 
         let use_docker = self.should_use_docker(&self.target);
         let (linkage_default, linkage_overrides) = parse_linkage_arg(&self.linkage)?;
+        let (linkage_on_shared_default, linkage_on_shared_overrides) =
+            parse_linkage_arg(&self.linkage_on_shared)
+                .map_err(|e| anyhow::anyhow!("--linkage-on-shared: {e}"))?;
+        let (linkage_on_static_default, linkage_on_static_overrides) =
+            parse_linkage_arg(&self.linkage_on_static)
+                .map_err(|e| anyhow::anyhow!("--linkage-on-static: {e}"))?;
 
         Ok(BuildOptions {
             target: self.target.clone(),
@@ -451,6 +487,10 @@ impl BuildCommand {
             analytics: self.analytics,
             linkage_default,
             linkage_overrides,
+            linkage_on_shared_default,
+            linkage_on_shared_overrides,
+            linkage_on_static_default,
+            linkage_on_static_overrides,
         })
     }
 
@@ -966,8 +1006,7 @@ mod tests {
 
     #[test]
     fn parse_linkage_arg_bare_value_sets_default() {
-        let (default, per_dep) =
-            parse_linkage_arg(&["shared-external".to_string()]).unwrap();
+        let (default, per_dep) = parse_linkage_arg(&["shared-external".to_string()]).unwrap();
         assert_eq!(default, Some(Linkage::SharedExternal));
         assert!(per_dep.is_empty());
     }
@@ -993,10 +1032,9 @@ mod tests {
 
     #[test]
     fn parse_linkage_arg_comma_separated_list() {
-        let (default, per_dep) = parse_linkage_arg(&[
-            "stdcomm=static-embedded,foundrycomm=shared-external".to_string(),
-        ])
-        .unwrap();
+        let (default, per_dep) =
+            parse_linkage_arg(&["stdcomm=static-embedded,foundrycomm=shared-external".to_string()])
+                .unwrap();
         assert_eq!(default, None);
         assert_eq!(per_dep.get("stdcomm"), Some(&Linkage::StaticEmbedded));
         assert_eq!(per_dep.get("foundrycomm"), Some(&Linkage::SharedExternal));
@@ -1014,11 +1052,9 @@ mod tests {
 
     #[test]
     fn parse_linkage_arg_last_wins_on_duplicate_default() {
-        let (default, _) = parse_linkage_arg(&[
-            "shared-external".to_string(),
-            "static-embedded".to_string(),
-        ])
-        .unwrap();
+        let (default, _) =
+            parse_linkage_arg(&["shared-external".to_string(), "static-embedded".to_string()])
+                .unwrap();
         assert_eq!(default, Some(Linkage::StaticEmbedded));
     }
 
@@ -1053,8 +1089,7 @@ mod tests {
     #[test]
     fn parse_linkage_arg_skips_empty_tokens_in_list() {
         // Trailing/leading commas should be tolerated.
-        let (default, per_dep) =
-            parse_linkage_arg(&[",shared-external,,".to_string()]).unwrap();
+        let (default, per_dep) = parse_linkage_arg(&[",shared-external,,".to_string()]).unwrap();
         assert_eq!(default, Some(Linkage::SharedExternal));
         assert!(per_dep.is_empty());
     }

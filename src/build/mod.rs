@@ -83,15 +83,21 @@ pub struct BuildOptions {
     pub cache: Option<String>,
     /// Show build analytics summary
     pub analytics: bool,
-    /// CLI override for project-wide default linkage. Sits between
-    /// `[[dependencies]].linkage` (toml per-dep, lower priority) and
-    /// `--linkage <name>=<value>` (CLI per-dep, higher priority) in the
-    /// resolution chain. `None` falls through to `[build].default_dep_linkage`.
+    /// CLI override for project-wide default linkage (`--linkage <value>`).
+    /// Falls through to `[build].default_dep_linkage` when `None`.
     pub linkage_default: Option<crate::config::Linkage>,
-    /// CLI per-dependency linkage overrides. Highest priority — wins over
-    /// every CCGO.toml setting. Map keys are dep names exactly as they
-    /// appear in `[[dependencies]].name`.
+    /// CLI per-dependency linkage overrides (`--linkage <name>=<value>`).
+    /// Highest priority — wins over every CCGO.toml setting.
     pub linkage_overrides: std::collections::HashMap<String, crate::config::Linkage>,
+    /// CLI override when the consumer builds as **shared** (`--linkage-on-shared <value>`).
+    /// Mirrors `linkage` semantics but only applies when `build_as = shared`.
+    pub linkage_on_shared_default: Option<crate::config::Linkage>,
+    /// CLI per-dep overrides for shared consumers (`--linkage-on-shared <name>=<value>`).
+    pub linkage_on_shared_overrides: std::collections::HashMap<String, crate::config::Linkage>,
+    /// CLI override when the consumer builds as **static** (`--linkage-on-static <value>`).
+    pub linkage_on_static_default: Option<crate::config::Linkage>,
+    /// CLI per-dep overrides for static consumers (`--linkage-on-static <name>=<value>`).
+    pub linkage_on_static_overrides: std::collections::HashMap<String, crate::config::Linkage>,
 }
 
 impl Default for BuildOptions {
@@ -116,6 +122,10 @@ impl Default for BuildOptions {
             analytics: false,
             linkage_default: None,
             linkage_overrides: std::collections::HashMap::new(),
+            linkage_on_shared_default: None,
+            linkage_on_shared_overrides: std::collections::HashMap::new(),
+            linkage_on_static_default: None,
+            linkage_on_static_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -285,6 +295,38 @@ impl BuildContext {
             1
         } else {
             0
+        }
+    }
+
+    /// Extract the three global-platform linkage fields from the platform-specific
+    /// config section (e.g. `[platforms.android]`). Returns `(build_as_hint,
+    /// default_hint)` where `build_as_hint` is the consumer-specific field and
+    /// `default_hint` is `default_dep_linkage`.
+    fn global_platform_linkage(
+        &self,
+        platform: &str,
+        consumer: &crate::commands::build::LinkType,
+    ) -> (Option<crate::config::Linkage>, Option<crate::config::Linkage>) {
+        use crate::commands::build::LinkType;
+        let p = self.config.platforms.as_ref();
+        macro_rules! extract {
+            ($cfg:expr) => {{
+                let build_as = $cfg.and_then(|c| match consumer {
+                    LinkType::Shared => c.dep_linkage_on_shared,
+                    LinkType::Static => c.dep_linkage_on_static,
+                    _ => None,
+                });
+                (build_as, $cfg.and_then(|c| c.default_dep_linkage))
+            }};
+        }
+        match platform {
+            "android" => extract!(p.and_then(|p| p.android.as_ref())),
+            "ios" => extract!(p.and_then(|p| p.ios.as_ref())),
+            "macos" => extract!(p.and_then(|p| p.macos.as_ref())),
+            "ohos" => extract!(p.and_then(|p| p.ohos.as_ref())),
+            "linux" => extract!(p.and_then(|p| p.linux.as_ref())),
+            "windows" => extract!(p.and_then(|p| p.windows.as_ref())),
+            _ => (None, None),
         }
     }
 
@@ -493,46 +535,122 @@ impl BuildContext {
         for dep in &self.config.dependencies {
             let dep_root = self.project_root.join(".ccgo/deps").join(&dep.name);
             let artifacts = detect_dep_artifacts(&dep_root, &platform);
-            let hint = self.resolved_linkage_hint(dep);
+            let hint = self.resolved_linkage_hint(dep, &platform, &consumer);
             let resolved = resolve_linkage(consumer.clone(), artifacts, hint, &dep.name)?;
             out.push((dep.name.clone(), resolved));
         }
         Ok(out)
     }
 
-    /// Resolve the linkage hint for a single dep using the canonical
+    /// Resolve the linkage hint for a single dep using the canonical 8-tier
     /// precedence chain. Centralises the rule so [`Self::resolved_dep_linkages`]
     /// (which feeds the resolver) and [`Self::materialize_source_deps`] (which
     /// feeds the recursive build) cannot drift.
     ///
-    /// Precedence (highest to lowest):
-    ///   1. CLI per-dep   (`--linkage <name>=<value>`)        — most explicit
-    ///   2. CLI default   (`--linkage <value>`)               — CLI beats toml so
-    ///                                                          comparisons via
-    ///                                                          `--linkage X` honestly
-    ///                                                          flip every dep, even
-    ///                                                          ones the toml pinned.
-    ///   3. toml per-dep  (`[[dependencies]].linkage`)
-    ///   4. toml default  (`[build].default_dep_linkage`)
-    ///   5. `None` → resolver picks based on artifacts
+    /// Precedence (highest to lowest, after CLI overrides):
+    ///   1. CLI per-dep (`--linkage <name>=<value>`)
+    ///   2. CLI default (`--linkage <value>`)
+    ///   3. dep.{platform}.linkage_on_{shared|static}  (platform + build_as + dep)
+    ///   4. dep.linkage_on_{shared|static}              (build_as + dep)
+    ///   5. dep.{platform}.linkage                      (platform + dep)
+    ///   6. dep.linkage                                 (dep only)
+    ///   7. [platforms.X].dep_linkage_on_{shared|static} (global: platform + build_as)
+    ///   8. [build].dep_linkage_on_{shared|static}       (global: build_as)
+    ///   9. [platforms.X].default_dep_linkage             (global: platform)
+    ///  10. [build].default_dep_linkage                   (global default)
+    ///  11. None → resolver picks based on artifacts
     ///
-    /// Pin-by-toml is recoverable via `--linkage <name>=<toml-value>`.
+    /// CLI `--linkage-on-shared/static` flags mirror the TOML `linkage_on_shared/static`
+    /// fields but sit above their TOML counterparts in priority:
+    ///   - `--linkage-on-shared <name>=<value>` beats tier 3
+    ///   - `--linkage-on-shared <value>`        beats tier 4
     fn resolved_linkage_hint(
         &self,
         dep: &crate::config::DependencyConfig,
+        platform: &str,
+        consumer: &crate::commands::build::LinkType,
     ) -> Option<crate::config::Linkage> {
-        let toml_default = self
-            .config
-            .build
-            .as_ref()
-            .and_then(|b| b.default_dep_linkage);
+        use crate::commands::build::LinkType;
+
+        let plat_dep = dep.platform_config(platform);
+        let (global_plat_build_as, global_plat_default) =
+            self.global_platform_linkage(platform, consumer);
+        let build_cfg = self.config.build.as_ref();
+
+        let global_build_as = build_cfg.and_then(|b| match consumer {
+            LinkType::Shared => b.dep_linkage_on_shared,
+            LinkType::Static => b.dep_linkage_on_static,
+            _ => None,
+        });
+        let global_default = build_cfg.and_then(|b| b.default_dep_linkage);
+
+        let plat_dep_build_as = plat_dep.and_then(|p| match consumer {
+            LinkType::Shared => p.linkage_on_shared,
+            LinkType::Static => p.linkage_on_static,
+            _ => None,
+        });
+        let dep_build_as = match consumer {
+            LinkType::Shared => dep.linkage_on_shared,
+            LinkType::Static => dep.linkage_on_static,
+            _ => None,
+        };
+
+        // CLI build-as-specific overrides (above toml per-dep)
+        let (cli_build_as_override, cli_build_as_default) = match consumer {
+            LinkType::Shared => (
+                self.options
+                    .linkage_on_shared_overrides
+                    .get(&dep.name)
+                    .copied(),
+                self.options.linkage_on_shared_default,
+            ),
+            LinkType::Static => (
+                self.options
+                    .linkage_on_static_overrides
+                    .get(&dep.name)
+                    .copied(),
+                self.options.linkage_on_static_default,
+            ),
+            _ => (None, None),
+        };
+
         self.options
             .linkage_overrides
             .get(&dep.name)
             .copied()
             .or(self.options.linkage_default)
+            .or(cli_build_as_override)
+            .or(cli_build_as_default)
+            .or(plat_dep_build_as)
+            .or(dep_build_as)
+            .or_else(|| plat_dep.and_then(|p| p.linkage))
             .or(dep.linkage)
-            .or(toml_default)
+            .or(global_plat_build_as)
+            .or(global_build_as)
+            .or(global_plat_default)
+            .or(global_default)
+    }
+
+    /// Resolve the linkage hint for materialize (pre-build of source deps).
+    ///
+    /// `materialize_source_deps` builds dep artifacts without knowing which
+    /// build-as the final consumer will use. If both Shared and Static consumers
+    /// would select the same hint, use it (avoids building artifacts we won't
+    /// need). If they differ, return `None` so the materializer builds both
+    /// artifact shapes.
+    fn resolved_materialize_hint(
+        &self,
+        dep: &crate::config::DependencyConfig,
+        platform: &str,
+    ) -> Option<crate::config::Linkage> {
+        use crate::commands::build::LinkType;
+        let shared_hint = self.resolved_linkage_hint(dep, platform, &LinkType::Shared);
+        let static_hint = self.resolved_linkage_hint(dep, platform, &LinkType::Static);
+        if shared_hint == static_hint {
+            shared_hint
+        } else {
+            None
+        }
     }
 
     /// Run the source-only-dep materialize pass: for any dep that ships
@@ -548,7 +666,7 @@ impl BuildContext {
             .config
             .dependencies
             .iter()
-            .map(|d| (d.name.clone(), self.resolved_linkage_hint(d)))
+            .map(|d| (d.name.clone(), self.resolved_materialize_hint(d, platform)))
             .collect();
 
         // `BuildOptions::architectures` is already lowercased by
@@ -754,4 +872,282 @@ pub struct BuildResult {
     pub duration_secs: f64,
     /// Architectures that were built
     pub architectures: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::build::LinkType;
+    use crate::config::{BuildConfig, CcgoConfig, DependencyConfig, Linkage, PlatformLinkageConfig};
+
+    fn make_ctx(options: BuildOptions, config: CcgoConfig) -> BuildContext {
+        BuildContext {
+            project_root: PathBuf::from("/tmp/test"),
+            config,
+            options,
+            cmake_build_dir: PathBuf::from("/tmp/test/cmake_build"),
+            output_dir: PathBuf::from("/tmp/test/target"),
+            git_version: None,
+        }
+    }
+
+    fn bare_dep(name: &str) -> DependencyConfig {
+        DependencyConfig {
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn bare_config() -> CcgoConfig {
+        toml::from_str("").expect("empty toml should parse")
+    }
+
+    fn bare_options() -> BuildOptions {
+        BuildOptions::default()
+    }
+
+    // --- tier 6: dep.linkage (dep only) ---
+
+    #[test]
+    fn dep_linkage_field_used_when_no_platform_or_build_as() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::StaticEmbedded);
+        let ctx = make_ctx(bare_options(), bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared),
+            Some(Linkage::StaticEmbedded)
+        );
+    }
+
+    // --- tier 4: dep.linkage_on_shared / dep.linkage_on_static ---
+
+    #[test]
+    fn dep_linkage_on_shared_beats_dep_linkage() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::SharedExternal);
+        dep.linkage_on_shared = Some(Linkage::StaticEmbedded);
+        let ctx = make_ctx(bare_options(), bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared),
+            Some(Linkage::StaticEmbedded)
+        );
+        // Static consumer still falls back to dep.linkage
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Static),
+            Some(Linkage::SharedExternal)
+        );
+    }
+
+    #[test]
+    fn dep_linkage_on_static_beats_dep_linkage() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::SharedExternal);
+        dep.linkage_on_static = Some(Linkage::StaticExternal);
+        let ctx = make_ctx(bare_options(), bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Static),
+            Some(Linkage::StaticExternal)
+        );
+    }
+
+    // --- tier 5 & 3: dep.{platform}.linkage / dep.{platform}.linkage_on_X ---
+
+    #[test]
+    fn platform_dep_linkage_beats_bare_dep_linkage() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::SharedExternal);
+        dep.android = Some(PlatformLinkageConfig {
+            linkage: Some(Linkage::StaticEmbedded),
+            linkage_on_shared: None,
+            linkage_on_static: None,
+        });
+        let ctx = make_ctx(bare_options(), bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "android", &LinkType::Shared),
+            Some(Linkage::StaticEmbedded),
+            "android.linkage should win over dep.linkage for android platform"
+        );
+        // Non-android platform falls back to dep.linkage
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "ios", &LinkType::Shared),
+            Some(Linkage::SharedExternal),
+        );
+    }
+
+    #[test]
+    fn platform_dep_build_as_beats_platform_dep_linkage() {
+        let mut dep = bare_dep("leaf");
+        dep.android = Some(PlatformLinkageConfig {
+            linkage: Some(Linkage::SharedExternal),
+            linkage_on_shared: Some(Linkage::StaticEmbedded),
+            linkage_on_static: None,
+        });
+        let ctx = make_ctx(bare_options(), bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "android", &LinkType::Shared),
+            Some(Linkage::StaticEmbedded),
+            "android.linkage_on_shared beats android.linkage"
+        );
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "android", &LinkType::Static),
+            Some(Linkage::SharedExternal),
+            "android.linkage used when linkage_on_static is absent"
+        );
+    }
+
+    // --- tier 10: [build].default_dep_linkage (global default) ---
+
+    #[test]
+    fn global_build_default_used_when_nothing_else_set() {
+        let dep = bare_dep("leaf");
+        let mut config = bare_config();
+        config.build = Some(BuildConfig {
+            default_dep_linkage: Some(Linkage::StaticExternal),
+            ..Default::default()
+        });
+        let ctx = make_ctx(bare_options(), config);
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared),
+            Some(Linkage::StaticExternal)
+        );
+    }
+
+    // --- tier 8: [build].dep_linkage_on_shared / dep_linkage_on_static ---
+
+    #[test]
+    fn global_build_build_as_beats_global_build_default() {
+        let dep = bare_dep("leaf");
+        let mut config = bare_config();
+        config.build = Some(BuildConfig {
+            default_dep_linkage: Some(Linkage::SharedExternal),
+            dep_linkage_on_shared: Some(Linkage::StaticEmbedded),
+            dep_linkage_on_static: None,
+            ..Default::default()
+        });
+        let ctx = make_ctx(bare_options(), config);
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared),
+            Some(Linkage::StaticEmbedded)
+        );
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Static),
+            Some(Linkage::SharedExternal)
+        );
+    }
+
+    // --- CLI overrides beat everything ---
+
+    #[test]
+    fn cli_per_dep_override_beats_all_toml() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::SharedExternal);
+        dep.android = Some(PlatformLinkageConfig {
+            linkage: Some(Linkage::StaticEmbedded),
+            linkage_on_shared: Some(Linkage::StaticEmbedded),
+            linkage_on_static: Some(Linkage::StaticEmbedded),
+        });
+        let mut options = bare_options();
+        options
+            .linkage_overrides
+            .insert("leaf".to_string(), Linkage::StaticExternal);
+        let ctx = make_ctx(options, bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "android", &LinkType::Shared),
+            Some(Linkage::StaticExternal)
+        );
+    }
+
+    // --- CLI --linkage-on-shared / --linkage-on-static ---
+
+    #[test]
+    fn cli_linkage_on_shared_default_beats_toml_dep_linkage_for_shared_consumer() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::SharedExternal);
+        let mut options = bare_options();
+        options.linkage_on_shared_default = Some(Linkage::StaticEmbedded);
+        let ctx = make_ctx(options, bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared),
+            Some(Linkage::StaticEmbedded),
+            "--linkage-on-shared default should beat dep.linkage for shared consumer"
+        );
+        // Static consumer unaffected — falls through to dep.linkage
+        let ctx2 = make_ctx(
+            {
+                let mut o = bare_options();
+                o.linkage_on_shared_default = Some(Linkage::StaticEmbedded);
+                o
+            },
+            bare_config(),
+        );
+        assert_eq!(
+            ctx2.resolved_linkage_hint(&dep, "linux", &LinkType::Static),
+            Some(Linkage::SharedExternal),
+        );
+    }
+
+    #[test]
+    fn cli_linkage_on_shared_per_dep_beats_default() {
+        let dep = bare_dep("leaf");
+        let mut options = bare_options();
+        options.linkage_on_shared_default = Some(Linkage::SharedExternal);
+        options
+            .linkage_on_shared_overrides
+            .insert("leaf".to_string(), Linkage::StaticEmbedded);
+        let ctx = make_ctx(options, bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared),
+            Some(Linkage::StaticEmbedded),
+            "--linkage-on-shared leaf=X should beat --linkage-on-shared default"
+        );
+    }
+
+    #[test]
+    fn cli_linkage_on_static_default_beats_toml_dep_linkage_for_static_consumer() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::SharedExternal);
+        let mut options = bare_options();
+        options.linkage_on_static_default = Some(Linkage::StaticExternal);
+        let ctx = make_ctx(options, bare_config());
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Static),
+            Some(Linkage::StaticExternal)
+        );
+    }
+
+    #[test]
+    fn cli_bare_linkage_still_beats_cli_build_as_linkage() {
+        let dep = bare_dep("leaf");
+        let mut options = bare_options();
+        options.linkage_default = Some(Linkage::SharedExternal);
+        options.linkage_on_shared_default = Some(Linkage::StaticEmbedded);
+        let ctx = make_ctx(options, bare_config());
+        // --linkage (bare) sits above --linkage-on-shared in priority
+        assert_eq!(
+            ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared),
+            Some(Linkage::SharedExternal),
+        );
+    }
+
+    // --- resolved_materialize_hint ---
+
+    #[test]
+    fn materialize_hint_returns_hint_when_shared_static_agree() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage = Some(Linkage::StaticEmbedded);
+        let ctx = make_ctx(bare_options(), bare_config());
+        assert_eq!(
+            ctx.resolved_materialize_hint(&dep, "linux"),
+            Some(Linkage::StaticEmbedded)
+        );
+    }
+
+    #[test]
+    fn materialize_hint_returns_none_when_shared_static_differ() {
+        let mut dep = bare_dep("leaf");
+        dep.linkage_on_shared = Some(Linkage::SharedExternal);
+        dep.linkage_on_static = Some(Linkage::StaticEmbedded);
+        let ctx = make_ctx(bare_options(), bare_config());
+        assert_eq!(ctx.resolved_materialize_hint(&dep, "linux"), None);
+    }
 }

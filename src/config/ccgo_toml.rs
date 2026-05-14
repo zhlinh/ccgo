@@ -280,6 +280,14 @@ impl SimplifiedDep {
                 SimplifiedDep::Full(spec) => spec.registry.clone(),
             },
             linkage: None,
+            linkage_on_shared: None,
+            linkage_on_static: None,
+            android: None,
+            ios: None,
+            macos: None,
+            ohos: None,
+            linux: None,
+            windows: None,
         }
     }
 }
@@ -488,6 +496,14 @@ impl WorkspaceDependency {
             workspace: false,
             registry: None,
             linkage: None,
+            linkage_on_shared: None,
+            linkage_on_static: None,
+            android: None,
+            ios: None,
+            macos: None,
+            ohos: None,
+            linux: None,
+            windows: None,
         }
     }
 }
@@ -555,6 +571,26 @@ pub struct ExampleConfig {
     pub path: Option<String>,
 }
 
+/// Per-platform linkage overrides inside a `[[dependencies]]` entry.
+///
+/// All three fields are optional. Unset fields fall through to the
+/// corresponding non-platform-specific field on `DependencyConfig`.
+///
+/// ```toml
+/// [[dependencies]]
+/// name = "stdcomm"
+/// linkage = "shared-external"          # any platform fallback
+/// android.linkage = "shared-external"  # android-only override
+/// android.linkage_on_shared = "static-embedded"
+/// android.linkage_on_static = "static-external"
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PlatformLinkageConfig {
+    pub linkage: Option<Linkage>,
+    pub linkage_on_shared: Option<Linkage>,
+    pub linkage_on_static: Option<Linkage>,
+}
+
 /// Per-dependency linkage strategy.
 ///
 /// Encodes two orthogonal facets in one symbol:
@@ -615,7 +651,7 @@ impl TryFrom<String> for Linkage {
 }
 
 /// Dependency configuration from [[dependencies]] array
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct DependencyConfig {
     /// Dependency name
     pub name: String,
@@ -643,6 +679,38 @@ pub struct DependencyConfig {
     /// When `None`, falls back to `[build].default_dep_linkage`, then to a
     /// platform-default chosen from the dep's available artifacts.
     pub linkage: Option<Linkage>,
+
+    /// Override when the consumer itself is building as a **shared** library.
+    /// Takes priority over `linkage` for shared consumers.
+    pub linkage_on_shared: Option<Linkage>,
+
+    /// Override when the consumer itself is building as a **static** library.
+    /// Takes priority over `linkage` for static consumers.
+    pub linkage_on_static: Option<Linkage>,
+
+    /// Android-specific linkage overrides (fields: `linkage`, `linkage_on_shared`, `linkage_on_static`).
+    #[serde(default)]
+    pub android: Option<PlatformLinkageConfig>,
+
+    /// iOS-specific linkage overrides.
+    #[serde(default)]
+    pub ios: Option<PlatformLinkageConfig>,
+
+    /// macOS-specific linkage overrides.
+    #[serde(default)]
+    pub macos: Option<PlatformLinkageConfig>,
+
+    /// OpenHarmony-specific linkage overrides.
+    #[serde(default)]
+    pub ohos: Option<PlatformLinkageConfig>,
+
+    /// Linux-specific linkage overrides.
+    #[serde(default)]
+    pub linux: Option<PlatformLinkageConfig>,
+
+    /// Windows-specific linkage overrides.
+    #[serde(default)]
+    pub windows: Option<PlatformLinkageConfig>,
 
     /// Whether this dependency is optional (only included when a feature enables it)
     #[serde(default)]
@@ -675,6 +743,20 @@ pub struct DependencyConfig {
 }
 
 impl DependencyConfig {
+    /// Return the platform-specific linkage overrides for `platform`, or `None`
+    /// if no per-platform block was configured for that platform.
+    pub fn platform_config(&self, platform: &str) -> Option<&PlatformLinkageConfig> {
+        match platform {
+            "android" => self.android.as_ref(),
+            "ios" => self.ios.as_ref(),
+            "macos" => self.macos.as_ref(),
+            "ohos" => self.ohos.as_ref(),
+            "linux" => self.linux.as_ref(),
+            "windows" => self.windows.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Merge with a workspace dependency, inheriting missing fields
     pub fn merge_with_workspace(&mut self, ws_dep: &WorkspaceDependency) {
         // Only merge if workspace inheritance is enabled
@@ -909,6 +991,14 @@ pub struct BuildConfig {
     /// consumers always get thin static-external; shared consumers prefer
     /// shared-external when the dep can produce a `.so`).
     pub default_dep_linkage: Option<Linkage>,
+
+    /// Project-wide default linkage when the consumer is building as **shared**.
+    /// Takes priority over `default_dep_linkage` for shared consumers.
+    pub dep_linkage_on_shared: Option<Linkage>,
+
+    /// Project-wide default linkage when the consumer is building as **static**.
+    /// Takes priority over `default_dep_linkage` for static consumers.
+    pub dep_linkage_on_static: Option<Linkage>,
 }
 
 /// Platform-specific configurations
@@ -941,6 +1031,13 @@ pub struct AndroidConfig {
 
     /// Target architectures
     pub architectures: Option<Vec<String>>,
+
+    /// Platform-wide default dep linkage (any build_as).
+    pub default_dep_linkage: Option<Linkage>,
+    /// Platform-wide dep linkage when consumer builds as shared.
+    pub dep_linkage_on_shared: Option<Linkage>,
+    /// Platform-wide dep linkage when consumer builds as static.
+    pub dep_linkage_on_static: Option<Linkage>,
 }
 
 /// iOS platform configuration
@@ -948,6 +1045,10 @@ pub struct AndroidConfig {
 pub struct IosConfig {
     /// Minimum iOS version
     pub min_version: Option<String>,
+
+    pub default_dep_linkage: Option<Linkage>,
+    pub dep_linkage_on_shared: Option<Linkage>,
+    pub dep_linkage_on_static: Option<Linkage>,
 }
 
 /// macOS platform configuration
@@ -955,6 +1056,10 @@ pub struct IosConfig {
 pub struct MacosConfig {
     /// Minimum macOS version
     pub min_version: Option<String>,
+
+    pub default_dep_linkage: Option<Linkage>,
+    pub dep_linkage_on_shared: Option<Linkage>,
+    pub dep_linkage_on_static: Option<Linkage>,
 }
 
 /// Windows platform configuration
@@ -962,6 +1067,10 @@ pub struct MacosConfig {
 pub struct WindowsConfig {
     /// Toolchain (msvc, mingw, auto)
     pub toolchain: Option<String>,
+
+    pub default_dep_linkage: Option<Linkage>,
+    pub dep_linkage_on_shared: Option<Linkage>,
+    pub dep_linkage_on_static: Option<Linkage>,
 }
 
 /// Linux platform configuration
@@ -969,6 +1078,10 @@ pub struct WindowsConfig {
 pub struct LinuxConfig {
     /// Target architectures
     pub architectures: Option<Vec<String>>,
+
+    pub default_dep_linkage: Option<Linkage>,
+    pub dep_linkage_on_shared: Option<Linkage>,
+    pub dep_linkage_on_static: Option<Linkage>,
 }
 
 /// OpenHarmony platform configuration
@@ -979,6 +1092,10 @@ pub struct OhosConfig {
 
     /// Target architectures
     pub architectures: Option<Vec<String>>,
+
+    pub default_dep_linkage: Option<Linkage>,
+    pub dep_linkage_on_shared: Option<Linkage>,
+    pub dep_linkage_on_static: Option<Linkage>,
 }
 
 impl CcgoConfig {
