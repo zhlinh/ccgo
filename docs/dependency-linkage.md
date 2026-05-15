@@ -14,17 +14,59 @@ Two orthogonal axes determine how a dependency ends up in your build product:
 * **`static-external`** — the dep stays as a separate `.a` and your `.a` records the dependency without merging. Only valid for static consumers; the final executable's linker reconciles symbols at exe link time. The "thin chain" model.
 * `shared-embedded` — **does not exist**. Trying to set it produces a parse error pointing at the two valid alternatives. A `.so` cannot be archived into another `.so`.
 
+## Valid build-as × linkage combinations
+
+The three linkage values have different validity rules depending on which
+consumer type (`build-as`) is producing the artifact. Invalid combinations
+are rejected at config parse time with a clear error message.
+
+### General hint (`linkage` / `default_dep_linkage`)
+
+When set on the `linkage` or `default_dep_linkage` field (which applies to
+all consumer shapes), the allowed values depend on `build-as`:
+
+| `build-as` | `shared-external` | `static-embedded` | `static-external` |
+|---|---|---|---|
+| `shared` | ✅ (default) | ✅ | ❌ |
+| `static` | ✅ | ❌ | ✅ (default) |
+| `both` | ✅ | ❌ | ❌ |
+
+`build-as = both` is the intersection: a value must be valid for *both*
+consumer shapes. `static-embedded` violates the static side; `static-external`
+violates the shared side. Only `shared-external` is safe to specify
+unconditionally across both shapes.
+
+### Consumer-specific fields (`linkage_on_shared` / `linkage_on_static`)
+
+Use these fields to set different hints per consumer shape without conflicting:
+
+| Value | `linkage_on_shared` | `linkage_on_static` |
+|---|---|---|
+| `shared-external` | ✅ | ✅ |
+| `static-embedded` | ✅ | ❌ |
+| `static-external` | ❌ | ✅ |
+
+`linkage_on_shared` never permits `static-external` — it would leave
+unresolved symbols in the `.so`. `linkage_on_static` never permits
+`static-embedded` — static archives cannot embed other archives.
+
 ## Decision matrix
 
 | Consumer | Dep provides | Hint | Result |
 |---|---|---|---|
-| `static` | any | (any) | `static-external` (or `shared-external` when only `.so` available) |
 | `shared` | only `.a` | (any) | `static-embedded` (forced; `shared-external` hint is an error) |
 | `shared` | only `.so` | (any) | `shared-external` (forced; `static-embedded` hint is an error) |
 | `shared` | both / source | absent | `shared-external` |
 | `shared` | both / source | `shared-external` | `shared-external` |
 | `shared` | both / source | `static-embedded` | `static-embedded` |
-| `shared` | any | `static-external` | **error** — leaves unresolved external static refs in the `.so` |
+| `shared` | any | `static-external` | **error** — banned for shared consumers |
+| `static` | only `.a` | absent / `static-external` | `static-external` |
+| `static` | only `.a` | `shared-external` | **error** — dep has no `.so` |
+| `static` | only `.so` | absent / `shared-external` | `shared-external` |
+| `static` | only `.so` | `static-external` | **error** — dep has no `.a` |
+| `static` | both / source | absent / `static-external` | `static-external` |
+| `static` | both / source | `shared-external` | `shared-external` |
+| `static` | any | `static-embedded` | **error** — static archives cannot embed |
 
 ## When to override
 

@@ -14,17 +14,56 @@
 * **`static-external`** —— 依赖保留为独立的 `.a`，你的 `.a` 仅记录该依赖关系而不合并。仅对 static 消费者有效；最终可执行文件的链接器在 exe 链接时解析符号。即"细链"模型。
 * `shared-embedded` —— **不存在**。尝试设置该值会产生解析错误，并指向两个有效的备选项。`.so` 不能被归档进另一个 `.so`。
 
+## build-as 与 linkage 有效组合
+
+三种 linkage 取值对不同消费者类型（`build-as`）有不同的有效性规则，
+无效组合会在配置解析时报错。
+
+### 通用提示字段（`linkage` / `default_dep_linkage`）
+
+当设置在 `linkage` 或 `default_dep_linkage` 字段（作用于所有消费者形态）时，
+允许的取值取决于 `build-as`：
+
+| `build-as` | `shared-external` | `static-embedded` | `static-external` |
+|---|---|---|---|
+| `shared` | ✅（默认）| ✅ | ❌ |
+| `static` | ✅ | ❌ | ✅（默认）|
+| `both` | ✅ | ❌ | ❌ |
+
+`build-as = both` 取两者的交集：某个取值必须对**两种**消费者形态都有效。
+`static-embedded` 违反 static 侧，`static-external` 违反 shared 侧，
+因此无条件安全的只有 `shared-external`。
+
+### 消费者专属字段（`linkage_on_shared` / `linkage_on_static`）
+
+通过这两个字段，可以为不同消费者形态分别指定提示，互不冲突：
+
+| 取值 | `linkage_on_shared` | `linkage_on_static` |
+|---|---|---|
+| `shared-external` | ✅ | ✅ |
+| `static-embedded` | ✅ | ❌ |
+| `static-external` | ❌ | ✅ |
+
+`linkage_on_shared` 永不允许 `static-external`（会在 `.so` 中留下未解析符号）。
+`linkage_on_static` 永不允许 `static-embedded`（静态归档不能内嵌其他静态归档）。
+
 ## 决策矩阵
 
 | 消费者 | 依赖提供 | 提示 | 结果 |
 |---|---|---|---|
-| `static` | 任意 |（任意）| `static-external`（仅有 `.so` 时为 `shared-external`）|
 | `shared` | 仅 `.a` |（任意）| `static-embedded`（强制；`shared-external` 提示报错）|
 | `shared` | 仅 `.so` |（任意）| `shared-external`（强制；`static-embedded` 提示报错）|
 | `shared` | 两者皆有 / 源码 | 缺省 | `shared-external` |
 | `shared` | 两者皆有 / 源码 | `shared-external` | `shared-external` |
 | `shared` | 两者皆有 / 源码 | `static-embedded` | `static-embedded` |
-| `shared` | 任意 | `static-external` | **报错** —— 会在 `.so` 中留下未解析的外部静态符号引用 |
+| `shared` | 任意 | `static-external` | **报错** —— shared 消费者禁用此值 |
+| `static` | 仅 `.a` | 缺省 / `static-external` | `static-external` |
+| `static` | 仅 `.a` | `shared-external` | **报错** —— 依赖无 `.so` |
+| `static` | 仅 `.so` | 缺省 / `shared-external` | `shared-external` |
+| `static` | 仅 `.so` | `static-external` | **报错** —— 依赖无 `.a` |
+| `static` | 两者皆有 / 源码 | 缺省 / `static-external` | `static-external` |
+| `static` | 两者皆有 / 源码 | `shared-external` | `shared-external` |
+| `static` | 任意 | `static-embedded` | **报错** —— 静态归档不能内嵌其他归档 |
 
 ## 何时需要覆盖
 
