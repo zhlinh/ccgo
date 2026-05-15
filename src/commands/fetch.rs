@@ -264,6 +264,7 @@ impl FetchCommand {
         let mut installed_count = 0;
         let mut failed_count = 0;
         let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
+        let packages_before = lockfile.packages.clone();
 
         // Create a map for quick lookup of dependency configs
         let dep_map: std::collections::HashMap<String, &DependencyConfig> =
@@ -305,8 +306,9 @@ impl FetchCommand {
             }
         }
 
-        // Save lockfile if any dependencies were installed
-        if installed_count > 0 {
+        // Save lockfile only when the packages actually changed, to avoid
+        // spurious timestamp-only diffs when all deps were already up-to-date.
+        if installed_count > 0 && lockfile.packages != packages_before {
             lockfile.touch();
             lockfile.save(&project_dir)?;
             println!("\n📝 Updated {}", LOCKFILE_NAME);
@@ -1385,6 +1387,7 @@ impl FetchCommand {
         fs::create_dir_all(&deps_dir).context("Failed to create .ccgo/deps directory")?;
 
         let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
+        let packages_before = lockfile.packages.clone();
         let mut installed_count = 0;
 
         // Resolve transitive dependencies
@@ -1441,8 +1444,8 @@ impl FetchCommand {
             }
         }
 
-        // Save lockfile
-        if installed_count > 0 {
+        // Save lockfile only when packages actually changed.
+        if installed_count > 0 && lockfile.packages != packages_before {
             lockfile.touch();
             lockfile.save(member_path)?;
             Self::update_gitignore(member_path)?;

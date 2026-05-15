@@ -62,7 +62,7 @@ pub struct LockfileMetadata {
 }
 
 /// A locked package with exact version and source information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LockedPackage {
     /// Package name
     pub name: String,
@@ -96,7 +96,7 @@ pub struct LockedPackage {
 }
 
 /// Information about a patched dependency
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PatchInfo {
     /// Source of the patch (e.g., "crates-io" or the original repository URL)
     pub patched_source: String,
@@ -110,7 +110,7 @@ pub struct PatchInfo {
 }
 
 /// Git-specific locked information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LockedGitInfo {
     /// Full commit hash
     pub revision: String,
