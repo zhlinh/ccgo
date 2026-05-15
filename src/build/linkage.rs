@@ -89,19 +89,54 @@ pub fn resolve_linkage(
     }
 
     match consumer {
-        // Static consumer: always thin. The hint can only choose between
-        // referencing the dep's .so vs .a externally — never embed.
-        LinkType::Static => match artifacts {
-            DepArtifacts::OnlyShared => Ok(ResolvedLinkage::SharedExternal),
-            DepArtifacts::OnlyStatic | DepArtifacts::Both => Ok(ResolvedLinkage::StaticExternal),
-            DepArtifacts::SourceOnly => Err(anyhow!(
-                "internal: dependency '{dep_name}' is still source-only at \
-                 link-resolution time. `materialize_source_deps` must run \
-                 before `resolve_linkage` so the dep's .a/.so are available. \
-                 This is a ccgo bug — please report it."
-            )),
-            DepArtifacts::None => unreachable!("handled above"),
-        },
+        // Static consumer: external only — static archives cannot embed other archives.
+        // Hint can override the static/shared choice when Both artifacts exist.
+        LinkType::Static => {
+            // static-embedded is never valid for a static consumer.
+            if matches!(hint, Some(Linkage::StaticEmbedded)) {
+                return Err(anyhow!(
+                    "dependency '{dep_name}': linkage = \"static-embedded\" is not valid \
+                     for a static consumer (static archives cannot embed other archives). \
+                     Use \"static-external\" (default) or \"shared-external\"."
+                ));
+            }
+            match artifacts {
+                DepArtifacts::OnlyShared => {
+                    if matches!(hint, Some(Linkage::StaticExternal)) {
+                        return Err(anyhow!(
+                            "dependency '{dep_name}' provides only a shared library but \
+                             linkage = \"static-external\" was requested. Either drop the \
+                             hint (ccgo will use shared-external automatically), or rebuild \
+                             '{dep_name}' with link_type = \"static\" or \"both\"."
+                        ));
+                    }
+                    Ok(ResolvedLinkage::SharedExternal)
+                }
+                DepArtifacts::OnlyStatic => {
+                    if matches!(hint, Some(Linkage::SharedExternal)) {
+                        return Err(anyhow!(
+                            "dependency '{dep_name}' provides only a static archive but \
+                             linkage = \"shared-external\" was requested. Either drop the \
+                             hint (ccgo will use static-external automatically), or rebuild \
+                             '{dep_name}' with link_type = \"shared\" or \"both\"."
+                        ));
+                    }
+                    Ok(ResolvedLinkage::StaticExternal)
+                }
+                DepArtifacts::Both => match hint {
+                    Some(Linkage::SharedExternal) => Ok(ResolvedLinkage::SharedExternal),
+                    None | Some(Linkage::StaticExternal) => Ok(ResolvedLinkage::StaticExternal),
+                    Some(Linkage::StaticEmbedded) => unreachable!("rejected above"),
+                },
+                DepArtifacts::SourceOnly => Err(anyhow!(
+                    "internal: dependency '{dep_name}' is still source-only at \
+                     link-resolution time. `materialize_source_deps` must run \
+                     before `resolve_linkage` so the dep's .a/.so are available. \
+                     This is a ccgo bug — please report it."
+                )),
+                DepArtifacts::None => unreachable!("handled above"),
+            }
+        }
         // Shared consumer: forced moves first, then honor hint, then default.
         LinkType::Shared => match artifacts {
             DepArtifacts::OnlyStatic => {
@@ -227,50 +262,63 @@ mod tests {
     }
 
     #[test]
-    fn static_consumer_always_external_regardless_of_hint() {
-        for hint in [
-            None,
-            Some(Linkage::SharedExternal),
-            Some(Linkage::StaticEmbedded),
-            Some(Linkage::StaticExternal),
-        ] {
-            for arts in [
-                DepArtifacts::OnlyStatic,
-                DepArtifacts::OnlyShared,
-                DepArtifacts::Both,
-            ] {
-                let resolved = resolve_linkage(LinkType::Static, arts, hint, "dep").unwrap();
-                assert!(
-                    matches!(
-                        resolved,
-                        ResolvedLinkage::StaticExternal | ResolvedLinkage::SharedExternal
-                    ),
-                    "static consumer should never produce StaticEmbedded; got {resolved:?} for hint={hint:?} arts={arts:?}"
-                );
-            }
+    fn static_consumer_never_produces_static_embedded() {
+        // static-embedded is always invalid for static consumers regardless of artifacts.
+        for arts in [DepArtifacts::OnlyStatic, DepArtifacts::OnlyShared, DepArtifacts::Both] {
+            let err =
+                resolve_linkage(LinkType::Static, arts, Some(Linkage::StaticEmbedded), "dep")
+                    .unwrap_err();
+            assert!(
+                err.to_string().contains("static-embedded"),
+                "expected static-embedded error, got: {err}"
+            );
         }
     }
 
     #[test]
-    fn static_consumer_with_static_artifacts_resolves_static_external() {
-        for arts in [
-            DepArtifacts::OnlyStatic,
-            DepArtifacts::Both,
-        ] {
-            for hint in [
-                None,
-                Some(Linkage::SharedExternal),
-                Some(Linkage::StaticEmbedded),
-                Some(Linkage::StaticExternal),
-            ] {
-                let r = resolve_linkage(LinkType::Static, arts, hint, "dep").unwrap();
-                assert_eq!(
-                    r,
-                    ResolvedLinkage::StaticExternal,
-                    "static consumer + arts={arts:?} hint={hint:?} should be StaticExternal"
-                );
-            }
+    fn static_consumer_with_no_hint_defaults_to_static_external_when_static_available() {
+        for arts in [DepArtifacts::OnlyStatic, DepArtifacts::Both] {
+            let r = resolve_linkage(LinkType::Static, arts, None, "dep").unwrap();
+            assert_eq!(r, ResolvedLinkage::StaticExternal, "arts={arts:?}");
         }
+    }
+
+    #[test]
+    fn static_consumer_both_honors_shared_external_hint() {
+        let r = resolve_linkage(
+            LinkType::Static,
+            DepArtifacts::Both,
+            Some(Linkage::SharedExternal),
+            "dep",
+        )
+        .unwrap();
+        assert_eq!(r, ResolvedLinkage::SharedExternal);
+    }
+
+    #[test]
+    fn static_consumer_only_static_rejects_shared_external_hint() {
+        let err = resolve_linkage(
+            LinkType::Static,
+            DepArtifacts::OnlyStatic,
+            Some(Linkage::SharedExternal),
+            "leaf",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("leaf"));
+        assert!(err.to_string().contains("shared-external"));
+    }
+
+    #[test]
+    fn static_consumer_only_shared_rejects_static_external_hint() {
+        let err = resolve_linkage(
+            LinkType::Static,
+            DepArtifacts::OnlyShared,
+            Some(Linkage::StaticExternal),
+            "leaf",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("leaf"));
+        assert!(err.to_string().contains("static-external"));
     }
 
     #[test]

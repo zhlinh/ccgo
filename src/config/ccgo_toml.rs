@@ -926,6 +926,22 @@ impl FeaturesConfig {
     }
 }
 
+/// Return an error if `value` is `static-external`, which is never valid for a
+/// shared consumer. `field` is used only in the error message.
+fn reject_static_external_for_shared(
+    value: Option<Linkage>,
+    field: &str,
+) -> Result<()> {
+    if value == Some(Linkage::StaticExternal) {
+        bail!(
+            "`{field}` cannot be \"static-external\": a shared consumer cannot have \
+             unresolved external static references. Use \"shared-external\" or \
+             \"static-embedded\" instead."
+        );
+    }
+    Ok(())
+}
+
 impl DependencyConfig {
     /// Validate the dependency configuration
     pub fn validate(&self) -> Result<()> {
@@ -936,6 +952,28 @@ impl DependencyConfig {
                 self.version, self.name
             )
         })?;
+
+        // linkage_on_shared fields must not be static-external (invalid for shared consumers)
+        let dep = &self.name;
+        reject_static_external_for_shared(
+            self.linkage_on_shared,
+            &format!("[[dependencies]].linkage_on_shared (dep '{dep}')"),
+        )?;
+        for (plat, cfg) in [
+            ("android", &self.android),
+            ("ios", &self.ios),
+            ("macos", &self.macos),
+            ("ohos", &self.ohos),
+            ("linux", &self.linux),
+            ("windows", &self.windows),
+        ] {
+            if let Some(cfg) = cfg {
+                reject_static_external_for_shared(
+                    cfg.linkage_on_shared,
+                    &format!("[[dependencies]].{plat}.linkage_on_shared (dep '{dep}')"),
+                )?;
+            }
+        }
 
         Ok(())
     }
@@ -1137,6 +1175,34 @@ impl CcgoConfig {
                 dep.validate()
                     .with_context(|| format!("Invalid dependency: {}", dep.name))?;
             }
+        }
+
+        // Validate [build] shared-consumer linkage fields
+        if let Some(build) = &config.build {
+            reject_static_external_for_shared(
+                build.dep_linkage_on_shared,
+                "[build].dep_linkage_on_shared",
+            )?;
+        }
+
+        // Validate [platforms.X] shared-consumer linkage fields
+        if let Some(platforms) = &config.platforms {
+            macro_rules! check_plat {
+                ($cfg:expr, $name:literal) => {
+                    if let Some(cfg) = $cfg {
+                        reject_static_external_for_shared(
+                            cfg.dep_linkage_on_shared,
+                            concat!("[platforms.", $name, "].dep_linkage_on_shared"),
+                        )?;
+                    }
+                };
+            }
+            check_plat!(platforms.android.as_ref(), "android");
+            check_plat!(platforms.ios.as_ref(), "ios");
+            check_plat!(platforms.macos.as_ref(), "macos");
+            check_plat!(platforms.ohos.as_ref(), "ohos");
+            check_plat!(platforms.linux.as_ref(), "linux");
+            check_plat!(platforms.windows.as_ref(), "windows");
         }
 
         Ok(config)

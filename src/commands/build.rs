@@ -467,6 +467,24 @@ impl BuildCommand {
             parse_linkage_arg(&self.linkage_on_static)
                 .map_err(|e| anyhow::anyhow!("--linkage-on-static: {e}"))?;
 
+        // --linkage-on-shared must not contain static-external (invalid for shared consumers)
+        {
+            use crate::config::Linkage;
+            let check = |v: Option<Linkage>, label: &str| -> anyhow::Result<()> {
+                if v == Some(Linkage::StaticExternal) {
+                    anyhow::bail!(
+                        "--linkage-on-shared {label}: \"static-external\" is not valid for a \
+                         shared consumer. Use \"shared-external\" or \"static-embedded\"."
+                    );
+                }
+                Ok(())
+            };
+            check(linkage_on_shared_default, "<value>")?;
+            for (name, &val) in &linkage_on_shared_overrides {
+                check(Some(val), &format!("{name}=<value>"))?;
+            }
+        }
+
         Ok(BuildOptions {
             target: self.target.clone(),
             architectures,
