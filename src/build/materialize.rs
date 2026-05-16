@@ -105,20 +105,57 @@ pub fn compute_source_fingerprint(dep_root: &Path, build_as: LinkType) -> Result
 /// Per-platform, per-build-as fingerprint sidecar path inside the dep root.
 ///
 /// Sidecar name is `.ccgo_materialize_<platform>_<build_as>.fingerprint`.
-/// Splitting by build_as is essential when multiple consumers materialize
-/// the same path-source dep with different `--build-as` values
-/// concurrently (e.g. integration test fixtures linked via `path = "../leaf"`):
-/// without it, two parallel runs would race on the same sidecar and
-/// alternate between writing each other's fingerprint, never settling on
-/// "cache hit".
+/// Normalise an absolute project path into a single directory name by
+/// replacing every `/`, `\`, and `:` with `-` and stripping a leading dash.
+/// Used to bucket fingerprints per-project inside `~/.ccgo/cache/`.
+fn normalize_path_for_cache(path: &Path) -> String {
+    // Canonicalize resolves symlinks and makes the path absolute; fall back
+    // to the raw value if the project root doesn't exist yet.
+    let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    abs.to_string_lossy()
+        .chars()
+        .map(|c| if matches!(c, '/' | '\\' | ':') { '-' } else { c })
+        .collect::<String>()
+        .trim_start_matches('-')
+        .to_string()
+}
+
+/// Return the global fingerprint cache root: `~/.ccgo/cache/`.
+/// All materialize fingerprints are stored here rather than inside the
+/// project tree so that `ccgo build` leaves no generated files in the
+/// project directory.
+pub fn global_fingerprint_cache() -> PathBuf {
+    directories::BaseDirs::new()
+        .map(|b| b.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".ccgo")
+        .join("cache")
+}
+
+/// Return the path where the materialize fingerprint for `dep_name` should
+/// be stored.
 ///
-/// `platform` must be lowercase (matches `BuildTarget::to_string()` and the
-/// `lib/<platform>/` layout). Mixing case will produce a different sidecar
-/// path and silently invalidate caches.
-pub fn fingerprint_path(dep_root: &Path, platform: &str, build_as: LinkType) -> PathBuf {
-    dep_root.join(format!(
-        ".ccgo_materialize_{platform}_{build_as}.fingerprint"
-    ))
+/// Layout: `<cache_base>/<normalised-project-root>/<dep_name>/<platform>_<build_as>.fingerprint`
+///
+/// Splitting by project root prevents two projects that happen to share a
+/// dep name from reading each other's fingerprints. Splitting by build_as is
+/// essential when multiple consumers materialise the same path-source dep
+/// with different `--build-as` values concurrently.
+///
+/// `platform` must be lowercase. `cache_base` is typically
+/// `global_fingerprint_cache()` in production and a `TempDir` in tests.
+pub fn fingerprint_path(
+    cache_base: &Path,
+    project_root: &Path,
+    dep_name: &str,
+    platform: &str,
+    build_as: LinkType,
+) -> PathBuf {
+    let normalized = normalize_path_for_cache(project_root);
+    cache_base
+        .join(normalized)
+        .join(dep_name)
+        .join(format!("{platform}_{build_as}.fingerprint"))
 }
 
 /// Read a previously persisted fingerprint. `None` if the sidecar does
@@ -171,6 +208,7 @@ pub fn materialize_source_deps_inner(
     release: bool,
     dep_hints: &[(String, Option<Linkage>)],
     ccgo_bin: &str,
+    cache_base: &Path,
 ) -> Result<()> {
     let platform_lc = platform.to_lowercase();
     let consumer_link_type = LinkType::Both;
@@ -193,7 +231,8 @@ pub fn materialize_source_deps_inner(
         }
 
         let build_as = build_as_for_hint(consumer_link_type.clone(), *hint);
-        let fp_path = fingerprint_path(&dep_root, &platform_lc, build_as.clone());
+        let fp_path =
+            fingerprint_path(cache_base, project_root, dep_name, &platform_lc, build_as.clone());
         let fp_now = compute_source_fingerprint(&dep_root, build_as.clone())?;
         let fp_prev = read_fingerprint(&fp_path)?;
 
@@ -520,7 +559,7 @@ mod tests {
     #[test]
     fn fingerprint_persists_to_disk_and_reads_back() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let path = tmp.path().join(".ccgo_materialize_macos.fingerprint");
+        let path = tmp.path().join("macos_both.fingerprint");
         write_fingerprint(&path, "abc123").unwrap();
         let read = read_fingerprint(&path).unwrap();
         assert_eq!(read, Some("abc123".to_string()));
@@ -549,11 +588,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(consumer.join(".ccgo"));
         let _ = std::fs::remove_dir_all(leaf.join("cmake_build"));
         let _ = std::fs::remove_dir_all(leaf.join("lib"));
-        for build_as in &["both", "shared", "static"] {
-            let _ = std::fs::remove_file(
-                leaf.join(format!(".ccgo_materialize_macos_{build_as}.fingerprint")),
-            );
-        }
+
+        let cache_dir = tempfile::TempDir::new().unwrap();
 
         let deps_dir = consumer.join(".ccgo/deps");
         std::fs::create_dir_all(&deps_dir).unwrap();
@@ -578,6 +614,7 @@ mod tests {
             false,
             &[("leaf".to_string(), None)],
             ccgo_bin.to_str().unwrap(),
+            cache_dir.path(),
         );
         assert!(
             result.is_ok(),
@@ -585,17 +622,17 @@ mod tests {
         );
 
         // After the spawn, leaf must have build output AND the fingerprint
-        // sidecar. (cmake_build/ is what ccgo build itself produces; the
-        // lib/<platform>/ layout that the consumer's CMake-Find expects
-        // is materialized later by Task 7's wiring — out of scope here.)
+        // sidecar in the global cache dir.
         assert!(
             leaf.join("cmake_build").exists(),
             "leaf should have produced cmake_build/ after materialize"
         );
         // hint=None → driver picks build_as=Both → sidecar lives at the Both variant.
+        let fp_expected =
+            fingerprint_path(cache_dir.path(), &consumer, "leaf", "macos", LinkType::Both);
         assert!(
-            leaf.join(".ccgo_materialize_macos_both.fingerprint").exists(),
-            "fingerprint sidecar (Both variant) should be persisted after a successful spawn"
+            fp_expected.exists(),
+            "fingerprint sidecar should be persisted in cache dir after a successful spawn"
         );
     }
 
@@ -627,10 +664,15 @@ mod tests {
         let project = tmp.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
         let dep_root = make_synthetic_dep(&project, "leaf");
+        let cache = tmp.path().join("cache");
 
         let build_as = build_as_for_hint(LinkType::Both, None);
         let fp = compute_source_fingerprint(&dep_root, build_as.clone()).unwrap();
-        write_fingerprint(&fingerprint_path(&dep_root, "macos", build_as.clone()), &fp).unwrap();
+        write_fingerprint(
+            &fingerprint_path(&cache, &project, "leaf", "macos", build_as.clone()),
+            &fp,
+        )
+        .unwrap();
 
         let sentinel = tmp.path().join("does-not-exist-and-must-not-be-spawned");
         let result = materialize_source_deps_inner(
@@ -640,6 +682,7 @@ mod tests {
             false,
             &[("leaf".to_string(), None)],
             sentinel.to_str().unwrap(),
+            &cache,
         );
         assert!(
             result.is_ok(),
@@ -655,13 +698,14 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let project = tmp.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
-        let dep_root = make_synthetic_dep(&project, "leaf");
+        let _dep_root = make_synthetic_dep(&project, "leaf");
+        let cache = tmp.path().join("cache");
 
         // Persist a fingerprint that won't match the current source.
         // Hint=None → driver picks build_as=Both, so write the sidecar
         // for that variant.
         write_fingerprint(
-            &fingerprint_path(&dep_root, "macos", LinkType::Both),
+            &fingerprint_path(&cache, &project, "leaf", "macos", LinkType::Both),
             "stale-fingerprint-0000",
         )
         .unwrap();
@@ -674,6 +718,7 @@ mod tests {
             false,
             &[("leaf".to_string(), None)],
             sentinel.to_str().unwrap(),
+            &cache,
         );
         assert!(
             result.is_err(),
@@ -696,11 +741,12 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let project = tmp.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
-        let dep_root = make_synthetic_dep(&project, "leaf");
+        let _dep_root = make_synthetic_dep(&project, "leaf");
+        let cache = tmp.path().join("cache");
 
         // The driver picks build_as=Both for hint=None, so the sidecar
         // it will write/read lives at the Both variant path.
-        let fp_path = fingerprint_path(&dep_root, "macos", LinkType::Both);
+        let fp_path = fingerprint_path(&cache, &project, "leaf", "macos", LinkType::Both);
         assert!(
             !fp_path.exists(),
             "test setup invariant: no fingerprint sidecar yet"
@@ -714,6 +760,7 @@ mod tests {
             false,
             &[("leaf".to_string(), None)],
             sentinel.to_str().unwrap(),
+            &cache,
         );
         assert!(
             result.is_ok(),
@@ -721,7 +768,7 @@ mod tests {
         );
         assert!(
             fp_path.exists(),
-            "fingerprint sidecar should be persisted on first-run trust path"
+            "fingerprint sidecar should be persisted in cache dir on first-run trust path"
         );
     }
 
@@ -733,10 +780,15 @@ mod tests {
         let project = tmp.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
         let dep_root = make_synthetic_dep(&project, "leaf");
+        let cache = tmp.path().join("cache");
 
         let build_as = build_as_for_hint(LinkType::Both, None);
         let fp = compute_source_fingerprint(&dep_root, build_as.clone()).unwrap();
-        write_fingerprint(&fingerprint_path(&dep_root, "macos", build_as.clone()), &fp).unwrap();
+        write_fingerprint(
+            &fingerprint_path(&cache, &project, "leaf", "macos", build_as.clone()),
+            &fp,
+        )
+        .unwrap();
 
         // Now wipe lib/ to simulate the user nuking build artifacts.
         std::fs::remove_dir_all(dep_root.join("lib")).unwrap();
@@ -749,6 +801,7 @@ mod tests {
             false,
             &[("leaf".to_string(), None)],
             sentinel.to_str().unwrap(),
+            &cache,
         );
         assert!(
             result.is_err(),
@@ -771,6 +824,7 @@ mod tests {
         )
         .unwrap();
 
+        let cache = tmp.path().join("cache");
         let sentinel = tmp.path().join("does-not-exist");
         let result = materialize_source_deps_inner(
             &project,
@@ -779,6 +833,7 @@ mod tests {
             false,
             &[("binarydep".to_string(), None)],
             sentinel.to_str().unwrap(),
+            &cache,
         );
         assert!(
             result.is_ok(),
@@ -795,6 +850,7 @@ mod tests {
         let project = tmp.path().join("project");
         std::fs::create_dir_all(project.join(".ccgo/deps")).unwrap();
 
+        let cache = tmp.path().join("cache");
         let sentinel = tmp.path().join("does-not-exist");
         let result = materialize_source_deps_inner(
             &project,
@@ -803,6 +859,7 @@ mod tests {
             false,
             &[("ghost".to_string(), None)],
             sentinel.to_str().unwrap(),
+            &cache,
         );
         assert!(
             result.is_ok(),

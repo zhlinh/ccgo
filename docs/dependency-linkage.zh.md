@@ -141,8 +141,8 @@ ccgo 会在下次构建时把 `stdcomm` 重建为 `.so`。
 ### 缓存
 
 实例化步骤会在
-`.ccgo/deps/<name>/.ccgo_materialize_<platform>_<build_as>.fingerprint`
-持久化一份按平台、按 `--build-as` 隔离的指纹。指纹是
+`~/.ccgo/cache/<project-path>/<dep>/<platform>_<build_as>.fingerprint`
+（位于项目目录之外，不会在工作区产生生成文件）持久化一份按平台、按 `--build-as` 隔离的指纹。指纹是
 （按字典序的源码树 mtime + size + 路径）+ `CCGO.toml` 内容
 + 请求的 `--build-as` 的 SHA-256。当指纹匹配且 `lib/<platform>/`
 仍存在产物时，后续构建会跳过递归 spawn。按 `build_as` 拆分 sidecar

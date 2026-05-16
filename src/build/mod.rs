@@ -660,7 +660,7 @@ impl BuildContext {
     /// the persisted sidecar AND whose `lib/<platform>/` already has
     /// artifacts on disk.
     pub fn materialize_source_deps(&self, platform: &str) -> anyhow::Result<()> {
-        use crate::build::materialize::materialize_source_deps_inner;
+        use crate::build::materialize::{global_fingerprint_cache, materialize_source_deps_inner};
 
         let dep_hints: Vec<(String, Option<crate::config::Linkage>)> = self
             .config
@@ -693,6 +693,7 @@ impl BuildContext {
             ccgo_bin
                 .to_str()
                 .context("ccgo binary path is not UTF-8")?,
+            &global_fingerprint_cache(),
         )
     }
 

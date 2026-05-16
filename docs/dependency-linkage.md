@@ -148,7 +148,8 @@ ccgo rebuilds `stdcomm` as a `.so` on the next build.
 ### Caching
 
 The materialize step persists a per-platform, per-`--build-as` fingerprint at
-`.ccgo/deps/<name>/.ccgo_materialize_<platform>_<build_as>.fingerprint`.
+`~/.ccgo/cache/<project-path>/<dep>/<platform>_<build_as>.fingerprint`
+(outside the project tree, so no generated files appear in your working copy).
 The fingerprint is a SHA-256 over (sorted source-tree mtimes + sizes + paths)
 + the `CCGO.toml` content + the requested `--build-as`. Subsequent builds
 skip the recursive spawn when the fingerprint matches AND `lib/<platform>/`
