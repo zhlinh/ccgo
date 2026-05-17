@@ -3,6 +3,7 @@
 pub mod changelog;
 pub mod git;
 pub mod git_version;
+pub mod ide;
 pub mod paths;
 pub mod terminal;
 pub mod version_sync;

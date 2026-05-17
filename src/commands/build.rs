@@ -627,6 +627,8 @@ impl BuildCommand {
         let project_root = current_dir;
         let package = config.require_package()?.clone();
 
+        crate::utils::ide::update_ide_ignores(&project_root)?;
+
         if verbose {
             eprintln!("Building {} for {} platform...", package.name, self.target);
         }

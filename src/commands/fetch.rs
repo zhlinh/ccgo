@@ -4,7 +4,6 @@
 //! Dependencies are cached globally in ~/.ccgo/ and linked to project's .ccgo/deps/.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -312,7 +311,7 @@ impl FetchCommand {
             lockfile.touch();
             lockfile.save(&project_dir)?;
             println!("\n📝 Updated {}", LOCKFILE_NAME);
-            Self::update_gitignore(&project_dir)?;
+            crate::utils::ide::update_ide_ignores(&project_dir)?;
         }
 
         // Summary
@@ -1236,35 +1235,6 @@ impl FetchCommand {
         Some(git_info)
     }
 
-    /// Update .gitignore to exclude .ccgo/
-    fn update_gitignore(project_dir: &Path) -> Result<()> {
-        let gitignore_path = project_dir.join(".gitignore");
-        let ccgo_pattern = ".ccgo/";
-
-        if gitignore_path.exists() {
-            let content = fs::read_to_string(&gitignore_path)?;
-            if content.contains(ccgo_pattern) || content.contains(".ccgo") {
-                return Ok(()); // Already ignored
-            }
-
-            // Append .ccgo/ to existing .gitignore
-            let mut file = fs::OpenOptions::new()
-                .append(true)
-                .open(&gitignore_path)?;
-            writeln!(file, "\n# CCGO dependencies (auto-generated)")?;
-            writeln!(file, "{}", ccgo_pattern)?;
-            println!("   Added {} to .gitignore", ccgo_pattern);
-        } else {
-            // Create new .gitignore
-            let mut file = fs::File::create(&gitignore_path)?;
-            writeln!(file, "# CCGO dependencies")?;
-            writeln!(file, "{}", ccgo_pattern)?;
-            println!("   Created .gitignore with {}", ccgo_pattern);
-        }
-
-        Ok(())
-    }
-
     /// Execute install for workspace members
     fn execute_workspace_install(&self, current_dir: &Path, verbose: bool) -> Result<()> {
         // Find workspace root
@@ -1448,7 +1418,7 @@ impl FetchCommand {
         if installed_count > 0 && lockfile.packages != packages_before {
             lockfile.touch();
             lockfile.save(member_path)?;
-            Self::update_gitignore(member_path)?;
+            crate::utils::ide::update_ide_ignores(member_path)?;
         }
 
         Ok(installed_count)
