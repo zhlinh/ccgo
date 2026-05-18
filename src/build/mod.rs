@@ -1426,4 +1426,64 @@ version = "0.1.0"
         let hint = ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared);
         assert_eq!(hint, Some(Linkage::SharedExternal));
     }
+    #[test]
+    fn full_profile_integration() {
+        use crate::config::CcgoConfig;
+        use crate::build::profile::resolve_profile;
+
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[build.cmake]
+arguments = ["-DGLOBAL=1"]
+
+[profile.debug]
+release = false
+
+[profile.sanitize]
+inherits = "debug"
+name = "mylib-asan"
+jobs = 2
+
+[profile.sanitize.cmake]
+merge = "extend"
+arguments = ["-DENABLE_ASAN=ON"]
+
+[profile.sanitize.platforms.android.build.cmake]
+merge = "replace"
+arguments = ["-DANDROID_SPECIFIC=1"]
+
+[profile.sanitize.dep_linkage]
+default = "static-embedded"
+"#;
+        let config = CcgoConfig::parse(toml).unwrap();
+        let rp = resolve_profile("sanitize", &config.profile).unwrap();
+
+        // Inherited from debug
+        assert_eq!(rp.release, Some(false));
+        // Own fields
+        assert_eq!(rp.name.as_deref(), Some("mylib-asan"));
+        assert_eq!(rp.jobs, Some(2));
+        // cmake extended (profile sanitize extends debug which has no cmake)
+        assert_eq!(rp.cmake.arguments, vec!["-DENABLE_ASAN=ON"]);
+        // android platform cmake: replaced (no parent android cmake to extend from)
+        let android_cmake = rp.platform_cmake.get("android").unwrap();
+        assert_eq!(android_cmake.arguments, vec!["-DANDROID_SPECIFIC=1"]);
+        // dep_linkage
+        assert_eq!(rp.dep_linkage.default, Some(crate::config::Linkage::StaticEmbedded));
+
+        // cmake_user_config() merges all 4 layers for linux (no platform override):
+        // [GLOBAL=1] + [ENABLE_ASAN=ON] + [] + []
+        let mut ctx = make_ctx(bare_options(), config);
+        ctx.resolved_profile = Some(rp);
+        let cfg = ctx.cmake_user_config("linux");
+        assert_eq!(cfg.arguments, vec!["-DGLOBAL=1", "-DENABLE_ASAN=ON"]);
+
+        // For android: [GLOBAL=1] + [ENABLE_ASAN=ON] + [] + [ANDROID_SPECIFIC=1]
+        let cfg_android = ctx.cmake_user_config("android");
+        assert_eq!(cfg_android.arguments, vec!["-DGLOBAL=1", "-DENABLE_ASAN=ON", "-DANDROID_SPECIFIC=1"]);
+    }
+
 }
