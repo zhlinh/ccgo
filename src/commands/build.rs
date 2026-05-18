@@ -473,6 +473,9 @@ impl BuildCommand {
         let rp = crate::build::profile::resolve_profile(pname, &config.profile)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+        // CLI precedence: check against the CLI default value (false for --release, Both for --build-as).
+        // This is sound for the current CLI interface where both flags are absent-or-present booleans.
+        // If either flag gains a tri-state (unset/true/false), this heuristic must be revisited.
         // release: apply from profile only if user didn't pass --release (CLI default is false)
         if let Some(prof_release) = rp.release {
             if !cmd.release {
@@ -493,7 +496,7 @@ impl BuildCommand {
         }
         // features: profile features first, then CLI features (CLI extends profile)
         if !rp.features.is_empty() {
-            let mut merged = rp.features.clone();
+            let mut merged = rp.features;
             merged.extend(options.features.iter().cloned());
             options.features = merged;
         }

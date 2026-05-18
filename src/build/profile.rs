@@ -63,9 +63,10 @@ fn expand_chain<'a>(
     profiles: &'a HashMap<String, ProfileConfig>,
 ) -> Result<Vec<&'a str>> {
     let mut chain: Vec<&str> = Vec::new();
+    let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut cursor = name;
     loop {
-        if chain.contains(&cursor) {
+        if !visited.insert(cursor) {
             bail!("profile inheritance cycle detected: '{cursor}' appears twice in chain");
         }
         chain.push(cursor);
@@ -170,6 +171,7 @@ fn apply_platform_configs(resolved: &mut ResolvedProfile, cfg: &ProfileConfig) {
 /// - a profile referenced in `inherits` doesn't exist
 ///
 /// Built-in profiles (`debug`, `release`) are synthesized; no declaration needed.
+#[must_use]
 pub fn resolve_profile(
     name: &str,
     user_profiles: &HashMap<String, ProfileConfig>,

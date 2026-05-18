@@ -202,13 +202,16 @@ impl BuildContext {
             }
         }
 
+        // Note: apply_profile_scalars() already validated this profile name before BuildContext::new()
+        // is called, so the error branch below is unreachable in normal build flows.
+        // resolve_profile is a pure function (no I/O) so the double call is acceptable.
         let (resolved_profile, profile_name_override) = if let Some(ref pname) = options.profile_name {
             match crate::build::profile::resolve_profile(pname, &config.profile) {
                 Ok(rp) => {
                     let name_override = rp.name.clone();
                     (Some(rp), name_override)
                 }
-                Err(e) => panic!("profile error: {e}"),
+                Err(e) => panic!("BUG: profile '{pname}' was already validated by apply_profile_scalars but failed here: {e}"),
             }
         } else {
             (None, None)
