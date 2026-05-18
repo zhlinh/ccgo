@@ -510,6 +510,7 @@ impl BuildCommand {
             linkage_on_shared_overrides,
             linkage_on_static_default,
             linkage_on_static_overrides,
+            profile_name: None,
         })
     }
 

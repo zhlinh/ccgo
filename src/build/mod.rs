@@ -99,6 +99,8 @@ pub struct BuildOptions {
     pub linkage_on_static_default: Option<crate::config::Linkage>,
     /// CLI per-dep overrides for static consumers (`--linkage-on-static <name>=<value>`).
     pub linkage_on_static_overrides: std::collections::HashMap<String, crate::config::Linkage>,
+    /// Named build profile to apply (`--profile <name>`). `None` = use defaults.
+    pub profile_name: Option<String>,
 }
 
 impl Default for BuildOptions {
@@ -127,6 +129,7 @@ impl Default for BuildOptions {
             linkage_on_shared_overrides: std::collections::HashMap::new(),
             linkage_on_static_default: None,
             linkage_on_static_overrides: std::collections::HashMap::new(),
+            profile_name: None,
         }
     }
 }
@@ -146,6 +149,10 @@ pub struct BuildContext {
     pub output_dir: PathBuf,
     /// Git version information
     pub git_version: Option<crate::utils::git_version::GitVersion>,
+    /// Resolved profile after inheritance chain expansion. `None` = no profile active.
+    pub resolved_profile: Option<crate::build::profile::ResolvedProfile>,
+    /// Package name override from the active profile.
+    pub profile_name_override: Option<String>,
 }
 
 impl BuildContext {
@@ -195,6 +202,18 @@ impl BuildContext {
             }
         }
 
+        let (resolved_profile, profile_name_override) = if let Some(ref pname) = options.profile_name {
+            match crate::build::profile::resolve_profile(pname, &config.profile) {
+                Ok(rp) => {
+                    let name_override = rp.name.clone();
+                    (Some(rp), name_override)
+                }
+                Err(e) => panic!("profile error: {e}"),
+            }
+        } else {
+            (None, None)
+        };
+
         Self {
             project_root,
             config,
@@ -202,11 +221,16 @@ impl BuildContext {
             cmake_build_dir,
             output_dir,
             git_version,
+            resolved_profile,
+            profile_name_override,
         }
     }
 
     /// Get the library name from config
     pub fn lib_name(&self) -> &str {
+        if let Some(ref name) = self.profile_name_override {
+            return name.as_str();
+        }
         &self
             .config
             .package
@@ -698,8 +722,11 @@ impl BuildContext {
         )
     }
 
-    /// Return merged cmake user config: global `[build.cmake]` + platform
-    /// `[platforms.X.build.cmake]`. All three lists are concatenated (global first).
+    /// Return merged cmake user config: 4 layers concatenated (each after the previous):
+    /// 1. global `[build.cmake]`
+    /// 2. profile global cmake
+    /// 3. platform `[platforms.X.build.cmake]`
+    /// 4. profile per-platform cmake
     pub fn cmake_user_config(&self, platform: &str) -> crate::config::CmakeUserConfig {
         use crate::config::CmakeUserConfig;
 
@@ -710,8 +737,19 @@ impl BuildContext {
             .and_then(|b| b.cmake.clone())
             .unwrap_or_default();
 
+        let profile_global = self
+            .resolved_profile
+            .as_ref()
+            .map(|rp| CmakeUserConfig {
+                arguments: rp.cmake.arguments.clone(),
+                c_flags: rp.cmake.c_flags.clone(),
+                cpp_flags: rp.cmake.cpp_flags.clone(),
+            })
+            .unwrap_or_default();
+
         let p = self.config.platforms.as_ref();
-        let platform_cfg: CmakeUserConfig = match platform.to_lowercase().as_str() {
+        let plat_lower = platform.to_lowercase();
+        let platform_cfg: CmakeUserConfig = match plat_lower.as_str() {
             "android" => p
                 .and_then(|p| p.android.as_ref())
                 .and_then(|a| a.build.as_ref())
@@ -745,10 +783,39 @@ impl BuildContext {
             _ => CmakeUserConfig::default(),
         };
 
+        let profile_plat = self
+            .resolved_profile
+            .as_ref()
+            .and_then(|rp| rp.platform_cmake.get(plat_lower.as_str()))
+            .map(|rc| CmakeUserConfig {
+                arguments: rc.arguments.clone(),
+                c_flags: rc.c_flags.clone(),
+                cpp_flags: rc.cpp_flags.clone(),
+            })
+            .unwrap_or_default();
+
         CmakeUserConfig {
-            arguments: [global.arguments, platform_cfg.arguments].concat(),
-            c_flags: [global.c_flags, platform_cfg.c_flags].concat(),
-            cpp_flags: [global.cpp_flags, platform_cfg.cpp_flags].concat(),
+            arguments: [
+                global.arguments,
+                profile_global.arguments,
+                platform_cfg.arguments,
+                profile_plat.arguments,
+            ]
+            .concat(),
+            c_flags: [
+                global.c_flags,
+                profile_global.c_flags,
+                platform_cfg.c_flags,
+                profile_plat.c_flags,
+            ]
+            .concat(),
+            cpp_flags: [
+                global.cpp_flags,
+                profile_global.cpp_flags,
+                platform_cfg.cpp_flags,
+                profile_plat.cpp_flags,
+            ]
+            .concat(),
         }
     }
 
@@ -944,6 +1011,8 @@ mod tests {
             cmake_build_dir: PathBuf::from("/tmp/test/cmake_build"),
             output_dir: PathBuf::from("/tmp/test/target"),
             git_version: None,
+            resolved_profile: None,
+            profile_name_override: None,
         }
     }
 
@@ -1205,5 +1274,50 @@ mod tests {
         dep.linkage_on_static = Some(Linkage::StaticEmbedded);
         let ctx = make_ctx(bare_options(), bare_config());
         assert_eq!(ctx.resolved_materialize_hint(&dep, "linux"), None);
+    }
+
+    #[test]
+    fn profile_release_applied_to_context() {
+        use crate::config::CcgoConfig;
+        use crate::build::profile::resolve_profile;
+
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.mysanitize]
+release = false
+"#;
+        let config = CcgoConfig::parse(toml).unwrap();
+        let resolved = resolve_profile("mysanitize", &config.profile).unwrap();
+        assert_eq!(resolved.release, Some(false));
+    }
+
+    #[test]
+    fn cmake_user_config_includes_profile_flags() {
+        use crate::config::CcgoConfig;
+
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[build.cmake]
+arguments = ["-DGLOBAL=1"]
+
+[profile.foo.cmake]
+merge = "extend"
+arguments = ["-DPROFILE=1"]
+"#;
+        let config = CcgoConfig::parse(toml).unwrap();
+        let resolved = crate::build::profile::resolve_profile("foo", &config.profile).unwrap();
+
+        let mut ctx = make_ctx(bare_options(), config);
+        ctx.resolved_profile = Some(resolved);
+
+        let cmake_cfg = ctx.cmake_user_config("linux");
+        assert!(cmake_cfg.arguments.contains(&"-DGLOBAL=1".to_string()));
+        assert!(cmake_cfg.arguments.contains(&"-DPROFILE=1".to_string()));
     }
 }
