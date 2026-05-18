@@ -223,140 +223,184 @@ link_dirs = ["third_party/lib"]
 system_libs = ["pthread", "dl"]
 ```
 
+### [build.cmake]
+
+Extra CMake arguments and compiler flags injected at configure time. These are appended **after** all internal CCGO flags, so they can override or extend defaults.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `arguments` | array of strings | Raw arguments passed verbatim to cmake configure | `[]` |
+| `c_flags` | array of strings | Flags appended to `CMAKE_C_FLAGS` | `[]` |
+| `cpp_flags` | array of strings | Flags appended to `CMAKE_CXX_FLAGS` | `[]` |
+
+```toml
+[build.cmake]
+arguments = ["-DCMAKE_VERBOSE_MAKEFILE=ON", "-DENABLE_FEATURE=1"]
+c_flags   = ["-D__STDC_FORMAT_MACROS"]
+cpp_flags = ["-fexceptions", "-frtti"]
+```
+
+Platform-specific cmake overrides can be set under `[platforms.<name>.build.cmake]` (see each platform section below). Global and platform-specific lists are concatenated; platform values are appended after global values.
+
 ---
 
 ## Platform Configuration
 
-### [android]
+### [platforms.android]
 
 Android-specific configuration.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `min_sdk_version` | integer | Minimum Android API level | `21` |
-| `target_sdk_version` | integer | Target Android API level | `33` |
-| `ndk_version` | string | NDK version | Latest |
-| `stl` | string | STL type: "c++_static", "c++_shared" | `"c++_static"` |
+| `min_sdk` | integer | Minimum Android API level | `21` |
 | `architectures` | array of strings | Target architectures | All |
+| `default_dep_linkage` | string | Default dependency linkage | — |
+| `dep_linkage_on_shared` | string | Dep linkage when consumer builds shared | — |
+| `dep_linkage_on_static` | string | Dep linkage when consumer builds static | — |
+
+**Linkage values:** `"shared-external"` | `"static-embedded"` | `"static-external"`
 
 ```toml
-[android]
-min_sdk_version = 21
-target_sdk_version = 33
-ndk_version = "25.2.9519653"
-stl = "c++_static"
-architectures = ["arm64-v8a", "armeabi-v7a"]
+[platforms.android]
+min_sdk        = 21
+architectures  = ["arm64-v8a", "armeabi-v7a"]
+default_dep_linkage = "static-embedded"
 ```
 
-### [ios]
+#### [platforms.android.build.cmake]
+
+CMake flags applied to Android builds only. Appended after `[build.cmake]`.
+
+```toml
+[platforms.android.build.cmake]
+arguments = ["-DANDROID_ARM_NEON=TRUE", "-DANDROID_TOOLCHAIN=clang"]
+cpp_flags = ["-fexceptions", "-frtti"]
+```
+
+### [platforms.ios]
 
 iOS-specific configuration.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `min_deployment_target` | string | Minimum iOS version | `"12.0"` |
-| `enable_bitcode` | boolean | Enable bitcode | `false` |
+| `min_version` | string | Minimum iOS deployment target | `"12.0"` |
 | `architectures` | array of strings | Target architectures | All |
+| `default_dep_linkage` | string | Default dependency linkage | — |
+| `dep_linkage_on_shared` | string | Dep linkage when consumer builds shared | — |
+| `dep_linkage_on_static` | string | Dep linkage when consumer builds static | — |
 
 ```toml
-[ios]
-min_deployment_target = "13.0"
-enable_bitcode = false
+[platforms.ios]
+min_version   = "13.0"
 architectures = ["arm64"]
 ```
 
-### [macos]
+#### [platforms.ios.build.cmake]
+
+```toml
+[platforms.ios.build.cmake]
+arguments = ["-DIOS_SPECIFIC=1"]
+cpp_flags = []
+```
+
+### [platforms.macos]
 
 macOS-specific configuration.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `min_deployment_target` | string | Minimum macOS version | `"10.15"` |
+| `min_version` | string | Minimum macOS deployment target | `"10.15"` |
 | `architectures` | array of strings | Target architectures | `["x86_64", "arm64"]` |
+| `default_dep_linkage` | string | Default dependency linkage | — |
+| `dep_linkage_on_shared` | string | Dep linkage when consumer builds shared | — |
+| `dep_linkage_on_static` | string | Dep linkage when consumer builds static | — |
 
 ```toml
-[macos]
-min_deployment_target = "11.0"
+[platforms.macos]
+min_version   = "11.0"
 architectures = ["arm64", "x86_64"]  # Universal binary
 ```
 
-### [windows]
+#### [platforms.macos.build.cmake]
+
+```toml
+[platforms.macos.build.cmake]
+arguments = []
+cpp_flags = []
+```
+
+### [platforms.windows]
 
 Windows-specific configuration.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `toolchain` | string | Toolchain: "msvc", "mingw", "auto" | `"auto"` |
-| `msvc_runtime` | string | MSVC runtime: "static", "dynamic" | `"dynamic"` |
 | `architectures` | array of strings | Target architectures | `["x86_64"]` |
+| `default_dep_linkage` | string | Default dependency linkage | — |
+| `dep_linkage_on_shared` | string | Dep linkage when consumer builds shared | — |
+| `dep_linkage_on_static` | string | Dep linkage when consumer builds static | — |
 
 ```toml
-[windows]
-toolchain = "msvc"
-msvc_runtime = "static"
+[platforms.windows]
 architectures = ["x86_64", "x86"]
 ```
 
-### [linux]
+#### [platforms.windows.build.cmake]
+
+```toml
+[platforms.windows.build.cmake]
+arguments = ["-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON"]
+cpp_flags = []
+```
+
+### [platforms.linux]
 
 Linux-specific configuration.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
 | `architectures` | array of strings | Target architectures | `["x86_64"]` |
-| `system_deps` | array of strings | System dependencies | `[]` |
+| `default_dep_linkage` | string | Default dependency linkage | — |
+| `dep_linkage_on_shared` | string | Dep linkage when consumer builds shared | — |
+| `dep_linkage_on_static` | string | Dep linkage when consumer builds static | — |
 
 ```toml
-[linux]
+[platforms.linux]
 architectures = ["x86_64", "aarch64"]
-system_deps = ["libssl-dev", "libcurl4-openssl-dev"]
 ```
 
-### [ohos]
+#### [platforms.linux.build.cmake]
+
+```toml
+[platforms.linux.build.cmake]
+arguments = []
+cpp_flags = []
+```
+
+### [platforms.ohos]
 
 OpenHarmony-specific configuration.
 
 | Field | Type | Description | Default |
 |-------|------|-------------|---------|
-| `min_api_version` | integer | Minimum API version | `9` |
-| `target_api_version` | integer | Target API version | `10` |
+| `min_api` | integer | Minimum OpenHarmony API level | `9` |
 | `architectures` | array of strings | Target architectures | All |
+| `default_dep_linkage` | string | Default dependency linkage | — |
+| `dep_linkage_on_shared` | string | Dep linkage when consumer builds shared | — |
+| `dep_linkage_on_static` | string | Dep linkage when consumer builds static | — |
 
 ```toml
-[ohos]
-min_api_version = 9
-target_api_version = 10
+[platforms.ohos]
+min_api       = 9
 architectures = ["arm64-v8a", "armeabi-v7a"]
 ```
 
-### [watchos]
-
-watchOS-specific configuration.
-
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `min_deployment_target` | string | Minimum watchOS version | `"5.0"` |
-| `architectures` | array of strings | Target architectures | All |
+#### [platforms.ohos.build.cmake]
 
 ```toml
-[watchos]
-min_deployment_target = "6.0"
-architectures = ["armv7k", "arm64_32"]
-```
-
-### [tvos]
-
-tvOS-specific configuration.
-
-| Field | Type | Description | Default |
-|-------|------|-------------|---------|
-| `min_deployment_target` | string | Minimum tvOS version | `"12.0"` |
-| `architectures` | array of strings | Target architectures | All |
-
-```toml
-[tvos]
-min_deployment_target = "13.0"
-architectures = ["arm64"]
+[platforms.ohos.build.cmake]
+arguments = []
+cpp_flags = []
 ```
 
 ---
@@ -442,6 +486,131 @@ Build and run binaries:
 ```bash
 ccgo run mytool --bin
 ccgo build --bin myapp --features full
+```
+
+---
+
+## [profile.\<name\>]
+
+Named build profiles store reusable configuration slices and are selected with `--profile <name>`.
+
+```bash
+ccgo build android --profile sanitize
+```
+
+**Built-in profiles** (no declaration required):
+
+| Name | Effect |
+|------|--------|
+| `debug` | `release = false` |
+| `release` | `release = true` |
+
+### Top-level fields
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `inherits` | string | Parent profile to inherit from (single inheritance) | — |
+| `name` | string | Override the output package name | package name |
+| `release` | bool | `true` = release build, `false` = debug build | — |
+| `link_type` | string | `"static"` \| `"shared"` \| `"both"` | — |
+| `jobs` | integer | Parallel build jobs | auto |
+
+### [profile.\<name\>.cmake]
+
+Extra CMake flags when this profile is active. Applied to all platforms.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `merge` | string | `"replace"` — discard inherited flags; `"extend"` — append after inherited | `"replace"` |
+| `arguments` | array of strings | Raw cmake configure arguments | `[]` |
+| `c_flags` | array of strings | Flags appended to `CMAKE_C_FLAGS` | `[]` |
+| `cpp_flags` | array of strings | Flags appended to `CMAKE_CXX_FLAGS` | `[]` |
+
+### [profile.\<name\>.features]
+
+Features to enable when this profile is active.
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `merge` | string | `"replace"` or `"extend"` | `"replace"` |
+| `list` | array of strings | Feature names | `[]` |
+
+### [profile.\<name\>.dep_linkage]
+
+Dependency linkage strategy when this profile is active.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `default` | string | Linkage for all build types |
+| `on_shared` | string | Override when consumer builds a shared library |
+| `on_static` | string | Override when consumer builds a static library |
+
+**Linkage values:** `"shared-external"` | `"static-embedded"` | `"static-external"`
+
+### Per-platform overrides
+
+Override cmake flags or dep_linkage for a specific platform inside a profile.
+
+```toml
+[profile.<name>.platforms.<platform>.build.cmake]
+merge     = "extend"
+arguments = []
+c_flags   = []
+cpp_flags = []
+
+[profile.<name>.platforms.<platform>.build.dep_linkage]
+default   = "static-embedded"
+on_shared = "shared-external"
+on_static = "static-embedded"
+```
+
+Supported `<platform>` values: `android`, `ios`, `macos`, `windows`, `linux`, `ohos`
+
+### Inheritance and merge order
+
+Profiles support single inheritance via `inherits`. Chains are supported; cycles are rejected.
+
+Priority order (later wins):
+1. Global `CCGO.toml` settings
+2. Inherited profile chain (oldest ancestor first)
+3. Active profile's own settings
+4. CLI flags (`--release`, `--link-type`, `--features`, `--jobs`)
+
+CMake flags accumulate through four layers:
+
+```
+[build.cmake]
+  + [platforms.<p>.build.cmake]
+  + [profile.<name>.cmake]
+  + [profile.<name>.platforms.<p>.build.cmake]
+```
+
+### Example
+
+```toml
+[profile.sanitize]
+inherits  = "debug"
+link_type = "both"
+
+[profile.sanitize.cmake]
+merge     = "extend"
+c_flags   = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+cpp_flags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+
+[profile.sanitize.features]
+merge = "extend"
+list  = ["debug-logging"]
+
+[profile.sanitize.platforms.android.build.cmake]
+merge     = "extend"
+cpp_flags = ["-fsanitize=address"]
+
+[profile.fat-static]
+inherits  = "release"
+link_type = "static"
+
+[profile.fat-static.dep_linkage]
+default = "static-embedded"
 ```
 
 ---
@@ -659,5 +828,7 @@ type = "static"
 
 - [CLI Reference](cli.md)
 - [Build System](../features/build-system.md)
+- [Build Profiles](../features/build-profiles.md)
 - [Dependency Management](../features/dependency-management.md)
 - [Publishing](../features/publishing.md)
+- [CCGO.toml.example](../../CCGO.toml.example)

@@ -223,140 +223,184 @@ link_dirs = ["third_party/lib"]
 system_libs = ["pthread", "dl"]
 ```
 
+### [build.cmake]
+
+在 configure 阶段注入的额外 CMake 参数和编译器标志。这些标志追加在所有内部 CCGO 标志**之后**，因此可以覆盖或扩展默认值。
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `arguments` | 字符串数组 | 直接传递给 cmake configure 的原始参数 | `[]` |
+| `c_flags` | 字符串数组 | 追加到 `CMAKE_C_FLAGS` 的标志 | `[]` |
+| `cpp_flags` | 字符串数组 | 追加到 `CMAKE_CXX_FLAGS` 的标志 | `[]` |
+
+```toml
+[build.cmake]
+arguments = ["-DCMAKE_VERBOSE_MAKEFILE=ON", "-DENABLE_FEATURE=1"]
+c_flags   = ["-D__STDC_FORMAT_MACROS"]
+cpp_flags = ["-fexceptions", "-frtti"]
+```
+
+平台专属的 cmake 覆盖可在 `[platforms.<name>.build.cmake]` 下设置（见各平台章节）。全局与平台特定的列表会拼接；平台值追加在全局值之后。
+
 ---
 
 ## 平台配置
 
-### [android]
+### [platforms.android]
 
 Android 特定配置。
 
 | 字段 | 类型 | 描述 | 默认值 |
 |------|------|------|--------|
-| `min_sdk_version` | 整数 | 最低 Android API 级别 | `21` |
-| `target_sdk_version` | 整数 | 目标 Android API 级别 | `33` |
-| `ndk_version` | 字符串 | NDK 版本 | 最新 |
-| `stl` | 字符串 | STL 类型："c++_static"、"c++_shared" | `"c++_static"` |
+| `min_sdk` | 整数 | 最低 Android API 级别 | `21` |
 | `architectures` | 字符串数组 | 目标架构 | 全部 |
+| `default_dep_linkage` | 字符串 | 默认依赖链接方式 | — |
+| `dep_linkage_on_shared` | 字符串 | 消费者构建动态库时的依赖链接方式 | — |
+| `dep_linkage_on_static` | 字符串 | 消费者构建静态库时的依赖链接方式 | — |
+
+**链接方式取值：** `"shared-external"` | `"static-embedded"` | `"static-external"`
 
 ```toml
-[android]
-min_sdk_version = 21
-target_sdk_version = 33
-ndk_version = "25.2.9519653"
-stl = "c++_static"
-architectures = ["arm64-v8a", "armeabi-v7a"]
+[platforms.android]
+min_sdk        = 21
+architectures  = ["arm64-v8a", "armeabi-v7a"]
+default_dep_linkage = "static-embedded"
 ```
 
-### [ios]
+#### [platforms.android.build.cmake]
+
+仅应用于 Android 构建的 CMake 标志，追加在 `[build.cmake]` 之后。
+
+```toml
+[platforms.android.build.cmake]
+arguments = ["-DANDROID_ARM_NEON=TRUE", "-DANDROID_TOOLCHAIN=clang"]
+cpp_flags = ["-fexceptions", "-frtti"]
+```
+
+### [platforms.ios]
 
 iOS 特定配置。
 
 | 字段 | 类型 | 描述 | 默认值 |
 |------|------|------|--------|
-| `min_deployment_target` | 字符串 | 最低 iOS 版本 | `"12.0"` |
-| `enable_bitcode` | 布尔值 | 启用 bitcode | `false` |
+| `min_version` | 字符串 | 最低 iOS 部署目标 | `"12.0"` |
 | `architectures` | 字符串数组 | 目标架构 | 全部 |
+| `default_dep_linkage` | 字符串 | 默认依赖链接方式 | — |
+| `dep_linkage_on_shared` | 字符串 | 消费者构建动态库时的依赖链接方式 | — |
+| `dep_linkage_on_static` | 字符串 | 消费者构建静态库时的依赖链接方式 | — |
 
 ```toml
-[ios]
-min_deployment_target = "13.0"
-enable_bitcode = false
+[platforms.ios]
+min_version   = "13.0"
 architectures = ["arm64"]
 ```
 
-### [macos]
+#### [platforms.ios.build.cmake]
+
+```toml
+[platforms.ios.build.cmake]
+arguments = ["-DIOS_SPECIFIC=1"]
+cpp_flags = []
+```
+
+### [platforms.macos]
 
 macOS 特定配置。
 
 | 字段 | 类型 | 描述 | 默认值 |
 |------|------|------|--------|
-| `min_deployment_target` | 字符串 | 最低 macOS 版本 | `"10.15"` |
+| `min_version` | 字符串 | 最低 macOS 部署目标 | `"10.15"` |
 | `architectures` | 字符串数组 | 目标架构 | `["x86_64", "arm64"]` |
+| `default_dep_linkage` | 字符串 | 默认依赖链接方式 | — |
+| `dep_linkage_on_shared` | 字符串 | 消费者构建动态库时的依赖链接方式 | — |
+| `dep_linkage_on_static` | 字符串 | 消费者构建静态库时的依赖链接方式 | — |
 
 ```toml
-[macos]
-min_deployment_target = "11.0"
+[platforms.macos]
+min_version   = "11.0"
 architectures = ["arm64", "x86_64"]  # 通用二进制
 ```
 
-### [windows]
+#### [platforms.macos.build.cmake]
+
+```toml
+[platforms.macos.build.cmake]
+arguments = []
+cpp_flags = []
+```
+
+### [platforms.windows]
 
 Windows 特定配置。
 
 | 字段 | 类型 | 描述 | 默认值 |
 |------|------|------|--------|
-| `toolchain` | 字符串 | 工具链："msvc"、"mingw"、"auto" | `"auto"` |
-| `msvc_runtime` | 字符串 | MSVC 运行时："static"、"dynamic" | `"dynamic"` |
 | `architectures` | 字符串数组 | 目标架构 | `["x86_64"]` |
+| `default_dep_linkage` | 字符串 | 默认依赖链接方式 | — |
+| `dep_linkage_on_shared` | 字符串 | 消费者构建动态库时的依赖链接方式 | — |
+| `dep_linkage_on_static` | 字符串 | 消费者构建静态库时的依赖链接方式 | — |
 
 ```toml
-[windows]
-toolchain = "msvc"
-msvc_runtime = "static"
+[platforms.windows]
 architectures = ["x86_64", "x86"]
 ```
 
-### [linux]
+#### [platforms.windows.build.cmake]
+
+```toml
+[platforms.windows.build.cmake]
+arguments = ["-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON"]
+cpp_flags = []
+```
+
+### [platforms.linux]
 
 Linux 特定配置。
 
 | 字段 | 类型 | 描述 | 默认值 |
 |------|------|------|--------|
 | `architectures` | 字符串数组 | 目标架构 | `["x86_64"]` |
-| `system_deps` | 字符串数组 | 系统依赖 | `[]` |
+| `default_dep_linkage` | 字符串 | 默认依赖链接方式 | — |
+| `dep_linkage_on_shared` | 字符串 | 消费者构建动态库时的依赖链接方式 | — |
+| `dep_linkage_on_static` | 字符串 | 消费者构建静态库时的依赖链接方式 | — |
 
 ```toml
-[linux]
+[platforms.linux]
 architectures = ["x86_64", "aarch64"]
-system_deps = ["libssl-dev", "libcurl4-openssl-dev"]
 ```
 
-### [ohos]
+#### [platforms.linux.build.cmake]
+
+```toml
+[platforms.linux.build.cmake]
+arguments = []
+cpp_flags = []
+```
+
+### [platforms.ohos]
 
 OpenHarmony 特定配置。
 
 | 字段 | 类型 | 描述 | 默认值 |
 |------|------|------|--------|
-| `min_api_version` | 整数 | 最低 API 版本 | `9` |
-| `target_api_version` | 整数 | 目标 API 版本 | `10` |
+| `min_api` | 整数 | 最低 OpenHarmony API 级别 | `9` |
 | `architectures` | 字符串数组 | 目标架构 | 全部 |
+| `default_dep_linkage` | 字符串 | 默认依赖链接方式 | — |
+| `dep_linkage_on_shared` | 字符串 | 消费者构建动态库时的依赖链接方式 | — |
+| `dep_linkage_on_static` | 字符串 | 消费者构建静态库时的依赖链接方式 | — |
 
 ```toml
-[ohos]
-min_api_version = 9
-target_api_version = 10
+[platforms.ohos]
+min_api       = 9
 architectures = ["arm64-v8a", "armeabi-v7a"]
 ```
 
-### [watchos]
-
-watchOS 特定配置。
-
-| 字段 | 类型 | 描述 | 默认值 |
-|------|------|------|--------|
-| `min_deployment_target` | 字符串 | 最低 watchOS 版本 | `"5.0"` |
-| `architectures` | 字符串数组 | 目标架构 | 全部 |
+#### [platforms.ohos.build.cmake]
 
 ```toml
-[watchos]
-min_deployment_target = "6.0"
-architectures = ["armv7k", "arm64_32"]
-```
-
-### [tvos]
-
-tvOS 特定配置。
-
-| 字段 | 类型 | 描述 | 默认值 |
-|------|------|------|--------|
-| `min_deployment_target` | 字符串 | 最低 tvOS 版本 | `"12.0"` |
-| `architectures` | 字符串数组 | 目标架构 | 全部 |
-
-```toml
-[tvos]
-min_deployment_target = "13.0"
-architectures = ["arm64"]
+[platforms.ohos.build.cmake]
+arguments = []
+cpp_flags = []
 ```
 
 ---
@@ -442,6 +486,131 @@ required_features = ["full"]
 ```bash
 ccgo run mytool --bin
 ccgo build --bin myapp --features full
+```
+
+---
+
+## [profile.\<name\>]
+
+命名构建 profile 存储可复用的配置片段，通过 `--profile <name>` 选择。
+
+```bash
+ccgo build android --profile sanitize
+```
+
+**内置 profile**（无需声明）：
+
+| 名称 | 效果 |
+|------|------|
+| `debug` | `release = false` |
+| `release` | `release = true` |
+
+### 顶层字段
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `inherits` | 字符串 | 要继承的父 profile 名称（单继承） | — |
+| `name` | 字符串 | 覆盖输出包名 | 包名 |
+| `release` | 布尔值 | `true` = release 构建，`false` = debug 构建 | — |
+| `link_type` | 字符串 | `"static"` \| `"shared"` \| `"both"` | — |
+| `jobs` | 整数 | 并行构建任务数 | 自动 |
+
+### [profile.\<name\>.cmake]
+
+此 profile 激活时应用于所有平台的额外 CMake 标志。
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `merge` | 字符串 | `"replace"` — 丢弃继承的标志；`"extend"` — 追加在继承标志之后 | `"replace"` |
+| `arguments` | 字符串数组 | 直接传递给 cmake configure 的原始参数 | `[]` |
+| `c_flags` | 字符串数组 | 追加到 `CMAKE_C_FLAGS` 的标志 | `[]` |
+| `cpp_flags` | 字符串数组 | 追加到 `CMAKE_CXX_FLAGS` 的标志 | `[]` |
+
+### [profile.\<name\>.features]
+
+此 profile 激活时启用的 features。
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `merge` | 字符串 | `"replace"` 或 `"extend"` | `"replace"` |
+| `list` | 字符串数组 | feature 名称列表 | `[]` |
+
+### [profile.\<name\>.dep_linkage]
+
+此 profile 激活时的依赖链接策略。
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `default` | 字符串 | 适用于所有构建类型的链接方式 |
+| `on_shared` | 字符串 | 消费者构建动态库时的覆盖值 |
+| `on_static` | 字符串 | 消费者构建静态库时的覆盖值 |
+
+**链接方式取值：** `"shared-external"` | `"static-embedded"` | `"static-external"`
+
+### 平台级覆盖
+
+在 profile 内部针对特定平台覆盖 cmake 标志或依赖链接方式。
+
+```toml
+[profile.<name>.platforms.<platform>.build.cmake]
+merge     = "extend"
+arguments = []
+c_flags   = []
+cpp_flags = []
+
+[profile.<name>.platforms.<platform>.build.dep_linkage]
+default   = "static-embedded"
+on_shared = "shared-external"
+on_static = "static-embedded"
+```
+
+支持的 `<platform>` 取值：`android`、`ios`、`macos`、`windows`、`linux`、`ohos`
+
+### 继承与合并顺序
+
+Profile 通过 `inherits` 支持单继承。支持继承链；循环引用会被检测并报告错误。
+
+优先级顺序（后者覆盖前者）：
+1. 全局 `CCGO.toml` 配置
+2. 继承链（从最古老的祖先到最近的父 profile）
+3. 当前激活 profile 的自身设置
+4. CLI 标志（`--release`、`--link-type`、`--features`、`--jobs`）
+
+CMake 标志通过四个层次累积：
+
+```
+[build.cmake]
+  + [platforms.<p>.build.cmake]
+  + [profile.<name>.cmake]
+  + [profile.<name>.platforms.<p>.build.cmake]
+```
+
+### 示例
+
+```toml
+[profile.sanitize]
+inherits  = "debug"
+link_type = "both"
+
+[profile.sanitize.cmake]
+merge     = "extend"
+c_flags   = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+cpp_flags = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
+
+[profile.sanitize.features]
+merge = "extend"
+list  = ["debug-logging"]
+
+[profile.sanitize.platforms.android.build.cmake]
+merge     = "extend"
+cpp_flags = ["-fsanitize=address"]
+
+[profile.fat-static]
+inherits  = "release"
+link_type = "static"
+
+[profile.fat-static.dep_linkage]
+default = "static-embedded"
 ```
 
 ---
@@ -659,5 +828,7 @@ type = "static"
 
 - [CLI 参考](cli.zh.md)
 - [构建系统](../features/build-system.zh.md)
+- [构建 Profile](../features/build-profiles.zh.md)
 - [依赖管理](../features/dependency-management.zh.md)
 - [发布](../features/publishing.zh.md)
+- [CCGO.toml.example](../../CCGO.toml.example)

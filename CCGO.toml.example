@@ -1,0 +1,503 @@
+# ============================================================
+# CCGO.toml — Complete Configuration Template
+#
+# This file documents every configurable option in CCGO.toml.
+# All entries are commented out. Copy what you need into your
+# own CCGO.toml and uncomment / adjust.
+#
+# Valid values are noted inline. Required fields are marked (required).
+# ============================================================
+
+
+# ============================================================
+# [package] — Package metadata
+# Required for all non-workspace projects.
+# ============================================================
+
+# [package]
+
+# (required) Package name.
+# Lowercase letters, digits, and hyphens only. Must start with a letter.
+# name = "my-library"
+
+# (required) Package version in semantic versioning format (MAJOR.MINOR.PATCH).
+# version = "1.0.0"
+
+# List of authors. Format: "Name <email@example.com>"
+# authors = ["Alice <alice@example.com>", "Bob <bob@example.com>"]
+
+# Short one-line description of the package.
+# description = "A cross-platform C++ networking library"
+
+# SPDX license identifier. Examples: "MIT", "Apache-2.0", "GPL-3.0-only"
+# license = "MIT"
+
+# URL of the source code repository.
+# repository = "https://github.com/user/my-library"
+
+# URL of the project homepage.
+# homepage = "https://my-library.example.com"
+
+# URL of the online documentation.
+# documentation = "https://docs.my-library.example.com"
+
+# Path to the README file (relative to project root).
+# readme = "README.md"
+
+# Keywords for discoverability on package registries.
+# keywords = ["networking", "async", "cross-platform"]
+
+# Categories for package classification.
+# categories = ["network-programming", "asynchronous"]
+
+
+# ============================================================
+# [library] — Library build configuration
+# ============================================================
+
+# [library]
+
+# Library output type.
+# Values: "static" | "shared" | "both"
+#   static — build only a static library (.a / .lib)
+#   shared — build only a shared library (.so / .dylib / .dll)
+#   both   — build both (default)
+# type = "both"
+
+# C++ namespace for the library (used in generated headers).
+# Defaults to the package name.
+# namespace = "mylib"
+
+# Custom output filename (without lib prefix or extension).
+# Defaults to the package name.
+# output_name = "mylib-cpp"
+
+
+# ============================================================
+# [dependencies] — Project dependencies (array style)
+#
+# Each dependency entry is a [[dependencies]] table.
+# ============================================================
+
+# Git-sourced dependency:
+# [[dependencies]]
+# name = "spdlog"
+# git = "https://github.com/gabime/spdlog.git"
+# tag = "v1.12.0"          # use tag, branch, or rev — not multiple
+# # branch = "master"
+# # rev = "9cca280a"
+
+# Local path dependency:
+# [[dependencies]]
+# name = "myutils"
+# path = "../myutils"
+
+# Optional dependency (only built when enabled via a feature):
+# [[dependencies]]
+# name = "openssl"
+# git = "https://github.com/openssl/openssl.git"
+# tag = "openssl-3.0.0"
+# optional = true          # not included unless a feature enables it
+
+# Dependency with specific per-dependency linkage override:
+# [[dependencies]]
+# name = "fmt"
+# git = "https://github.com/fmtlib/fmt.git"
+# tag = "10.1.1"
+# linkage = "static-embedded"   # "shared-external" | "static-embedded" | "static-external"
+
+
+# ============================================================
+# [build] — Global build configuration
+# ============================================================
+
+# [build]
+
+# C++ standard version.
+# Values: "11" | "14" | "17" | "20" | "23"
+# cpp_standard = "17"
+
+# Minimum required CMake version.
+# cmake_minimum_version = "3.18"
+
+# Extra compiler flags passed to all platforms.
+# compile_flags = ["-Wall", "-Wextra"]
+
+# Extra linker flags passed to all platforms.
+# link_flags = ["-flto"]
+
+# Additional include directories (relative to project root).
+# include_dirs = ["third_party/include"]
+
+# Additional library search paths.
+# link_dirs = ["third_party/lib"]
+
+# System libraries to link against.
+# system_libs = ["pthread", "dl"]
+
+# Default linkage for all dependencies (any build_as).
+# Values: "shared-external" | "static-embedded" | "static-external"
+# default_dep_linkage = "static-embedded"
+
+# Default dependency linkage when the consumer builds a shared library.
+# dep_linkage_on_shared = "shared-external"
+
+# Default dependency linkage when the consumer builds a static library.
+# dep_linkage_on_static = "static-embedded"
+
+
+# [build.definitions] — Preprocessor macro definitions
+# Each key becomes a -D<KEY>=<VALUE> CMake flag.
+# [build.definitions]
+# MY_FEATURE = "1"
+# APP_VERSION = "\"1.0.0\""    # note escaped inner quotes for string values
+# ENABLE_LOGGING = true
+
+
+# [build.cmake] — Extra CMake flags injected at configure time
+# These are appended after all internal CCGO flags, so they can override defaults.
+# Platform-specific overrides can be set under [platforms.X.build.cmake].
+# [build.cmake]
+
+# Raw arguments passed verbatim to cmake configure.
+# Example: enable verbose makefiles, pass a custom find path.
+# arguments = ["-DCMAKE_VERBOSE_MAKEFILE=ON", "-DFOO=bar"]
+
+# Flags appended to CMAKE_C_FLAGS.
+# c_flags = ["-D__STDC_FORMAT_MACROS", "-fstack-protector-strong"]
+
+# Flags appended to CMAKE_CXX_FLAGS.
+# cpp_flags = ["-fexceptions", "-frtti"]
+
+
+# ============================================================
+# [features] — Conditional compilation features
+# ============================================================
+
+# [features]
+# default = ["basic"]       # features enabled by default (empty list = no defaults)
+# basic = []                # a feature with no dependencies
+# network = ["openssl"]     # enables the optional "openssl" dependency
+# full = ["basic", "network"]   # composite feature grouping others
+
+# CLI usage:
+#   ccgo build android --features network,full
+#   ccgo build android --all-features
+#   ccgo build android --no-default-features
+
+
+# ============================================================
+# Platform configurations
+# All platform sections live under [platforms.<name>].
+# Supported platforms: android, ios, macos, windows, linux, ohos
+# ============================================================
+
+
+# ------------------------------------------------------------
+# [platforms.android] — Android-specific configuration
+# ------------------------------------------------------------
+
+# [platforms.android]
+
+# Minimum Android SDK (API) level.
+# min_sdk = 21
+
+# Target architectures to build for.
+# Values (one or more): "arm64-v8a" | "armeabi-v7a" | "x86_64" | "x86"
+# architectures = ["arm64-v8a", "armeabi-v7a"]
+
+# Default dependency linkage for Android (any build_as).
+# default_dep_linkage = "static-embedded"
+
+# Dependency linkage when consumer builds a shared library.
+# dep_linkage_on_shared = "shared-external"
+
+# Dependency linkage when consumer builds a static library.
+# dep_linkage_on_static = "static-embedded"
+
+# [platforms.android.build.cmake]
+# arguments = ["-DANDROID_ARM_NEON=TRUE", "-DANDROID_TOOLCHAIN=clang"]
+# c_flags = []
+# cpp_flags = ["-fexceptions", "-frtti"]
+
+
+# ------------------------------------------------------------
+# [platforms.ios] — iOS-specific configuration
+# ------------------------------------------------------------
+
+# [platforms.ios]
+
+# Minimum iOS deployment target.
+# min_version = "12.0"
+
+# Target architectures.
+# Values: "arm64" (device) | "x86_64" (simulator) | "arm64" (simulator, Apple Silicon)
+# architectures = ["arm64"]
+
+# default_dep_linkage = "static-embedded"
+# dep_linkage_on_shared = "shared-external"
+# dep_linkage_on_static = "static-embedded"
+
+# [platforms.ios.build.cmake]
+# arguments = ["-DIOS_DEPLOYMENT_TARGET=12.0"]
+# cpp_flags = []
+
+
+# ------------------------------------------------------------
+# [platforms.macos] — macOS-specific configuration
+# ------------------------------------------------------------
+
+# [platforms.macos]
+
+# Minimum macOS deployment target.
+# min_version = "10.15"
+
+# Target architectures.
+# Values: "x86_64" | "arm64" | both (universal binary)
+# architectures = ["arm64", "x86_64"]
+
+# default_dep_linkage = "static-embedded"
+# dep_linkage_on_shared = "shared-external"
+# dep_linkage_on_static = "static-embedded"
+
+# [platforms.macos.build.cmake]
+# arguments = []
+# cpp_flags = []
+
+
+# ------------------------------------------------------------
+# [platforms.windows] — Windows-specific configuration
+# ------------------------------------------------------------
+
+# [platforms.windows]
+
+# Target architectures.
+# Values: "x86_64" | "x86"
+# architectures = ["x86_64"]
+
+# default_dep_linkage = "static-embedded"
+# dep_linkage_on_shared = "shared-external"
+# dep_linkage_on_static = "static-embedded"
+
+# [platforms.windows.build.cmake]
+# arguments = ["-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON"]
+# cpp_flags = []
+
+
+# ------------------------------------------------------------
+# [platforms.linux] — Linux-specific configuration
+# ------------------------------------------------------------
+
+# [platforms.linux]
+
+# Target architectures.
+# Values: "x86_64" | "aarch64"
+# architectures = ["x86_64"]
+
+# default_dep_linkage = "static-embedded"
+# dep_linkage_on_shared = "shared-external"
+# dep_linkage_on_static = "static-embedded"
+
+# [platforms.linux.build.cmake]
+# arguments = []
+# cpp_flags = []
+
+
+# ------------------------------------------------------------
+# [platforms.ohos] — OpenHarmony-specific configuration
+# ------------------------------------------------------------
+
+# [platforms.ohos]
+
+# Minimum OpenHarmony API level.
+# min_api = 9
+
+# Target architectures.
+# Values (one or more): "arm64-v8a" | "armeabi-v7a" | "x86_64"
+# architectures = ["arm64-v8a"]
+
+# default_dep_linkage = "static-embedded"
+# dep_linkage_on_shared = "shared-external"
+# dep_linkage_on_static = "static-embedded"
+
+# [platforms.ohos.build.cmake]
+# arguments = []
+# cpp_flags = []
+
+
+# ============================================================
+# [profile.<name>] — Named build profiles
+#
+# A profile is a named configuration slice that can override
+# release mode, link type, features, CMake flags, dependency
+# linkage, and the output package name.
+#
+# Select a profile with: ccgo build <platform> --profile <name>
+#
+# Built-in profiles (no declaration required):
+#   debug   — release = false (default when --release is not passed)
+#   release — release = true  (same as passing --release)
+#
+# Priority order (later wins):
+#   hardcoded defaults
+#   → CCGO.toml global settings
+#   → inherited profile chain (oldest ancestor first)
+#   → current profile
+#   → CLI flags (always win)
+# ============================================================
+
+
+# --- Example: a sanitizer profile -------------------------
+# [profile.sanitize]
+
+# Inherit from another profile. Single inheritance only.
+# Cycle detection is enforced. Built-ins ("debug", "release") are always available.
+# inherits = "debug"
+
+# Override the output package name (used for archive/library naming).
+# Useful when publishing platform-specific variants under different names.
+# name = "mylib-sanitize"
+
+# Release mode. true = optimized, false = debug symbols.
+# Values: true | false
+# release = false
+
+# Library type to produce.
+# Values: "static" | "shared" | "both"
+# link_type = "both"
+
+# Number of parallel build jobs (overrides auto-detection).
+# jobs = 4
+
+
+# CMake flags — profile-global, applies to all platforms.
+# [profile.sanitize.cmake]
+
+# merge controls how this profile's list combines with the inherited parent's list.
+# Values:
+#   "replace" — discard parent's flags, use only this profile's list (default)
+#   "extend"  — append this profile's flags after the parent's accumulated list
+# merge = "extend"
+
+# Raw cmake configure arguments.
+# arguments = ["-DSANITIZE=address", "-DCMAKE_BUILD_TYPE=Debug"]
+
+# Flags appended to CMAKE_C_FLAGS.
+# c_flags = ["-fsanitize=address", "-fno-omit-frame-pointer"]
+
+# Flags appended to CMAKE_CXX_FLAGS.
+# cpp_flags = ["-fsanitize=address", "-fno-omit-frame-pointer"]
+
+
+# Features — which features to enable when this profile is active.
+# [profile.sanitize.features]
+
+# merge strategy: "replace" discards inherited features, "extend" appends.
+# merge = "extend"
+
+# List of features to enable.
+# list = ["network", "debug-logging"]
+
+
+# Dependency linkage — profile-global default linkage for all deps.
+# [profile.sanitize.dep_linkage]
+
+# Linkage used regardless of what the consumer builds as.
+# Values: "shared-external" | "static-embedded" | "static-external"
+# default = "static-embedded"
+
+# Linkage override when the consumer produces a shared library.
+# on_shared = "shared-external"
+
+# Linkage override when the consumer produces a static library.
+# on_static = "static-embedded"
+
+
+# Per-platform CMake overrides inside a profile.
+# These are merged on top of both the global CCGO.toml platform cmake
+# and the profile's own global cmake block.
+#
+# [profile.sanitize.platforms.android.build.cmake]
+# merge = "extend"
+# arguments = ["-DANDROID_ARM_NEON=TRUE"]
+# cpp_flags = ["-fsanitize=address"]
+
+# [profile.sanitize.platforms.ios.build.cmake]
+# merge = "extend"
+# cpp_flags = ["-fsanitize=address"]
+
+# [profile.sanitize.platforms.macos.build.cmake]
+# merge = "extend"
+# cpp_flags = ["-fsanitize=address"]
+
+# Per-platform dep_linkage overrides inside a profile.
+# [profile.sanitize.platforms.android.build.dep_linkage]
+# default = "static-embedded"
+# on_shared = "shared-external"
+# on_static = "static-embedded"
+
+
+# --- Example: a release-lite profile (inherits release, shared only) ---
+# [profile.release-shared]
+# inherits = "release"
+# link_type = "shared"
+
+# [profile.release-shared.cmake]
+# merge = "extend"
+# cpp_flags = ["-fvisibility=hidden"]
+
+
+# --- Example: a fat-static profile (release, static only) ---------------
+# [profile.fat-static]
+# inherits = "release"
+# link_type = "static"
+# dep_linkage = { default = "static-embedded" }
+
+
+# ============================================================
+# [[examples]] — Example programs
+# ============================================================
+
+# [[examples]]
+# name = "basic"
+# path = "examples/basic.cpp"
+# # required_features = ["network"]   # only built when this feature is active
+
+# [[examples]]
+# name = "advanced"
+# path = "examples/advanced.cpp"
+# required_features = ["full"]
+
+
+# ============================================================
+# [[bins]] — Binary targets
+# ============================================================
+
+# [[bins]]
+# name = "mytool"
+# path = "src/bin/mytool.cpp"
+# # required_features = []
+
+# [[bins]]
+# name = "myapp"
+# path = "src/bin/myapp.cpp"
+# required_features = ["full"]
+
+
+# ============================================================
+# [include] — Include directory packaging
+# ============================================================
+
+# [include]
+# Source directory for public headers (relative to project root).
+# These headers are included in the published SDK archive.
+# src = "include"
+
+
+# ============================================================
+# [registries] — Custom package registry sources
+# ============================================================
+
+# [registries]
+# company = "https://github.com/company/ccgo-packages.git"
+# private  = "git@gitlab.internal:packages/ccgo-index.git"
