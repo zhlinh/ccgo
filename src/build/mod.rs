@@ -567,6 +567,49 @@ impl BuildContext {
         Ok(out)
     }
 
+    /// Extract the four profile dep-linkage tiers for `resolved_linkage_hint`.
+    /// Returns `(plat_build_as, global_build_as, plat_default, global_default)`.
+    fn profile_linkage_tiers(
+        &self,
+        platform: &str,
+        consumer: &crate::commands::build::LinkType,
+    ) -> (
+        Option<crate::config::Linkage>,
+        Option<crate::config::Linkage>,
+        Option<crate::config::Linkage>,
+        Option<crate::config::Linkage>,
+    ) {
+        use crate::commands::build::LinkType;
+
+        let (plat_build_as, plat_default) = self
+            .resolved_profile
+            .as_ref()
+            .and_then(|rp| rp.platform_dep_linkage.get(platform))
+            .map(|pdl| {
+                let build_as = match consumer {
+                    LinkType::Shared => pdl.on_shared,
+                    LinkType::Static => pdl.on_static,
+                    _ => None,
+                };
+                (build_as, pdl.default)
+            })
+            .unwrap_or((None, None));
+
+        let global_build_as =
+            self.resolved_profile.as_ref().and_then(|rp| match consumer {
+                LinkType::Shared => rp.dep_linkage.on_shared,
+                LinkType::Static => rp.dep_linkage.on_static,
+                _ => None,
+            });
+
+        let global_default = self
+            .resolved_profile
+            .as_ref()
+            .and_then(|rp| rp.dep_linkage.default);
+
+        (plat_build_as, global_build_as, plat_default, global_default)
+    }
+
     /// Resolve the linkage hint for a single dep using the canonical 8-tier
     /// precedence chain. Centralises the rule so [`Self::resolved_dep_linkages`]
     /// (which feeds the resolver) and [`Self::materialize_source_deps`] (which
@@ -609,6 +652,10 @@ impl BuildContext {
         });
         let global_default = build_cfg.and_then(|b| b.default_dep_linkage);
 
+        // Profile dep_linkage tiers (above CCGO.toml global, below per-dep)
+        let (profile_plat_build_as, profile_global_build_as, profile_plat_default, profile_global_default) =
+            self.profile_linkage_tiers(platform, consumer);
+
         let plat_dep_build_as = plat_dep.and_then(|p| match consumer {
             LinkType::Shared => p.linkage_on_shared,
             LinkType::Static => p.linkage_on_static,
@@ -650,6 +697,12 @@ impl BuildContext {
             .or(dep_build_as)
             .or_else(|| plat_dep.and_then(|p| p.linkage))
             .or(dep.linkage)
+            // Profile tiers: above CCGO.toml global, below per-dep
+            .or(profile_plat_build_as)
+            .or(profile_global_build_as)
+            .or(profile_plat_default)
+            .or(profile_global_default)
+            // CCGO.toml global tiers
             .or(global_plat_build_as)
             .or(global_build_as)
             .or(global_plat_default)
@@ -1319,5 +1372,58 @@ arguments = ["-DPROFILE=1"]
         let cmake_cfg = ctx.cmake_user_config("linux");
         assert!(cmake_cfg.arguments.contains(&"-DGLOBAL=1".to_string()));
         assert!(cmake_cfg.arguments.contains(&"-DPROFILE=1".to_string()));
+    }
+
+    #[test]
+    fn profile_dep_linkage_default_applied() {
+        use crate::build::profile::{ResolvedDepLinkage, ResolvedProfile};
+
+        let config: CcgoConfig = toml::from_str(
+            r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+"#,
+        )
+        .unwrap();
+
+        let dep = bare_dep("leafdep");
+
+        let mut profile = ResolvedProfile::default();
+        profile.dep_linkage.default = Some(Linkage::StaticEmbedded);
+
+        let mut ctx = make_ctx(bare_options(), config);
+        ctx.resolved_profile = Some(profile);
+
+        let hint = ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared);
+        assert_eq!(hint, Some(Linkage::StaticEmbedded));
+    }
+
+    #[test]
+    fn cli_linkage_beats_profile_dep_linkage() {
+        use crate::build::profile::{ResolvedDepLinkage, ResolvedProfile};
+
+        let config: CcgoConfig = toml::from_str(
+            r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+"#,
+        )
+        .unwrap();
+
+        let dep = bare_dep("leafdep");
+
+        let mut profile = ResolvedProfile::default();
+        profile.dep_linkage.default = Some(Linkage::StaticEmbedded);
+
+        let mut options = bare_options();
+        options.linkage_default = Some(Linkage::SharedExternal);
+
+        let mut ctx = make_ctx(options, config);
+        ctx.resolved_profile = Some(profile);
+
+        let hint = ctx.resolved_linkage_hint(&dep, "linux", &LinkType::Shared);
+        assert_eq!(hint, Some(Linkage::SharedExternal));
     }
 }
