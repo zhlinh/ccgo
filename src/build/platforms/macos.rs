@@ -205,6 +205,12 @@ impl MacosBuilder {
             cmake = cmake.variable("CCGO_DEPENDENCY_LINKAGES", linkages_val);
         }
 
+        let user = ctx.cmake_user_config("macos");
+        cmake = cmake
+            .user_arguments(user.arguments)
+            .user_c_flags(user.c_flags)
+            .user_cpp_flags(user.cpp_flags);
+
         cmake.configure_build_install()?;
 
         // For static builds, merge all module libraries into a single library

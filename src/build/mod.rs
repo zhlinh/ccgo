@@ -697,6 +697,60 @@ impl BuildContext {
         )
     }
 
+    /// Return merged cmake user config: global `[build.cmake]` + platform
+    /// `[platforms.X.build.cmake]`. All three lists are concatenated (global first).
+    pub fn cmake_user_config(&self, platform: &str) -> crate::config::CmakeUserConfig {
+        use crate::config::CmakeUserConfig;
+
+        let global = self
+            .config
+            .build
+            .as_ref()
+            .and_then(|b| b.cmake.clone())
+            .unwrap_or_default();
+
+        let p = self.config.platforms.as_ref();
+        let platform_cfg: CmakeUserConfig = match platform.to_lowercase().as_str() {
+            "android" => p
+                .and_then(|p| p.android.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake.clone())
+                .unwrap_or_default(),
+            "ios" => p
+                .and_then(|p| p.ios.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake.clone())
+                .unwrap_or_default(),
+            "macos" => p
+                .and_then(|p| p.macos.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake.clone())
+                .unwrap_or_default(),
+            "windows" => p
+                .and_then(|p| p.windows.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake.clone())
+                .unwrap_or_default(),
+            "linux" => p
+                .and_then(|p| p.linux.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake.clone())
+                .unwrap_or_default(),
+            "ohos" => p
+                .and_then(|p| p.ohos.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake.clone())
+                .unwrap_or_default(),
+            _ => CmakeUserConfig::default(),
+        };
+
+        CmakeUserConfig {
+            arguments: [global.arguments, platform_cfg.arguments].concat(),
+            c_flags: [global.c_flags, platform_cfg.c_flags].concat(),
+            cpp_flags: [global.cpp_flags, platform_cfg.cpp_flags].concat(),
+        }
+    }
+
     /// Create incremental build analyzer for a specific link type
     pub fn create_incremental_analyzer(
         &self,

@@ -285,6 +285,12 @@ impl WindowsBuilder {
             cmake = cmake.compiler_cache(cache);
         }
 
+        let user = ctx.cmake_user_config("windows");
+        cmake = cmake
+            .user_arguments(user.arguments)
+            .user_c_flags(user.c_flags)
+            .user_cpp_flags(user.cpp_flags);
+
         Ok(cmake)
     }
 

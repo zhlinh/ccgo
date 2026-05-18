@@ -55,6 +55,12 @@ pub struct CMakeConfig {
     compile_definitions: Vec<String>,
     /// Compiler cache configuration
     compiler_cache: Option<super::cache::CacheConfig>,
+    /// User-specified raw cmake arguments (from [build.cmake] / [platforms.X.build.cmake])
+    user_arguments: Vec<String>,
+    /// User-specified extra C compiler flags
+    user_c_flags: Vec<String>,
+    /// User-specified extra C++ compiler flags
+    user_cpp_flags: Vec<String>,
 }
 
 impl CMakeConfig {
@@ -161,6 +167,24 @@ impl CMakeConfig {
         self
     }
 
+    /// Append user-specified raw cmake arguments (from CCGO.toml `[build.cmake].arguments`).
+    pub fn user_arguments(mut self, args: Vec<String>) -> Self {
+        self.user_arguments.extend(args);
+        self
+    }
+
+    /// Append user-specified C compiler flags (from CCGO.toml `[build.cmake].c_flags`).
+    pub fn user_c_flags(mut self, flags: Vec<String>) -> Self {
+        self.user_c_flags.extend(flags);
+        self
+    }
+
+    /// Append user-specified C++ compiler flags (from CCGO.toml `[build.cmake].cpp_flags`).
+    pub fn user_cpp_flags(mut self, flags: Vec<String>) -> Self {
+        self.user_cpp_flags.extend(flags);
+        self
+    }
+
     /// Find CMake executable
     fn find_cmake() -> Result<PathBuf> {
         which::which("cmake").context("CMake not found. Please install CMake and add it to PATH.")
@@ -230,6 +254,24 @@ impl CMakeConfig {
             // Pass as CCGO_FEATURE_DEFINITIONS which CMake can use
             let definitions = self.compile_definitions.join(";");
             cmd.arg(format!("-DCCGO_FEATURE_DEFINITIONS={}", definitions));
+        }
+
+        // User-specified flags from [build.cmake] / [platforms.X.build.cmake].
+        // Emitted last so they can override earlier -D settings.
+        for arg in &self.user_arguments {
+            cmd.arg(arg);
+        }
+        if !self.user_c_flags.is_empty() {
+            cmd.arg(format!(
+                "-DCMAKE_C_FLAGS:STRING={}",
+                self.user_c_flags.join(" ")
+            ));
+        }
+        if !self.user_cpp_flags.is_empty() {
+            cmd.arg(format!(
+                "-DCMAKE_CXX_FLAGS:STRING={}",
+                self.user_cpp_flags.join(" ")
+            ));
         }
 
         if self.verbose {

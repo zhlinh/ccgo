@@ -1037,6 +1037,42 @@ pub struct BuildConfig {
     /// Project-wide default linkage when the consumer is building as **static**.
     /// Takes priority over `default_dep_linkage` for static consumers.
     pub dep_linkage_on_static: Option<Linkage>,
+
+    /// User-specified extra CMake arguments and compiler flags.
+    pub cmake: Option<CmakeUserConfig>,
+}
+
+/// User-configurable CMake flags for a build or platform section.
+///
+/// Mirrors the Android Gradle `CmakeFlags` interface:
+/// - `arguments` — passed verbatim to the cmake configure command
+/// - `c_flags`   — appended to `CMAKE_C_FLAGS`
+/// - `cpp_flags` — appended to `CMAKE_CXX_FLAGS`
+///
+/// When both `[build.cmake]` and `[platforms.X.build.cmake]` are set, lists are
+/// concatenated: global first, then platform-specific.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CmakeUserConfig {
+    /// Raw arguments passed verbatim to the cmake configure invocation.
+    /// Example: `["-DANDROID_ARM_NEON=TRUE", "-DANDROID_TOOLCHAIN=clang"]`
+    #[serde(default)]
+    pub arguments: Vec<String>,
+
+    /// Extra flags appended to `CMAKE_C_FLAGS`.
+    /// Example: `["-D__STDC_FORMAT_MACROS"]`
+    #[serde(default)]
+    pub c_flags: Vec<String>,
+
+    /// Extra flags appended to `CMAKE_CXX_FLAGS`.
+    /// Example: `["-fexceptions", "-frtti"]`
+    #[serde(default)]
+    pub cpp_flags: Vec<String>,
+}
+
+/// Per-platform build configuration (`[platforms.X.build]`).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PlatformBuildConfig {
+    pub cmake: Option<CmakeUserConfig>,
 }
 
 /// Platform-specific configurations
@@ -1076,6 +1112,9 @@ pub struct AndroidConfig {
     pub dep_linkage_on_shared: Option<Linkage>,
     /// Platform-wide dep linkage when consumer builds as static.
     pub dep_linkage_on_static: Option<Linkage>,
+
+    /// Android-specific build config (`[platforms.android.build]`).
+    pub build: Option<PlatformBuildConfig>,
 }
 
 /// iOS platform configuration
@@ -1087,6 +1126,8 @@ pub struct IosConfig {
     pub default_dep_linkage: Option<Linkage>,
     pub dep_linkage_on_shared: Option<Linkage>,
     pub dep_linkage_on_static: Option<Linkage>,
+
+    pub build: Option<PlatformBuildConfig>,
 }
 
 /// macOS platform configuration
@@ -1098,6 +1139,8 @@ pub struct MacosConfig {
     pub default_dep_linkage: Option<Linkage>,
     pub dep_linkage_on_shared: Option<Linkage>,
     pub dep_linkage_on_static: Option<Linkage>,
+
+    pub build: Option<PlatformBuildConfig>,
 }
 
 /// Windows platform configuration
@@ -1109,6 +1152,8 @@ pub struct WindowsConfig {
     pub default_dep_linkage: Option<Linkage>,
     pub dep_linkage_on_shared: Option<Linkage>,
     pub dep_linkage_on_static: Option<Linkage>,
+
+    pub build: Option<PlatformBuildConfig>,
 }
 
 /// Linux platform configuration
@@ -1120,6 +1165,8 @@ pub struct LinuxConfig {
     pub default_dep_linkage: Option<Linkage>,
     pub dep_linkage_on_shared: Option<Linkage>,
     pub dep_linkage_on_static: Option<Linkage>,
+
+    pub build: Option<PlatformBuildConfig>,
 }
 
 /// OpenHarmony platform configuration
@@ -1134,6 +1181,8 @@ pub struct OhosConfig {
     pub default_dep_linkage: Option<Linkage>,
     pub dep_linkage_on_shared: Option<Linkage>,
     pub dep_linkage_on_static: Option<Linkage>,
+
+    pub build: Option<PlatformBuildConfig>,
 }
 
 impl CcgoConfig {
