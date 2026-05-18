@@ -258,6 +258,24 @@ impl CMakeConfig {
 
         // User-specified flags from [build.cmake] / [platforms.X.build.cmake].
         // Emitted last so they can override earlier -D settings.
+        //
+        // Print a visible summary so the user can confirm their CCGO.toml
+        // cmake settings were picked up.
+        if !self.user_arguments.is_empty()
+            || !self.user_c_flags.is_empty()
+            || !self.user_cpp_flags.is_empty()
+        {
+            println!("   📋 Custom CMake settings from CCGO.toml:");
+            if !self.user_arguments.is_empty() {
+                println!("      arguments : [{}]", self.user_arguments.join(", "));
+            }
+            if !self.user_c_flags.is_empty() {
+                println!("      c_flags   : [{}]", self.user_c_flags.join(", "));
+            }
+            if !self.user_cpp_flags.is_empty() {
+                println!("      cpp_flags : [{}]", self.user_cpp_flags.join(", "));
+            }
+        }
         for arg in &self.user_arguments {
             cmd.arg(arg);
         }
