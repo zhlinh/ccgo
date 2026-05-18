@@ -406,6 +406,15 @@ pub struct BuildCommand {
     /// Analytics data is saved to ~/.ccgo/analytics/ for historical tracking.
     #[arg(long)]
     pub analytics: bool,
+
+    /// Named build profile to use (defined in `[profile.<name>]` in CCGO.toml).
+    ///
+    /// Built-in profiles: `debug` (release=false), `release` (release=true).
+    /// CLI flags always take precedence over profile settings.
+    ///
+    /// Example: ccgo build android --profile sanitize
+    #[arg(long, verbatim_doc_comment)]
+    pub profile: Option<String>,
 }
 
 impl BuildCommand {
@@ -449,6 +458,47 @@ impl BuildCommand {
         }
 
         false
+    }
+
+    /// Apply profile scalar overrides to build options.
+    /// CLI flags always win; profile only sets what the user didn't explicitly specify.
+    fn apply_profile_scalars(
+        mut options: BuildOptions,
+        config: &crate::config::CcgoConfig,
+        cmd: &Self,
+    ) -> Result<BuildOptions> {
+        let Some(ref pname) = options.profile_name else {
+            return Ok(options);
+        };
+        let rp = crate::build::profile::resolve_profile(pname, &config.profile)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        // release: apply from profile only if user didn't pass --release (CLI default is false)
+        if let Some(prof_release) = rp.release {
+            if !cmd.release {
+                options.release = prof_release;
+            }
+        }
+        // link_type: apply from profile if user left it at the CLI default (Both)
+        if let Some(ref prof_lt) = rp.link_type {
+            if cmd.link_type == LinkType::Both {
+                options.link_type = prof_lt.clone();
+            }
+        }
+        // jobs: apply from profile if not set via CLI
+        if options.jobs.is_none() {
+            if let Some(j) = rp.jobs {
+                options.jobs = Some(j as usize);
+            }
+        }
+        // features: profile features first, then CLI features (CLI extends profile)
+        if !rp.features.is_empty() {
+            let mut merged = rp.features.clone();
+            merged.extend(options.features.iter().cloned());
+            options.features = merged;
+        }
+
+        Ok(options)
     }
 
     /// Create build options from command arguments
@@ -510,7 +560,7 @@ impl BuildCommand {
             linkage_on_shared_overrides,
             linkage_on_static_default,
             linkage_on_static_overrides,
-            profile_name: None,
+            profile_name: self.profile.clone(),
         })
     }
 
@@ -646,6 +696,7 @@ impl BuildCommand {
         }
 
         let options = self.create_build_options(verbose)?;
+        let options = Self::apply_profile_scalars(options, &config, &self)?;
         let ctx = BuildContext::new(project_root, config, options);
 
         if use_docker {
@@ -790,6 +841,7 @@ impl BuildCommand {
         let package = config.require_package()?.clone();
 
         let options = self.create_build_options(verbose)?;
+        let options = Self::apply_profile_scalars(options, &config, self)?;
         let ctx = BuildContext::new(member_path.clone(), config, options);
 
         let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
