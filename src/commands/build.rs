@@ -174,7 +174,8 @@ pub fn parse_linkage_arg(
 }
 
 /// Library linking type
-#[derive(Debug, Clone, Default, ValueEnum, PartialEq)]
+#[derive(Debug, Clone, Default, ValueEnum, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum LinkType {
     /// Static library only
     Static,

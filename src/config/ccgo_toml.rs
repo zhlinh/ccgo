@@ -115,6 +115,10 @@ pub struct CcgoConfig {
 
     /// Include directory configuration for SDK packaging
     pub include: Option<IncludeConfig>,
+
+    /// Named build profiles (`[profile.<name>]`).
+    #[serde(default)]
+    pub profile: HashMap<String, ProfileConfig>,
 }
 
 /// Include directory configuration for SDK packaging.
@@ -1067,6 +1071,98 @@ pub struct CmakeUserConfig {
     /// Example: `["-fexceptions", "-frtti"]`
     #[serde(default)]
     pub cpp_flags: Vec<String>,
+}
+
+/// How a profile list field merges with its inherited parent.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MergeStrategy {
+    /// Discard parent's list; use only this profile's list.
+    #[default]
+    Replace,
+    /// Append this profile's list after the parent's accumulated list.
+    Extend,
+}
+
+/// A list field inside a profile that carries a merge strategy.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProfileListField {
+    #[serde(default)]
+    pub merge: MergeStrategy,
+    #[serde(default)]
+    pub list: Vec<String>,
+}
+
+/// CMake flags block inside a profile (mirrors `CmakeUserConfig` + merge).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProfileCmake {
+    #[serde(default)]
+    pub merge: MergeStrategy,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    #[serde(default)]
+    pub c_flags: Vec<String>,
+    #[serde(default)]
+    pub cpp_flags: Vec<String>,
+}
+
+/// Dependency linkage block inside a profile.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProfileDepLinkage {
+    pub default: Option<Linkage>,
+    pub on_shared: Option<Linkage>,
+    pub on_static: Option<Linkage>,
+}
+
+/// Per-platform build overrides inside a profile (`[profile.X.platforms.Y.build]`).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProfilePlatformBuild {
+    pub cmake: Option<ProfileCmake>,
+    pub dep_linkage: Option<ProfileDepLinkage>,
+}
+
+/// Mirrors the `[platforms.Y.build]` nesting used in top-level CCGO.toml.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProfilePlatformConfig {
+    pub build: Option<ProfilePlatformBuild>,
+}
+
+/// All per-platform overrides inside a profile.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProfilePlatforms {
+    pub android: Option<ProfilePlatformConfig>,
+    pub ios: Option<ProfilePlatformConfig>,
+    pub macos: Option<ProfilePlatformConfig>,
+    pub windows: Option<ProfilePlatformConfig>,
+    pub linux: Option<ProfilePlatformConfig>,
+    pub ohos: Option<ProfilePlatformConfig>,
+}
+
+/// A named build profile (`[profile.<name>]`).
+///
+/// Profiles are full configuration slices that can override cmake flags,
+/// link type, release mode, features, dependency linkage, and package name.
+/// They support single inheritance via `inherits`.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProfileConfig {
+    /// Name of the profile to inherit from (single inheritance).
+    pub inherits: Option<String>,
+    /// Override the package name used in build output.
+    pub name: Option<String>,
+    /// Override release/debug mode. `true` = release, `false` = debug.
+    pub release: Option<bool>,
+    /// Override what the project produces: `static`, `shared`, or `both`.
+    pub link_type: Option<crate::commands::build::LinkType>,
+    /// Override the number of parallel build jobs.
+    pub jobs: Option<u32>,
+    /// Extra CMake flags (global, all platforms).
+    pub cmake: Option<ProfileCmake>,
+    /// Additional features to enable.
+    pub features: Option<ProfileListField>,
+    /// Override dependency linkage strategy.
+    pub dep_linkage: Option<ProfileDepLinkage>,
+    /// Per-platform overrides.
+    pub platforms: Option<ProfilePlatforms>,
 }
 
 /// Per-platform build configuration (`[platforms.X.build]`).
@@ -2083,5 +2179,86 @@ git = "https://github.com/example/somelib.git"
         "#;
         let cfg: CcgoConfig = toml::from_str(toml).unwrap();
         assert_eq!(cfg.dependencies[0].linkage, None);
+    }
+}
+
+#[cfg(test)]
+mod profile_parse_tests {
+    use super::*;
+
+    #[test]
+    fn profile_parses_basic_fields() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.sanitize]
+inherits = "debug"
+name = "mylib-asan"
+release = false
+link_type = "static"
+jobs = 4
+
+[profile.sanitize.features]
+merge = "extend"
+list = ["asan", "ubsan"]
+
+[profile.sanitize.cmake]
+merge = "replace"
+arguments = ["-DENABLE_ASAN=ON"]
+c_flags = ["-fsanitize=address"]
+cpp_flags = ["-fsanitize=address"]
+
+[profile.sanitize.dep_linkage]
+default = "static-embedded"
+on_shared = "static-embedded"
+on_static = "static-embedded"
+
+[profile.sanitize.platforms.android.build.cmake]
+merge = "extend"
+arguments = ["-DANDROID_ARM_NEON=TRUE"]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).expect("should parse");
+        let prof = config.profile.get("sanitize").expect("sanitize profile");
+        assert_eq!(prof.inherits.as_deref(), Some("debug"));
+        assert_eq!(prof.name.as_deref(), Some("mylib-asan"));
+        assert_eq!(prof.release, Some(false));
+        assert_eq!(prof.link_type, Some(crate::commands::build::LinkType::Static));
+        assert_eq!(prof.jobs, Some(4));
+
+        let feat = prof.features.as_ref().expect("features");
+        assert_eq!(feat.merge, MergeStrategy::Extend);
+        assert_eq!(feat.list, vec!["asan", "ubsan"]);
+
+        let cmake = prof.cmake.as_ref().expect("cmake");
+        assert_eq!(cmake.merge, MergeStrategy::Replace);
+        assert_eq!(cmake.arguments, vec!["-DENABLE_ASAN=ON"]);
+
+        let dep = prof.dep_linkage.as_ref().expect("dep_linkage");
+        assert_eq!(dep.default, Some(Linkage::StaticEmbedded));
+
+        let plat_cmake = prof.platforms.as_ref()
+            .and_then(|p| p.android.as_ref())
+            .and_then(|a| a.build.as_ref())
+            .and_then(|b| b.cmake.as_ref())
+            .expect("android.build.cmake");
+        assert_eq!(plat_cmake.merge, MergeStrategy::Extend);
+        assert_eq!(plat_cmake.arguments, vec!["-DANDROID_ARM_NEON=TRUE"]);
+    }
+
+    #[test]
+    fn merge_strategy_defaults_to_replace() {
+        let toml = r#"
+[package]
+name = "x"
+version = "0.1.0"
+
+[profile.foo.cmake]
+arguments = ["-DFOO=1"]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).expect("should parse");
+        let cmake = config.profile["foo"].cmake.as_ref().unwrap();
+        assert_eq!(cmake.merge, MergeStrategy::Replace);
     }
 }
