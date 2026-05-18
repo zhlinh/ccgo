@@ -1044,6 +1044,13 @@ pub struct BuildConfig {
 
     /// User-specified extra CMake arguments and compiler flags.
     pub cmake: Option<CmakeUserConfig>,
+
+    /// Path to a cmake script file to include during configure.
+    ///
+    /// Relative to the project root. When set, ccgo passes
+    /// `-DCCGO_USER_CMAKE_FILES=<path>` to cmake, disabling auto-discovery of
+    /// `CCGO.cmake`. An empty string suppresses cmake file inclusion entirely.
+    pub cmake_file: Option<String>,
 }
 
 /// User-configurable CMake flags for a build or platform section.
@@ -1169,6 +1176,12 @@ pub struct ProfileConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PlatformBuildConfig {
     pub cmake: Option<CmakeUserConfig>,
+
+    /// Platform-specific cmake script file to include during configure.
+    ///
+    /// Relative to project root. An empty string suppresses all cmake file
+    /// inclusion for this platform, overriding any global `cmake_file`.
+    pub cmake_file: Option<String>,
 }
 
 /// Platform-specific configurations

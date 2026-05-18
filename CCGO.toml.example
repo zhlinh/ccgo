@@ -154,6 +154,15 @@
 # ENABLE_LOGGING = true
 
 
+# cmake_file — Path to a cmake script file included during configure (relative to project root).
+# When set, ccgo passes -DCCGO_USER_CMAKE_FILES=<path> to cmake, disabling auto-discovery.
+# Leave unset to let ccgo auto-discover CCGO.cmake (or CMakeConfig.local.cmake as fallback).
+# Set to "" to suppress cmake file inclusion entirely for all platforms.
+# Per-platform overrides can be set under [platforms.X.build] cmake_file = "...".
+# cmake_file = "CCGO.cmake"
+# cmake_file = ""   # suppress cmake file inclusion
+
+
 # [build.cmake] — Extra CMake flags injected at configure time
 # These are appended after all internal CCGO flags, so they can override defaults.
 # Platform-specific overrides can be set under [platforms.X.build.cmake].
@@ -215,6 +224,10 @@
 # Dependency linkage when consumer builds a static library.
 # dep_linkage_on_static = "static-embedded"
 
+# [platforms.android.build]
+# cmake_file = "CCGO.android.cmake"   # android-only cmake file (additive on top of global)
+# cmake_file = ""                     # suppress cmake file for android only
+
 # [platforms.android.build.cmake]
 # arguments = ["-DANDROID_ARM_NEON=TRUE", "-DANDROID_TOOLCHAIN=clang"]
 # c_flags = []
@@ -238,6 +251,10 @@
 # dep_linkage_on_shared = "shared-external"
 # dep_linkage_on_static = "static-embedded"
 
+# [platforms.ios.build]
+# cmake_file = "CCGO.ios.cmake"   # ios-only cmake file
+# cmake_file = ""                 # suppress cmake file for ios only
+
 # [platforms.ios.build.cmake]
 # arguments = ["-DIOS_DEPLOYMENT_TARGET=12.0"]
 # cpp_flags = []
@@ -260,6 +277,10 @@
 # dep_linkage_on_shared = "shared-external"
 # dep_linkage_on_static = "static-embedded"
 
+# [platforms.macos.build]
+# cmake_file = "CCGO.macos.cmake"   # macos-only cmake file
+# cmake_file = ""                   # suppress cmake file for macos only
+
 # [platforms.macos.build.cmake]
 # arguments = []
 # cpp_flags = []
@@ -279,6 +300,10 @@
 # dep_linkage_on_shared = "shared-external"
 # dep_linkage_on_static = "static-embedded"
 
+# [platforms.windows.build]
+# cmake_file = "CCGO.windows.cmake"   # windows-only cmake file
+# cmake_file = ""                     # suppress cmake file for windows only
+
 # [platforms.windows.build.cmake]
 # arguments = ["-DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON"]
 # cpp_flags = []
@@ -297,6 +322,10 @@
 # default_dep_linkage = "static-embedded"
 # dep_linkage_on_shared = "shared-external"
 # dep_linkage_on_static = "static-embedded"
+
+# [platforms.linux.build]
+# cmake_file = "CCGO.linux.cmake"   # linux-only cmake file
+# cmake_file = ""                   # suppress cmake file for linux only
 
 # [platforms.linux.build.cmake]
 # arguments = []
@@ -319,6 +348,10 @@
 # default_dep_linkage = "static-embedded"
 # dep_linkage_on_shared = "shared-external"
 # dep_linkage_on_static = "static-embedded"
+
+# [platforms.ohos.build]
+# cmake_file = "CCGO.ohos.cmake"   # ohos-only cmake file
+# cmake_file = ""                  # suppress cmake file for ohos only
 
 # [platforms.ohos.build.cmake]
 # arguments = []

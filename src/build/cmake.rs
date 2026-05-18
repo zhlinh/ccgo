@@ -61,6 +61,9 @@ pub struct CMakeConfig {
     user_c_flags: Vec<String>,
     /// User-specified extra C++ compiler flags
     user_cpp_flags: Vec<String>,
+    /// Explicit cmake script files from [build].cmake_file / [platforms.X.build].cmake_file.
+    /// None = auto-discover; Some(vec![]) = suppress; Some(paths) = include these files.
+    user_cmake_files: Option<Vec<PathBuf>>,
 }
 
 impl CMakeConfig {
@@ -185,6 +188,13 @@ impl CMakeConfig {
         self
     }
 
+    /// Set explicit cmake file list from CCGO.toml `[build].cmake_file`.
+    /// `None` = auto-discover; `Some(vec![])` = suppress; `Some(paths)` = use these files.
+    pub fn user_cmake_files(mut self, files: Option<Vec<PathBuf>>) -> Self {
+        self.user_cmake_files = files;
+        self
+    }
+
     /// Find CMake executable
     fn find_cmake() -> Result<PathBuf> {
         which::which("cmake").context("CMake not found. Please install CMake and add it to PATH.")
@@ -264,6 +274,7 @@ impl CMakeConfig {
         if !self.user_arguments.is_empty()
             || !self.user_c_flags.is_empty()
             || !self.user_cpp_flags.is_empty()
+            || self.user_cmake_files.is_some()
         {
             println!("   📋 Custom CMake settings from CCGO.toml:");
             if !self.user_arguments.is_empty() {
@@ -274,6 +285,15 @@ impl CMakeConfig {
             }
             if !self.user_cpp_flags.is_empty() {
                 println!("      cpp_flags : [{}]", self.user_cpp_flags.join(", "));
+            }
+            if let Some(files) = &self.user_cmake_files {
+                if files.is_empty() {
+                    println!("      cmake_file: (suppressed)");
+                } else {
+                    for f in files {
+                        println!("      cmake_file: {}", f.display());
+                    }
+                }
             }
         }
         for arg in &self.user_arguments {
@@ -290,6 +310,14 @@ impl CMakeConfig {
                 "-DCMAKE_CXX_FLAGS:STRING={}",
                 self.user_cpp_flags.join(" ")
             ));
+        }
+        if let Some(files) = &self.user_cmake_files {
+            let list = files
+                .iter()
+                .map(|f| f.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(";");
+            cmd.arg(format!("-DCCGO_USER_CMAKE_FILES={}", list));
         }
 
         if self.verbose {

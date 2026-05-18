@@ -202,6 +202,7 @@ Defines build configuration.
 | `include_dirs` | array of strings | Additional include directories | `[]` |
 | `link_dirs` | array of strings | Additional library search paths | `[]` |
 | `system_libs` | array of strings | System libraries to link | `[]` |
+| `cmake_file` | string | Path to a cmake script to include at configure time (relative to project root). Omit to auto-discover `CCGO.cmake`; set to `""` to suppress all cmake file inclusion. Per-platform overrides via `[platforms.X.build] cmake_file`. | auto-discover |
 
 ### Example
 
@@ -267,6 +268,18 @@ architectures  = ["arm64-v8a", "armeabi-v7a"]
 default_dep_linkage = "static-embedded"
 ```
 
+#### [platforms.android.build]
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `cmake_file` | string | Android-specific cmake script (relative to project root). `""` suppresses cmake file for Android even if globally set. | — |
+
+```toml
+[platforms.android.build]
+cmake_file = "CCGO.android.cmake"   # android-only addition on top of global
+# cmake_file = ""                   # suppress cmake file for android
+```
+
 #### [platforms.android.build.cmake]
 
 CMake flags applied to Android builds only. Appended after `[build.cmake]`.
@@ -295,6 +308,12 @@ min_version   = "13.0"
 architectures = ["arm64"]
 ```
 
+#### [platforms.ios.build]
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `cmake_file` | string | iOS-specific cmake script. `""` suppresses cmake file for iOS. | — |
+
 #### [platforms.ios.build.cmake]
 
 ```toml
@@ -321,6 +340,12 @@ min_version   = "11.0"
 architectures = ["arm64", "x86_64"]  # Universal binary
 ```
 
+#### [platforms.macos.build]
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `cmake_file` | string | macOS-specific cmake script. `""` suppresses cmake file for macOS. | — |
+
 #### [platforms.macos.build.cmake]
 
 ```toml
@@ -345,6 +370,12 @@ Windows-specific configuration.
 architectures = ["x86_64", "x86"]
 ```
 
+#### [platforms.windows.build]
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `cmake_file` | string | Windows-specific cmake script. `""` suppresses cmake file for Windows. | — |
+
 #### [platforms.windows.build.cmake]
 
 ```toml
@@ -368,6 +399,12 @@ Linux-specific configuration.
 [platforms.linux]
 architectures = ["x86_64", "aarch64"]
 ```
+
+#### [platforms.linux.build]
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `cmake_file` | string | Linux-specific cmake script. `""` suppresses cmake file for Linux. | — |
 
 #### [platforms.linux.build.cmake]
 
@@ -394,6 +431,12 @@ OpenHarmony-specific configuration.
 min_api       = 9
 architectures = ["arm64-v8a", "armeabi-v7a"]
 ```
+
+#### [platforms.ohos.build]
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `cmake_file` | string | OpenHarmony-specific cmake script. `""` suppresses cmake file for OHOS. | — |
 
 #### [platforms.ohos.build.cmake]
 

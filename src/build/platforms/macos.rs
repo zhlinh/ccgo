@@ -209,7 +209,8 @@ impl MacosBuilder {
         cmake = cmake
             .user_arguments(user.arguments)
             .user_c_flags(user.c_flags)
-            .user_cpp_flags(user.cpp_flags);
+            .user_cpp_flags(user.cpp_flags)
+            .user_cmake_files(ctx.cmake_user_files("macos"));
 
         cmake.configure_build_install()?;
 

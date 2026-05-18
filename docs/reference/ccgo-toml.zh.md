@@ -202,6 +202,7 @@ ios-specific = { path = "./ios-lib" }
 | `include_dirs` | 字符串数组 | 额外的包含目录 | `[]` |
 | `link_dirs` | 字符串数组 | 额外的库搜索路径 | `[]` |
 | `system_libs` | 字符串数组 | 要链接的系统库 | `[]` |
+| `cmake_file` | 字符串 | configure 时包含的 cmake 脚本路径（相对于项目根目录）。省略则自动发现 `CCGO.cmake`；设为 `""` 可完全禁用 cmake 文件包含。各平台可通过 `[platforms.X.build] cmake_file` 覆盖。 | 自动发现 |
 
 ### 示例
 
@@ -267,6 +268,12 @@ architectures  = ["arm64-v8a", "armeabi-v7a"]
 default_dep_linkage = "static-embedded"
 ```
 
+#### [platforms.android.build]
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `cmake_file` | 字符串 | Android 专用 cmake 脚本（相对于项目根目录）。`""` 可禁用 Android 的 cmake 文件包含。 | — |
+
 #### [platforms.android.build.cmake]
 
 仅应用于 Android 构建的 CMake 标志，追加在 `[build.cmake]` 之后。
@@ -295,6 +302,12 @@ min_version   = "13.0"
 architectures = ["arm64"]
 ```
 
+#### [platforms.ios.build]
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `cmake_file` | 字符串 | iOS 专用 cmake 脚本。`""` 可禁用 iOS 的 cmake 文件包含。 | — |
+
 #### [platforms.ios.build.cmake]
 
 ```toml
@@ -321,6 +334,12 @@ min_version   = "11.0"
 architectures = ["arm64", "x86_64"]  # 通用二进制
 ```
 
+#### [platforms.macos.build]
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `cmake_file` | 字符串 | macOS 专用 cmake 脚本。`""` 可禁用 macOS 的 cmake 文件包含。 | — |
+
 #### [platforms.macos.build.cmake]
 
 ```toml
@@ -345,6 +364,12 @@ Windows 特定配置。
 architectures = ["x86_64", "x86"]
 ```
 
+#### [platforms.windows.build]
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `cmake_file` | 字符串 | Windows 专用 cmake 脚本。`""` 可禁用 Windows 的 cmake 文件包含。 | — |
+
 #### [platforms.windows.build.cmake]
 
 ```toml
@@ -368,6 +393,12 @@ Linux 特定配置。
 [platforms.linux]
 architectures = ["x86_64", "aarch64"]
 ```
+
+#### [platforms.linux.build]
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `cmake_file` | 字符串 | Linux 专用 cmake 脚本。`""` 可禁用 Linux 的 cmake 文件包含。 | — |
 
 #### [platforms.linux.build.cmake]
 
@@ -394,6 +425,12 @@ OpenHarmony 特定配置。
 min_api       = 9
 architectures = ["arm64-v8a", "armeabi-v7a"]
 ```
+
+#### [platforms.ohos.build]
+
+| 字段 | 类型 | 描述 | 默认值 |
+|------|------|------|--------|
+| `cmake_file` | 字符串 | OpenHarmony 专用 cmake 脚本。`""` 可禁用 OHOS 的 cmake 文件包含。 | — |
 
 #### [platforms.ohos.build.cmake]
 

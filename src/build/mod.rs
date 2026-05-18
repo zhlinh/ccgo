@@ -875,6 +875,73 @@ impl BuildContext {
         }
     }
 
+    /// Compute explicit cmake file list for the given platform.
+    ///
+    /// Returns `None` when neither global nor platform `cmake_file` is configured
+    /// (cmake will auto-discover `CCGO.cmake`). Returns `Some(files)` — possibly
+    /// empty — when at least one side is configured; an empty vec suppresses all
+    /// cmake file inclusion.
+    pub fn cmake_user_files(&self, platform: &str) -> Option<Vec<std::path::PathBuf>> {
+        let global = self
+            .config
+            .build
+            .as_ref()
+            .and_then(|b| b.cmake_file.as_deref());
+
+        let p = self.config.platforms.as_ref();
+        let plat_lower = platform.to_lowercase();
+        let platform_val: Option<&str> = match plat_lower.as_str() {
+            "android" => p
+                .and_then(|p| p.android.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake_file.as_deref()),
+            "ios" => p
+                .and_then(|p| p.ios.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake_file.as_deref()),
+            "macos" => p
+                .and_then(|p| p.macos.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake_file.as_deref()),
+            "windows" => p
+                .and_then(|p| p.windows.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake_file.as_deref()),
+            "linux" => p
+                .and_then(|p| p.linux.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake_file.as_deref()),
+            "ohos" => p
+                .and_then(|p| p.ohos.as_ref())
+                .and_then(|a| a.build.as_ref())
+                .and_then(|b| b.cmake_file.as_deref()),
+            _ => None,
+        };
+
+        match (global, platform_val) {
+            (None, None) => None,
+            (g, p) => {
+                // Platform "" suppresses everything regardless of global.
+                if p == Some("") {
+                    return Some(vec![]);
+                }
+                let mut files: Vec<std::path::PathBuf> = vec![];
+                if let Some(g) = g {
+                    if !g.is_empty() {
+                        files.push(self.project_root.join(g));
+                    }
+                    // global "" with no platform override → files stays empty → suppress
+                }
+                if let Some(p) = p {
+                    if !p.is_empty() {
+                        files.push(self.project_root.join(p));
+                    }
+                }
+                Some(files)
+            }
+        }
+    }
+
     /// Create incremental build analyzer for a specific link type
     pub fn create_incremental_analyzer(
         &self,

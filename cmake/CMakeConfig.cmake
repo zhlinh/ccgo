@@ -9,10 +9,26 @@
 # notice shall be included in all copies or
 # substantial portions of the Software.
 
-# check ${CMAKE_SOURCE_DIR}/CMakeConfig.local.cmake exists
-if(EXISTS ${CMAKE_SOURCE_DIR}/CMakeConfig.local.cmake)
-    # eixst then include it
-    include(${CMAKE_SOURCE_DIR}/CMakeConfig.local.cmake)
+# --- User cmake file inclusion ---
+if(DEFINED CCGO_USER_CMAKE_FILES)
+    # Explicit list from CCGO.toml cmake_file field (may be empty = suppress all)
+    foreach(cmake_file IN LISTS CCGO_USER_CMAKE_FILES)
+        if(NOT cmake_file STREQUAL "")
+            if(EXISTS "${cmake_file}")
+                include("${cmake_file}")
+            else()
+                message(WARNING "[ccgo] cmake_file not found: ${cmake_file}")
+            endif()
+        endif()
+    endforeach()
+else()
+    # Auto-discover: CCGO.cmake (preferred), CMakeConfig.local.cmake (deprecated fallback)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/CCGO.cmake")
+        include("${CMAKE_SOURCE_DIR}/CCGO.cmake")
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/CMakeConfig.local.cmake")
+        message(STATUS "[ccgo] CMakeConfig.local.cmake is deprecated; rename to CCGO.cmake")
+        include("${CMAKE_SOURCE_DIR}/CMakeConfig.local.cmake")
+    endif()
 endif()
 
 if (NOT DEFINED CCGO_CONFIG_CMAKE_CXX_STANDARD)

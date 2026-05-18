@@ -295,7 +295,8 @@ impl LinuxBuilder {
         cmake = cmake
             .user_arguments(user.arguments)
             .user_c_flags(user.c_flags)
-            .user_cpp_flags(user.cpp_flags);
+            .user_cpp_flags(user.cpp_flags)
+            .user_cmake_files(ctx.cmake_user_files("linux"));
 
         cmake.configure_build_install()?;
 
