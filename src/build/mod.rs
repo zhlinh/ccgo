@@ -36,6 +36,7 @@ pub mod materialize;
 pub mod platforms;
 pub mod toolchains;
 pub mod verinfo;
+pub mod profile;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
