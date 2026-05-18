@@ -44,12 +44,26 @@ RUN MINGW_SHARED=/usr/share/mingw-w64/include && \
 RUN update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix && \
     update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
 
+# Install llvm-mingw for aarch64-w64-mingw32 cross-compilation (Windows ARM64 MinGW)
+# llvm-mingw provides aarch64-w64-mingw32-clang which standard mingw-w64 does not ship.
+# Detects host arch at build time: x86_64 hosts use the x86_64 tarball,
+# aarch64 hosts (e.g. Apple Silicon via OrbStack) use the aarch64 tarball.
+# Release filenames use ubuntu-20.04 regardless of base image.
+ARG LLVM_MINGW_VERSION=20241119
+RUN ARCH=$(uname -m) && \
+    TARBALL="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-20.04-${ARCH}.tar.xz" && \
+    wget -q "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${TARBALL}" \
+    && tar -xf "${TARBALL}" -C /opt \
+    && mv "/opt/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-20.04-${ARCH}" /opt/llvm-mingw \
+    && rm "${TARBALL}"
+
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     CC=x86_64-w64-mingw32-gcc \
     CXX=x86_64-w64-mingw32-g++ \
     AR=x86_64-w64-mingw32-ar \
-    RANLIB=x86_64-w64-mingw32-ranlib
+    RANLIB=x86_64-w64-mingw32-ranlib \
+    PATH="/opt/llvm-mingw/bin:${PATH}"
 
 # Install Rust for building ccgo from source
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
@@ -64,6 +78,7 @@ RUN pip3 install --no-cache-dir ccgo
 RUN echo "=== MinGW Toolchain Verification ===" && \
     x86_64-w64-mingw32-gcc --version && \
     x86_64-w64-mingw32-g++ --version && \
+    aarch64-w64-mingw32-clang --version && \
     cmake --version && \
     python3 --version && \
     rustc --version && \

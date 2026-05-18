@@ -109,6 +109,7 @@ pub fn normalize_arch_alias(raw: &str, target: &BuildTarget) -> String {
         }
         BuildTarget::Linux | BuildTarget::Windows => match lower.as_str() {
             "x64" => "x86_64".to_string(),
+            "arm64" | "aarch64" | "a64" | "armv8" => "aarch64".to_string(),
             _ => lower,
         },
         // Meta-targets (All/Apple/Kmp/Conan) delegate to individual platforms
@@ -245,8 +246,8 @@ pub struct BuildCommand {
     ///   * OHOS     arm64-v8a, armeabi-v7a, x86_64
     ///   * macOS    arm64, x86_64   (both by default — universal)
     ///   * iOS      arm64, x86_64   (device + sim built automatically; flag is a no-op)
-    ///   * Linux    x86_64          (flag is a no-op)
-    ///   * Windows  x86_64          (flag is a no-op)
+    ///   * Linux    x86_64, aarch64 (cross via aarch64-linux-gnu-gcc)
+    ///   * Windows  x86_64, aarch64 (MSVC: ARM64 generator; MinGW: aarch64-w64-mingw32-gcc)
     ///
     /// Accepted aliases (case-insensitive):
     ///   all                              ->  every arch this platform builds by default

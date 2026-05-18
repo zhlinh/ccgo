@@ -17,6 +17,8 @@ pub enum MingwArch {
     X86_64,
     /// 32-bit x86 (i686)
     I686,
+    /// 64-bit ARM (aarch64-w64-mingw32, requires llvm-mingw or similar)
+    Aarch64,
 }
 
 impl MingwArch {
@@ -25,6 +27,7 @@ impl MingwArch {
         match self {
             MingwArch::X86_64 => "x86_64-w64-mingw32",
             MingwArch::I686 => "i686-w64-mingw32",
+            MingwArch::Aarch64 => "aarch64-w64-mingw32",
         }
     }
 
@@ -33,6 +36,17 @@ impl MingwArch {
         match self {
             MingwArch::X86_64 => "x86_64",
             MingwArch::I686 => "i686",
+            MingwArch::Aarch64 => "aarch64",
+        }
+    }
+
+    /// Parse from a user-supplied string
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "x86_64" | "x64" => Ok(MingwArch::X86_64),
+            "i686" | "x86" | "i386" => Ok(MingwArch::I686),
+            "aarch64" | "arm64" => Ok(MingwArch::Aarch64),
+            other => bail!("Unknown MinGW architecture '{}'. Supported: x86_64, i686, aarch64", other),
         }
     }
 }
@@ -57,29 +71,62 @@ impl MingwToolchain {
         Self::detect_for_arch(MingwArch::X86_64)
     }
 
-    /// Detect MinGW-w64 installation for a specific architecture
+    /// Detect MinGW-w64 installation for a specific architecture.
+    ///
+    /// For x86_64/i686: searches standard GCC-based toolchain, then llvm-mingw clang as fallback.
+    /// For aarch64: standard mingw-w64 has no GCC cross-compiler; searches llvm-mingw clang first
+    ///              (llvm-mingw provides `aarch64-w64-mingw32-clang`).
     pub fn detect_for_arch(arch: MingwArch) -> Result<Self> {
         let prefix = arch.triple_prefix();
 
-        // Look for the gcc compiler.
-        // Prefer posix threading model (provides std::mutex, std::thread) over win32.
+        // Search order for C compiler:
+        //   1. {prefix}-gcc-posix  (standard mingw-w64, posix threads)
+        //   2. {prefix}-gcc        (standard mingw-w64)
+        //   3. {prefix}-clang      (llvm-mingw — primary compiler for aarch64)
         let gcc_posix = format!("{}-gcc-posix", prefix);
         let gcc_name = format!("{}-gcc", prefix);
+        let clang_name = format!("{}-clang", prefix);
         let gcc_path = find_executable(&gcc_posix)
             .or_else(|| find_executable(&gcc_name))
+            .or_else(|| find_executable(&clang_name))
             .ok_or_else(|| {
+                let install_hint = if arch == MingwArch::Aarch64 {
+                    "Install llvm-mingw: https://github.com/mstorsjo/llvm-mingw/releases\n  \
+                     Then add its bin/ directory to PATH."
+                } else {
+                    "Install MinGW-w64: apt-get install mingw-w64  (or equivalent)"
+                };
                 anyhow::anyhow!(
-                    "MinGW-w64 not found. Please install MinGW-w64 and ensure {} is in PATH.",
-                    gcc_name
+                    "MinGW cross-compiler not found for target {}.\n  {}\n  \
+                     Looked for: {}, {}, {}",
+                    prefix,
+                    install_hint,
+                    gcc_posix,
+                    gcc_name,
+                    clang_name,
                 )
             })?;
 
-        // Look for g++ compiler. Prefer posix threading model.
+        // Search order for C++ compiler:
+        //   1. {prefix}-g++-posix  (standard mingw-w64, posix threads)
+        //   2. {prefix}-g++        (standard mingw-w64)
+        //   3. {prefix}-clang++    (llvm-mingw)
         let gxx_posix = format!("{}-g++-posix", prefix);
         let gxx_name = format!("{}-g++", prefix);
+        let clangxx_name = format!("{}-clang++", prefix);
         let gxx_path = find_executable(&gxx_posix)
             .or_else(|| find_executable(&gxx_name))
-            .ok_or_else(|| anyhow::anyhow!("MinGW-w64 C++ compiler not found: {}", gxx_name))?;
+            .or_else(|| find_executable(&clangxx_name))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "MinGW C++ compiler not found for target {}.\n  \
+                     Looked for: {}, {}, {}",
+                    prefix,
+                    gxx_posix,
+                    gxx_name,
+                    clangxx_name,
+                )
+            })?;
 
         // Look for windres (optional)
         let windres_name = format!("{}-windres", prefix);

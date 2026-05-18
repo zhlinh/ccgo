@@ -14,6 +14,8 @@ use crate::build::archive::{
 use crate::build::cmake::{BuildType, CMakeConfig};
 #[cfg(target_os = "linux")]
 use crate::build::toolchains::detect_default_compiler;
+use crate::build::toolchains::linux::{LinuxArch, LinuxToolchain};
+use crate::build::toolchains::Toolchain;
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
@@ -32,8 +34,8 @@ impl LinuxBuilder {
         build_dir: &PathBuf,
         lib_name: &str,
         verbose: bool,
+        toolchain: &LinuxToolchain,
     ) -> Result<()> {
-        use crate::build::toolchains::linux::LinuxToolchain;
 
         // Find the output directory where CMake puts libraries
         let out_dir = build_dir.join("out");
@@ -145,7 +147,6 @@ impl LinuxBuilder {
         );
 
         // Merge all module libraries into the main library
-        let toolchain = LinuxToolchain::detect()?;
         toolchain.merge_static_libs(&module_libs, &main_lib_path)?;
 
         // Clean up module libraries after merge
@@ -181,9 +182,8 @@ impl LinuxBuilder {
         build_dir: &PathBuf,
         lib_name: &str,
         verbose: bool,
+        toolchain: &LinuxToolchain,
     ) -> Result<()> {
-        use crate::build::toolchains::linux::LinuxToolchain;
-
         let out_dir = build_dir.join("out");
         let main_lib_path = out_dir.join(format!("lib{}.a", lib_name));
         if !main_lib_path.exists() {
@@ -223,7 +223,6 @@ impl LinuxBuilder {
             );
         }
 
-        let toolchain = LinuxToolchain::detect()?;
         let mut all_libs = vec![main_lib_path.clone()];
         all_libs.extend(third_party_libs);
         toolchain.merge_static_libs(&all_libs, &main_lib_path)?;
@@ -231,10 +230,16 @@ impl LinuxBuilder {
         Ok(())
     }
 
-    /// Build a specific link type (static or shared)
-    /// Returns the build directory where output is located
-    fn build_link_type(&self, ctx: &BuildContext, link_type: &str) -> Result<PathBuf> {
-        let build_dir = ctx.cmake_build_dir.join(link_type);
+    /// Build a specific link type (static or shared) for one target architecture.
+    /// Returns the build directory where output is located.
+    fn build_link_type_for_arch(
+        &self,
+        ctx: &BuildContext,
+        link_type: &str,
+        arch: &str,
+        toolchain: &LinuxToolchain,
+    ) -> Result<PathBuf> {
+        let build_dir = ctx.cmake_build_dir.join(link_type).join(arch);
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
@@ -291,6 +296,11 @@ impl LinuxBuilder {
             cmake = cmake.compiler_cache(cache);
         }
 
+        // Inject toolchain compiler variables (required for cross-compilation)
+        for (key, val) in toolchain.cmake_variables() {
+            cmake = cmake.variable(key, val);
+        }
+
         let user = ctx.cmake_user_config("linux");
         cmake = cmake
             .user_arguments(user.arguments)
@@ -303,8 +313,8 @@ impl LinuxBuilder {
         // For static builds, merge all module libraries into a single library
         // This is essential for KMP cinterop which expects a single complete library
         if !build_shared {
-            self.merge_module_static_libs(&build_dir, ctx.lib_name(), ctx.options.verbose)?;
-            self.merge_third_party_static_libs(&build_dir, ctx.lib_name(), ctx.options.verbose)?;
+            self.merge_module_static_libs(&build_dir, ctx.lib_name(), ctx.options.verbose, toolchain)?;
+            self.merge_third_party_static_libs(&build_dir, ctx.lib_name(), ctx.options.verbose, toolchain)?;
         }
 
         // Return build_dir since CCGO cmake installs to build_dir/out/
@@ -432,13 +442,21 @@ impl LinuxBuilder {
     }
 }
 
+fn resolve_arches(ctx: &BuildContext) -> Vec<String> {
+    if ctx.options.architectures.is_empty() {
+        vec!["x86_64".to_string(), "aarch64".to_string()]
+    } else {
+        ctx.options.architectures.clone()
+    }
+}
+
 impl PlatformBuilder for LinuxBuilder {
     fn platform_name(&self) -> &str {
         "linux"
     }
 
     fn default_architectures(&self) -> Vec<String> {
-        vec!["x86_64".to_string()]
+        vec!["x86_64".to_string(), "aarch64".to_string()]
     }
 
     fn validate_prerequisites(&self, _ctx: &BuildContext) -> Result<()> {
@@ -474,34 +492,32 @@ impl PlatformBuilder for LinuxBuilder {
                 );
             }
 
+            // Verify aarch64 cross-compiler when requested
+            let arches = resolve_arches(_ctx);
+            if arches.iter().any(|a| a == "aarch64") {
+                LinuxToolchain::detect_for_arch(LinuxArch::Aarch64)
+                    .context("aarch64 cross-compiler unavailable")?;
+            }
+
             Ok(())
         }
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
-        // Check for IDE project generation mode
         if ctx.options.ide_project {
             return self.generate_ide_project(ctx);
         }
 
         let start = Instant::now();
-
-        // Validate prerequisites first
         self.validate_prerequisites(ctx)?;
 
         if ctx.options.verbose {
             eprintln!("Building {} for Linux...", ctx.lib_name());
         }
 
-        // Source-only deps: ensure they have artifacts before we compose link lines.
-        // (Skips deps whose fingerprint matches and whose lib/<platform>/ already
-        // has artifacts on disk; spawns `ccgo build` recursively otherwise.)
         ctx.materialize_source_deps(self.platform_name())?;
-
-        // Create output directory
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        // Create archive builder
         let archive = ArchiveBuilder::new(
             ctx.lib_name(),
             ctx.version(),
@@ -511,41 +527,73 @@ impl PlatformBuilder for LinuxBuilder {
             ctx.output_dir.clone(),
         )?;
 
-        let mut built_link_types = Vec::new();
+        let arches = resolve_arches(ctx);
+        let link_type_str = ctx.options.link_type.to_string();
 
-        // Build static libraries
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        // Collect .so files from all arches for a single symbols archive
+        let symbols_temp = std::env::temp_dir().join(format!("ccgo-symbols-{}", ctx.lib_name()));
+        let mut found_symbols = false;
+
+        for arch in &arches {
             if ctx.options.verbose {
-                eprintln!("Building static library...");
+                eprintln!("Building for arch: {}", arch);
             }
-            let build_dir = self.build_link_type(ctx, "static")?;
 
-            // Add static library to archive: lib/linux/static/
-            // find_lib_dir prioritizes out/ which contains only the merged library
-            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
-                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_STATIC);
-                archive.add_directory_filtered(&lib_dir, &archive_path, &["a"])?;
+            let linux_arch = LinuxArch::parse(arch)?;
+            let toolchain = LinuxToolchain::detect_for_arch(linux_arch)?;
+
+            if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+                if ctx.options.verbose {
+                    eprintln!("  Building static library...");
+                }
+                let build_dir =
+                    self.build_link_type_for_arch(ctx, "static", arch, &toolchain)?;
+                if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                    let archive_path = format!(
+                        "lib/{}/{}/{}",
+                        self.platform_name(),
+                        ARCHIVE_DIR_STATIC,
+                        arch
+                    );
+                    archive.add_directory_filtered(&lib_dir, &archive_path, &["a"])?;
+                }
             }
-            built_link_types.push("static");
+
+            if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+                if ctx.options.verbose {
+                    eprintln!("  Building shared library...");
+                }
+                let build_dir =
+                    self.build_link_type_for_arch(ctx, "shared", arch, &toolchain)?;
+                if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                    let archive_path = format!(
+                        "lib/{}/{}/{}",
+                        self.platform_name(),
+                        ARCHIVE_DIR_SHARED,
+                        arch
+                    );
+                    archive.add_directory_filtered(&lib_dir, &archive_path, &["so", "a"])?;
+
+                    // Collect unstripped .so files into obj/linux/{arch}/ for symbols archive
+                    let obj_arch_dir = symbols_temp
+                        .join(ARCHIVE_DIR_OBJ)
+                        .join(self.platform_name())
+                        .join(arch);
+                    std::fs::create_dir_all(&obj_arch_dir)?;
+                    for entry in std::fs::read_dir(&lib_dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.extension().is_some_and(|ext| ext == "so") {
+                            let file_name = path.file_name().unwrap();
+                            std::fs::copy(&path, obj_arch_dir.join(file_name))?;
+                            found_symbols = true;
+                        }
+                    }
+                }
+            }
         }
 
-        // Build shared libraries
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-            if ctx.options.verbose {
-                eprintln!("Building shared library...");
-            }
-            let build_dir = self.build_link_type(ctx, "shared")?;
-
-            // Add shared library to archive: lib/linux/shared/
-            // find_lib_dir prioritizes out/ which contains only the merged library
-            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
-                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED);
-                archive.add_directory_filtered(&lib_dir, &archive_path, &["so", "a"])?;
-            }
-            built_link_types.push("shared");
-        }
-
-        // Add include files from project's include directory (matching pyccgo behavior)
+        // Add include files
         let include_source = ctx.include_source_dir();
         if include_source.exists() {
             let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
@@ -559,49 +607,15 @@ impl PlatformBuilder for LinuxBuilder {
             }
         }
 
-        // Create the SDK archive
-        let link_type_str = ctx.options.link_type.to_string();
-        let sdk_archive = archive.create_sdk_archive(&["x86_64".to_string()], &link_type_str)?;
+        let sdk_archive = archive.create_sdk_archive(&arches, &link_type_str)?;
 
-        // Create symbols archive with unstripped binaries
-        // Structure: obj/linux/x86_64/*.so (for shared libs)
         let mut symbols_archive_result = None;
-        if ctx.options.link_type != LinkType::Static {
-            // For shared builds, collect unstripped .so files
-            let symbols_temp =
-                std::env::temp_dir().join(format!("ccgo-symbols-{}", ctx.lib_name()));
-            std::fs::create_dir_all(&symbols_temp)?;
-
-            // Create obj/linux/x86_64/ structure
-            let obj_arch_dir = symbols_temp
-                .join(ARCHIVE_DIR_OBJ)
-                .join(self.platform_name())
-                .join("x86_64");
-            std::fs::create_dir_all(&obj_arch_dir)?;
-
-            // Find and copy unstripped .so files from build directory
-            let shared_build_dir = ctx.cmake_build_dir.join("shared");
-            if let Some(lib_dir) = self.find_lib_dir(&shared_build_dir) {
-                for entry in std::fs::read_dir(&lib_dir)? {
-                    let entry = entry?;
-                    let path = entry.path();
-                    if path.extension().is_some_and(|ext| ext == "so") {
-                        let file_name = path.file_name().unwrap();
-                        std::fs::copy(&path, obj_arch_dir.join(file_name))?;
-                    }
-                }
-
-                // Only create symbols archive if we found .so files
-                if obj_arch_dir.read_dir()?.next().is_some() {
-                    let symbols_archive_path = archive.create_symbols_archive(&symbols_temp)?;
-                    symbols_archive_result = Some(symbols_archive_path);
-                }
-            }
-
-            // Clean up temp directory
-            if symbols_temp.exists() {
-                std::fs::remove_dir_all(&symbols_temp)?;
-            }
+        if found_symbols {
+            let symbols_archive_path = archive.create_symbols_archive(&symbols_temp)?;
+            symbols_archive_result = Some(symbols_archive_path);
+        }
+        if symbols_temp.exists() {
+            std::fs::remove_dir_all(&symbols_temp).ok();
         }
 
         let duration = start.elapsed();
@@ -622,7 +636,7 @@ impl PlatformBuilder for LinuxBuilder {
             symbols_archive: symbols_archive_result,
             aar_archive: None,
             duration_secs: duration.as_secs_f64(),
-            architectures: vec!["x86_64".to_string()],
+            architectures: arches,
         })
     }
 

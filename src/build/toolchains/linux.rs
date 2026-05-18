@@ -1,6 +1,7 @@
 //! Linux toolchain detection (GCC, Clang)
 //!
 //! Detects and configures GCC or Clang compilers for Linux builds.
+//! Supports native x86_64 builds and cross-compilation to aarch64.
 
 use std::path::PathBuf;
 
@@ -8,21 +9,95 @@ use anyhow::{bail, Context, Result};
 
 use super::{detect_default_compiler, find_executable, CompilerInfo, CompilerType, Toolchain};
 
+/// Linux target architecture
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LinuxArch {
+    /// 64-bit x86 (native)
+    X86_64,
+    /// 64-bit ARM (cross-compilation via aarch64-linux-gnu-gcc)
+    Aarch64,
+}
+
+impl LinuxArch {
+    /// GNU cross-compiler prefix
+    pub fn triple_prefix(self) -> &'static str {
+        match self {
+            LinuxArch::X86_64 => "x86_64-linux-gnu",
+            LinuxArch::Aarch64 => "aarch64-linux-gnu",
+        }
+    }
+
+    /// Canonical architecture string used in archive paths and CMake
+    pub fn arch_string(self) -> &'static str {
+        match self {
+            LinuxArch::X86_64 => "x86_64",
+            LinuxArch::Aarch64 => "aarch64",
+        }
+    }
+
+    /// `CMAKE_SYSTEM_PROCESSOR` value for cross-compilation
+    pub fn cmake_system_processor(self) -> &'static str {
+        match self {
+            LinuxArch::X86_64 => "x86_64",
+            LinuxArch::Aarch64 => "aarch64",
+        }
+    }
+
+    /// Parse from a user-supplied string (canonical or alias)
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "x86_64" | "x64" => Ok(LinuxArch::X86_64),
+            "aarch64" | "arm64" => Ok(LinuxArch::Aarch64),
+            other => bail!("Unknown Linux architecture '{}'. Supported: x86_64, aarch64", other),
+        }
+    }
+}
+
 /// Linux GCC/Clang toolchain
 pub struct LinuxToolchain {
     compiler: CompilerInfo,
+    /// Target architecture (affects CMake variables for cross-compilation)
+    arch: LinuxArch,
 }
 
 impl LinuxToolchain {
-    /// Detect and create a Linux toolchain
+    /// Detect native toolchain for the host architecture (x86_64)
     pub fn detect() -> Result<Self> {
-        let compiler = detect_default_compiler()
-            .context("No C/C++ compiler found. Please install GCC or Clang.")?;
-
-        Ok(Self { compiler })
+        Self::detect_for_arch(LinuxArch::X86_64)
     }
 
-    /// Prefer GCC
+    /// Detect toolchain for a specific target architecture.
+    ///
+    /// For `X86_64` on an x86_64 host: uses native GCC/Clang.
+    /// For `Aarch64`: searches for `aarch64-linux-gnu-gcc` cross-compiler.
+    pub fn detect_for_arch(arch: LinuxArch) -> Result<Self> {
+        let compiler = match arch {
+            LinuxArch::X86_64 => {
+                detect_default_compiler()
+                    .context("No C/C++ compiler found. Please install GCC or Clang.")?
+            }
+            LinuxArch::Aarch64 => {
+                let prefix = arch.triple_prefix();
+                let cc_name = format!("{}-gcc", prefix);
+                let cxx_name = format!("{}-g++", prefix);
+                let cc = find_executable(&cc_name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "aarch64 cross-compiler not found: {}\n\
+                         Install it with: apt-get install gcc-aarch64-linux-gnu g++-aarch64-linux-gnu",
+                        cc_name
+                    )
+                })?;
+                let cxx = find_executable(&cxx_name).ok_or_else(|| {
+                    anyhow::anyhow!("aarch64 C++ cross-compiler not found: {}", cxx_name)
+                })?;
+                let version = super::get_compiler_version(&cc).unwrap_or_else(|| "unknown".to_string());
+                CompilerInfo { compiler_type: CompilerType::Gcc, cc, cxx, version }
+            }
+        };
+        Ok(Self { compiler, arch })
+    }
+
+    /// Prefer GCC (native x86_64)
     pub fn prefer_gcc() -> Result<Self> {
         if let (Some(cc), Some(cxx)) = (find_executable("gcc"), find_executable("g++")) {
             let version = super::get_compiler_version(&cc).unwrap_or_else(|| "unknown".to_string());
@@ -33,12 +108,13 @@ impl LinuxToolchain {
                     cxx,
                     version,
                 },
+                arch: LinuxArch::X86_64,
             });
         }
         Self::detect()
     }
 
-    /// Prefer Clang
+    /// Prefer Clang (native x86_64)
     pub fn prefer_clang() -> Result<Self> {
         if let (Some(cc), Some(cxx)) = (find_executable("clang"), find_executable("clang++")) {
             let version = super::get_compiler_version(&cc).unwrap_or_else(|| "unknown".to_string());
@@ -49,6 +125,7 @@ impl LinuxToolchain {
                     cxx,
                     version,
                 },
+                arch: LinuxArch::X86_64,
             });
         }
         Self::detect()
@@ -59,19 +136,58 @@ impl LinuxToolchain {
         &self.compiler
     }
 
-    /// Merge multiple static libraries into a single library using ar
-    /// This is essential for KMP cinterop which expects a single complete library
+    /// Get the target architecture
+    pub fn arch(&self) -> LinuxArch {
+        self.arch
+    }
+
+    /// Path to the `ar` archiver for this toolchain.
+    ///
+    /// For cross-compilation returns the prefixed archiver
+    /// (e.g. `aarch64-linux-gnu-ar`); falls back to plain `ar`.
+    pub fn ar_path(&self) -> PathBuf {
+        match self.arch {
+            LinuxArch::X86_64 => {
+                find_executable("ar").unwrap_or_else(|| PathBuf::from("ar"))
+            }
+            LinuxArch::Aarch64 => {
+                let ar_name = format!("{}-ar", self.arch.triple_prefix());
+                find_executable(&ar_name).unwrap_or_else(|| PathBuf::from("ar"))
+            }
+        }
+    }
+
+    /// CMake variables for cross-compilation (empty for native x86_64 build).
+    pub fn cross_cmake_variables(&self) -> Vec<(String, String)> {
+        match self.arch {
+            LinuxArch::X86_64 => vec![],
+            LinuxArch::Aarch64 => {
+                let prefix = self.arch.triple_prefix();
+                vec![
+                    ("CMAKE_SYSTEM_NAME".to_string(), "Linux".to_string()),
+                    ("CMAKE_SYSTEM_PROCESSOR".to_string(), self.arch.cmake_system_processor().to_string()),
+                    ("CMAKE_C_COMPILER".to_string(), self.compiler.cc.display().to_string()),
+                    ("CMAKE_CXX_COMPILER".to_string(), self.compiler.cxx.display().to_string()),
+                    ("CMAKE_FIND_ROOT_PATH".to_string(), format!("/usr/{}", prefix)),
+                    ("CMAKE_FIND_ROOT_PATH_MODE_PROGRAM".to_string(), "NEVER".to_string()),
+                    ("CMAKE_FIND_ROOT_PATH_MODE_LIBRARY".to_string(), "ONLY".to_string()),
+                    ("CMAKE_FIND_ROOT_PATH_MODE_INCLUDE".to_string(), "ONLY".to_string()),
+                ]
+            }
+        }
+    }
+
+    /// Merge multiple static libraries into a single library using the
+    /// architecture-appropriate `ar`.
     pub fn merge_static_libs(&self, src_libs: &[PathBuf], dst_lib: &PathBuf) -> Result<()> {
         if src_libs.is_empty() {
             bail!("No source libraries to merge");
         }
 
-        // Ensure output directory exists
         if let Some(parent) = dst_lib.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Create a temporary directory for extracting object files
         let temp_dir = std::env::temp_dir().join(format!(
             "ccgo-merge-{}",
             std::time::SystemTime::now()
@@ -81,13 +197,13 @@ impl LinuxToolchain {
         ));
         std::fs::create_dir_all(&temp_dir)?;
 
-        // Extract all object files from source libraries
+        let ar_cmd = self.ar_path();
+
         for (idx, lib) in src_libs.iter().enumerate() {
             let extract_dir = temp_dir.join(format!("lib{}", idx));
             std::fs::create_dir_all(&extract_dir)?;
 
-            // Extract objects: ar x libname.a
-            let output = std::process::Command::new("ar")
+            let output = std::process::Command::new(&ar_cmd)
                 .arg("x")
                 .arg(lib)
                 .current_dir(&extract_dir)
@@ -101,7 +217,6 @@ impl LinuxToolchain {
             }
         }
 
-        // Collect all object files (.o or .obj) from all extraction directories
         let mut object_files: Vec<PathBuf> = Vec::new();
         for entry in walkdir::WalkDir::new(&temp_dir) {
             let entry = entry?;
@@ -116,13 +231,11 @@ impl LinuxToolchain {
             bail!("No object files found in source libraries");
         }
 
-        // Remove existing output library if it exists
         if dst_lib.exists() {
             std::fs::remove_file(dst_lib)?;
         }
 
-        // Create the merged library: ar rcs output.a obj1.o obj2.o ...
-        let mut cmd = std::process::Command::new("ar");
+        let mut cmd = std::process::Command::new(&ar_cmd);
         cmd.arg("rcs").arg(dst_lib);
         for obj in &object_files {
             cmd.arg(obj);
@@ -135,7 +248,6 @@ impl LinuxToolchain {
             bail!("ar merge failed: {}", stderr);
         }
 
-        // Clean up temporary directory
         std::fs::remove_dir_all(&temp_dir).ok();
 
         Ok(())
@@ -160,7 +272,12 @@ impl Toolchain for LinuxToolchain {
     }
 
     fn cmake_variables(&self) -> Vec<(String, String)> {
-        self.compiler.cmake_variables()
+        // For cross-compilation, use cross_cmake_variables (includes system/processor/compiler).
+        // For native builds, just pass compiler paths via CompilerInfo.
+        match self.arch {
+            LinuxArch::X86_64 => self.compiler.cmake_variables(),
+            LinuxArch::Aarch64 => self.cross_cmake_variables(),
+        }
     }
 
     fn validate(&self) -> Result<()> {

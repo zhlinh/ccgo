@@ -16,9 +16,14 @@
 # using clang as the compiler and lld-link as the linker.
 #
 
+# Architecture selection — set by ccgo via -DCCGO_XWIN_ARCH=x86_64|aarch64
+if(NOT DEFINED CCGO_XWIN_ARCH)
+    set(CCGO_XWIN_ARCH "x86_64")
+endif()
+
 # Target system settings
 set(CMAKE_SYSTEM_NAME Windows)
-set(CMAKE_SYSTEM_PROCESSOR x86_64)
+set(CMAKE_SYSTEM_PROCESSOR ${CCGO_XWIN_ARCH})
 
 # Signal MSVC-compatible build to CMake
 # This enables Windows-specific code paths in CMakeLists.txt files
@@ -42,7 +47,11 @@ set(CMAKE_C_CREATE_STATIC_LIBRARY "<CMAKE_COMMAND> -E rm -f <TARGET> && llvm-lib
 set(CMAKE_CXX_CREATE_STATIC_LIBRARY "<CMAKE_COMMAND> -E rm -f <TARGET> && llvm-lib /out:<TARGET> <OBJECTS>")
 
 # Target triple for MSVC ABI
-set(CLANG_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+if(CCGO_XWIN_ARCH STREQUAL "aarch64")
+    set(CLANG_TARGET_TRIPLE "aarch64-pc-windows-msvc")
+else()
+    set(CLANG_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+endif()
 
 # Force static runtime library (libcmt.lib) since xwin doesn't have debug CRT
 # This avoids the missing msvcrtd.lib error
@@ -73,9 +82,9 @@ if(DEFINED ENV{LIB})
     string(REPLACE ":" ";" XWIN_LIB_DIRS "$ENV{LIB}")
 else()
     set(XWIN_LIB_DIRS
-        "/opt/xwin/sdk/crt/lib/x86_64"
-        "/opt/xwin/sdk/sdk/lib/um/x86_64"
-        "/opt/xwin/sdk/sdk/lib/ucrt/x86_64"
+        "/opt/xwin/sdk/crt/lib/${CCGO_XWIN_ARCH}"
+        "/opt/xwin/sdk/sdk/lib/um/${CCGO_XWIN_ARCH}"
+        "/opt/xwin/sdk/sdk/lib/ucrt/${CCGO_XWIN_ARCH}"
     )
 endif()
 

@@ -19,6 +19,8 @@ pub struct MsvcToolchain {
     version: String,
     /// VC tools version (e.g., 14.29.30133)
     vc_tools_version: String,
+    /// Target architecture ("x86_64", "aarch64")
+    architecture: String,
 }
 
 impl MsvcToolchain {
@@ -85,6 +87,7 @@ impl MsvcToolchain {
             vs_path: xwin_sdk_path,
             version,
             vc_tools_version: "xwin".to_string(),
+            architecture: "x86_64".to_string(),
         })
     }
 
@@ -155,6 +158,7 @@ impl MsvcToolchain {
             vs_path,
             version,
             vc_tools_version,
+            architecture: "x86_64".to_string(),
         })
     }
 
@@ -206,6 +210,29 @@ impl MsvcToolchain {
         }
     }
 
+    /// Detect MSVC for a specific target architecture.
+    ///
+    /// xwin (Docker) stays x64-only; on native Windows the CMake generator platform
+    /// is set to `x64` (x86_64) or `ARM64` (aarch64).
+    pub fn detect_for_arch(arch: &str) -> Result<Self> {
+        let mut tc = Self::detect()?;
+        tc.architecture = arch.to_string();
+        Ok(tc)
+    }
+
+    /// Get the target architecture string
+    pub fn architecture(&self) -> &str {
+        &self.architecture
+    }
+
+    /// Map architecture string to `CMAKE_GENERATOR_PLATFORM` value
+    fn cmake_generator_platform(&self) -> &str {
+        match self.architecture.as_str() {
+            "aarch64" | "arm64" => "ARM64",
+            _ => "x64",
+        }
+    }
+
     /// Check if this is an xwin-based setup (Linux + clang-cl)
     pub fn is_xwin(&self) -> bool {
         self.vc_tools_version == "xwin"
@@ -233,7 +260,7 @@ impl Toolchain for MsvcToolchain {
 
         // Native Windows MSVC needs platform specification
         if !self.is_xwin() {
-            vars.push(("CMAKE_GENERATOR_PLATFORM".to_string(), "x64".to_string()));
+            vars.push(("CMAKE_GENERATOR_PLATFORM".to_string(), self.cmake_generator_platform().to_string()));
         } else {
             // xwin environment uses a CMake toolchain file extracted to ~/.ccgo/cmake/
             // by the embedded cmake_templates system (same as ios/tvos/watchos toolchains)
@@ -245,6 +272,13 @@ impl Toolchain for MsvcToolchain {
             vars.push((
                 "CMAKE_TOOLCHAIN_FILE".to_string(),
                 toolchain_path.display().to_string(),
+            ));
+            // Pass target arch so the toolchain file can select the correct
+            // xwin SDK lib path (crt/lib/x86_64 vs crt/lib/aarch64) and
+            // Clang target triple (x86_64-pc-windows-msvc vs aarch64-pc-windows-msvc).
+            vars.push((
+                "CCGO_XWIN_ARCH".to_string(),
+                self.architecture.clone(),
             ));
         }
 

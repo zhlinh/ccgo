@@ -5,13 +5,8 @@ FROM ubuntu:22.04
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base tools first (needed for adding LLVM repository)
-# Note: wine32 requires i386 architecture to be enabled first
-RUN dpkg --add-architecture i386 && \
-    apt-get update && apt-get install -y --no-install-recommends \
-    # Wine for running Windows tools
-    wine64 wine32 \
-    # Build tools
+# Install base tools (needed for adding LLVM repository)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     make \
     ninja-build \
@@ -62,10 +57,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     . ~/.cargo/env && \
     cargo install xwin
 
-# Download Windows SDK headers and libraries
+# Download Windows SDK headers and libraries (x86_64 + aarch64)
 RUN . ~/.cargo/env && \
     mkdir -p /opt/xwin && \
-    xwin --accept-license splat --output /opt/xwin/sdk
+    xwin --accept-license splat --output /opt/xwin/sdk --arch x86_64 --arch aarch64
 
 # Note: The MSVC toolchain cmake file is embedded in the ccgo binary
 # and extracted at runtime to ~/.ccgo/cmake/ (same as ios/tvos/watchos toolchains)

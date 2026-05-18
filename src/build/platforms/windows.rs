@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::build::archive::{get_unified_include_path, ArchiveBuilder};
 use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::toolchains::mingw::{is_mingw_available, MingwToolchain};
+use crate::build::toolchains::mingw::{is_mingw_available, MingwArch, MingwToolchain};
 use crate::build::toolchains::msvc::{is_msvc_available, MsvcToolchain};
 use crate::build::toolchains::Toolchain;
 use crate::build::{BuildContext, BuildResult, PlatformBuilder};
@@ -295,14 +295,18 @@ impl WindowsBuilder {
         Ok(cmake)
     }
 
-    /// Build for a specific link type with MinGW
+    /// Build for a specific link type with MinGW for a target architecture
     fn build_with_mingw(
         &self,
         ctx: &BuildContext,
-        mingw: &MingwToolchain,
         link_type: &str,
+        arch: &str,
     ) -> Result<PathBuf> {
-        let build_dir = ctx.cmake_build_dir.join(format!("{}/mingw", link_type));
+        let mingw_arch = MingwArch::parse(arch)?;
+        let mingw = MingwToolchain::detect_for_arch(mingw_arch)?;
+        let build_dir = ctx
+            .cmake_build_dir
+            .join(format!("{}/{}/mingw", link_type, arch));
         let install_dir = build_dir.join("install");
         let build_shared = link_type == "shared";
 
@@ -328,13 +332,13 @@ impl WindowsBuilder {
         // For static builds, merge all module libraries into a single library
         if !build_shared {
             self.merge_module_static_libs_mingw(
-                mingw,
+                &mingw,
                 &build_dir,
                 ctx.lib_name(),
                 ctx.options.verbose,
             )?;
             self.merge_third_party_static_libs_mingw(
-                mingw,
+                &mingw,
                 &build_dir,
                 ctx.lib_name(),
                 ctx.options.verbose,
@@ -344,15 +348,18 @@ impl WindowsBuilder {
         Ok(build_dir)
     }
 
-    /// Build for a specific link type with MSVC
-    /// Supports both native Windows (Visual Studio) and Linux (xwin + clang-cl)
+    /// Build for a specific link type with MSVC for a target architecture.
+    /// Supports both native Windows (Visual Studio) and Linux (xwin + clang-cl).
     fn build_with_msvc(
         &self,
         ctx: &BuildContext,
-        msvc: &MsvcToolchain,
         link_type: &str,
+        arch: &str,
     ) -> Result<PathBuf> {
-        let build_dir = ctx.cmake_build_dir.join(format!("{}/msvc", link_type));
+        let msvc = MsvcToolchain::detect_for_arch(arch)?;
+        let build_dir = ctx
+            .cmake_build_dir
+            .join(format!("{}/{}/msvc", link_type, arch));
         let install_dir = build_dir.join("install");
         let build_shared = link_type == "shared";
 
@@ -363,7 +370,7 @@ impl WindowsBuilder {
             } else {
                 BuildType::Debug
             })
-            .install_prefix(install_dir.clone());
+            .install_prefix(install_dir);
 
         for (name, value) in msvc.cmake_variables() {
             cmake = cmake.variable(&name, &value);
@@ -479,39 +486,36 @@ impl WindowsBuilder {
         Ok(libs)
     }
 
-    /// Build for a specific link type
+    /// Build for a specific link type and target architecture
     fn build_link_type(
         &self,
         ctx: &BuildContext,
         link_type: &str,
+        arch: &str,
         toolchain: WindowsToolchain,
     ) -> Result<PathBuf> {
         if ctx.options.verbose {
             eprintln!(
-                "Building {} library for Windows ({})...",
+                "Building {} library for Windows/{} ({})...",
                 link_type,
+                arch,
                 toolchain.name()
             );
         }
 
         match toolchain {
-            WindowsToolchain::MinGW => {
-                let mingw = MingwToolchain::detect()?;
-                self.build_with_mingw(ctx, &mingw, link_type)
-            }
-            WindowsToolchain::MSVC => {
-                let msvc = MsvcToolchain::detect()?;
-                self.build_with_msvc(ctx, &msvc, link_type)
-            }
+            WindowsToolchain::MinGW => self.build_with_mingw(ctx, link_type, arch),
+            WindowsToolchain::MSVC => self.build_with_msvc(ctx, link_type, arch),
         }
     }
 
-    /// Add libraries to archive with toolchain-specific paths
+    /// Add libraries to archive with arch- and toolchain-specific paths
     fn add_libraries_to_archive(
         &self,
         archive: &ArchiveBuilder,
         build_dir: &PathBuf,
         link_type: &str,
+        arch: &str,
         is_shared: bool,
         toolchain: WindowsToolchain,
     ) -> Result<()> {
@@ -519,11 +523,12 @@ impl WindowsBuilder {
 
         for lib in &libs {
             let lib_name = lib.file_name().unwrap().to_str().unwrap();
-            // Archive path: lib/windows/{static|shared}/{toolchain}/{lib_name}
+            // Archive path: lib/windows/{static|shared}/{arch}/{toolchain}/{lib_name}
             let dest = format!(
-                "lib/{}/{}/{}/{}",
+                "lib/{}/{}/{}/{}/{}",
                 self.platform_name(),
                 link_type,
+                arch,
                 toolchain.name(),
                 lib_name
             );
@@ -710,36 +715,39 @@ impl WindowsBuilder {
         Ok(())
     }
 
-    /// Build and archive the static link type
+    /// Build and archive the static link type for a specific architecture
     fn build_and_archive_static(
         &self,
         ctx: &BuildContext,
         archive: &ArchiveBuilder,
+        arch: &str,
         toolchain: WindowsToolchain,
     ) -> Result<()> {
-        let build_dir = self.build_link_type(ctx, "static", toolchain)?;
-        self.add_libraries_to_archive(archive, &build_dir, "static", false, toolchain)
+        let build_dir = self.build_link_type(ctx, "static", arch, toolchain)?;
+        self.add_libraries_to_archive(archive, &build_dir, "static", arch, false, toolchain)
     }
 
-    /// Build and archive the shared link type, stripping when appropriate
+    /// Build and archive the shared link type for a specific architecture, stripping when appropriate
     fn build_and_archive_shared(
         &self,
         ctx: &BuildContext,
         archive: &ArchiveBuilder,
+        arch: &str,
         toolchain: WindowsToolchain,
     ) -> Result<()> {
-        let build_dir = self.build_link_type(ctx, "shared", toolchain)?;
+        let build_dir = self.build_link_type(ctx, "shared", arch, toolchain)?;
 
         // Strip shared libraries for release builds (MinGW only)
         if ctx.options.release && toolchain == WindowsToolchain::MinGW {
             if ctx.options.verbose {
                 eprintln!("Stripping shared libraries...");
             }
-            let mingw = MingwToolchain::detect()?;
+            let mingw_arch = MingwArch::parse(arch)?;
+            let mingw = MingwToolchain::detect_for_arch(mingw_arch)?;
             self.strip_libraries(&mingw, &build_dir, ctx.options.verbose)?;
         }
 
-        self.add_libraries_to_archive(archive, &build_dir, "shared", true, toolchain)
+        self.add_libraries_to_archive(archive, &build_dir, "shared", arch, true, toolchain)
     }
 
     /// Add include files from the project's include directory into the archive
@@ -771,13 +779,21 @@ impl WindowsBuilder {
     }
 }
 
+fn resolve_arches(ctx: &BuildContext) -> Vec<String> {
+    if ctx.options.architectures.is_empty() {
+        vec!["x86_64".to_string(), "aarch64".to_string()]
+    } else {
+        ctx.options.architectures.clone()
+    }
+}
+
 impl PlatformBuilder for WindowsBuilder {
     fn platform_name(&self) -> &str {
         "windows"
     }
 
     fn default_architectures(&self) -> Vec<String> {
-        vec!["x86_64".to_string()]
+        vec!["x86_64".to_string(), "aarch64".to_string()]
     }
 
     fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
@@ -795,7 +811,6 @@ impl PlatformBuilder for WindowsBuilder {
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
-        // Check for IDE project generation mode
         if ctx.options.ide_project {
             return self.generate_ide_project(ctx);
         }
@@ -809,11 +824,7 @@ impl PlatformBuilder for WindowsBuilder {
             eprintln!("Building {} for Windows...", ctx.lib_name());
         }
 
-        // Source-only deps: ensure they have artifacts before we compose link lines.
-        // (Skips deps whose fingerprint matches and whose lib/<platform>/ already
-        // has artifacts on disk; spawns `ccgo build` recursively otherwise.)
         ctx.materialize_source_deps(self.platform_name())?;
-
         std::fs::create_dir_all(&ctx.output_dir)?;
 
         let archive = ArchiveBuilder::new(
@@ -825,23 +836,26 @@ impl PlatformBuilder for WindowsBuilder {
             ctx.output_dir.clone(),
         )?;
 
-        let mut built_link_types = Vec::new();
+        let arches = resolve_arches(ctx);
+        let link_type_str = ctx.options.link_type.to_string();
 
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
-            self.build_and_archive_static(ctx, &archive, toolchain)?;
-            built_link_types.push("static");
-        }
+        for arch in &arches {
+            if ctx.options.verbose {
+                eprintln!("Building for arch: {}", arch);
+            }
 
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-            self.build_and_archive_shared(ctx, &archive, toolchain)?;
-            built_link_types.push("shared");
+            if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+                self.build_and_archive_static(ctx, &archive, arch, toolchain)?;
+            }
+
+            if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+                self.build_and_archive_shared(ctx, &archive, arch, toolchain)?;
+            }
         }
 
         Self::add_include_files(ctx, &archive)?;
 
-        let architectures = vec!["x86_64".to_string()];
-        let link_type_str = ctx.options.link_type.to_string();
-        let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
+        let sdk_archive = archive.create_sdk_archive(&arches, &link_type_str)?;
 
         let duration = start.elapsed();
 
@@ -858,7 +872,7 @@ impl PlatformBuilder for WindowsBuilder {
             symbols_archive: None,
             aar_archive: None,
             duration_secs: duration.as_secs_f64(),
-            architectures,
+            architectures: arches,
         })
     }
 

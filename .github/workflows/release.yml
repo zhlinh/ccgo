@@ -96,8 +96,16 @@ jobs:
 
   # Build wheels for Windows
   windows:
-    name: Build Windows x86_64
+    name: Build Windows ${{ matrix.target }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64
+            rust_target: x86_64-pc-windows-msvc
+          - target: aarch64
+            rust_target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -106,17 +114,17 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: x86_64
+          target: ${{ matrix.target }}
           args: --release --locked --out dist
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-windows-x86_64
+          name: wheels-windows-${{ matrix.target }}
           path: dist
       - name: Archive binary
         shell: bash
         run: |
-          TARGET=x86_64-pc-windows-msvc
+          TARGET=${{ matrix.rust_target }}
           ARCHIVE_NAME=${{ env.PACKAGE_NAME }}-$TARGET
           ARCHIVE_FILE=$ARCHIVE_NAME.zip
 
@@ -127,7 +135,7 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-windows-x86_64
+          name: binaries-windows-${{ matrix.target }}
           path: |
             *.zip
             *.sha256

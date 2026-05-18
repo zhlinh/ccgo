@@ -516,18 +516,24 @@ impl DockerBuilder {
             let cargo_build_cmd = "env -u CC -u CXX -u AR -u RANLIB CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release --manifest-path /ccgo-src/Cargo.toml".to_string();
             (cargo_build_cmd, "/tmp/ccgo-build/release/ccgo".to_string())
         } else if self.ctx.options.dev {
-            // Download pre-built ccgo from GitHub releases
-            let download_cmd = "echo 'Downloading pre-built ccgo from GitHub releases...' && \
-                 curl -fsSL https://github.com/zhlinh/ccgo/releases/latest/download/ccgo-x86_64-unknown-linux-gnu.tar.gz -o /tmp/ccgo.tar.gz && \
+            // Download pre-built ccgo from GitHub releases.
+            // Detect host arch at runtime so Apple Silicon (arm64) containers
+            // download the aarch64 binary instead of the x86_64 one.
+            let download_cmd = r#"ARCH=$(uname -m) && \
+                 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+                   TRIPLE="aarch64-unknown-linux-gnu"; \
+                 else \
+                   TRIPLE="x86_64-unknown-linux-gnu"; \
+                 fi && \
+                 echo "Downloading pre-built ccgo from GitHub releases (${TRIPLE})..." && \
+                 curl -fsSL "https://github.com/zhlinh/ccgo/releases/latest/download/ccgo-${TRIPLE}.tar.gz" -o /tmp/ccgo.tar.gz && \
                  tar xzf /tmp/ccgo.tar.gz -C /tmp && \
-                 chmod +x /tmp/ccgo-x86_64-unknown-linux-gnu/ccgo || \
+                 chmod +x "/tmp/ccgo-${TRIPLE}/ccgo" && \
+                 ln -sf "/tmp/ccgo-${TRIPLE}/ccgo" /tmp/ccgo-bin || \
                  (echo 'ERROR: Failed to download ccgo from GitHub releases.' && \
                   echo 'No release found. Try without --dev flag to use pre-installed ccgo' && \
-                  exit 1)".to_string();
-            (
-                download_cmd,
-                "/tmp/ccgo-x86_64-unknown-linux-gnu/ccgo".to_string(),
-            )
+                  exit 1)"#.to_string();
+            (download_cmd, "/tmp/ccgo-bin".to_string())
         } else {
             // Default: Use pre-installed ccgo from Docker image
             let setup_cmd = "command -v ccgo >/dev/null 2>&1 || \
@@ -559,10 +565,15 @@ impl DockerBuilder {
                 setup_cmd, ccgo_bin, link_type
             )
         } else {
+            let arch_arg = if !self.ctx.options.architectures.is_empty() {
+                format!(" --arch {}", self.ctx.options.architectures.join(","))
+            } else {
+                String::new()
+            };
             format!(
                 "{} && \
-                 {} build {} --build-as {}{}",
-                setup_cmd, ccgo_bin, platform, link_type, toolchain_arg
+                 {} build {} --build-as {}{}{}",
+                setup_cmd, ccgo_bin, platform, link_type, toolchain_arg, arch_arg
             )
         };
 
@@ -664,7 +675,13 @@ impl DockerBuilder {
                             "arm64-v8a".to_string(),
                             "x86_64".to_string(),
                         ];
-                    } else if platform == "linux" || platform == "windows" {
+                    } else if platform == "linux" {
+                        architectures = if self.ctx.options.architectures.is_empty() {
+                            vec!["x86_64".to_string()]
+                        } else {
+                            self.ctx.options.architectures.clone()
+                        };
+                    } else if platform == "windows" {
                         architectures = vec!["x86_64".to_string()];
                     } else if platform == "macos" {
                         architectures = vec!["x86_64".to_string(), "arm64".to_string()];
