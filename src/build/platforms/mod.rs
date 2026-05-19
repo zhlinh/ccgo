@@ -24,6 +24,7 @@ pub mod kmp;
 pub mod linux;
 pub mod macos;
 pub mod ohos;
+pub mod openwrt;
 pub mod tests;
 pub mod tvos;
 pub mod watchos;
@@ -55,6 +56,7 @@ pub fn get_builder(target: &BuildTarget) -> Result<Box<dyn PlatformBuilder>> {
         BuildTarget::Watchos => Ok(Box::new(watchos::WatchosBuilder::new())),
         BuildTarget::Kmp => Ok(Box::new(kmp::KmpBuilder::new())),
         BuildTarget::Conan => Ok(Box::new(conan::ConanBuilder::new())),
+        BuildTarget::Openwrt => Ok(Box::new(openwrt::OpenwrtBuilder::new())),
         BuildTarget::All => bail!("Use build_all() for building all platforms"),
         BuildTarget::Apple => bail!("Use build_apple() for building all Apple platforms"),
     }
@@ -98,6 +100,9 @@ fn can_build_natively(target: &BuildTarget) -> bool {
         BuildTarget::Macos | BuildTarget::Ios | BuildTarget::Tvos | BuildTarget::Watchos => {
             host_os == "macos"
         }
+
+        // OpenWrt requires musl cross-compilers — only native on Linux with toolchains installed
+        BuildTarget::Openwrt => host_os == "linux",
 
         // Android, OHOS, Kmp, Conan can be built on any platform
         _ => true,

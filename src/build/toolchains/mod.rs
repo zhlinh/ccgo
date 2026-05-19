@@ -8,6 +8,7 @@ pub mod linux;
 pub mod mingw;
 pub mod msvc;
 pub mod ohos;
+pub mod openwrt;
 pub mod xcode;
 
 use std::path::PathBuf;

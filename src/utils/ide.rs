@@ -13,22 +13,24 @@ use std::path::Path;
 
 use anyhow::Result;
 
-/// Directories that ccgo generates and that should be hidden from IDEs / git.
-const IGNORE_DIRS: &[&str] = &[".ccgo", "cmake_build"];
+/// Fixed directory that ccgo always generates (dependency cache).
+const FIXED_IGNORE: &str = ".ccgo";
 
 /// Update `.gitignore`, `.vscode/settings.json`, and `.idea/*.iml` for the
-/// given project root. All operations are idempotent — already-present entries
-/// are never duplicated.
-pub fn update_ide_ignores(project_dir: &Path) -> Result<()> {
-    update_gitignore(project_dir)?;
-    update_vscode(project_dir)?;
-    update_jetbrains(project_dir)?;
+/// given project root. `build_dir` is the configured build directory name
+/// (default `"ccgo_build"`, overridable via `[build].build_dir` in CCGO.toml).
+/// All operations are idempotent — already-present entries are never duplicated.
+pub fn update_ide_ignores(project_dir: &Path, build_dir: &str) -> Result<()> {
+    let dirs = [FIXED_IGNORE, build_dir];
+    update_gitignore(project_dir, &dirs)?;
+    update_vscode(project_dir, &dirs)?;
+    update_jetbrains(project_dir, &dirs)?;
     Ok(())
 }
 
 // ─── .gitignore ──────────────────────────────────────────────────────────────
 
-fn update_gitignore(project_dir: &Path) -> Result<()> {
+fn update_gitignore(project_dir: &Path, ignore_dirs: &[&str]) -> Result<()> {
     let path = project_dir.join(".gitignore");
     let existing = if path.exists() {
         fs::read_to_string(&path)?
@@ -37,7 +39,7 @@ fn update_gitignore(project_dir: &Path) -> Result<()> {
     };
 
     // A dir is already covered if either "dir" or "dir/" appears in the file.
-    let to_add: Vec<&str> = IGNORE_DIRS
+    let to_add: Vec<&str> = ignore_dirs
         .iter()
         .filter(|&&dir| {
             !existing.contains(&format!("{dir}/"))
@@ -67,7 +69,7 @@ fn update_gitignore(project_dir: &Path) -> Result<()> {
 
 // ─── .vscode/settings.json ───────────────────────────────────────────────────
 
-fn update_vscode(project_dir: &Path) -> Result<()> {
+fn update_vscode(project_dir: &Path, ignore_dirs: &[&str]) -> Result<()> {
     let vscode_dir = project_dir.join(".vscode");
     let settings_path = vscode_dir.join("settings.json");
 
@@ -94,7 +96,7 @@ fn update_vscode(project_dir: &Path) -> Result<()> {
             .entry(*section)
             .or_insert_with(|| serde_json::json!({}));
         if let Some(map) = map.as_object_mut() {
-            for dir in IGNORE_DIRS {
+            for dir in ignore_dirs {
                 if !map.contains_key(*dir) {
                     map.insert((*dir).to_string(), serde_json::Value::Bool(true));
                     changed = true;
@@ -118,7 +120,7 @@ fn update_vscode(project_dir: &Path) -> Result<()> {
 
 // ─── .idea/*.iml ─────────────────────────────────────────────────────────────
 
-fn update_jetbrains(project_dir: &Path) -> Result<()> {
+fn update_jetbrains(project_dir: &Path, ignore_dirs: &[&str]) -> Result<()> {
     let idea_dir = project_dir.join(".idea");
     if !idea_dir.is_dir() {
         return Ok(());
@@ -133,7 +135,7 @@ fn update_jetbrains(project_dir: &Path) -> Result<()> {
         let path = entry.path();
         let content = fs::read_to_string(&path)?;
 
-        let to_add: Vec<&str> = IGNORE_DIRS
+        let to_add: Vec<&str> = ignore_dirs
             .iter()
             .filter(|&&dir| !content.contains(&format!("$MODULE_DIR$/{dir}")))
             .copied()

@@ -22,7 +22,7 @@ fn shared_external_does_not_embed_dep_symbols() {
 
     // For shared-external linkage, the consumer dylib must list libleaf.dylib
     // as an external load command (DT_NEEDED / LC_LOAD_DYLIB).
-    let dylib = fixture.join("cmake_build/release/macos/shared/arm64/libconsumer.dylib");
+    let dylib = fixture.join("ccgo_build/release/macos/shared/arm64/libconsumer.dylib");
     let out = std::process::Command::new("otool")
         .args(["-L"])
         .arg(&dylib)
@@ -65,7 +65,7 @@ fn static_embedded_does_embed_dep_symbols() {
     // For static-embedded linkage, the universal static archive must contain
     // the leaf symbol compiled in (not referenced as undefined).
     let static_archive =
-        fixture.join("cmake_build/release/macos/static/universal/lib/libconsumer.a");
+        fixture.join("ccgo_build/release/macos/static/universal/lib/libconsumer.a");
     let out = std::process::Command::new("nm")
         .arg(&static_archive)
         .output()
@@ -79,7 +79,7 @@ fn static_embedded_does_embed_dep_symbols() {
 
     // Also verify that the dylib does NOT list libleaf.dylib as an external
     // load command — the dep is embedded, not a DT_NEEDED.
-    let dylib = fixture.join("cmake_build/release/macos/shared/arm64/libconsumer.dylib");
+    let dylib = fixture.join("ccgo_build/release/macos/shared/arm64/libconsumer.dylib");
     let otool_out = std::process::Command::new("otool")
         .args(["-L"])
         .arg(&dylib)
@@ -104,10 +104,12 @@ fn static_embedded_does_embed_dep_symbols() {
 /// chosen at build time.
 ///
 /// Uses a dedicated `consumer-cli-override` fixture (a copy of
-/// consumer-static-embedded) so this test's `cmake_build/` doesn't collide
+/// consumer-static-embedded) so this test's `ccgo_build/` doesn't collide
 /// in parallel with the sibling tests that target the shared-external and
 /// static-embedded fixtures. Cargo runs integration tests in parallel by
 /// default; one fixture per test gives clean isolation.
+///
+/// Note: build output goes to `ccgo_build/` (the canonical build directory).
 #[cfg(target_os = "macos")]
 #[test]
 fn cli_linkage_default_overrides_toml_default() {
@@ -115,7 +117,7 @@ fn cli_linkage_default_overrides_toml_default() {
         .join("tests/fixtures/linkage/consumer-cli-override");
 
     // Clean prior outputs so this test is order-independent.
-    let _ = std::fs::remove_dir_all(fixture.join("cmake_build"));
+    let _ = std::fs::remove_dir_all(fixture.join("ccgo_build"));
     let _ = std::fs::remove_dir_all(fixture.join("target"));
 
     // The fixture has `path = "../leaf"`, so ccgo fetch resolves the dep
@@ -147,7 +149,7 @@ fn cli_linkage_default_overrides_toml_default() {
     // After the override, the consumer dylib should record libleaf.dylib as
     // an external load command — proof the CLI flag took effect even though
     // CCGO.toml says static-embedded.
-    let dylib = fixture.join("cmake_build/release/macos/shared/arm64/libconsumer.dylib");
+    let dylib = fixture.join("ccgo_build/release/macos/shared/arm64/libconsumer.dylib");
     let otool_out = std::process::Command::new("otool")
         .args(["-L"])
         .arg(&dylib)

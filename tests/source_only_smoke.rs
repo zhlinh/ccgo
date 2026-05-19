@@ -10,10 +10,10 @@ fn source_only_dep_is_built_automatically() {
     // Clean prior outputs in BOTH consumer and leaf so the test is
     // order-independent and exercises the materialize step from a
     // clean slate.
-    let _ = std::fs::remove_dir_all(fixture.join("cmake_build"));
+    let _ = std::fs::remove_dir_all(fixture.join("ccgo_build"));
     let _ = std::fs::remove_dir_all(fixture.join("target"));
     let leaf = fixture.parent().unwrap().join("leaf");
-    let _ = std::fs::remove_dir_all(leaf.join("cmake_build"));
+    let _ = std::fs::remove_dir_all(leaf.join("ccgo_build"));
     let _ = std::fs::remove_dir_all(leaf.join("lib"));
 
     let fetch = std::process::Command::new(env!("CARGO_BIN_EXE_ccgo"))
@@ -35,7 +35,7 @@ fn source_only_dep_is_built_automatically() {
     );
 
     // Consumer dylib must list libleaf.dylib (default linkage = shared-external).
-    let dylib = fixture.join("cmake_build/release/macos/shared/arm64/libconsumer.dylib");
+    let dylib = fixture.join("ccgo_build/release/macos/shared/arm64/libconsumer.dylib");
     let out = std::process::Command::new("otool")
         .args(["-L"])
         .arg(&dylib)

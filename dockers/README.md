@@ -4,7 +4,8 @@ This directory contains Dockerfiles for cross-platform builds using Docker conta
 
 ## Supported Platforms
 
-- **Linux** (`Dockerfile.linux`) - Ubuntu + GCC/Clang
+- **Linux** (`Dockerfile.linux`) - Ubuntu + GCC/Clang (glibc)
+- **OpenWrt** (`Dockerfile.openwrt`) - Ubuntu + musl-libc cross-compilers (mipsel_24kc, mips_24kc, arm_cortex_a7, aarch64)
 - **Windows MinGW** (`Dockerfile.windows-mingw`) - Ubuntu + MinGW-w64 cross-compiler
 - **Windows MSVC** (`Dockerfile.windows-msvc`) - Windows Server Core + Visual Studio Build Tools
 - **Apple Platforms** (`Dockerfile.apple`) - Ubuntu + OSXCross for macOS/iOS/tvOS/watchOS
@@ -18,6 +19,13 @@ Build any platform from any OS using Docker:
 # Build for Linux (from macOS/Windows)
 ccgo build linux --docker
 
+# Build for OpenWrt (from macOS/Windows/Linux)
+# Default: mipsel_24kc + aarch64
+ccgo build openwrt --docker
+
+# Build for OpenWrt with specific architectures
+ccgo build openwrt --docker --arch mipsel_24kc,arm_cortex_a7,aarch64
+
 # Build for Windows (from macOS/Linux)
 ccgo build windows --docker
 
@@ -30,6 +38,18 @@ ccgo build ios --docker
 # Build for Android (from macOS/Windows/Linux)
 ccgo build android --docker
 ```
+
+### OpenWrt Architecture Notes
+
+OpenWrt uses **musl libc** (not glibc). The Linux Docker image cannot be reused
+because its cross-compilers target glibc — those binaries won't run on OpenWrt.
+
+| `--arch` value | Toolchain triple | Typical hardware |
+|---|---|---|
+| `mipsel_24kc` (default) | `mipsel-linux-musl` | TP-Link, Netgear, Asus older models |
+| `mips_24kc` | `mips-linux-musl` | Big-endian MIPS routers |
+| `arm_cortex_a7` | `arm-linux-musleabihf` | ARM routers (Cortex-A7, NEON) |
+| `aarch64` (default) | `aarch64-linux-musl` | Modern 64-bit ARM routers |
 
 ## CCGO Version in Docker Images
 
@@ -45,6 +65,7 @@ The `pip3 install ccgo` command installs a **pre-built Rust binary** packaged as
 
 Prebuilt Docker images are available from GitHub Container Registry (GHCR):
 - `ghcr.io/zhlinh/ccgo-builder-linux:latest`
+- `ghcr.io/zhlinh/ccgo-builder-openwrt:latest`
 - `ghcr.io/zhlinh/ccgo-builder-windows-mingw:latest`
 - `ghcr.io/zhlinh/ccgo-builder-windows-msvc:latest`
 - `ghcr.io/zhlinh/ccgo-builder-apple:latest`
@@ -55,6 +76,7 @@ The first Docker build will pull these prebuilt images (3-20x faster than buildi
 ## Image Sizes
 
 - Linux: ~800MB
+- OpenWrt: ~1.5GB
 - Windows MinGW: ~1.2GB
 - Apple (macOS/iOS/tvOS/watchOS): ~2.5GB
 - Android: ~3.5GB

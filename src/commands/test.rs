@@ -75,6 +75,11 @@ pub struct TestCommand {
     #[arg(long)]
     pub release: bool,
 
+    /// Named build profile (`[profile.<name>]` in CCGO.toml); composes with mode and sanitizer.
+    /// The names `debug` and `release` are reserved — use the mode flags instead.
+    #[arg(long)]
+    pub profile: Option<String>,
+
     /// List all discovered tests without running
     #[arg(long)]
     pub list: bool,
@@ -110,6 +115,16 @@ pub struct TestCommand {
     /// Write JUnit XML report to path
     #[arg(long)]
     pub junit_xml: Option<PathBuf>,
+
+    /// Enable AddressSanitizer (ASan). Composes with `--debug`/`--release` and `--profile`.
+    /// Output: `ccgo_build/{mode}[-{profile}]-asan/`. Mutually exclusive with `--tsan`.
+    #[arg(long, conflicts_with = "tsan")]
+    pub asan: bool,
+
+    /// Enable ThreadSanitizer (TSan). Composes with `--debug`/`--release` and `--profile`.
+    /// Output: `ccgo_build/{mode}[-{profile}]-tsan/`. Mutually exclusive with `--asan`.
+    #[arg(long, conflicts_with = "asan")]
+    pub tsan: bool,
 }
 
 impl TestCommand {
@@ -118,6 +133,26 @@ impl TestCommand {
         // Load project configuration
         let config = CcgoConfig::load()?;
         let project_root = std::env::current_dir()?;
+
+        let sanitizer = if self.asan {
+            Some(crate::build::sanitizer::SanitizerKind::Address)
+        } else if self.tsan {
+            Some(crate::build::sanitizer::SanitizerKind::Thread)
+        } else {
+            None
+        };
+
+        // Validate reserved profile names.
+        if let Some(ref pname) = self.profile {
+            if matches!(pname.as_str(), "debug" | "release") {
+                anyhow::bail!(
+                    "'--profile {pname}' is reserved; use --release (or omit for debug) instead"
+                );
+            }
+        }
+
+        let release = self.release; // mode is CLI-only; profile.release is never applied
+        let profile_name = self.profile.clone();
 
         // Create build context for tests
         let options = BuildOptions {
@@ -128,7 +163,7 @@ impl TestCommand {
             auto_docker: false,
             jobs: self.jobs,
             ide_project: self.ide_project,
-            release: self.release,
+            release,
             native_only: false,
             toolchain: WindowsToolchain::Auto,
             verbose,
@@ -140,18 +175,16 @@ impl TestCommand {
             analytics: false,
             linkage_default: None,
             linkage_overrides: std::collections::HashMap::new(),
+            sanitizer,
+            profile_name,
             ..BuildOptions::default()
         };
 
         let ctx = BuildContext::new(project_root.clone(), config, options);
         let builder = TestsBuilder::new();
 
-        // Determine build directory
-        let release_subdir = if self.release { "release" } else { "debug" };
-        let build_dir = project_root
-            .join("cmake_build")
-            .join(release_subdir)
-            .join("tests");
+        // Use the build directory from the build context (respects config and profile).
+        let build_dir = ctx.cmake_build_dir.clone();
 
         // Handle list command
         if self.list {

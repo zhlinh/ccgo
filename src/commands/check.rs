@@ -73,7 +73,7 @@ impl CheckCommand {
         let ctx = BuildContext::new(current_dir.clone(), config.clone(), options);
 
         // Set up build directory for syntax check
-        let build_dir = current_dir.join("cmake_build").join("check");
+        let build_dir = current_dir.join(crate::utils::paths::CCGO_BUILD_DIR).join("check");
 
         let build_type = if self.release {
             BuildType::Release

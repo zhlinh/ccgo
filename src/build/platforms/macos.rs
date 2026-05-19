@@ -800,20 +800,10 @@ impl PlatformBuilder for MacosBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean new directory structure: cmake_build/{release|debug}/macos
-        for subdir in &["release", "debug"] {
-            let build_dir = ctx
-                .project_root
-                .join("cmake_build")
-                .join(subdir)
-                .join("macos");
-            if build_dir.exists() {
-                std::fs::remove_dir_all(&build_dir)
-                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-            }
-        }
+        // Clean all profile variants under ccgo_build/
+        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "macos")?;
 
-        // Clean old structure for backwards compatibility: cmake_build/macOS, cmake_build/macos
+        // Clean old cmake_build/ structure for backwards compatibility with Python ccgo
         for old_dir in &[
             ctx.project_root.join("cmake_build/macOS"),
             ctx.project_root.join("cmake_build/macos"),

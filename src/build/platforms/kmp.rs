@@ -32,13 +32,13 @@ impl KmpBuilder {
         }
     }
 
-    /// Check if native libraries already exist for a platform
+    /// Check if native libraries already exist for a platform.
     ///
-    /// Checks both pyccgo path (cmake_build/{Platform}/) and Rust ccgo path
-    /// (cmake_build/{debug|release}/{platform}/)
+    /// Checks three layouts in order:
+    /// 1. Legacy pyccgo: `cmake_build/{Platform}/static/`
+    /// 2. New ccgo: `ccgo_build/{mode[-profile]}/{platform}/static/`
+    /// 3. Legacy Rust ccgo: `cmake_build/{mode}/{platform}/static/`
     fn native_libs_exist(&self, ctx: &BuildContext, platform: &str) -> bool {
-        let cmake_build = ctx.project_root.join("cmake_build");
-
         // Platform name mapping for pyccgo paths (capitalized)
         let pyccgo_platform = match platform {
             "ios" => "iOS",
@@ -51,52 +51,53 @@ impl KmpBuilder {
             _ => platform,
         };
 
-        // Check pyccgo path: cmake_build/{Platform}/static/
-        let pyccgo_path = cmake_build.join(pyccgo_platform).join("static");
-        if pyccgo_path.exists() {
-            // Check if there's a .a file in out/ or directly
-            let out_dir = pyccgo_path.join("out");
-            if out_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&out_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().extension().is_some_and(|e| e == "a") {
+        // 1. Legacy pyccgo path: cmake_build/{Platform}/static/
+        let legacy_pyccgo = ctx.project_root.join("cmake_build").join(pyccgo_platform).join("static");
+        if Self::has_native_libs(&legacy_pyccgo) {
+            return true;
+        }
+
+        let mode = if ctx.options.release { "release" } else { "debug" };
+
+        // 2. New ccgo path: ccgo_build/{mode[-profile]}/{platform}/static/
+        if ctx.ccgo_build_root.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&ctx.ccgo_build_root) {
+                for entry in entries.flatten() {
+                    if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                        continue;
+                    }
+                    let subdir_name = entry.file_name().to_string_lossy().to_string();
+                    if subdir_name == mode || subdir_name.starts_with(&format!("{mode}-")) {
+                        let candidate = entry.path().join(platform).join("static");
+                        if Self::has_native_libs(&candidate) {
                             return true;
                         }
                     }
                 }
             }
-            // Also check for xcframework (iOS/macOS)
-            let xcframework = pyccgo_path.join("xcframework");
-            if xcframework.exists() {
-                return true;
-            }
         }
 
-        // Check Rust ccgo path: cmake_build/{debug|release}/{platform}/static/
-        let mode = if ctx.options.release {
-            "release"
-        } else {
-            "debug"
-        };
-        let rust_path = cmake_build.join(mode).join(platform).join("static");
-        if rust_path.exists() {
-            let out_dir = rust_path.join("out");
-            if out_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&out_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().extension().is_some_and(|e| e == "a") {
-                            return true;
-                        }
+        // 3. Legacy Rust ccgo path: cmake_build/{mode}/{platform}/static/
+        let legacy_rust = ctx.project_root.join("cmake_build").join(mode).join(platform).join("static");
+        Self::has_native_libs(&legacy_rust)
+    }
+
+    /// Return true if `dir` contains at least one `.a` file or an `xcframework` bundle.
+    fn has_native_libs(dir: &std::path::Path) -> bool {
+        if !dir.exists() {
+            return false;
+        }
+        let out_dir = dir.join("out");
+        if out_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&out_dir) {
+                for entry in entries.flatten() {
+                    if entry.path().extension().is_some_and(|e| e == "a") {
+                        return true;
                     }
                 }
             }
-            let xcframework = rust_path.join("xcframework");
-            if xcframework.exists() {
-                return true;
-            }
         }
-
-        false
+        dir.join("xcframework").exists()
     }
 
     /// Build native C/C++ libraries required for KMP cinterop

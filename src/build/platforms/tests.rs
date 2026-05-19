@@ -20,16 +20,7 @@ impl TestsBuilder {
 
     /// Get build output directory
     fn build_dir(&self, ctx: &BuildContext) -> PathBuf {
-        // Uses cmake_build/{release|debug}/tests/ structure
-        let release_subdir = if ctx.options.release {
-            "release"
-        } else {
-            "debug"
-        };
-        ctx.project_root
-            .join("cmake_build")
-            .join(release_subdir)
-            .join("tests")
+        ctx.cmake_build_dir.clone()
     }
 
     /// Get install directory
@@ -394,21 +385,10 @@ impl PlatformBuilder for TestsBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean new directory structure: cmake_build/{release|debug}/tests
-        for subdir in &["release", "debug"] {
-            let build_dir = ctx
-                .project_root
-                .join("cmake_build")
-                .join(subdir)
-                .join("tests");
-            if build_dir.exists() {
-                std::fs::remove_dir_all(&build_dir)
-                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-                eprintln!("Cleaned: {}", build_dir.display());
-            }
-        }
+        // Clean all profile variants under ccgo_build/
+        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "tests")?;
 
-        // Clean old structure for backwards compatibility: cmake_build/Tests, cmake_build/tests
+        // Clean old cmake_build/ structure for backwards compatibility with Python ccgo
         for old_dir in &[
             ctx.project_root.join("cmake_build/Tests"),
             ctx.project_root.join("cmake_build/tests"),

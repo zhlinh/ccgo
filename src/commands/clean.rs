@@ -22,13 +22,15 @@ pub struct CleanCommand {
     #[arg(short = 'y', long)]
     pub yes: bool,
 
-    /// Clean only cmake_build directory
+    /// Clean only ccgo_build directory
     #[arg(long)]
     pub native_only: bool,
 }
 
 struct ProjectCleaner {
     project_dir: PathBuf,
+    /// Resolved build root directory (project_dir + build_dir_name from config).
+    build_root: PathBuf,
     dry_run: bool,
     skip_confirm: bool,
     cleaned_dirs: Vec<String>,
@@ -37,9 +39,10 @@ struct ProjectCleaner {
 }
 
 impl ProjectCleaner {
-    fn new(project_dir: PathBuf, dry_run: bool, skip_confirm: bool) -> Self {
+    fn new(project_dir: PathBuf, build_root: PathBuf, dry_run: bool, skip_confirm: bool) -> Self {
         Self {
             project_dir,
+            build_root,
             dry_run,
             skip_confirm,
             cleaned_dirs: Vec::new(),
@@ -155,26 +158,40 @@ impl ProjectCleaner {
     }
 
     fn clean_cmake(&mut self) {
+        let build_dir_name = self
+            .build_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("ccgo_build");
+
         println!("\n{}", "=".repeat(60));
-        println!("  Cleaning cmake_build/ directory");
+        println!("  Cleaning {build_dir_name}/ directory");
         println!("{}", "=".repeat(60));
 
-        let cmake_dir = self.project_dir.join("cmake_build");
+        let legacy_cmake_dir = self.project_dir.join("cmake_build");
 
-        if !cmake_dir.exists() {
-            println!("  ℹ️  cmake_build/ directory does not exist");
+        let any_exists = self.build_root.exists() || legacy_cmake_dir.exists();
+        if !any_exists {
+            println!("  ℹ️  {build_dir_name}/ directory does not exist");
             return;
         }
 
         if !self.dry_run
             && !self.skip_confirm
-            && !self.confirm_clean("  Remove cmake_build/ directory?")
+            && !self.confirm_clean(&format!("  Remove {build_dir_name}/ directory?"))
         {
             println!("  ⏭️  Skipped");
             return;
         }
 
-        self.remove_directory(&cmake_dir, Some("cmake_build/"));
+        if self.build_root.exists() {
+            let label = format!("{build_dir_name}/");
+            self.remove_directory(&self.build_root.clone(), Some(&label));
+        }
+        // Also remove legacy cmake_build/ if present (Python ccgo projects)
+        if legacy_cmake_dir.exists() {
+            self.remove_directory(&legacy_cmake_dir, Some("cmake_build/"));
+        }
     }
 
     fn clean_android(&mut self) {
@@ -457,7 +474,14 @@ impl CleanCommand {
         // Find CCGO.toml to locate project directory
         let project_subdir = Self::find_project_dir(&project_dir)?;
 
-        let mut cleaner = ProjectCleaner::new(project_subdir, self.dry_run, self.yes);
+        // Load config to determine the configured build directory name.
+        let build_dir_name =
+            crate::config::CcgoConfig::load_from(project_subdir.join("CCGO.toml"))
+                .map(|cfg| cfg.build_dir_name().to_string())
+                .unwrap_or_else(|_| crate::utils::paths::CCGO_BUILD_DIR.to_string());
+
+        let build_root = project_subdir.join(&build_dir_name);
+        let mut cleaner = ProjectCleaner::new(project_subdir, build_root, self.dry_run, self.yes);
 
         // Determine what to clean based on arguments
         if self.native_only {

@@ -37,6 +37,7 @@ pub mod platforms;
 pub mod toolchains;
 pub mod verinfo;
 pub mod profile;
+pub mod sanitizer;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -101,6 +102,8 @@ pub struct BuildOptions {
     pub linkage_on_static_overrides: std::collections::HashMap<String, crate::config::Linkage>,
     /// Named build profile to apply (`--profile <name>`). `None` = use defaults.
     pub profile_name: Option<String>,
+    /// Built-in sanitizer (`--asan` / `--tsan`). Composes freely with `profile_name`.
+    pub sanitizer: Option<sanitizer::SanitizerKind>,
 }
 
 impl Default for BuildOptions {
@@ -130,6 +133,7 @@ impl Default for BuildOptions {
             linkage_on_static_default: None,
             linkage_on_static_overrides: std::collections::HashMap::new(),
             profile_name: None,
+            sanitizer: None,
         }
     }
 }
@@ -143,7 +147,9 @@ pub struct BuildContext {
     pub config: CcgoConfig,
     /// Build options
     pub options: BuildOptions,
-    /// CMake build directory (cmake_build/{debug|release}/<platform>)
+    /// Top-level build directory (e.g. `{project_root}/ccgo_build` or custom from [build].build_dir)
+    pub ccgo_build_root: PathBuf,
+    /// CMake build directory (ccgo_build/{debug|release}[-<profile>]/<platform>)
     pub cmake_build_dir: PathBuf,
     /// Output directory for final artifacts (target/<platform>)
     pub output_dir: PathBuf,
@@ -161,17 +167,41 @@ impl BuildContext {
         // Convert platform name to lowercase for consistent directory structure
         let platform_name = options.target.to_string().to_lowercase();
 
-        // Both cmake_build and target use release/debug subdirectory for consistency:
-        // cmake_build/release/android/ or cmake_build/debug/android/
-        // target/release/android/ or target/debug/android/
-        let release_subdir = if options.release { "release" } else { "debug" };
-        let cmake_build_dir = project_root
-            .join("cmake_build")
-            .join(release_subdir)
-            .join(&platform_name);
+        // Resolve the build directory name from config (default: "ccgo_build").
+        let build_dir_name = config
+            .build
+            .as_ref()
+            .and_then(|b| b.build_dir.as_deref())
+            .unwrap_or(crate::utils::paths::CCGO_BUILD_DIR)
+            .to_string();
+
+        // Build subdirectory encodes all three axes:
+        //   {mode}[-{profile}][-{sanitizer}]
+        //
+        //   debug/                        no profile, no sanitizer
+        //   release/                      release mode, no extras
+        //   debug-ci/                     --profile ci
+        //   release-ci/                   --release --profile ci
+        //   debug-asan/                   --asan
+        //   release-asan/                 --release --asan
+        //   debug-ci-asan/                --profile ci --asan
+        //   release-ci-tsan/              --release --profile ci --tsan
+        let mode = if options.release { "release" } else { "debug" };
+        let build_subdir = {
+            let mut parts: Vec<String> = vec![mode.to_string()];
+            if let Some(ref p) = options.profile_name {
+                parts.push(crate::utils::paths::sanitize_for_path(p));
+            }
+            if let Some(ref s) = options.sanitizer {
+                parts.push(s.name().to_string());
+            }
+            parts.join("-")
+        };
+        let ccgo_build_root = project_root.join(&build_dir_name);
+        let cmake_build_dir = ccgo_build_root.join(&build_subdir).join(&platform_name);
         let output_dir = project_root
             .join("target")
-            .join(release_subdir)
+            .join(&build_subdir)
             .join(&platform_name);
 
         // Get package info (required for builds)
@@ -188,7 +218,7 @@ impl BuildContext {
         .ok();
 
         // If [build].verinfo_path is set, regenerate the ccgo verinfo
-        // translation unit under cmake_build/ccgo_generated/ with the
+        // translation unit under ccgo_build/ccgo_generated/ with the
         // current build identity before the C/C++ build starts. Best-
         // effort — skipping on failure so verinfo trouble can't block builds.
         if let Some(header_rel) = config
@@ -202,25 +232,65 @@ impl BuildContext {
             }
         }
 
-        // Note: apply_profile_scalars() already validated this profile name before BuildContext::new()
-        // is called, so the error branch below is unreachable in normal build flows.
-        // resolve_profile is a pure function (no I/O) so the double call is acceptable.
-        let (resolved_profile, profile_name_override) = if let Some(ref pname) = options.profile_name {
-            match crate::build::profile::resolve_profile(pname, &config.profile) {
-                Ok(rp) => {
-                    let name_override = rp.name.clone();
-                    (Some(rp), name_override)
+        // Resolve cmake flags from profile and sanitizer, then merge.
+        //
+        // Profile (--profile) is resolved first and owns the base cmake flags.
+        // Sanitizer (--asan/--tsan) always extends on top with its cmake flags,
+        // whether or not a named profile is also active.
+        //
+        // apply_profile_scalars() has already validated the profile name before
+        // this point, so the panic branch below is unreachable in normal flows.
+        let (resolved_profile, profile_name_override) = {
+            // Step 1: resolve named profile (if any).
+            let (mut base, name_override) = if let Some(ref pname) = options.profile_name {
+                match crate::build::profile::resolve_profile(pname, &config.profile) {
+                    Ok(rp) => {
+                        let name_override = rp.name.clone();
+                        (Some(rp), name_override)
+                    }
+                    Err(e) => panic!(
+                        "BUG: profile '{pname}' was already validated by \
+                         apply_profile_scalars but failed here: {e}"
+                    ),
                 }
-                Err(e) => panic!("BUG: profile '{pname}' was already validated by apply_profile_scalars but failed here: {e}"),
+            } else {
+                (None, None)
+            };
+
+            // Step 2: extend with sanitizer cmake flags (always additive).
+            if let Some(ref san) = options.sanitizer {
+                let san_rp = match crate::build::profile::resolve_profile(
+                    san.name(),
+                    &config.profile,
+                ) {
+                    Ok(rp) => rp,
+                    Err(_) => san.to_resolved_profile(),
+                };
+
+                if let Some(ref mut b) = base {
+                    // Sanitizer always extends, never replaces, the profile cmake flags.
+                    b.cmake.c_flags.extend_from_slice(&san_rp.cmake.c_flags);
+                    b.cmake.cpp_flags.extend_from_slice(&san_rp.cmake.cpp_flags);
+                    b.cmake.arguments.extend_from_slice(&san_rp.cmake.arguments);
+                    for (plat, san_cmake) in &san_rp.platform_cmake {
+                        let acc = b.platform_cmake.entry(plat.clone()).or_default();
+                        acc.c_flags.extend_from_slice(&san_cmake.c_flags);
+                        acc.cpp_flags.extend_from_slice(&san_cmake.cpp_flags);
+                        acc.arguments.extend_from_slice(&san_cmake.arguments);
+                    }
+                } else {
+                    base = Some(san_rp);
+                }
             }
-        } else {
-            (None, None)
+
+            (base, name_override)
         };
 
         Self {
             project_root,
             config,
             options,
+            ccgo_build_root,
             cmake_build_dir,
             output_dir,
             git_version,
@@ -1131,7 +1201,8 @@ mod tests {
             project_root: PathBuf::from("/tmp/test"),
             config,
             options,
-            cmake_build_dir: PathBuf::from("/tmp/test/cmake_build"),
+            ccgo_build_root: PathBuf::from("/tmp/test/ccgo_build"),
+            cmake_build_dir: PathBuf::from("/tmp/test/ccgo_build"),
             output_dir: PathBuf::from("/tmp/test/target"),
             git_version: None,
             resolved_profile: None,
@@ -1556,4 +1627,339 @@ default = "static-embedded"
         assert_eq!(cfg_android.arguments, vec!["-DGLOBAL=1", "-DENABLE_ASAN=ON", "-DANDROID_SPECIFIC=1"]);
     }
 
+    // --- build path construction ---
+
+    const PATH_TEST_TOML: &str = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+"#;
+
+    #[test]
+    fn build_context_default_dir_no_profile() {
+        let config: CcgoConfig = CcgoConfig::parse(PATH_TEST_TOML).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: true,
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(ctx.ccgo_build_root, PathBuf::from("/proj/ccgo_build"));
+        assert_eq!(ctx.cmake_build_dir, PathBuf::from("/proj/ccgo_build/release/android"));
+    }
+
+    #[test]
+    fn build_context_with_profile_uses_sanitized_subdir() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.my-profile]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: true,
+            profile_name: Some("my-profile".to_string()),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(ctx.ccgo_build_root, PathBuf::from("/proj/ccgo_build"));
+        assert_eq!(ctx.cmake_build_dir, PathBuf::from("/proj/ccgo_build/release-my-profile/android"));
+    }
+
+    #[test]
+    fn build_context_respects_custom_build_dir() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[build]
+build_dir = "my_build"
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: true,
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(ctx.ccgo_build_root, PathBuf::from("/proj/my_build"));
+        assert_eq!(ctx.cmake_build_dir, PathBuf::from("/proj/my_build/release/android"));
+    }
+
+    #[test]
+    fn build_context_custom_dir_and_profile_combined() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[build]
+build_dir = "my_build"
+
+[profile.staging]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            profile_name: Some("staging".to_string()),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(ctx.ccgo_build_root, PathBuf::from("/proj/my_build"));
+        assert_eq!(ctx.cmake_build_dir, PathBuf::from("/proj/my_build/debug-staging/android"));
+    }
+
+    // --- sanitizer path construction ---
+
+    #[test]
+    fn asan_flag_produces_debug_asan_subdir() {
+        let config: CcgoConfig = CcgoConfig::parse(PATH_TEST_TOML).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(ctx.cmake_build_dir, PathBuf::from("/proj/ccgo_build/debug-asan/android"));
+    }
+
+    #[test]
+    fn tsan_flag_produces_debug_tsan_subdir() {
+        let config: CcgoConfig = CcgoConfig::parse(PATH_TEST_TOML).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            sanitizer: Some(sanitizer::SanitizerKind::Thread),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(ctx.cmake_build_dir, PathBuf::from("/proj/ccgo_build/debug-tsan/android"));
+    }
+
+    #[test]
+    fn asan_injects_builtin_cmake_flags() {
+        let config: CcgoConfig = CcgoConfig::parse(PATH_TEST_TOML).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        let cmake_cfg = ctx.cmake_user_config("android");
+        assert!(cmake_cfg.c_flags.iter().any(|f| f.contains("-fsanitize=address")));
+        assert!(cmake_cfg.cpp_flags.iter().any(|f| f.contains("-fsanitize=address")));
+        assert!(cmake_cfg.arguments.iter().any(|a| a.contains("EXE_LINKER_FLAGS")));
+    }
+
+    #[test]
+    fn asan_user_profile_overrides_builtin() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.asan]
+[profile.asan.cmake]
+c_flags = ["-fsanitize=address", "-DCUSTOM=1"]
+cpp_flags = ["-fsanitize=address", "-DCUSTOM=1"]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        let cmake_cfg = ctx.cmake_user_config("android");
+        assert!(cmake_cfg.c_flags.contains(&"-DCUSTOM=1".to_string()), "user profile should be used");
+    }
+
+    // --- apply_profile_scalars: user-defined [profile.asan] scalar interaction ---
+    //
+    // These tests verify that when --asan is combined with a user-defined
+    // [profile.asan] in CCGO.toml, the cmake flags from the user profile are
+    // applied (not the built-in ones). The scalar fields (release, link_type, etc.)
+    // are exercised via apply_profile_scalars() which is tested separately in
+    // the commands layer; here we confirm cmake_user_config reflects the user profile.
+
+    #[test]
+    fn asan_user_profile_cmake_flags_fully_replace_builtin() {
+        // User-defined [profile.asan] cmake.c_flags replaces the built-in flags entirely
+        // (resolve_profile uses Replace merge strategy by default).
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.asan.cmake]
+c_flags   = ["-fsanitize=address", "-DUSER_FLAG=1"]
+cpp_flags = ["-fsanitize=address", "-DUSER_FLAG=1"]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        let cmake_cfg = ctx.cmake_user_config("android");
+        // User's flag is present
+        assert!(cmake_cfg.c_flags.contains(&"-DUSER_FLAG=1".to_string()));
+        // Built-in linker args are NOT injected (user profile has no arguments → empty)
+        assert!(
+            cmake_cfg.arguments.is_empty(),
+            "user profile should replace built-in linker args; got {:?}",
+            cmake_cfg.arguments
+        );
+    }
+
+    #[test]
+    fn builtin_asan_linker_args_absent_when_user_profile_defines_asan() {
+        // When user has [profile.asan] but no cmake.arguments, the built-in
+        // -DCMAKE_EXE_LINKER_FLAGS arg should NOT bleed through.
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.asan]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        let cmake_cfg = ctx.cmake_user_config("android");
+        // Empty user profile → all cmake fields empty, no built-in injection
+        assert!(cmake_cfg.c_flags.is_empty());
+        assert!(cmake_cfg.arguments.is_empty());
+    }
+
+    // --- three-axis composition: profile + sanitizer + mode ---
+
+    #[test]
+    fn profile_and_asan_compose_path() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.ci]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            profile_name: Some("ci".to_string()),
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(
+            ctx.cmake_build_dir,
+            PathBuf::from("/proj/ccgo_build/debug-ci-asan/android")
+        );
+    }
+
+    #[test]
+    fn release_profile_and_tsan_compose_path() {
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.ci]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: true,
+            profile_name: Some("ci".to_string()),
+            sanitizer: Some(sanitizer::SanitizerKind::Thread),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        assert_eq!(
+            ctx.cmake_build_dir,
+            PathBuf::from("/proj/ccgo_build/release-ci-tsan/android")
+        );
+    }
+
+    #[test]
+    fn profile_cmake_flags_extended_by_builtin_asan() {
+        // --profile ci --asan: ci cmake flags + built-in asan flags merged
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.ci.cmake]
+merge = "extend"
+c_flags = ["-DCI=1"]
+cpp_flags = ["-DCI=1"]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            profile_name: Some("ci".to_string()),
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        let cmake_cfg = ctx.cmake_user_config("android");
+        // ci profile flag present
+        assert!(cmake_cfg.c_flags.contains(&"-DCI=1".to_string()), "ci flag missing");
+        // asan built-in flags extended on top
+        assert!(
+            cmake_cfg.c_flags.iter().any(|f| f.contains("-fsanitize=address")),
+            "asan c_flags missing"
+        );
+        assert!(
+            cmake_cfg.arguments.iter().any(|a| a.contains("EXE_LINKER_FLAGS")),
+            "asan linker args missing"
+        );
+    }
+
+    #[test]
+    fn profile_cmake_flags_extended_by_user_asan_profile() {
+        // --profile ci --asan, user has [profile.asan]: ci flags + user asan flags merged
+        let toml = r#"
+[package]
+name = "mylib"
+version = "0.1.0"
+
+[profile.ci.cmake]
+merge = "extend"
+c_flags = ["-DCI=1"]
+
+[profile.asan.cmake]
+merge = "extend"
+c_flags = ["-fsanitize=address", "-DASAN_CUSTOM=1"]
+"#;
+        let config: CcgoConfig = CcgoConfig::parse(toml).unwrap();
+        let options = BuildOptions {
+            target: BuildTarget::Android,
+            release: false,
+            profile_name: Some("ci".to_string()),
+            sanitizer: Some(sanitizer::SanitizerKind::Address),
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(PathBuf::from("/proj"), config, options);
+        let cmake_cfg = ctx.cmake_user_config("android");
+        assert!(cmake_cfg.c_flags.contains(&"-DCI=1".to_string()), "ci flag missing");
+        assert!(cmake_cfg.c_flags.contains(&"-DASAN_CUSTOM=1".to_string()), "user asan flag missing");
+    }
 }

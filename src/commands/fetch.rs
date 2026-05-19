@@ -311,7 +311,7 @@ impl FetchCommand {
             lockfile.touch();
             lockfile.save(&project_dir)?;
             println!("\n📝 Updated {}", LOCKFILE_NAME);
-            crate::utils::ide::update_ide_ignores(&project_dir)?;
+            crate::utils::ide::update_ide_ignores(&project_dir, config.build_dir_name())?;
         }
 
         // Summary
@@ -1418,7 +1418,7 @@ impl FetchCommand {
         if installed_count > 0 && lockfile.packages != packages_before {
             lockfile.touch();
             lockfile.save(member_path)?;
-            crate::utils::ide::update_ide_ignores(member_path)?;
+            crate::utils::ide::update_ide_ignores(member_path, config.build_dir_name())?;
         }
 
         Ok(installed_count)

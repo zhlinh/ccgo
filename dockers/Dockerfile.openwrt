@@ -1,0 +1,84 @@
+# Dockerfile for building OpenWrt libraries (musl libc) on any platform
+# OpenWrt uses musl libc — cannot reuse the Linux/glibc Docker image.
+# Installs pre-built musl cross-compilers from musl.cc for the most common targets:
+#   mipsel_24kc  (most routers: TP-Link, Netgear, Asus older models)
+#   mips_24kc    (big-endian MIPS routers)
+#   arm_cortex_a7 (ARM routers with NEON, hard-float ABI)
+#   aarch64      (modern ARM64 routers)
+# Force linux/amd64: musl.cc cross-compilers are x86_64 ELF binaries; they must run
+# in an amd64 container. On Apple Silicon this uses Rosetta emulation automatically.
+FROM --platform=linux/amd64 ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    curl \
+    xz-utils \
+    zip \
+    unzip \
+    pkg-config \
+    ca-certificates \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download pre-built musl cross-compilers from musl.cc
+# These are GCC-based toolchains targeting musl libc, matching OpenWrt's runtime.
+ENV TOOLCHAIN_DIR="/opt/cross"
+RUN mkdir -p ${TOOLCHAIN_DIR}
+
+# mipsel-linux-musl: covers mipsel_24kc, mipsel_24kc_nand and similar targets
+RUN wget -q "https://musl.cc/mipsel-linux-musl-cross.tgz" -O /tmp/tc.tgz && \
+    tar xf /tmp/tc.tgz -C ${TOOLCHAIN_DIR} && \
+    rm /tmp/tc.tgz
+
+# mips-linux-musl: big-endian MIPS targets (mips_24kc)
+RUN wget -q "https://musl.cc/mips-linux-musl-cross.tgz" -O /tmp/tc.tgz && \
+    tar xf /tmp/tc.tgz -C ${TOOLCHAIN_DIR} && \
+    rm /tmp/tc.tgz
+
+# arm-linux-musleabihf: ARM hard-float targets (arm_cortex-a7_neon-vfpv4, arm_cortex-a9, etc.)
+RUN wget -q "https://musl.cc/arm-linux-musleabihf-cross.tgz" -O /tmp/tc.tgz && \
+    tar xf /tmp/tc.tgz -C ${TOOLCHAIN_DIR} && \
+    rm /tmp/tc.tgz
+
+# aarch64-linux-musl: modern 64-bit ARM routers (aarch64_cortex-a53, aarch64_generic)
+RUN wget -q "https://musl.cc/aarch64-linux-musl-cross.tgz" -O /tmp/tc.tgz && \
+    tar xf /tmp/tc.tgz -C ${TOOLCHAIN_DIR} && \
+    rm /tmp/tc.tgz
+
+# Add all toolchain bin directories to PATH
+ENV PATH="${TOOLCHAIN_DIR}/mipsel-linux-musl-cross/bin:\
+${TOOLCHAIN_DIR}/mips-linux-musl-cross/bin:\
+${TOOLCHAIN_DIR}/arm-linux-musleabihf-cross/bin:\
+${TOOLCHAIN_DIR}/aarch64-linux-musl-cross/bin:\
+${PATH}"
+
+# Install ccgo from PyPI (pre-compiled Rust wheel)
+RUN pip3 install --no-cache-dir ccgo
+
+# Set environment variables
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Verify toolchains are accessible
+RUN echo "=== OpenWrt Toolchain Verification ===" && \
+    mipsel-linux-musl-gcc --version && \
+    mips-linux-musl-gcc --version && \
+    arm-linux-musleabihf-gcc --version && \
+    aarch64-linux-musl-gcc --version && \
+    cmake --version && \
+    python3 --version && \
+    ccgo --version
+
+# Set working directory
+WORKDIR /workspace
+
+# Entry point - execute build script
+ENTRYPOINT ["/bin/bash", "-c"]

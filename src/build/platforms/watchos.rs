@@ -486,20 +486,10 @@ impl PlatformBuilder for WatchosBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean new directory structure: cmake_build/{release|debug}/watchos
-        for subdir in &["release", "debug"] {
-            let build_dir = ctx
-                .project_root
-                .join("cmake_build")
-                .join(subdir)
-                .join("watchos");
-            if build_dir.exists() {
-                std::fs::remove_dir_all(&build_dir)
-                    .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-            }
-        }
+        // Clean all profile variants under ccgo_build/
+        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "watchos")?;
 
-        // Clean old structure for backwards compatibility: cmake_build/watchOS, cmake_build/watchos
+        // Clean old cmake_build/ structure for backwards compatibility with Python ccgo
         for old_dir in &[
             ctx.project_root.join("cmake_build/watchOS"),
             ctx.project_root.join("cmake_build/watchos"),

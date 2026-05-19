@@ -29,7 +29,7 @@ const EXCLUDE_DIRS: &[&str] = &[
     ".hg",
     "target",
     "build",
-    "cmake_build",
+    "ccgo_build",
     ".ccgo",
     "node_modules",
     "__pycache__",

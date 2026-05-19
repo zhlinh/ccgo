@@ -41,17 +41,37 @@ pub struct ResolvedProfile {
 }
 
 /// Build a map that includes built-in profiles alongside user-defined ones.
-/// User-defined profiles take precedence (can override built-ins).
+///
+/// Built-in profiles (`debug`, `release`) carry a fixed `release` bool.  When
+/// the user redefines one of these names to add cmake flags or dep-linkage hints,
+/// they almost never want to lose that bool.  So instead of a blind overwrite we
+/// preserve the built-in `release` field unless the user explicitly set one.
 fn build_full_profiles(
     user_profiles: &HashMap<String, ProfileConfig>,
 ) -> HashMap<String, ProfileConfig> {
+    let builtin_release_for = |name: &str| -> Option<bool> {
+        match name {
+            "debug" => Some(false),
+            "release" => Some(true),
+            _ => None,
+        }
+    };
+
     let mut map = HashMap::new();
-    let builtin_debug = ProfileConfig { release: Some(false), ..Default::default() };
-    let builtin_release = ProfileConfig { release: Some(true), ..Default::default() };
-    map.insert("debug".to_string(), builtin_debug);
-    map.insert("release".to_string(), builtin_release);
+    map.insert("debug".to_string(), ProfileConfig { release: Some(false), ..Default::default() });
+    map.insert("release".to_string(), ProfileConfig { release: Some(true), ..Default::default() });
+
     for (k, v) in user_profiles {
-        map.insert(k.clone(), v.clone());
+        let entry = if let Some(builtin_release) = builtin_release_for(k) {
+            // Preserve the built-in `release` bool when the user didn't set one.
+            ProfileConfig {
+                release: v.release.or(Some(builtin_release)),
+                ..v.clone()
+            }
+        } else {
+            v.clone()
+        };
+        map.insert(k.clone(), entry);
     }
     map
 }

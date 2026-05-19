@@ -877,14 +877,10 @@ impl PlatformBuilder for WindowsBuilder {
     }
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
-        // Clean new directory structure: cmake_build/{release|debug}/windows
-        let new_build_dirs: Vec<PathBuf> = ["release", "debug"]
-            .iter()
-            .map(|s| ctx.project_root.join("cmake_build").join(s).join("windows"))
-            .collect();
-        Self::remove_dirs_if_exist(&new_build_dirs)?;
+        // Clean all profile variants under ccgo_build/
+        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "windows")?;
 
-        // Clean old structure for backwards compatibility
+        // Clean old cmake_build/ structure for backwards compatibility with Python ccgo
         let old_build_dirs = [
             ctx.project_root.join("cmake_build/Windows"),
             ctx.project_root.join("cmake_build/windows"),

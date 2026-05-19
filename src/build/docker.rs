@@ -23,6 +23,7 @@ const DOCKERFILE_OHOS: &str = include_str!("../../dockers/Dockerfile.ohos");
 const DOCKERFILE_APPLE: &str = include_str!("../../dockers/Dockerfile.apple");
 const DOCKERFILE_WINDOWS_MINGW: &str = include_str!("../../dockers/Dockerfile.windows-mingw");
 const DOCKERFILE_WINDOWS_MSVC: &str = include_str!("../../dockers/Dockerfile.windows-msvc");
+const DOCKERFILE_OPENWRT: &str = include_str!("../../dockers/Dockerfile.openwrt");
 
 // Embed CMake toolchain files at compile time
 const CMAKE_TOOLCHAIN_WINDOWS_MSVC: &str = include_str!("../../cmake/windows-msvc.toolchain.cmake");
@@ -116,6 +117,13 @@ impl PlatformDockerConfig {
                 image_name: "ccgo-builder-ohos",
                 remote_image: format!("{}/ccgo-builder-ohos:latest", GHCR_REPO),
                 size_estimate: "~2.5GB",
+            }),
+            BuildTarget::Openwrt => Some(Self {
+                dockerfile: "Dockerfile.openwrt",
+                dockerfile_content: DOCKERFILE_OPENWRT,
+                image_name: "ccgo-builder-openwrt",
+                remote_image: format!("{}/ccgo-builder-openwrt:latest", GHCR_REPO),
+                size_estimate: "~1.5GB",
             }),
             _ => None,
         }
@@ -564,6 +572,16 @@ impl DockerBuilder {
                  --arch armeabi-v7a,arm64-v8a,x86_64 --build-as {}",
                 setup_cmd, ccgo_bin, link_type
             )
+        } else if self.ctx.options.target == BuildTarget::Openwrt {
+            let arch_arg = if !self.ctx.options.architectures.is_empty() {
+                format!(" --arch {}", self.ctx.options.architectures.join(","))
+            } else {
+                " --arch mipsel_24kc,aarch64".to_string()
+            };
+            format!(
+                "{} && {} build openwrt --build-as {}{}",
+                setup_cmd, ccgo_bin, link_type, arch_arg
+            )
         } else {
             let arch_arg = if !self.ctx.options.architectures.is_empty() {
                 format!(" --arch {}", self.ctx.options.architectures.join(","))
@@ -675,6 +693,12 @@ impl DockerBuilder {
                             "arm64-v8a".to_string(),
                             "x86_64".to_string(),
                         ];
+                    } else if platform == "openwrt" {
+                        architectures = if self.ctx.options.architectures.is_empty() {
+                            vec!["mipsel_24kc".to_string(), "aarch64".to_string()]
+                        } else {
+                            self.ctx.options.architectures.clone()
+                        };
                     } else if platform == "linux" {
                         architectures = if self.ctx.options.architectures.is_empty() {
                             vec!["x86_64".to_string()]

@@ -33,6 +33,8 @@ pub enum BuildTarget {
     Linux,
     /// OpenHarmony platform
     Ohos,
+    /// OpenWrt platform (musl libc, embedded Linux routers)
+    Openwrt,
     /// tvOS platform
     Tvos,
     /// watchOS platform
@@ -54,6 +56,7 @@ impl std::fmt::Display for BuildTarget {
             BuildTarget::Windows => write!(f, "windows"),
             BuildTarget::Linux => write!(f, "linux"),
             BuildTarget::Ohos => write!(f, "ohos"),
+            BuildTarget::Openwrt => write!(f, "openwrt"),
             BuildTarget::Tvos => write!(f, "tvos"),
             BuildTarget::Watchos => write!(f, "watchos"),
             BuildTarget::Kmp => write!(f, "kmp"),
@@ -110,6 +113,13 @@ pub fn normalize_arch_alias(raw: &str, target: &BuildTarget) -> String {
         BuildTarget::Linux | BuildTarget::Windows => match lower.as_str() {
             "x64" => "x86_64".to_string(),
             "arm64" | "aarch64" | "a64" | "armv8" => "aarch64".to_string(),
+            _ => lower,
+        },
+        BuildTarget::Openwrt => match lower.as_str() {
+            "mipsel" => "mipsel_24kc".to_string(),
+            "mips" => "mips_24kc".to_string(),
+            "arm" | "arm_cortex-a7" => "arm_cortex_a7".to_string(),
+            "arm64" | "aarch64" | "a64" => "aarch64".to_string(),
             _ => lower,
         },
         // Meta-targets (All/Apple/Kmp/Conan) delegate to individual platforms
@@ -410,12 +420,44 @@ pub struct BuildCommand {
 
     /// Named build profile to use (defined in `[profile.<name>]` in CCGO.toml).
     ///
-    /// Built-in profiles: `debug` (release=false), `release` (release=true).
-    /// CLI flags always take precedence over profile settings.
+    /// Profiles are cmake-flag/dep-linkage overlays that compose freely with
+    /// `--debug`/`--release` and `--asan`/`--tsan`. The names `debug` and
+    /// `release` are reserved — use the mode flags directly.
     ///
-    /// Example: ccgo build android --profile sanitize
+    /// When used with an explicit mode flag, the mode flag wins for `release`.
+    /// When used alone, the profile's `release` field (if set) determines the mode.
+    ///
+    /// Path: `ccgo_build/{mode}-{profile}/` or `ccgo_build/{mode}-{profile}-{san}/`
+    ///
+    /// Example: ccgo build android --release --profile ci --asan
     #[arg(long, verbatim_doc_comment)]
     pub profile: Option<String>,
+
+    /// Enable AddressSanitizer (ASan).
+    ///
+    /// Injects `-fsanitize=address -fno-omit-frame-pointer` into C/C++ compiler flags and
+    /// the matching linker flags. Composes freely with `--debug`/`--release` and `--profile`.
+    ///
+    /// Output: `ccgo_build/{mode}[-{profile}]-asan/<platform>/`
+    ///
+    /// If `[profile.asan]` is defined in CCGO.toml, its cmake flags override the built-in
+    /// flags (scalars from `[profile.asan]` apply only when `--profile` is not also given).
+    /// Mutually exclusive with `--tsan`.
+    #[arg(long, conflicts_with = "tsan", verbatim_doc_comment)]
+    pub asan: bool,
+
+    /// Enable ThreadSanitizer (TSan).
+    ///
+    /// Injects `-fsanitize=thread -fno-omit-frame-pointer` into C/C++ compiler flags and
+    /// the matching linker flags. Composes freely with `--debug`/`--release` and `--profile`.
+    ///
+    /// Output: `ccgo_build/{mode}[-{profile}]-tsan/<platform>/`
+    ///
+    /// If `[profile.tsan]` is defined in CCGO.toml, its cmake flags override the built-in
+    /// flags (scalars from `[profile.tsan]` apply only when `--profile` is not also given).
+    /// Mutually exclusive with `--asan`.
+    #[arg(long, conflicts_with = "asan", verbatim_doc_comment)]
+    pub tsan: bool,
 }
 
 impl BuildCommand {
@@ -443,6 +485,9 @@ impl BuildCommand {
 
             // OHOS can be built on any platform with OHOS SDK
             BuildTarget::Ohos => true,
+
+            // OpenWrt requires musl cross-compilers — only native on Linux with toolchains installed
+            BuildTarget::Openwrt => host_os == "linux",
         }
     }
 
@@ -462,44 +507,71 @@ impl BuildCommand {
     }
 
     /// Apply profile scalar overrides to build options.
-    /// CLI flags always win; profile only sets what the user didn't explicitly specify.
+    ///
+    /// Mode (release vs debug) is always determined by the `--release` CLI flag alone —
+    /// a profile's `release` field never overrides it. All other scalars (link_type, jobs,
+    /// features) are applied from the named profile, then from the sanitizer user-profile
+    /// when no named profile is active.
     fn apply_profile_scalars(
         mut options: BuildOptions,
         config: &crate::config::CcgoConfig,
         cmd: &Self,
     ) -> Result<BuildOptions> {
-        let Some(ref pname) = options.profile_name else {
-            return Ok(options);
-        };
-        let rp = crate::build::profile::resolve_profile(pname, &config.profile)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        // "debug" and "release" are reserved — they are mode flags, not profile names.
+        if let Some(ref pname) = options.profile_name {
+            if matches!(pname.as_str(), "debug" | "release") {
+                anyhow::bail!(
+                    "'--profile {pname}' is reserved; use --release (or omit for debug) instead"
+                );
+            }
+        }
 
-        // CLI precedence: check against the CLI default value (false for --release, Both for --build-as).
-        // This is sound for the current CLI interface where both flags are absent-or-present booleans.
-        // If either flag gains a tri-state (unset/true/false), this heuristic must be revisited.
-        // release: apply from profile only if user didn't pass --release (CLI default is false)
-        if let Some(prof_release) = rp.release {
-            if !cmd.release {
-                options.release = prof_release;
+        // Apply non-mode scalars from named profile.
+        if let Some(ref pname) = options.profile_name {
+            let rp = crate::build::profile::resolve_profile(pname, &config.profile)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // release intentionally not applied — mode is CLI-only.
+            if let Some(ref prof_lt) = rp.link_type {
+                if cmd.link_type == LinkType::Both {
+                    options.link_type = prof_lt.clone();
+                }
+            }
+            if options.jobs.is_none() {
+                if let Some(j) = rp.jobs {
+                    options.jobs = Some(j as usize);
+                }
+            }
+            if !rp.features.is_empty() {
+                let mut merged = rp.features;
+                merged.extend(options.features.iter().cloned());
+                options.features = merged;
             }
         }
-        // link_type: apply from profile if user left it at the CLI default (Both)
-        if let Some(ref prof_lt) = rp.link_type {
-            if cmd.link_type == LinkType::Both {
-                options.link_type = prof_lt.clone();
+
+        // Apply non-mode scalars from sanitizer user-profile when no named profile is active.
+        if options.profile_name.is_none() {
+            if let Some(ref san) = options.sanitizer {
+                if let Ok(rp) =
+                    crate::build::profile::resolve_profile(san.name(), &config.profile)
+                {
+                    // release intentionally not applied — mode is CLI-only.
+                    if let Some(ref prof_lt) = rp.link_type {
+                        if cmd.link_type == LinkType::Both {
+                            options.link_type = prof_lt.clone();
+                        }
+                    }
+                    if options.jobs.is_none() {
+                        if let Some(j) = rp.jobs {
+                            options.jobs = Some(j as usize);
+                        }
+                    }
+                    if !rp.features.is_empty() {
+                        let mut merged = rp.features;
+                        merged.extend(options.features.iter().cloned());
+                        options.features = merged;
+                    }
+                }
             }
-        }
-        // jobs: apply from profile if not set via CLI
-        if options.jobs.is_none() {
-            if let Some(j) = rp.jobs {
-                options.jobs = Some(j as usize);
-            }
-        }
-        // features: profile features first, then CLI features (CLI extends profile)
-        if !rp.features.is_empty() {
-            let mut merged = rp.features;
-            merged.extend(options.features.iter().cloned());
-            options.features = merged;
         }
 
         Ok(options)
@@ -565,6 +637,13 @@ impl BuildCommand {
             linkage_on_static_default,
             linkage_on_static_overrides,
             profile_name: self.profile.clone(),
+            sanitizer: if self.asan {
+                Some(crate::build::sanitizer::SanitizerKind::Address)
+            } else if self.tsan {
+                Some(crate::build::sanitizer::SanitizerKind::Thread)
+            } else {
+                None
+            },
         })
     }
 
@@ -683,7 +762,7 @@ impl BuildCommand {
         let project_root = current_dir;
         let package = config.require_package()?.clone();
 
-        crate::utils::ide::update_ide_ignores(&project_root)?;
+        crate::utils::ide::update_ide_ignores(&project_root, config.build_dir_name())?;
 
         if verbose {
             eprintln!("Building {} for {} platform...", package.name, self.target);

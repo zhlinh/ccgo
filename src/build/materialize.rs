@@ -325,7 +325,7 @@ pub fn materialize_source_deps_inner(
 ///   This matches `FindCCGODependencies.cmake`'s `file(GLOB *.xcframework
 ///   ${LIB_DIR})` walk, which expects the bundle at the top of `<link_type>/`.
 /// * **Non-Apple** (Android/OHOS/Linux/Windows) — links the entire
-///   `<link_type>/` subtree wholesale. The cmake_build layout already
+///   `<link_type>/` subtree wholesale. The ccgo_build layout already
 ///   mirrors `<link_type>/<arch>/<lib>` so a coarse symlink works.
 ///
 /// Pre-existing `lib/<platform>/<link_type>/` content (e.g. a hand-committed
@@ -337,16 +337,67 @@ pub fn materialize_source_deps_inner(
 /// require admin or Developer Mode (unlike Win32 symlinks), so this works
 /// for any user on any modern Windows. They behave like symlinks for the
 /// CMake-Find globs we care about.
+/// Locate the build platform directory for a dependency.
+///
+/// Checks both the new `ccgo_build/<mode[-profile]>/<platform>/` layout and
+/// the legacy `cmake_build/<mode>/<platform>/` layout (Python ccgo projects).
+/// Also tries the dep's configured `[build].build_dir` if CCGO.toml can be loaded.
+///
+/// Returns `None` if no matching directory exists.
+fn find_dep_build_platform_dir(dep_root: &Path, platform: &str, release: bool) -> Option<PathBuf> {
+    let mode = if release { "release" } else { "debug" };
+
+    // Determine which build directory name the dep uses.
+    let build_dir_name = crate::config::CcgoConfig::load_from(dep_root.join("CCGO.toml"))
+        .map(|cfg| cfg.build_dir_name().to_string())
+        .unwrap_or_else(|_| crate::utils::paths::CCGO_BUILD_DIR.to_string());
+
+    // Scan ccgo_build (or custom build_dir) for any subdir whose name equals
+    // the mode or starts with "{mode}-" (profile variant).
+    let build_root = dep_root.join(&build_dir_name);
+    if build_root.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&build_root) {
+            let mut candidates: Vec<PathBuf> = entries
+                .flatten()
+                .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                .filter(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    name == mode || name.starts_with(&format!("{mode}-"))
+                })
+                .map(|e| e.path().join(platform))
+                .filter(|p| p.is_dir())
+                .collect();
+            // Prefer exact match (no profile) over profile variants.
+            candidates.sort_by_key(|p| {
+                p.parent()
+                    .and_then(|pp| pp.file_name())
+                    .map(|n| n.to_string_lossy().len())
+                    .unwrap_or(0)
+            });
+            if let Some(first) = candidates.into_iter().next() {
+                return Some(first);
+            }
+        }
+    }
+
+    // Legacy layout: cmake_build/<mode>/<platform>/
+    let legacy = dep_root.join("cmake_build").join(mode).join(platform);
+    if legacy.is_dir() {
+        return Some(legacy);
+    }
+
+    None
+}
+
 fn bridge_cmake_build_to_lib(dep_root: &Path, platform: &str, release: bool) -> Result<()> {
-    let profile = if release { "release" } else { "debug" };
-    let cmake_build_platform = dep_root.join("cmake_build").join(profile).join(platform);
-    if !cmake_build_platform.is_dir() {
+    let cmake_build_platform = find_dep_build_platform_dir(dep_root, platform, release);
+    let Some(cmake_build_platform) = cmake_build_platform else {
         // Build didn't produce the expected output tree. Most likely the
-        // dep's CMake template doesn't write into cmake_build/<profile>/
+        // dep's CMake template doesn't write into ccgo_build/<profile>/
         // (older fixture, custom CCGO.toml). Leave lib/ alone and let
         // resolve_linkage surface the missing-artifacts error downstream.
         return Ok(());
-    }
+    };
 
     let lib_platform = dep_root.join("lib").join(platform);
 
@@ -401,7 +452,7 @@ fn bridge_cmake_build_to_lib(dep_root: &Path, platform: &str, release: bool) -> 
 ///
 /// * Unix: standard `symlink` (always available).
 /// * Windows: NTFS junction via `cmd /c mklink /J`. Junctions don't need
-///   admin or Developer Mode, work on the same volume (which the cmake_build
+///   admin or Developer Mode, work on the same volume (which the ccgo_build
 ///   tree always is — it's inside the dep), and behave like symlinks for
 ///   `file(GLOB ...)` and `EXISTS` which is all FindCCGODependencies needs.
 ///
@@ -586,7 +637,8 @@ mod tests {
         let leaf = manifest_dir.join("tests/fixtures/source_only/leaf");
 
         let _ = std::fs::remove_dir_all(consumer.join(".ccgo"));
-        let _ = std::fs::remove_dir_all(leaf.join("cmake_build"));
+        let _ = std::fs::remove_dir_all(leaf.join("ccgo_build"));
+        let _ = std::fs::remove_dir_all(leaf.join("cmake_build")); // legacy cleanup
         let _ = std::fs::remove_dir_all(leaf.join("lib"));
 
         let cache_dir = tempfile::TempDir::new().unwrap();
@@ -624,8 +676,8 @@ mod tests {
         // After the spawn, leaf must have build output AND the fingerprint
         // sidecar in the global cache dir.
         assert!(
-            leaf.join("cmake_build").exists(),
-            "leaf should have produced cmake_build/ after materialize"
+            leaf.join("ccgo_build").exists() || leaf.join("cmake_build").exists(),
+            "leaf should have produced ccgo_build/ (or legacy cmake_build/) after materialize"
         );
         // hint=None → driver picks build_as=Both → sidecar lives at the Both variant.
         let fp_expected =

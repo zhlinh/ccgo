@@ -81,7 +81,7 @@ impl Default for CoverageConfig {
     fn default() -> Self {
         Self {
             source_dir: PathBuf::from("."),
-            build_dir: PathBuf::from("cmake_build"),
+            build_dir: PathBuf::from(crate::utils::paths::CCGO_BUILD_DIR),
             output_dir: PathBuf::from("coverage"),
             format: CoverageFormat::Html,
             exclude: vec![

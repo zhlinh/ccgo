@@ -1006,17 +1006,17 @@ pub struct BuildConfig {
     /// Include-namespace subpath for the ccgo-generated verinfo header.
     ///
     /// When set, `ccgo build` writes two files under the project's
-    /// `cmake_build/` tree (which every ccgo project already gitignores):
+    /// `ccgo_build/` tree (which every ccgo project already gitignores):
     ///
-    /// * `cmake_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`
-    /// * `cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc`
+    /// * `ccgo_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`
+    /// * `ccgo_build/ccgo_generated/src/verinfo_ccgo_gen.cc`
     ///
     /// The `<verinfo_path>` segment controls only the `#include` path that
     /// project code uses to pull in the `<PROJECT>_CCGO_PROJECT_VERIDENTITY`
     /// macro and `<project>_ccgo_project_veridentity` symbol — e.g.
     /// `verinfo_path = "stdcomm/base/"` lets project code write
     /// `#include "stdcomm/base/verinfo_ccgo_gen.h"`. It is *not* a filesystem
-    /// output path; ccgo always writes under `cmake_build/`.
+    /// output path; ccgo always writes under `ccgo_build/`.
     ///
     /// When unset, no generation happens at all.
     ///
@@ -1051,6 +1051,21 @@ pub struct BuildConfig {
     /// `-DCCGO_USER_CMAKE_FILES=<path>` to cmake, disabling auto-discovery of
     /// `CCGO.cmake`. An empty string suppresses cmake file inclusion entirely.
     pub cmake_file: Option<String>,
+
+    /// Custom build directory name (default: `"ccgo_build"`).
+    ///
+    /// ccgo creates this directory at the project root for all intermediate
+    /// build artifacts. Override it when `ccgo_build` conflicts with another
+    /// tool or your team's conventions.
+    ///
+    /// ```toml
+    /// [build]
+    /// build_dir = "my_build"
+    /// ```
+    ///
+    /// The configured name is automatically added to `.gitignore` and IDE
+    /// exclude lists alongside `.ccgo`.
+    pub build_dir: Option<String>,
 }
 
 /// User-configurable CMake flags for a build or platform section.
@@ -1428,6 +1443,16 @@ impl CcgoConfig {
     }
 
     /// Get package configuration, returning an error if not present
+    /// Return the effective build directory name for this project.
+    ///
+    /// Uses `[build].build_dir` when set, otherwise defaults to `"ccgo_build"`.
+    pub fn build_dir_name(&self) -> &str {
+        self.build
+            .as_ref()
+            .and_then(|b| b.build_dir.as_deref())
+            .unwrap_or(crate::utils::paths::CCGO_BUILD_DIR)
+    }
+
     pub fn require_package(&self) -> Result<&PackageConfig> {
         self.package.as_ref().context(
             "This operation requires a [package] section in CCGO.toml.\n\

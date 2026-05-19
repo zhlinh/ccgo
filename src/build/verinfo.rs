@@ -2,16 +2,16 @@
 //!
 //! When a project declares `[build].verinfo_path = "<proj>/base/"` in its
 //! `CCGO.toml`, ccgo writes two auto-generated files into the current
-//! project's `cmake_build/ccgo_generated/` tree before each build:
+//! project's `ccgo_build/ccgo_generated/` tree before each build:
 //!
-//! * `cmake_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`
+//! * `ccgo_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`
 //!   — C header with `#define <PROJECT>_CCGO_PROJECT_VERIDENTITY "..."`.
-//! * `cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc`
+//! * `ccgo_build/ccgo_generated/src/verinfo_ccgo_gen.cc`
 //!   — translation unit that defines a `const char[]` symbol with
 //!   `__attribute__((used))`, plus an optional ELF `.note.ccgo.project`
 //!   note for structured readout.
 //!
-//! The generated tree lives entirely under `cmake_build/`, which is
+//! The generated tree lives entirely under `ccgo_build/`, which is
 //! gitignored by every ccgo-managed project. Nothing is written into the
 //! source tree — so the working copy stays clean across builds, even as the
 //! embedded identity changes on every `ccgo build`.
@@ -35,8 +35,8 @@
 //! VERIDENTITY is a separate build fingerprint and never affects filenames.
 //!
 //! The CMake template (`cmake/template/Root.CMakeLists.txt.in`) adds
-//! `cmake_build/ccgo_generated/include` to the global include path and
-//! appends `cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc` to each
+//! `ccgo_build/ccgo_generated/include` to the global include path and
+//! appends `ccgo_build/ccgo_generated/src/verinfo_ccgo_gen.cc` to each
 //! platform's `SELF_SRC_FILES`, guarded by `if(EXISTS ...)`.
 
 use std::fs;
@@ -44,34 +44,34 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-/// Subdirectory under a project's `cmake_build/` where ccgo writes its
+/// Subdirectory under a project's `ccgo_build/` where ccgo writes its
 /// generated sources. Kept in one place so the CMake template and the Rust
 /// generator stay in sync.
-const GENERATED_SUBDIR: &str = "cmake_build/ccgo_generated";
+const GENERATED_SUBDIR: &str = "ccgo_build/ccgo_generated";
 
 /// Handle returned after generating the verinfo files. Callers that want to
 /// feed the generated `.cc` into CMake can read `.source`.
 #[derive(Debug, Clone)]
 pub struct GeneratedVerinfo {
     /// Absolute path to the generated C header
-    /// (`cmake_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`).
+    /// (`ccgo_build/ccgo_generated/include/<verinfo_path>/verinfo_ccgo_gen.h`).
     pub header: PathBuf,
     /// Absolute path to the generated C++ source
-    /// (`cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc`).
+    /// (`ccgo_build/ccgo_generated/src/verinfo_ccgo_gen.cc`).
     pub source: PathBuf,
     /// The full VERIDENTITY string that was embedded (for logging).
     pub identity: String,
 }
 
 /// Generate `verinfo_ccgo_gen.h` + `verinfo_ccgo_gen.cc` under
-/// `<project_root>/cmake_build/ccgo_generated/`. The CMake template picks
+/// `<project_root>/ccgo_build/ccgo_generated/`. The CMake template picks
 /// the generated `.cc` up via `list(APPEND SELF_SRC_FILES ...)` guarded by
 /// `if(EXISTS ...)`.
 ///
 /// * `project_root` — absolute project directory.
 /// * `header_include_subdir` — value of `[build].verinfo_path`. Controls
 ///   the `#include` namespace of the generated header, e.g. `"stdcomm/base/"`
-///   produces `cmake_build/ccgo_generated/include/stdcomm/base/verinfo_ccgo_gen.h`
+///   produces `ccgo_build/ccgo_generated/include/stdcomm/base/verinfo_ccgo_gen.h`
 ///   which project code can pull in via
 ///   `#include "stdcomm/base/verinfo_ccgo_gen.h"`.
 /// * `project_name` — used for the `<PROJECT>_CCGO_PROJECT_VERIDENTITY`
@@ -277,13 +277,13 @@ mod tests {
         )
         .unwrap();
 
-        // Files land under cmake_build/ccgo_generated/, not in the source tree.
+        // Files land under ccgo_build/ccgo_generated/, not in the source tree.
         let expected_header = tmp
             .path()
-            .join("cmake_build/ccgo_generated/include/foo/base/verinfo_ccgo_gen.h");
+            .join("ccgo_build/ccgo_generated/include/foo/base/verinfo_ccgo_gen.h");
         let expected_source = tmp
             .path()
-            .join("cmake_build/ccgo_generated/src/verinfo_ccgo_gen.cc");
+            .join("ccgo_build/ccgo_generated/src/verinfo_ccgo_gen.cc");
         assert_eq!(out.header, expected_header);
         assert_eq!(out.source, expected_source);
         assert!(out.header.is_file());
