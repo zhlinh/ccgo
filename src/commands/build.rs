@@ -458,9 +458,63 @@ pub struct BuildCommand {
     /// Mutually exclusive with `--asan`.
     #[arg(long, conflicts_with = "asan", verbatim_doc_comment)]
     pub tsan: bool,
+
+    /// Skip automatic dependency fetching before build.
+    ///
+    /// By default, `ccgo build` automatically runs `ccgo fetch` when any declared
+    /// dependency is missing from `.ccgo/deps/`. Pass `--no-fetch` to disable this
+    /// behaviour (e.g. in CI where dependencies are pre-installed).
+    #[arg(long)]
+    pub no_fetch: bool,
 }
 
 impl BuildCommand {
+    /// Run `ccgo fetch` for a project directory if any declared deps are missing.
+    ///
+    /// Mirrors cargo's behaviour: dependencies are resolved and downloaded
+    /// automatically on `cargo build` without a separate `cargo fetch` step.
+    fn auto_fetch_if_needed(
+        project_root: &std::path::Path,
+        config: &CcgoConfig,
+        verbose: bool,
+    ) -> Result<()> {
+        use crate::commands::fetch::FetchCommand;
+
+        let missing: Vec<&str> = config
+            .dependencies
+            .iter()
+            .filter(|dep| {
+                !project_root
+                    .join(".ccgo/deps")
+                    .join(&dep.name)
+                    .exists()
+            })
+            .map(|dep| dep.name.as_str())
+            .collect();
+
+        if missing.is_empty() {
+            return Ok(());
+        }
+
+        eprintln!(
+            "📦 Missing dependencies: {}. Running ccgo fetch...",
+            missing.join(", ")
+        );
+
+        FetchCommand {
+            dependency: None,
+            force: false,
+            platform: None,
+            clean_cache: false,
+            copy: false,
+            locked: false,
+            conflict_strategy: crate::commands::fetch::ConflictStrategy::default(),
+            workspace: false,
+            package: None,
+        }
+        .execute(verbose)
+    }
+
     /// Check if a platform can be built natively on the current host
     fn can_build_natively(target: &BuildTarget) -> bool {
         let host_os = std::env::consts::OS;
@@ -762,6 +816,10 @@ impl BuildCommand {
         let project_root = current_dir;
         let package = config.require_package()?.clone();
 
+        if !self.no_fetch {
+            Self::auto_fetch_if_needed(&project_root, &config, verbose)?;
+        }
+
         crate::utils::ide::update_ide_ignores(&project_root, config.build_dir_name())?;
 
         if verbose {
@@ -922,6 +980,10 @@ impl BuildCommand {
         let config_path = member_path.join("CCGO.toml");
         let config = CcgoConfig::load_from(&config_path)?;
         let package = config.require_package()?.clone();
+
+        if !self.no_fetch {
+            Self::auto_fetch_if_needed(&member_path, &config, verbose)?;
+        }
 
         let options = self.create_build_options(verbose)?;
         let options = Self::apply_profile_scalars(options, &config, self)?;

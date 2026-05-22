@@ -649,10 +649,12 @@ impl FetchCommand {
             println!("   Downloading {} archive...", fmt);
             Self::download_zip(zip_source)?
         } else {
-            let local_path = if Path::new(zip_source).is_absolute() {
-                PathBuf::from(zip_source)
+            // Strip optional file:// scheme, then resolve absolute vs relative.
+            let path_str = zip_source.strip_prefix("file://").unwrap_or(zip_source);
+            let local_path = if Path::new(path_str).is_absolute() {
+                PathBuf::from(path_str)
             } else {
-                project_dir.join(zip_source)
+                project_dir.join(path_str)
             };
             if !local_path.exists() {
                 anyhow::bail!("Archive file not found: {}", local_path.display());
