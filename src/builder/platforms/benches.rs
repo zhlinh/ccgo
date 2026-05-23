@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 
 /// Benches platform builder
 pub struct BenchesBuilder {}

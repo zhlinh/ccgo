@@ -9,14 +9,14 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{
+use crate::builder::archive::{
     get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_OBJ, ARCHIVE_DIR_SHARED,
     ARCHIVE_DIR_STATIC,
 };
-use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::toolchains::openwrt::{OpenwrtArch, OpenwrtToolchain};
-use crate::build::toolchains::Toolchain;
-use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::builder::cmake::{BuildType, CMakeConfig};
+use crate::builder::toolchains::openwrt::{OpenwrtArch, OpenwrtToolchain};
+use crate::builder::toolchains::Toolchain;
+use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
 /// OpenWrt platform builder
@@ -242,7 +242,7 @@ impl PlatformBuilder for OpenwrtBuilder {
     }
 
     fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
-        if !crate::build::cmake::is_cmake_available() {
+        if !crate::builder::cmake::is_cmake_available() {
             bail!("CMake is required for OpenWrt builds. Please install CMake.");
         }
 

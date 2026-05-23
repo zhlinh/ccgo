@@ -8,11 +8,11 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{get_unified_include_path, ArchiveBuilder};
-use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::toolchains::ohos::{OhosAbi, OhosSdkToolchain, DEFAULT_MIN_SDK_VERSION};
-use crate::build::toolchains::Toolchain;
-use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::builder::archive::{get_unified_include_path, ArchiveBuilder};
+use crate::builder::cmake::{BuildType, CMakeConfig};
+use crate::builder::toolchains::ohos::{OhosAbi, OhosSdkToolchain, DEFAULT_MIN_SDK_VERSION};
+use crate::builder::toolchains::Toolchain;
+use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
 /// OHOS platform builder
@@ -658,7 +658,7 @@ impl PlatformBuilder for OhosBuilder {
 
     fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
         // Check for CMake
-        if !crate::build::cmake::is_cmake_available() {
+        if !crate::builder::cmake::is_cmake_available() {
             bail!("CMake is required for OHOS builds. Please install CMake.");
         }
 

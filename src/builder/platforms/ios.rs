@@ -1,41 +1,53 @@
-//! macOS platform builder
+//! iOS platform builder
 //!
-//! Builds static and dynamic frameworks for macOS using CMake with Clang.
-//! Supports universal binaries (x86_64 + arm64) via lipo.
+//! Builds XCFrameworks for iOS using CMake with Xcode toolchain.
+//! Supports device (arm64) and simulator (arm64, x86_64) architectures.
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{
+use crate::builder::archive::{
     get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_FRAMEWORKS, ARCHIVE_DIR_SHARED,
     ARCHIVE_DIR_STATIC,
 };
-use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::toolchains::xcode::{ApplePlatform, XcodeToolchain};
+use crate::builder::cmake::{BuildType, CMakeConfig};
+use crate::builder::toolchains::xcode::{ApplePlatform, XcodeToolchain};
 #[cfg(target_os = "macos")]
-use crate::build::toolchains::Toolchain;
-use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::builder::toolchains::Toolchain;
+use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
-/// macOS platform builder
-pub struct MacosBuilder {
-    /// Xcode toolchain (lazily initialized)
-    xcode: Option<XcodeToolchain>,
+/// iOS build target (device or simulator)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IosTarget {
+    Device,
+    Simulator,
 }
 
-impl MacosBuilder {
-    pub fn new() -> Self {
-        Self { xcode: None }
+impl IosTarget {
+    fn platform(&self) -> ApplePlatform {
+        match self {
+            IosTarget::Device => ApplePlatform::IOS,
+            IosTarget::Simulator => ApplePlatform::IOSSimulator,
+        }
     }
 
-    /// Get or detect Xcode toolchain
-    fn get_xcode(&mut self) -> Result<&XcodeToolchain> {
-        if self.xcode.is_none() {
-            self.xcode = Some(XcodeToolchain::detect()?);
+    fn name(&self) -> &str {
+        match self {
+            IosTarget::Device => "device",
+            IosTarget::Simulator => "simulator",
         }
-        Ok(self.xcode.as_ref().unwrap())
+    }
+}
+
+/// iOS platform builder
+pub struct IosBuilder;
+
+impl IosBuilder {
+    pub fn new() -> Self {
+        Self
     }
 
     /// Merge all module static libraries into a single library
@@ -112,22 +124,74 @@ impl MacosBuilder {
         Ok(())
     }
 
-    /// Build for a single architecture
-    /// Returns the build directory where output is located (not install_dir, since CCGO cmake uses "out/")
-    fn build_arch(
+    /// Merge third-party static libraries (e.g. libzstd.a from cmake build root)
+    /// into the main merged library so the output is self-contained.
+    fn merge_third_party_static_libs(
+        &self,
+        xcode: &XcodeToolchain,
+        build_dir: &PathBuf,
+        lib_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        let out_dir = build_dir.join("out");
+        let main_lib_path = out_dir.join(format!("lib{}.a", lib_name));
+        if !main_lib_path.exists() {
+            return Ok(());
+        }
+        let placeholder_name = format!("lib{}.a", lib_name);
+        let mut third_party_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(build_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        let fname = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_str()
+                            .unwrap_or_default();
+                        if fname != placeholder_name {
+                            third_party_libs.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        if third_party_libs.is_empty() {
+            return Ok(());
+        }
+        if verbose {
+            eprintln!(
+                "    Merging {} third-party libs into {}",
+                third_party_libs.len(),
+                placeholder_name
+            );
+        }
+        let mut all_libs = vec![main_lib_path.clone()];
+        all_libs.extend(third_party_libs);
+        xcode.merge_static_libs(&all_libs, &main_lib_path)?;
+        Ok(())
+    }
+
+    /// Build for a single target (device or simulator) and architecture
+    fn build_target_arch(
         &self,
         ctx: &BuildContext,
         xcode: &XcodeToolchain,
+        target: IosTarget,
         arch: &str,
         link_type: &str,
     ) -> Result<PathBuf> {
-        let build_dir = ctx.cmake_build_dir.join(format!("{}/{}", link_type, arch));
+        let build_dir =
+            ctx.cmake_build_dir
+                .join(format!("{}/{}/{}", link_type, target.name(), arch));
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
 
-        // Get macOS SDK path and CMake variables
-        let cmake_vars = xcode.cmake_variables_for_platform(ApplePlatform::MacOS)?;
+        // Get iOS SDK path and CMake variables
+        let cmake_vars = xcode.cmake_variables_for_platform(target.platform())?;
 
         // Configure and build with CMake
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
@@ -145,6 +209,7 @@ impl MacosBuilder {
             )
             .variable("CCGO_LIB_NAME", ctx.lib_name())
             .variable("CMAKE_OSX_ARCHITECTURES", arch)
+            .variable("CMAKE_SYSTEM_NAME", "iOS")
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
@@ -156,7 +221,6 @@ impl MacosBuilder {
         // Add SDK-related variables
         for (name, value) in cmake_vars {
             if name != "CMAKE_OSX_ARCHITECTURES" {
-                // Skip archs, we set it above
                 cmake = cmake.variable(&name, &value);
             }
         }
@@ -190,27 +254,12 @@ impl MacosBuilder {
             cmake = cmake.compiler_cache(cache);
         }
 
-        // Resolve and pass per-dep linkage as a semicolon-separated list of
-        // <NAME>=<VALUE> pairs. CMake parses this in FindCCGODependencies.cmake
-        // to populate CCGO_DEPENDENCY_<NAME>_LINKAGE for each dep, which then
-        // drives the choice between target_link_libraries(... shared) and
-        // target_link_libraries(... static) per dep.
-        let linkages = ctx.resolved_dep_linkages(self.platform_name())?;
-        if !linkages.is_empty() {
-            let linkages_val = linkages
-                .iter()
-                .map(|(name, l)| format!("{name}={l}"))
-                .collect::<Vec<_>>()
-                .join(";");
-            cmake = cmake.variable("CCGO_DEPENDENCY_LINKAGES", linkages_val);
-        }
-
-        let user = ctx.cmake_user_config("macos");
+        let user = ctx.cmake_user_config("ios");
         cmake = cmake
             .user_arguments(user.arguments)
             .user_c_flags(user.c_flags)
             .user_cpp_flags(user.cpp_flags)
-            .user_cmake_files(ctx.cmake_user_files("macos"));
+            .user_cmake_files(ctx.cmake_user_files("ios"));
 
         cmake.configure_build_install()?;
 
@@ -228,84 +277,6 @@ impl MacosBuilder {
 
         // Return build_dir since CCGO cmake installs to build_dir/out/
         Ok(build_dir)
-    }
-
-    /// Merge third-party static libs from cmake build root into the merged module library.
-    /// cmake installs third-party libs (e.g. libzstd.a, libboost*.a) directly into the
-    /// build_dir root. This ensures the final xcframework .a is fully self-contained.
-    fn merge_third_party_static_libs(
-        &self,
-        xcode: &XcodeToolchain,
-        build_dir: &PathBuf,
-        lib_name: &str,
-        verbose: bool,
-    ) -> Result<()> {
-        let out_dir = build_dir.join("out");
-        let main_lib_path = out_dir.join(format!("lib{}.a", lib_name));
-        if !main_lib_path.exists() {
-            return Ok(());
-        }
-
-        // Collect third-party .a files from build_dir root (not the placeholder main lib)
-        let placeholder_name = format!("lib{}.a", lib_name);
-        let mut third_party_libs: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(build_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "a" {
-                        let fname = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_str()
-                            .unwrap_or_default();
-                        // Skip the placeholder main lib (which is near-empty)
-                        if fname != placeholder_name {
-                            third_party_libs.push(path);
-                        }
-                    }
-                }
-            }
-        }
-
-        if third_party_libs.is_empty() {
-            return Ok(());
-        }
-
-        if verbose {
-            eprintln!(
-                "    Merging {} third-party libs into lib{}.a",
-                third_party_libs.len(),
-                lib_name
-            );
-        }
-
-        // Merge third-party libs into the already-merged main lib
-        let mut all_libs = vec![main_lib_path.clone()];
-        all_libs.extend(third_party_libs);
-        xcode.merge_static_libs(&all_libs, &main_lib_path)?;
-
-        Ok(())
-    }
-
-    /// Create universal binary from multiple architectures using lipo
-    fn create_universal_binary(
-        &self,
-        xcode: &XcodeToolchain,
-        arch_libs: &[(String, PathBuf)], // (arch, lib_path)
-        output: &PathBuf,
-    ) -> Result<()> {
-        if arch_libs.len() == 1 {
-            // Only one architecture, just copy
-            std::fs::copy(&arch_libs[0].1, output)?;
-            return Ok(());
-        }
-
-        let lib_paths: Vec<PathBuf> = arch_libs.iter().map(|(_, p)| p.clone()).collect();
-        xcode.create_universal_binary(&lib_paths, output)?;
-
-        Ok(())
     }
 
     /// Find library files in install directory
@@ -353,47 +324,73 @@ impl MacosBuilder {
         Ok(libs)
     }
 
-    /// Build a specific link type for all architectures
-    fn build_link_type(
-        &mut self,
-        ctx: &BuildContext,
-        link_type: &str,
-        architectures: &[String],
-    ) -> Result<PathBuf> {
-        let xcode = XcodeToolchain::detect()?;
+    /// Create universal binary from multiple architectures using lipo
+    fn create_universal_binary(
+        &self,
+        xcode: &XcodeToolchain,
+        arch_libs: &[PathBuf],
+        output: &PathBuf,
+    ) -> Result<()> {
+        if arch_libs.len() == 1 {
+            std::fs::copy(&arch_libs[0], output)?;
+            return Ok(());
+        }
 
+        xcode.create_universal_binary(arch_libs, output)?;
+        Ok(())
+    }
+
+    /// Build for a specific link type
+    fn build_link_type(
+        &self,
+        ctx: &BuildContext,
+        xcode: &XcodeToolchain,
+        link_type: &str,
+    ) -> Result<(PathBuf, PathBuf)> {
+        // (device_lib, simulator_lib)
         if ctx.options.verbose {
-            eprintln!("Building {} library for macOS...", link_type);
+            eprintln!("Building {} library for iOS...", link_type);
         }
 
         let is_shared = link_type == "shared";
 
-        // Build each architecture
-        let mut arch_results: Vec<(String, PathBuf)> = Vec::new();
-        for arch in architectures {
+        // Build device (arm64)
+        if ctx.options.verbose {
+            eprintln!("  Building for device (arm64)...");
+        }
+        let device_install =
+            self.build_target_arch(ctx, xcode, IosTarget::Device, "arm64", link_type)?;
+
+        // Build simulator architectures
+        let sim_archs = vec!["arm64", "x86_64"];
+        let mut sim_arch_installs: Vec<(String, PathBuf)> = Vec::new();
+
+        for arch in &sim_archs {
             if ctx.options.verbose {
-                eprintln!("  Building for {}...", arch);
+                eprintln!("  Building for simulator ({})...", arch);
             }
-            let install_dir = self.build_arch(ctx, &xcode, arch, link_type)?;
-            arch_results.push((arch.clone(), install_dir));
+            let install =
+                self.build_target_arch(ctx, xcode, IosTarget::Simulator, arch, link_type)?;
+            sim_arch_installs.push((arch.to_string(), install));
         }
 
-        // Create universal output directory
-        let universal_dir = ctx.cmake_build_dir.join(format!("{}/universal", link_type));
-        let universal_lib_dir = universal_dir.join("lib");
-        std::fs::create_dir_all(&universal_lib_dir)?;
+        // Create universal simulator library
+        let sim_universal_dir = ctx
+            .cmake_build_dir
+            .join(format!("{}/simulator-universal", link_type));
+        let sim_lib_dir = sim_universal_dir.join("lib");
+        std::fs::create_dir_all(&sim_lib_dir)?;
 
-        // Find and merge libraries for each architecture
-        let first_install = &arch_results[0].1;
-        let libs = self.find_libraries(first_install, is_shared)?;
+        // Find and merge simulator libraries
+        let first_sim_install = &sim_arch_installs[0].1;
+        let libs = self.find_libraries(first_sim_install, is_shared)?;
 
         for lib in &libs {
             let lib_name = lib.file_name().unwrap().to_str().unwrap();
-            let output_path = universal_lib_dir.join(lib_name);
+            let output_path = sim_lib_dir.join(lib_name);
 
-            // Collect the same library from each architecture
-            let mut arch_libs: Vec<(String, PathBuf)> = Vec::new();
-            for (arch, install_dir) in &arch_results {
+            let mut arch_libs: Vec<PathBuf> = Vec::new();
+            for (_, install_dir) in &sim_arch_installs {
                 // Check multiple possible locations
                 let possible_paths = vec![
                     install_dir.join("lib").join(lib_name),
@@ -402,25 +399,25 @@ impl MacosBuilder {
                 ];
                 for arch_lib in possible_paths {
                     if arch_lib.exists() {
-                        arch_libs.push((arch.clone(), arch_lib));
+                        arch_libs.push(arch_lib);
                         break;
                     }
                 }
             }
 
             if !arch_libs.is_empty() {
-                self.create_universal_binary(&xcode, &arch_libs, &output_path)?;
+                self.create_universal_binary(xcode, &arch_libs, &output_path)?;
             }
         }
 
-        // Copy include files from first architecture
-        let include_src = first_install.join("include");
-        let include_dst = universal_dir.join("include");
+        // Copy include files
+        let include_src = first_sim_install.join("include");
+        let include_dst = sim_universal_dir.join("include");
         if include_src.exists() {
             copy_dir_all(&include_src, &include_dst)?;
         }
 
-        Ok(universal_dir)
+        Ok((device_install, sim_universal_dir))
     }
 
     /// Find library directory, checking multiple possible locations
@@ -443,7 +440,86 @@ impl MacosBuilder {
         None
     }
 
-    /// Generate Xcode IDE project for macOS
+    /// Create XCFramework from device and simulator libraries
+    fn create_xcframework(
+        &self,
+        xcode: &XcodeToolchain,
+        device_lib: &PathBuf,
+        simulator_lib: &PathBuf,
+        output: &PathBuf,
+        is_shared: bool,
+        lib_name: &str,
+    ) -> Result<()> {
+        // Remove existing XCFramework if present
+        if output.exists() {
+            std::fs::remove_dir_all(output)?;
+        }
+
+        let extension = if is_shared { "dylib" } else { "a" };
+
+        // Main library filename to look for (e.g., "libccgonow.dylib" or "libccgonow.a")
+        let main_lib_name = format!("lib{}.{}", lib_name, extension);
+
+        // Find the library directories (check multiple possible locations)
+        let device_lib_dir = self
+            .find_lib_dir(device_lib)
+            .ok_or_else(|| anyhow::anyhow!("Device library directory not found"))?;
+        let sim_lib_dir = self
+            .find_lib_dir(simulator_lib)
+            .ok_or_else(|| anyhow::anyhow!("Simulator library directory not found"))?;
+
+        let mut inputs: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
+
+        // Find device library - prefer main library with exact name match
+        let device_main_lib = device_lib_dir.join(&main_lib_name);
+        if device_main_lib.exists() {
+            inputs.push((device_main_lib, None));
+        } else {
+            // Fallback: find first library with matching extension
+            for entry in std::fs::read_dir(&device_lib_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension() {
+                        if ext == extension {
+                            inputs.push((path, None));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Find simulator library - prefer main library with exact name match
+        let sim_main_lib = sim_lib_dir.join(&main_lib_name);
+        if sim_main_lib.exists() {
+            inputs.push((sim_main_lib, None));
+        } else {
+            // Fallback: find first library with matching extension
+            for entry in std::fs::read_dir(&sim_lib_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension() {
+                        if ext == extension {
+                            inputs.push((path, None));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if inputs.is_empty() {
+            bail!("No libraries found to create XCFramework");
+        }
+
+        xcode.create_xcframework(&inputs, output)?;
+
+        Ok(())
+    }
+
+    /// Generate Xcode IDE project for iOS
     pub fn generate_ide_project(&self, ctx: &BuildContext) -> Result<BuildResult> {
         use std::process::Command;
 
@@ -460,29 +536,15 @@ impl MacosBuilder {
             .with_context(|| format!("Failed to create {}", build_dir.display()))?;
 
         eprintln!(
-            "Generating Xcode project for macOS in {}...",
+            "Generating Xcode project for iOS in {}...",
             build_dir.display()
         );
 
-        // Get compiler paths from Xcode using xcrun
-        let cc_output = Command::new("xcrun")
-            .args(["--find", "clang"])
-            .output()
-            .context("Failed to find clang via xcrun")?;
-        let cc = String::from_utf8_lossy(&cc_output.stdout)
-            .trim()
-            .to_string();
-
-        let cxx_output = Command::new("xcrun")
-            .args(["--find", "clang++"])
-            .output()
-            .context("Failed to find clang++ via xcrun")?;
-        let cxx = String::from_utf8_lossy(&cxx_output.stdout)
-            .trim()
-            .to_string();
+        // Detect Xcode toolchain
+        let xcode = XcodeToolchain::detect()?;
+        let cmake_vars = xcode.cmake_variables_for_platform(ApplePlatform::IOS)?;
 
         // Configure with CMake using Xcode generator
-        // For macOS native builds, let Xcode handle SDK detection automatically
         let mut cmake_cmd = Command::new("cmake");
         cmake_cmd
             .arg("-S")
@@ -491,18 +553,16 @@ impl MacosBuilder {
             .arg(&build_dir)
             .arg("-G")
             .arg("Xcode")
-            // Explicitly specify compilers to avoid detection issues with Android SDK's cmake
-            .arg(format!("-DCMAKE_C_COMPILER={}", cc))
-            .arg(format!("-DCMAKE_CXX_COMPILER={}", cxx))
-            // Use static library for compiler testing - avoids code signing issues during detection
-            .arg("-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY")
-            // Disable code signing for the generated project
-            .arg("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO")
-            .arg("-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY=");
+            .arg("-DCMAKE_SYSTEM_NAME=iOS");
 
         // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake_cmd.arg(format!("-DCCGO_CMAKE_DIR={}", cmake_dir.display()));
+        }
+
+        // Add SDK-related variables
+        for (name, value) in cmake_vars {
+            cmake_cmd.arg(format!("-D{}={}", name, value));
         }
 
         // Add lib name
@@ -545,73 +605,20 @@ impl MacosBuilder {
             architectures: vec![],
         })
     }
-
-    /// Create XCFramework from universal library
-    fn create_xcframework(
-        &self,
-        xcode: &XcodeToolchain,
-        universal_dir: &PathBuf,
-        output: &PathBuf,
-        is_shared: bool,
-        lib_name: &str,
-    ) -> Result<()> {
-        // Remove existing XCFramework if present
-        if output.exists() {
-            std::fs::remove_dir_all(output)?;
-        }
-
-        let extension = if is_shared { "dylib" } else { "a" };
-
-        // Main library filename to look for (e.g., "libccgonow.dylib" or "libccgonow.a")
-        let main_lib_name = format!("lib{}.{}", lib_name, extension);
-
-        // Find the library directory (check multiple possible locations)
-        let lib_dir = self
-            .find_lib_dir(universal_dir)
-            .ok_or_else(|| anyhow::anyhow!("Universal library directory not found"))?;
-
-        // Find main library - prefer exact name match
-        let main_lib = lib_dir.join(&main_lib_name);
-        if !main_lib.exists() {
-            // Fallback: find first library with matching extension
-            let mut found = false;
-            for entry in std::fs::read_dir(&lib_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == extension {
-                            // Use first matching library
-                            xcode.create_xcframework(&[(path, None)], output)?;
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if !found {
-                bail!(
-                    "Main library {} not found in {}",
-                    main_lib_name,
-                    lib_dir.display()
-                );
-            }
-        } else {
-            // Create XCFramework with main library
-            xcode.create_xcframework(&[(main_lib, None)], output)?;
-        }
-
-        Ok(())
-    }
 }
 
-impl PlatformBuilder for MacosBuilder {
+impl PlatformBuilder for IosBuilder {
     fn platform_name(&self) -> &str {
-        "macos"
+        "ios"
     }
 
     fn default_architectures(&self) -> Vec<String> {
-        vec!["x86_64".to_string(), "arm64".to_string()]
+        // iOS builds are organized by target, not individual architectures
+        vec![
+            "arm64".to_string(),            // Device
+            "arm64-simulator".to_string(),  // Simulator (Apple Silicon)
+            "x86_64-simulator".to_string(), // Simulator (Intel)
+        ]
     }
 
     fn validate_prerequisites(&self, _ctx: &BuildContext) -> Result<()> {
@@ -619,10 +626,10 @@ impl PlatformBuilder for MacosBuilder {
         #[cfg(not(target_os = "macos"))]
         {
             bail!(
-                "macOS builds can only be run on macOS systems.\n\
+                "iOS builds can only be run on macOS systems.\n\
                  Current OS: {}\n\n\
-                 To build for macOS from your current OS, use Docker:\n  \
-                 ccgo build macos --docker",
+                 To build for iOS from your current OS, use Docker:\n  \
+                 ccgo build ios --docker",
                 std::env::consts::OS
             );
         }
@@ -631,21 +638,30 @@ impl PlatformBuilder for MacosBuilder {
         #[cfg(target_os = "macos")]
         {
             // Check for CMake
-            if !crate::build::cmake::is_cmake_available() {
-                bail!("CMake is required for macOS builds. Please install CMake.");
+            if !crate::builder::cmake::is_cmake_available() {
+                bail!("CMake is required for iOS builds. Please install CMake.");
             }
 
             // Check for Xcode
             let xcode = XcodeToolchain::detect()
-                .context("Xcode is required for macOS builds. Please install Xcode.")?;
+                .context("Xcode is required for iOS builds. Please install Xcode.")?;
 
             xcode.validate()?;
+
+            // Verify iOS SDK is available
+            xcode.sdk_path(ApplePlatform::IOS)?;
+            xcode.sdk_path(ApplePlatform::IOSSimulator)?;
 
             if _ctx.options.verbose {
                 eprintln!(
                     "Using Xcode {} (build {})",
                     xcode.version(),
                     xcode.build_version()
+                );
+                eprintln!("  iOS SDK: {}", xcode.sdk_version(ApplePlatform::IOS)?);
+                eprintln!(
+                    "  iOS Simulator SDK: {}",
+                    xcode.sdk_version(ApplePlatform::IOSSimulator)?
                 );
             }
 
@@ -661,27 +677,19 @@ impl PlatformBuilder for MacosBuilder {
 
         let start = Instant::now();
 
-        // Create a mutable copy for building
-        let mut builder = MacosBuilder::new();
-
         // Validate prerequisites first
-        builder.validate_prerequisites(ctx)?;
+        self.validate_prerequisites(ctx)?;
+
+        let xcode = XcodeToolchain::detect()?;
 
         if ctx.options.verbose {
-            eprintln!("Building {} for macOS...", ctx.lib_name());
+            eprintln!("Building {} for iOS...", ctx.lib_name());
         }
 
         // Source-only deps: ensure they have artifacts before we compose link lines.
         // (Skips deps whose fingerprint matches and whose lib/<platform>/ already
         // has artifacts on disk; spawns `ccgo build` recursively otherwise.)
         ctx.materialize_source_deps(self.platform_name())?;
-
-        // Determine architectures to build
-        let architectures = if ctx.options.architectures.is_empty() {
-            self.default_architectures()
-        } else {
-            ctx.options.architectures.clone()
-        };
 
         // Create output directory
         std::fs::create_dir_all(&ctx.output_dir)?;
@@ -692,7 +700,7 @@ impl PlatformBuilder for MacosBuilder {
             ctx.version(),
             ctx.publish_suffix(),
             ctx.options.release,
-            "macos",
+            "ios",
             ctx.output_dir.clone(),
         )?;
 
@@ -700,23 +708,21 @@ impl PlatformBuilder for MacosBuilder {
 
         // Build static libraries and create XCFramework
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
-            let universal_dir = builder.build_link_type(ctx, "static", &architectures)?;
-
-            // Get Xcode for XCFramework creation
-            let xcode = XcodeToolchain::detect()?;
+            let (device_dir, sim_dir) = self.build_link_type(ctx, &xcode, "static")?;
 
             // Create XCFramework
             let xcframework_path = ctx.cmake_build_dir.join("static/xcframework");
             let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(
+            self.create_xcframework(
                 &xcode,
-                &universal_dir,
+                &device_dir,
+                &sim_dir,
                 &xcframework,
                 false,
                 ctx.lib_name(),
             )?;
 
-            // Add to archive: frameworks/macos/static/{lib_name}.xcframework
+            // Add to archive: lib/ios/static/{lib_name}.xcframework
             if xcframework.exists() {
                 let archive_path = format!(
                     "{}/{}/{}/{}.xcframework",
@@ -732,23 +738,21 @@ impl PlatformBuilder for MacosBuilder {
 
         // Build shared libraries and create XCFramework
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-            let universal_dir = builder.build_link_type(ctx, "shared", &architectures)?;
-
-            // Get Xcode for XCFramework creation
-            let xcode = XcodeToolchain::detect()?;
+            let (device_dir, sim_dir) = self.build_link_type(ctx, &xcode, "shared")?;
 
             // Create XCFramework
             let xcframework_path = ctx.cmake_build_dir.join("shared/xcframework");
             let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(
+            self.create_xcframework(
                 &xcode,
-                &universal_dir,
+                &device_dir,
+                &sim_dir,
                 &xcframework,
                 true,
                 ctx.lib_name(),
             )?;
 
-            // Add to archive: frameworks/macos/shared/{lib_name}.xcframework
+            // Add to archive: lib/ios/shared/{lib_name}.xcframework
             if xcframework.exists() {
                 let archive_path = format!(
                     "{}/{}/{}/{}.xcframework",
@@ -777,6 +781,11 @@ impl PlatformBuilder for MacosBuilder {
         }
 
         // Create the SDK archive
+        let architectures = vec![
+            "arm64".to_string(),
+            "arm64-simulator".to_string(),
+            "x86_64-simulator".to_string(),
+        ];
         let link_type_str = ctx.options.link_type.to_string();
         let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
 
@@ -784,7 +793,7 @@ impl PlatformBuilder for MacosBuilder {
 
         if ctx.options.verbose {
             eprintln!(
-                "macOS build completed in {:.2}s: {}",
+                "iOS build completed in {:.2}s: {}",
                 duration.as_secs_f64(),
                 sdk_archive.display()
             );
@@ -801,12 +810,12 @@ impl PlatformBuilder for MacosBuilder {
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean all profile variants under ccgo_build/
-        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "macos")?;
+        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "ios")?;
 
         // Clean old cmake_build/ structure for backwards compatibility with Python ccgo
         for old_dir in &[
-            ctx.project_root.join("cmake_build/macOS"),
-            ctx.project_root.join("cmake_build/macos"),
+            ctx.project_root.join("cmake_build/iOS"),
+            ctx.project_root.join("cmake_build/ios"),
         ] {
             if old_dir.exists() {
                 std::fs::remove_dir_all(old_dir)
@@ -816,12 +825,12 @@ impl PlatformBuilder for MacosBuilder {
 
         // Clean target directories
         for old_dir in &[
-            ctx.project_root.join("target/release/macos"),
-            ctx.project_root.join("target/debug/macos"),
-            ctx.project_root.join("target/release/macOS"),
-            ctx.project_root.join("target/debug/macOS"),
-            ctx.project_root.join("target/macos"),
-            ctx.project_root.join("target/macOS"),
+            ctx.project_root.join("target/release/ios"),
+            ctx.project_root.join("target/debug/ios"),
+            ctx.project_root.join("target/release/iOS"),
+            ctx.project_root.join("target/debug/iOS"),
+            ctx.project_root.join("target/ios"),
+            ctx.project_root.join("target/iOS"),
         ] {
             if old_dir.exists() {
                 std::fs::remove_dir_all(old_dir)
@@ -833,7 +842,7 @@ impl PlatformBuilder for MacosBuilder {
     }
 }
 
-impl Default for MacosBuilder {
+impl Default for IosBuilder {
     fn default() -> Self {
         Self::new()
     }

@@ -9,8 +9,8 @@ use std::time::Instant;
 use anyhow::Result;
 use clap::Args;
 
-use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::BuildContext;
+use crate::builder::cmake::{BuildType, CMakeConfig};
+use crate::builder::BuildContext;
 use crate::config::CcgoConfig;
 
 /// Check compilation without generating binaries
@@ -47,7 +47,7 @@ impl CheckCommand {
         let start = Instant::now();
 
         // Create a minimal BuildOptions for BuildContext
-        let options = crate::build::BuildOptions {
+        let options = crate::builder::BuildOptions {
             target: crate::commands::build::BuildTarget::Macos, // host platform for check
             architectures: Vec::new(),
             link_type: crate::commands::build::LinkType::Static,
@@ -67,7 +67,7 @@ impl CheckCommand {
             analytics: false,
             linkage_default: None,
             linkage_overrides: std::collections::HashMap::new(),
-            ..crate::build::BuildOptions::default()
+            ..crate::builder::BuildOptions::default()
         };
 
         let ctx = BuildContext::new(current_dir.clone(), config.clone(), options);

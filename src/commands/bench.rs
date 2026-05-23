@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::Args;
 
-use crate::build::platforms::benches::BenchesBuilder;
-use crate::build::{BuildContext, BuildOptions, PlatformBuilder};
+use crate::builder::platforms::benches::BenchesBuilder;
+use crate::builder::{BuildContext, BuildOptions, PlatformBuilder};
 use crate::commands::build::{BuildTarget, LinkType, WindowsToolchain};
 use crate::config::CcgoConfig;
 use crate::testing::benchmark::{BenchmarkStore, ComparisonReport};
@@ -110,9 +110,9 @@ impl BenchCommand {
         let project_root = std::env::current_dir()?;
 
         let sanitizer = if self.asan {
-            Some(crate::build::sanitizer::SanitizerKind::Address)
+            Some(crate::builder::sanitizer::SanitizerKind::Address)
         } else if self.tsan {
-            Some(crate::build::sanitizer::SanitizerKind::Thread)
+            Some(crate::builder::sanitizer::SanitizerKind::Thread)
         } else {
             None
         };

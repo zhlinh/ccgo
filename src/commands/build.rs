@@ -5,12 +5,12 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use clap::{Args, ValueEnum};
 
-use crate::build::analytics::{
+use crate::builder::analytics::{
     count_files, get_artifact_size, get_cache_stats, BuildAnalytics, CacheStats, FileStats,
 };
-use crate::build::archive::{create_build_info_full, print_build_info_json};
-use crate::build::platforms::{build_all, build_apple, get_builder};
-use crate::build::{BuildContext, BuildOptions, BuildResult};
+use crate::builder::archive::{create_build_info_full, print_build_info_json};
+use crate::builder::platforms::{build_all, build_apple, get_builder};
+use crate::builder::{BuildContext, BuildOptions, BuildResult};
 use crate::config::CcgoConfig;
 use crate::workspace::{find_workspace_root, Workspace};
 
@@ -582,7 +582,7 @@ impl BuildCommand {
 
         // Apply non-mode scalars from named profile.
         if let Some(ref pname) = options.profile_name {
-            let rp = crate::build::profile::resolve_profile(pname, &config.profile)
+            let rp = crate::builder::profile::resolve_profile(pname, &config.profile)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             // release intentionally not applied — mode is CLI-only.
             if let Some(ref prof_lt) = rp.link_type {
@@ -606,7 +606,7 @@ impl BuildCommand {
         if options.profile_name.is_none() {
             if let Some(ref san) = options.sanitizer {
                 if let Ok(rp) =
-                    crate::build::profile::resolve_profile(san.name(), &config.profile)
+                    crate::builder::profile::resolve_profile(san.name(), &config.profile)
                 {
                     // release intentionally not applied — mode is CLI-only.
                     if let Some(ref prof_lt) = rp.link_type {
@@ -692,9 +692,9 @@ impl BuildCommand {
             linkage_on_static_overrides,
             profile_name: self.profile.clone(),
             sanitizer: if self.asan {
-                Some(crate::build::sanitizer::SanitizerKind::Address)
+                Some(crate::builder::sanitizer::SanitizerKind::Address)
             } else if self.tsan {
-                Some(crate::build::sanitizer::SanitizerKind::Thread)
+                Some(crate::builder::sanitizer::SanitizerKind::Thread)
             } else {
                 None
             },
@@ -708,7 +708,7 @@ impl BuildCommand {
         package: &crate::config::PackageConfig,
         verbose: bool,
     ) -> Result<()> {
-        use crate::build::docker::DockerBuilder;
+        use crate::builder::docker::DockerBuilder;
 
         match self.target {
             BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
@@ -953,7 +953,7 @@ impl BuildCommand {
     /// borrow, so we pass `&ctx` through to `execute_build_by_target`.
     fn execute_member_build(&self, ctx: BuildContext) -> Result<Vec<BuildResult>> {
         if self.should_use_docker(&self.target) {
-            use crate::build::docker::DockerBuilder;
+            use crate::builder::docker::DockerBuilder;
 
             match self.target {
                 BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
@@ -1011,13 +1011,13 @@ impl BuildCommand {
 
     /// Print archive tree for a single result
     fn print_archive_tree(result: &BuildResult) {
-        if let Err(e) = crate::build::archive::print_zip_tree(&result.sdk_archive, "      ") {
+        if let Err(e) = crate::builder::archive::print_zip_tree(&result.sdk_archive, "      ") {
             eprintln!("      Warning: Failed to print archive contents: {}", e);
         }
 
         if let Some(symbols_path) = &result.symbols_archive {
             eprintln!("\n      Symbols archive:");
-            if let Err(e) = crate::build::archive::print_zip_tree(symbols_path, "      ") {
+            if let Err(e) = crate::builder::archive::print_zip_tree(symbols_path, "      ") {
                 eprintln!(
                     "      Warning: Failed to print symbols archive contents: {}",
                     e
@@ -1032,7 +1032,7 @@ impl BuildCommand {
                 "AAR"
             };
             eprintln!("\n      {} contents:", archive_type);
-            if let Err(e) = crate::build::archive::print_zip_tree(archive_path, "      ") {
+            if let Err(e) = crate::builder::archive::print_zip_tree(archive_path, "      ") {
                 eprintln!(
                     "      Warning: Failed to print {} contents: {}",
                     archive_type, e

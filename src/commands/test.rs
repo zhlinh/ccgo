@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Args, ValueEnum};
 
-use crate::build::platforms::tests::TestsBuilder;
-use crate::build::{BuildContext, BuildOptions, PlatformBuilder};
+use crate::builder::platforms::tests::TestsBuilder;
+use crate::builder::{BuildContext, BuildOptions, PlatformBuilder};
 use crate::commands::build::{BuildTarget, LinkType, WindowsToolchain};
 use crate::config::CcgoConfig;
 use crate::testing::ci::{CiFormat, CiReporter};
@@ -135,9 +135,9 @@ impl TestCommand {
         let project_root = std::env::current_dir()?;
 
         let sanitizer = if self.asan {
-            Some(crate::build::sanitizer::SanitizerKind::Address)
+            Some(crate::builder::sanitizer::SanitizerKind::Address)
         } else if self.tsan {
-            Some(crate::build::sanitizer::SanitizerKind::Thread)
+            Some(crate::builder::sanitizer::SanitizerKind::Thread)
         } else {
             None
         };

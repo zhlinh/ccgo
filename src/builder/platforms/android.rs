@@ -13,11 +13,11 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{get_unified_include_path, ArchiveBuilder};
-use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::toolchains::android_ndk::{AndroidAbi, AndroidNdkToolchain, DEFAULT_API_LEVEL};
-use crate::build::toolchains::Toolchain;
-use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::builder::archive::{get_unified_include_path, ArchiveBuilder};
+use crate::builder::cmake::{BuildType, CMakeConfig};
+use crate::builder::toolchains::android_ndk::{AndroidAbi, AndroidNdkToolchain, DEFAULT_API_LEVEL};
+use crate::builder::toolchains::Toolchain;
+use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
 /// Android platform builder
@@ -747,7 +747,7 @@ impl PlatformBuilder for AndroidBuilder {
 
     fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
         // Check for CMake
-        if !crate::build::cmake::is_cmake_available() {
+        if !crate::builder::cmake::is_cmake_available() {
             bail!("CMake is required for Android builds. Please install CMake.");
         }
 

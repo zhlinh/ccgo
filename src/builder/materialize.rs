@@ -12,7 +12,7 @@ use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-use crate::build::linkage::{detect_dep_artifacts, DepArtifacts};
+use crate::builder::linkage::{detect_dep_artifacts, DepArtifacts};
 use crate::commands::build::LinkType;
 use crate::config::Linkage;
 

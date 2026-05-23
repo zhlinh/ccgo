@@ -8,8 +8,8 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 use clap::Args;
 
-use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::toolchains::detect_default_compiler;
+use crate::builder::cmake::{BuildType, CMakeConfig};
+use crate::builder::toolchains::detect_default_compiler;
 use crate::config::CcgoConfig;
 
 /// Target type to run

@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::build::analytics::BuildAnalytics;
+use crate::builder::analytics::BuildAnalytics;
 use crate::config::CcgoConfig;
 
 /// Build analytics and performance metrics

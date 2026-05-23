@@ -9,7 +9,7 @@
 //! Rust CLI → build/ modules → CMake/Gradle/Hvigor (direct)
 //! ```
 
-mod build;
+mod builder;
 mod cli;
 mod collection;
 mod commands;

@@ -1,4 +1,4 @@
-use crate::build::profile::{ResolvedCmake, ResolvedProfile};
+use crate::builder::profile::{ResolvedCmake, ResolvedProfile};
 
 /// Sanitizer kind for built-in --asan / --tsan flags.
 #[derive(Debug, Clone, PartialEq, Eq)]

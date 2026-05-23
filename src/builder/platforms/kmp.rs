@@ -12,8 +12,8 @@ use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::ArchiveBuilder;
-use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::builder::archive::ArchiveBuilder;
+use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 
 /// KMP platform builder
 pub struct KmpBuilder {}

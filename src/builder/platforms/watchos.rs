@@ -1,31 +1,31 @@
-//! tvOS platform builder
+//! watchOS platform builder
 //!
-//! Builds XCFrameworks for tvOS using CMake with Xcode toolchain.
-//! Supports device (arm64) and simulator (arm64) architectures.
-//! Note: tvOS Simulator no longer supports x86_64 since Xcode 14.
+//! Builds XCFrameworks for watchOS using CMake with Xcode toolchain.
+//! Supports device (arm64_32, armv7k) and simulator (arm64) architectures.
+//! Note: watchOS Simulator no longer supports x86_64 since Xcode 14.
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use crate::build::archive::{
+use crate::builder::archive::{
     get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_FRAMEWORKS, ARCHIVE_DIR_SHARED,
     ARCHIVE_DIR_STATIC,
 };
-use crate::build::cmake::{BuildType, CMakeConfig};
-use crate::build::toolchains::xcode::{ApplePlatform, XcodeToolchain};
-use crate::build::toolchains::Toolchain;
-use crate::build::{BuildContext, BuildResult, PlatformBuilder};
+use crate::builder::cmake::{BuildType, CMakeConfig};
+use crate::builder::toolchains::xcode::{ApplePlatform, XcodeToolchain};
+use crate::builder::toolchains::Toolchain;
+use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
-/// tvOS platform builder
-pub struct TvosBuilder {
+/// watchOS platform builder
+pub struct WatchosBuilder {
     /// Xcode toolchain (lazily initialized)
     xcode: Option<XcodeToolchain>,
 }
 
-impl TvosBuilder {
+impl WatchosBuilder {
     pub fn new() -> Self {
         Self { xcode: None }
     }
@@ -128,11 +128,11 @@ impl TvosBuilder {
 
         let build_shared = link_type == "shared";
 
-        // Get tvOS SDK path and CMake variables (use correct platform based on SDK type)
+        // Get watchOS SDK path and CMake variables (use correct platform based on SDK type)
         let platform = if sdk == "simulator" {
-            ApplePlatform::TvOSSimulator
+            ApplePlatform::WatchOSSimulator
         } else {
-            ApplePlatform::TvOS
+            ApplePlatform::WatchOS
         };
         let cmake_vars = xcode.cmake_variables_for_platform(platform)?;
 
@@ -271,32 +271,37 @@ impl TvosBuilder {
         let xcode = XcodeToolchain::detect()?;
 
         if ctx.options.verbose {
-            eprintln!("Building {} library for tvOS...", link_type);
+            eprintln!("Building {} library for watchOS...", link_type);
         }
 
         // Separate device and simulator architectures
         let device_archs: Vec<&str> = architectures
             .iter()
-            .filter(|a| a.as_str() == "arm64")
+            .filter(|a| a.contains("arm") && !a.contains("simulator"))
             .map(|s| s.as_str())
             .collect();
 
         let sim_archs: Vec<&str> = architectures
             .iter()
-            .filter(|a| a.contains("simulator"))
+            .filter(|a| a.contains("simulator") || a.as_str() == "x86_64")
             .map(|s| s.as_str())
             .collect();
 
         if device_archs.is_empty() {
-            bail!("No device architectures specified for tvOS");
+            bail!("No device architectures specified for watchOS");
         }
 
         if sim_archs.is_empty() {
-            bail!("No simulator architectures specified for tvOS");
+            bail!("No simulator architectures specified for watchOS");
         }
 
-        // Build device architecture (arm64)
-        let device_dir = self.build_arch(ctx, &xcode, "arm64", link_type, "device")?;
+        // Build device architecture (arm64_32 or armv7k)
+        let device_arch = if device_archs.contains(&"arm64_32") {
+            "arm64_32"
+        } else {
+            "armv7k"
+        };
+        let device_dir = self.build_arch(ctx, &xcode, device_arch, link_type, "device")?;
 
         // Build simulator architecture (x86_64 or arm64)
         let sim_arch = if sim_archs.contains(&"arm64-simulator") {
@@ -310,25 +315,25 @@ impl TvosBuilder {
     }
 }
 
-impl PlatformBuilder for TvosBuilder {
+impl PlatformBuilder for WatchosBuilder {
     fn platform_name(&self) -> &str {
-        "tvos"
+        "watchos"
     }
 
     fn default_architectures(&self) -> Vec<String> {
-        // tvOS Simulator only supports arm64 (Apple Silicon) since Xcode 14
-        vec!["arm64".to_string(), "arm64-simulator".to_string()]
+        // watchOS Simulator only supports arm64 (Apple Silicon) since Xcode 14
+        vec!["arm64_32".to_string(), "arm64-simulator".to_string()]
     }
 
     fn validate_prerequisites(&self, ctx: &BuildContext) -> Result<()> {
         // Check for CMake
-        if !crate::build::cmake::is_cmake_available() {
-            bail!("CMake is required for tvOS builds. Please install CMake.");
+        if !crate::builder::cmake::is_cmake_available() {
+            bail!("CMake is required for watchOS builds. Please install CMake.");
         }
 
         // Check for Xcode
         let xcode = XcodeToolchain::detect()
-            .context("Xcode is required for tvOS builds. Please install Xcode.")?;
+            .context("Xcode is required for watchOS builds. Please install Xcode.")?;
 
         xcode.validate()?;
 
@@ -347,13 +352,13 @@ impl PlatformBuilder for TvosBuilder {
         let start = Instant::now();
 
         // Create a mutable copy for building
-        let mut builder = TvosBuilder::new();
+        let mut builder = WatchosBuilder::new();
 
         // Validate prerequisites first
         builder.validate_prerequisites(ctx)?;
 
         if ctx.options.verbose {
-            eprintln!("Building {} for tvOS...", ctx.lib_name());
+            eprintln!("Building {} for watchOS...", ctx.lib_name());
         }
 
         // Source-only deps: ensure they have artifacts before we compose link lines.
@@ -377,7 +382,7 @@ impl PlatformBuilder for TvosBuilder {
             ctx.version(),
             ctx.publish_suffix(),
             ctx.options.release,
-            "tvos",
+            "watchos",
             ctx.output_dir.clone(),
         )?;
 
@@ -399,7 +404,7 @@ impl PlatformBuilder for TvosBuilder {
                 ctx.lib_name(),
             )?;
 
-            // Add to archive: frameworks/tvos/static/{lib_name}.xcframework
+            // Add to archive: frameworks/watchos/static/{lib_name}.xcframework
             if xcframework.exists() {
                 let archive_path = format!(
                     "{}/{}/{}/{}.xcframework",
@@ -429,7 +434,7 @@ impl PlatformBuilder for TvosBuilder {
                 ctx.lib_name(),
             )?;
 
-            // Add to archive: frameworks/tvos/shared/{lib_name}.xcframework
+            // Add to archive: frameworks/watchos/shared/{lib_name}.xcframework
             if xcframework.exists() {
                 let archive_path = format!(
                     "{}/{}/{}/{}.xcframework",
@@ -465,7 +470,7 @@ impl PlatformBuilder for TvosBuilder {
 
         if ctx.options.verbose {
             eprintln!(
-                "tvOS build completed in {:.2}s: {}",
+                "watchOS build completed in {:.2}s: {}",
                 duration.as_secs_f64(),
                 sdk_archive.display()
             );
@@ -482,12 +487,12 @@ impl PlatformBuilder for TvosBuilder {
 
     fn clean(&self, ctx: &BuildContext) -> Result<()> {
         // Clean all profile variants under ccgo_build/
-        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "tvos")?;
+        crate::utils::paths::clean_ccgo_build_platform(&ctx.ccgo_build_root, "watchos")?;
 
         // Clean old cmake_build/ structure for backwards compatibility with Python ccgo
         for old_dir in &[
-            ctx.project_root.join("cmake_build/tvOS"),
-            ctx.project_root.join("cmake_build/tvos"),
+            ctx.project_root.join("cmake_build/watchOS"),
+            ctx.project_root.join("cmake_build/watchos"),
         ] {
             if old_dir.exists() {
                 std::fs::remove_dir_all(old_dir)
@@ -497,12 +502,12 @@ impl PlatformBuilder for TvosBuilder {
 
         // Clean target directories
         for old_dir in &[
-            ctx.project_root.join("target/release/tvos"),
-            ctx.project_root.join("target/debug/tvos"),
-            ctx.project_root.join("target/release/tvOS"),
-            ctx.project_root.join("target/debug/tvOS"),
-            ctx.project_root.join("target/tvos"),
-            ctx.project_root.join("target/tvOS"),
+            ctx.project_root.join("target/release/watchos"),
+            ctx.project_root.join("target/debug/watchos"),
+            ctx.project_root.join("target/release/watchOS"),
+            ctx.project_root.join("target/debug/watchOS"),
+            ctx.project_root.join("target/watchos"),
+            ctx.project_root.join("target/watchOS"),
         ] {
             if old_dir.exists() {
                 std::fs::remove_dir_all(old_dir)
@@ -514,7 +519,7 @@ impl PlatformBuilder for TvosBuilder {
     }
 }
 
-impl Default for TvosBuilder {
+impl Default for WatchosBuilder {
     fn default() -> Self {
         Self::new()
     }

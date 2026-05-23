@@ -156,7 +156,7 @@ pub struct BuildContext {
     /// Git version information
     pub git_version: Option<crate::utils::git_version::GitVersion>,
     /// Resolved profile after inheritance chain expansion. `None` = no profile active.
-    pub resolved_profile: Option<crate::build::profile::ResolvedProfile>,
+    pub resolved_profile: Option<crate::builder::profile::ResolvedProfile>,
     /// Package name override from the active profile.
     pub profile_name_override: Option<String>,
 }
@@ -243,7 +243,7 @@ impl BuildContext {
         let (resolved_profile, profile_name_override) = {
             // Step 1: resolve named profile (if any).
             let (mut base, name_override) = if let Some(ref pname) = options.profile_name {
-                match crate::build::profile::resolve_profile(pname, &config.profile) {
+                match crate::builder::profile::resolve_profile(pname, &config.profile) {
                     Ok(rp) => {
                         let name_override = rp.name.clone();
                         (Some(rp), name_override)
@@ -259,7 +259,7 @@ impl BuildContext {
 
             // Step 2: extend with sanitizer cmake flags (always additive).
             if let Some(ref san) = options.sanitizer {
-                let san_rp = match crate::build::profile::resolve_profile(
+                let san_rp = match crate::builder::profile::resolve_profile(
                     san.name(),
                     &config.profile,
                 ) {
@@ -588,8 +588,8 @@ impl BuildContext {
     pub fn resolved_dep_linkages(
         &self,
         platform: &str,
-    ) -> anyhow::Result<Vec<(String, crate::build::linkage::ResolvedLinkage)>> {
-        use crate::build::linkage::{detect_dep_artifacts, resolve_linkage};
+    ) -> anyhow::Result<Vec<(String, crate::builder::linkage::ResolvedLinkage)>> {
+        use crate::builder::linkage::{detect_dep_artifacts, resolve_linkage};
 
         // Normalize platform to lowercase: artifact paths (.ccgo/deps/<name>/lib/<platform>/)
         // are always lowercase, but PlatformBuilder::platform_name() returns
@@ -811,7 +811,7 @@ impl BuildContext {
     /// the persisted sidecar AND whose `lib/<platform>/` already has
     /// artifacts on disk.
     pub fn materialize_source_deps(&self, platform: &str) -> anyhow::Result<()> {
-        use crate::build::materialize::{global_fingerprint_cache, materialize_source_deps_inner};
+        use crate::builder::materialize::{global_fingerprint_cache, materialize_source_deps_inner};
 
         let dep_hints: Vec<(String, Option<crate::config::Linkage>)> = self
             .config
@@ -1473,7 +1473,7 @@ mod tests {
     #[test]
     fn profile_release_applied_to_context() {
         use crate::config::CcgoConfig;
-        use crate::build::profile::resolve_profile;
+        use crate::builder::profile::resolve_profile;
 
         let toml = r#"
 [package]
@@ -1505,7 +1505,7 @@ merge = "extend"
 arguments = ["-DPROFILE=1"]
 "#;
         let config = CcgoConfig::parse(toml).unwrap();
-        let resolved = crate::build::profile::resolve_profile("foo", &config.profile).unwrap();
+        let resolved = crate::builder::profile::resolve_profile("foo", &config.profile).unwrap();
 
         let mut ctx = make_ctx(bare_options(), config);
         ctx.resolved_profile = Some(resolved);
@@ -1517,7 +1517,7 @@ arguments = ["-DPROFILE=1"]
 
     #[test]
     fn profile_dep_linkage_default_applied() {
-        use crate::build::profile::{ResolvedDepLinkage, ResolvedProfile};
+        use crate::builder::profile::{ResolvedDepLinkage, ResolvedProfile};
 
         let config: CcgoConfig = toml::from_str(
             r#"
@@ -1542,7 +1542,7 @@ version = "0.1.0"
 
     #[test]
     fn cli_linkage_beats_profile_dep_linkage() {
-        use crate::build::profile::{ResolvedDepLinkage, ResolvedProfile};
+        use crate::builder::profile::{ResolvedDepLinkage, ResolvedProfile};
 
         let config: CcgoConfig = toml::from_str(
             r#"
@@ -1570,7 +1570,7 @@ version = "0.1.0"
     #[test]
     fn full_profile_integration() {
         use crate::config::CcgoConfig;
-        use crate::build::profile::resolve_profile;
+        use crate::builder::profile::resolve_profile;
 
         let toml = r#"
 [package]
