@@ -11,7 +11,7 @@ pub mod ohos;
 pub mod openwrt;
 pub mod xcode;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -54,12 +54,12 @@ pub fn get_env_path(name: &str) -> Option<PathBuf> {
 }
 
 /// Check if a path exists and is a directory
-pub fn is_valid_directory(path: &PathBuf) -> bool {
+pub fn is_valid_directory(path: &Path) -> bool {
     path.exists() && path.is_dir()
 }
 
 /// Check if a path exists and is a file
-pub fn is_valid_file(path: &PathBuf) -> bool {
+pub fn is_valid_file(path: &Path) -> bool {
     path.exists() && path.is_file()
 }
 
@@ -155,7 +155,7 @@ pub fn detect_default_compiler() -> Option<CompilerInfo> {
 }
 
 /// Get compiler version string
-fn get_compiler_version(compiler: &PathBuf) -> Option<String> {
+fn get_compiler_version(compiler: &Path) -> Option<String> {
     let output = std::process::Command::new(compiler)
         .arg("--version")
         .output()

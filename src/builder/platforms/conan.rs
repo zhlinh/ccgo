@@ -3,7 +3,7 @@
 //! Builds C/C++ library using Conan package manager.
 //! Pure Rust implementation that directly invokes Conan CLI.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
@@ -231,7 +231,7 @@ impl ConanBuilder {
 
     /// Find library directory in build output
     /// Checks for actual library files, not just directory existence
-    fn find_lib_dir(&self, build_dir: &PathBuf, _is_release: bool) -> Option<PathBuf> {
+    fn find_lib_dir(&self, build_dir: &Path, _is_release: bool) -> Option<PathBuf> {
         // Conan 2.x with cmake_layout puts libraries directly in build/Release or build/Debug
         // Always check Release first since Conan often builds Release even for debug configs
         let possible_dirs = vec![
@@ -268,19 +268,14 @@ impl ConanBuilder {
     }
 
     /// Find include directory in build output
-    fn find_include_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+    fn find_include_dir(&self, build_dir: &Path) -> Option<PathBuf> {
         let possible_dirs = vec![
             build_dir.join("install/include"),
             build_dir.join("include"),
             build_dir.join("build/include"),
         ];
 
-        for dir in possible_dirs {
-            if dir.exists() {
-                return Some(dir);
-            }
-        }
-        None
+        possible_dirs.into_iter().find(|dir| dir.exists())
     }
 }
 
@@ -399,7 +394,7 @@ impl PlatformBuilder for ConanBuilder {
 
         // Create the SDK archive
         let link_type_str = ctx.options.link_type.to_string();
-        let sdk_archive = archive.create_sdk_archive(&[host_arch.clone()], &link_type_str)?;
+        let sdk_archive = archive.create_sdk_archive(std::slice::from_ref(&host_arch), &link_type_str)?;
 
         let duration = start.elapsed();
 

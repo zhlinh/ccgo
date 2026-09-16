@@ -2,7 +2,7 @@
 //!
 //! Detects and configures Xcode for macOS, iOS, tvOS, and watchOS builds.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -10,6 +10,9 @@ use anyhow::{bail, Context, Result};
 use super::Toolchain;
 
 /// Apple platform targets
+// MSVC / IOS are how these platforms spell themselves; renaming them to Msvc /
+// Ios would churn every call site to satisfy a naming lint.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ApplePlatform {
     MacOS,
@@ -227,7 +230,7 @@ impl XcodeToolchain {
     }
 
     /// Run lipo to create a universal binary
-    pub fn create_universal_binary(&self, input_libs: &[PathBuf], output: &PathBuf) -> Result<()> {
+    pub fn create_universal_binary(&self, input_libs: &[PathBuf], output: &Path) -> Result<()> {
         let mut cmd = Command::new("lipo");
         cmd.arg("-create");
 
@@ -303,7 +306,7 @@ impl XcodeToolchain {
     pub fn create_xcframework(
         &self,
         inputs: &[(PathBuf, Option<PathBuf>)], // (library/framework path, optional dSYM)
-        output: &PathBuf,
+        output: &Path,
     ) -> Result<()> {
         let mut cmd = Command::new("xcodebuild");
         cmd.arg("-create-xcframework");

@@ -4,7 +4,7 @@
 //! Unlike the Linux builder (which targets glibc), this uses musl-based toolchains
 //! from musl.cc — the same C library OpenWrt itself uses.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -29,7 +29,7 @@ impl OpenwrtBuilder {
 
     fn merge_module_static_libs(
         &self,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
         toolchain: &OpenwrtToolchain,
@@ -157,7 +157,7 @@ impl OpenwrtBuilder {
         Ok(build_dir)
     }
 
-    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+    fn find_lib_dir(&self, build_dir: &Path) -> Option<PathBuf> {
         let candidates = [
             build_dir.join("out"),
             build_dir.join("install/lib"),
@@ -171,7 +171,7 @@ impl OpenwrtBuilder {
         ctx: &BuildContext,
         arch: &str,
         archive: &ArchiveBuilder,
-        symbols_temp: &PathBuf,
+        symbols_temp: &Path,
     ) -> Result<bool> {
         let openwrt_arch = OpenwrtArch::parse(arch)?;
         let toolchain = OpenwrtToolchain::detect_for_arch(openwrt_arch)?;
@@ -201,8 +201,8 @@ impl OpenwrtBuilder {
 
     fn collect_symbols(
         &self,
-        lib_dir: &PathBuf,
-        symbols_temp: &PathBuf,
+        lib_dir: &Path,
+        symbols_temp: &Path,
         arch: &str,
     ) -> Result<bool> {
         let obj_arch_dir = symbols_temp

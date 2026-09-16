@@ -409,7 +409,7 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn create_test_dependency(name: &str, deps: Vec<&str>) -> DependencyConfig {
+    fn create_test_dependency(name: &str, _deps: Vec<&str>) -> DependencyConfig {
         DependencyConfig {
             name: name.to_string(),
             version: "1.0.0".to_string(),

@@ -3,7 +3,7 @@
 //! Builds static and dynamic libraries for Windows using CMake with MinGW or MSVC.
 //! Supports cross-compilation from macOS/Linux using MinGW-w64.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -17,6 +17,9 @@ use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
 /// Windows toolchain type
+// MSVC / IOS are how these platforms spell themselves; renaming them to Msvc /
+// Ios would churn every call site to satisfy a naming lint.
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WindowsToolchain {
     /// MinGW-w64 (cross-compilation)
@@ -44,11 +47,11 @@ impl WindowsBuilder {
     }
 
     /// Remove all `.a` files in `out_dir` except for `keep_path`
-    fn cleanup_module_libs(out_dir: &PathBuf, keep_path: &PathBuf) -> Result<()> {
+    fn cleanup_module_libs(out_dir: &Path, keep_path: &Path) -> Result<()> {
         for entry in std::fs::read_dir(out_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.is_file() && &path != keep_path {
+            if path.is_file() && path != keep_path {
                 if let Some(ext) = path.extension() {
                     if ext == "a" {
                         let _ = std::fs::remove_file(&path);
@@ -60,18 +63,17 @@ impl WindowsBuilder {
     }
 
     /// Collect all `.a` files in `out_dir`, excluding `exclude_path`
-    fn collect_a_files(dir: &PathBuf, exclude_path: Option<&PathBuf>) -> Result<Vec<PathBuf>> {
+    fn collect_a_files(dir: &Path, exclude_path: Option<&PathBuf>) -> Result<Vec<PathBuf>> {
         let mut libs = Vec::new();
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension() {
-                    if ext == "a" {
-                        if exclude_path.map_or(true, |excl| &path != excl) {
+                    if ext == "a"
+                        && exclude_path != Some(&path) {
                             libs.push(path);
                         }
-                    }
                 }
             }
         }
@@ -83,7 +85,7 @@ impl WindowsBuilder {
     fn merge_module_static_libs_mingw(
         &self,
         mingw: &MingwToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -153,18 +155,18 @@ impl WindowsBuilder {
     }
 
     /// Returns true when the main library already exists and is non-empty
-    fn main_lib_already_merged(main_lib_path: &PathBuf) -> bool {
+    fn main_lib_already_merged(main_lib_path: &Path) -> bool {
         if !main_lib_path.exists() {
             return false;
         }
-        std::fs::metadata(main_lib_path).map_or(false, |m| m.len() > 0)
+        std::fs::metadata(main_lib_path).is_ok_and(|m| m.len() > 0)
     }
 
     /// Merge third-party static libs from cmake build root into the main lib (MinGW)
     fn merge_third_party_static_libs_mingw(
         &self,
         mingw: &MingwToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -197,7 +199,7 @@ impl WindowsBuilder {
     }
 
     /// Collect `.a` files in `dir` whose filename differs from `exclude_name`
-    fn collect_third_party_libs(dir: &PathBuf, exclude_name: &str) -> Result<Vec<PathBuf>> {
+    fn collect_third_party_libs(dir: &Path, exclude_name: &str) -> Result<Vec<PathBuf>> {
         let mut libs = Vec::new();
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -385,7 +387,7 @@ impl WindowsBuilder {
 
     /// Scan `lib_dir` and add files with `extension` to `libs`, skipping duplicates by filename
     fn collect_libs_from_dir(
-        lib_dir: &PathBuf,
+        lib_dir: &Path,
         extension: &str,
         libs: &mut Vec<PathBuf>,
     ) -> Result<()> {
@@ -394,14 +396,13 @@ impl WindowsBuilder {
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension() {
-                    if ext == extension {
-                        if !libs
+                    if ext == extension
+                        && !libs
                             .iter()
                             .any(|p: &PathBuf| p.file_name() == path.file_name())
                         {
                             libs.push(path);
                         }
-                    }
                 }
             }
         }
@@ -410,7 +411,7 @@ impl WindowsBuilder {
 
     /// Scan `lib_dir` and add import library files (matching `import_ext` suffix) to `libs`
     fn collect_import_libs_from_dir(
-        lib_dir: &PathBuf,
+        lib_dir: &Path,
         import_ext: &str,
         libs: &mut Vec<PathBuf>,
     ) -> Result<()> {
@@ -434,7 +435,7 @@ impl WindowsBuilder {
     /// Find library files in build directory
     fn find_libraries(
         &self,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         is_shared: bool,
         toolchain: WindowsToolchain,
     ) -> Result<Vec<PathBuf>> {
@@ -513,7 +514,7 @@ impl WindowsBuilder {
     fn add_libraries_to_archive(
         &self,
         archive: &ArchiveBuilder,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         link_type: &str,
         arch: &str,
         is_shared: bool,
@@ -539,7 +540,7 @@ impl WindowsBuilder {
     }
 
     /// Run `cmake -S … -B … -G …` and return the exit status
-    fn run_cmake_configure(ctx: &BuildContext, build_dir: &PathBuf, generator: &str) -> Result<()> {
+    fn run_cmake_configure(ctx: &BuildContext, build_dir: &Path, generator: &str) -> Result<()> {
         use std::process::Command;
 
         let mut cmake_cmd = Command::new("cmake");
@@ -573,7 +574,7 @@ impl WindowsBuilder {
     }
 
     /// Print the location of generated IDE project files
-    fn report_project_files(ctx: &BuildContext, build_dir: &PathBuf) {
+    fn report_project_files(ctx: &BuildContext, build_dir: &Path) {
         let sln_file = build_dir.join(format!("{}.sln", ctx.lib_name()));
         let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
 
@@ -657,7 +658,7 @@ impl WindowsBuilder {
     fn strip_libraries(
         &self,
         mingw: &MingwToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         verbose: bool,
     ) -> Result<()> {
         let strip_path = mingw.strip_path();

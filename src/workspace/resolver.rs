@@ -172,7 +172,7 @@ impl<'a> WorkspaceResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CcgoConfig, PackageConfig, WorkspaceConfig, WorkspaceDependency};
+    
     use std::fs;
     use tempfile::TempDir;
 

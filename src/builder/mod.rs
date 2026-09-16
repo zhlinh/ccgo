@@ -1533,7 +1533,7 @@ arguments = ["-DPROFILE=1"]
 
     #[test]
     fn profile_dep_linkage_default_applied() {
-        use crate::builder::profile::{ResolvedDepLinkage, ResolvedProfile};
+        use crate::builder::profile::ResolvedProfile;
 
         let config: CcgoConfig = toml::from_str(
             r#"
@@ -1558,7 +1558,7 @@ version = "0.1.0"
 
     #[test]
     fn cli_linkage_beats_profile_dep_linkage() {
-        use crate::builder::profile::{ResolvedDepLinkage, ResolvedProfile};
+        use crate::builder::profile::ResolvedProfile;
 
         let config: CcgoConfig = toml::from_str(
             r#"

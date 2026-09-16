@@ -3,7 +3,7 @@
 //! Builds static and dynamic frameworks for macOS using CMake with Clang.
 //! Supports universal binaries (x86_64 + arm64) via lipo.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -43,7 +43,7 @@ impl MacosBuilder {
     fn merge_module_static_libs(
         &self,
         xcode: &XcodeToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -236,7 +236,7 @@ impl MacosBuilder {
     fn merge_third_party_static_libs(
         &self,
         xcode: &XcodeToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -294,7 +294,7 @@ impl MacosBuilder {
         &self,
         xcode: &XcodeToolchain,
         arch_libs: &[(String, PathBuf)], // (arch, lib_path)
-        output: &PathBuf,
+        output: &Path,
     ) -> Result<()> {
         if arch_libs.len() == 1 {
             // Only one architecture, just copy
@@ -310,7 +310,7 @@ impl MacosBuilder {
 
     /// Find library files in install directory
     /// Checks multiple possible locations: lib/, out/, and root
-    fn find_libraries(&self, install_dir: &PathBuf, is_shared: bool) -> Result<Vec<PathBuf>> {
+    fn find_libraries(&self, install_dir: &Path, is_shared: bool) -> Result<Vec<PathBuf>> {
         let extension = if is_shared { "dylib" } else { "a" };
         let mut libs = Vec::new();
 
@@ -424,23 +424,19 @@ impl MacosBuilder {
     }
 
     /// Find library directory, checking multiple possible locations
-    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+    fn find_lib_dir(&self, build_dir: &Path) -> Option<PathBuf> {
         let possible_dirs = vec![
             build_dir.join("lib"),
             build_dir.join("out"),
             build_dir.to_path_buf(),
         ];
 
-        for dir in possible_dirs {
-            if dir.exists()
-                && std::fs::read_dir(&dir)
+        possible_dirs.into_iter().find(|dir| {
+            dir.exists()
+                && std::fs::read_dir(dir)
                     .map(|d| d.count() > 0)
                     .unwrap_or(false)
-            {
-                return Some(dir);
-            }
-        }
-        None
+        })
     }
 
     /// Generate Xcode IDE project for macOS
@@ -550,8 +546,8 @@ impl MacosBuilder {
     fn create_xcframework(
         &self,
         xcode: &XcodeToolchain,
-        universal_dir: &PathBuf,
-        output: &PathBuf,
+        universal_dir: &Path,
+        output: &Path,
         is_shared: bool,
         lib_name: &str,
     ) -> Result<()> {
@@ -840,7 +836,7 @@ impl Default for MacosBuilder {
 }
 
 /// Copy a directory recursively
-fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> Result<()> {
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;

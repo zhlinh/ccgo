@@ -1210,8 +1210,6 @@ pub struct PlatformBuildConfig {
     pub cmake_file: Option<String>,
 }
 
-/// Platform-specific configurations
-
 /// The `stl` knob from the top-level `[android]` section.
 ///
 /// `--stl` overrides it. Whatever wins must reach both CMake (ANDROID_STL) and
@@ -1270,6 +1268,7 @@ pub struct OhosSection {
     pub export_own_lib: Option<bool>,
 }
 
+/// Platform-specific configurations
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlatformConfigs {
     /// Android configuration

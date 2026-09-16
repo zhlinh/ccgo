@@ -128,9 +128,9 @@ pub fn find_ancestor_with(start: &Path, marker: &str) -> Option<std::path::PathB
         if cur.join(marker).is_file() {
             return Some(cur.to_path_buf());
         }
-        match cur.parent() {
-            Some(p) => cur = p,
-            None => return None,
+        {
+            let p = cur.parent()?;
+            cur = p
         }
     }
 }

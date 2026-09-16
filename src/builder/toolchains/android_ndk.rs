@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
@@ -190,7 +190,7 @@ impl AndroidNdkToolchain {
     }
 
     /// Find NDK in SDK's ndk/ directory (newer layout)
-    fn find_ndk_in_sdk(sdk_path: &PathBuf) -> Option<PathBuf> {
+    fn find_ndk_in_sdk(sdk_path: &Path) -> Option<PathBuf> {
         let ndk_dir = sdk_path.join("ndk");
         if !ndk_dir.exists() {
             return None;
@@ -213,12 +213,12 @@ impl AndroidNdkToolchain {
         }
 
         // Sort by version descending and return highest
-        versions.sort_by(|a, b| b.1.cmp(&a.1));
+        versions.sort_by_key(|a| std::cmp::Reverse(a.1));
         versions.first().map(|(p, _)| p.clone())
     }
 
     /// Parse version from directory name (e.g., "25.2.9519653")
-    fn parse_version_from_dirname(path: &PathBuf) -> Option<(u32, u32, u32)> {
+    fn parse_version_from_dirname(path: &Path) -> Option<(u32, u32, u32)> {
         let name = path.file_name()?.to_str()?;
         let parts: Vec<&str> = name.split('.').collect();
         if parts.len() >= 2 {
@@ -231,7 +231,7 @@ impl AndroidNdkToolchain {
     }
 
     /// Check if a path contains a valid NDK
-    fn is_valid_ndk(path: &PathBuf) -> bool {
+    fn is_valid_ndk(path: &Path) -> bool {
         if !path.exists() || !path.is_dir() {
             return false;
         }
@@ -248,7 +248,7 @@ impl AndroidNdkToolchain {
     }
 
     /// Parse NDK version from source.properties
-    fn parse_ndk_version(ndk_path: &PathBuf) -> Result<(String, (u32, u32, u32))> {
+    fn parse_ndk_version(ndk_path: &Path) -> Result<(String, (u32, u32, u32))> {
         let props_path = ndk_path.join("source.properties");
         let content = fs::read_to_string(&props_path)
             .with_context(|| format!("Failed to read {}", props_path.display()))?;
@@ -420,7 +420,7 @@ impl AndroidNdkToolchain {
     /// Bare `llvm-strip`, no `--strip-unneeded`: that is what the old build scripts
     /// ran, and the published artifacts match it byte for byte. `--strip-unneeded`
     /// leaves 456 more bytes per ABI, skipping the strip entirely leaves ~39% more.
-    pub fn strip_stl_library(&self, library_path: &PathBuf, verbose: bool) -> Result<()> {
+    pub fn strip_stl_library(&self, library_path: &Path, verbose: bool) -> Result<()> {
         let strip_path = self.llvm_strip_path();
 
         if !strip_path.exists() {
@@ -447,7 +447,7 @@ impl AndroidNdkToolchain {
     ///
     /// Uses llvm-strip with --strip-unneeded to remove debug symbols
     /// while preserving the symbol table needed for dynamic linking.
-    pub fn strip_library(&self, library_path: &PathBuf, verbose: bool) -> Result<()> {
+    pub fn strip_library(&self, library_path: &Path, verbose: bool) -> Result<()> {
         let strip_path = self.llvm_strip_path();
 
         if !strip_path.exists() {
@@ -472,7 +472,7 @@ impl AndroidNdkToolchain {
     }
 
     /// Copy STL library (libc++_shared.so) to destination directory
-    pub fn copy_stl_library(&self, abi: AndroidAbi, dest_dir: &PathBuf) -> Result<PathBuf> {
+    pub fn copy_stl_library(&self, abi: AndroidAbi, dest_dir: &Path) -> Result<PathBuf> {
         let stl_path = self.stl_library_path(abi);
 
         if !stl_path.exists() {

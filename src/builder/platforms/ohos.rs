@@ -3,7 +3,7 @@
 //! Builds native libraries and HAR packages for OpenHarmony using CMake with OHOS SDK.
 //! Supports multiple ABIs (arm64-v8a, armeabi-v7a, x86_64).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -40,7 +40,7 @@ impl OhosBuilder {
     fn merge_module_static_libs(
         &self,
         sdk: &OhosSdkToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -220,7 +220,7 @@ impl OhosBuilder {
     /// Prioritizes the combined library output directory
     fn find_libraries(
         &self,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         is_shared: bool,
         link_type: &str,
         abi: OhosAbi,
@@ -348,7 +348,7 @@ impl OhosBuilder {
         &self,
         abi_results: &[(OhosAbi, PathBuf)],
         lib_name: &str,
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
         verbose: bool,
     ) -> Result<()> {
         for (abi, build_dir) in abi_results {
@@ -548,7 +548,7 @@ impl OhosBuilder {
     }
 
     /// Find hvigorw command (local or system)
-    fn find_hvigorw_cmd(ctx: &BuildContext, ohos_project: &PathBuf) -> Result<String> {
+    fn find_hvigorw_cmd(ctx: &BuildContext, ohos_project: &Path) -> Result<String> {
         let hvigorw_name = if cfg!(target_os = "windows") {
             "hvigorw.bat"
         } else {
@@ -612,8 +612,8 @@ impl OhosBuilder {
     /// Find HAR file and copy to output directory
     fn find_and_copy_har_to_output(
         ctx: &BuildContext,
-        ohos_project: &PathBuf,
-        output_dir: &PathBuf,
+        ohos_project: &Path,
+        output_dir: &Path,
     ) -> Result<()> {
         let har_dir = ohos_project.join("main_ohos_sdk/build/default/outputs/default");
 
@@ -652,7 +652,7 @@ impl OhosBuilder {
     }
 
     /// Build HAR package using hvigorw assembleHar task
-    fn build_har(&self, ctx: &BuildContext, _abis: &[OhosAbi], output_dir: &PathBuf) -> Result<()> {
+    fn build_har(&self, ctx: &BuildContext, _abis: &[OhosAbi], output_dir: &Path) -> Result<()> {
         let ohos_project = ctx.project_root.join("ohos");
         if !ohos_project.exists() {
             bail!(
@@ -695,7 +695,7 @@ impl OhosBuilder {
     fn create_symbols_archive_from_staging(
         &self,
         archive: &ArchiveBuilder,
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
     ) -> Result<PathBuf> {
         archive.create_symbols_archive(symbols_staging)
     }
@@ -893,7 +893,7 @@ impl OhosBuilder {
         abis: &[OhosAbi],
         min_sdk_version: u32,
         archive: &ArchiveBuilder,
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
     ) -> Result<Vec<&'static str>> {
         let mut built_link_types = Vec::new();
 
@@ -977,7 +977,7 @@ impl OhosBuilder {
         &self,
         ctx: &BuildContext,
         built_link_types: &[&str],
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
         archive: &ArchiveBuilder,
     ) -> Result<Option<PathBuf>> {
         if !built_link_types.contains(&"shared") {

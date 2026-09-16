@@ -191,7 +191,6 @@ fn apply_platform_configs(resolved: &mut ResolvedProfile, cfg: &ProfileConfig) {
 /// - a profile referenced in `inherits` doesn't exist
 ///
 /// Built-in profiles (`debug`, `release`) are synthesized; no declaration needed.
-#[must_use]
 pub fn resolve_profile(
     name: &str,
     user_profiles: &HashMap<String, ProfileConfig>,
@@ -251,23 +250,31 @@ mod tests {
 
     #[test]
     fn cycle_detected() {
-        let mut a = ProfileConfig::default();
-        a.inherits = Some("b".to_string());
-        let mut b = ProfileConfig::default();
-        b.inherits = Some("a".to_string());
+        let a = ProfileConfig {
+            inherits: Some("b".to_string()),
+            ..Default::default()
+        };
+        let b = ProfileConfig {
+            inherits: Some("a".to_string()),
+            ..Default::default()
+        };
         let profs = profiles_from(&[("a", a), ("b", b)]);
         assert!(resolve_profile("a", &profs).is_err());
     }
 
     #[test]
     fn scalar_fields_inherited_and_overridable() {
-        let mut base = ProfileConfig::default();
-        base.release = Some(false);
-        base.jobs = Some(2);
+        let base = ProfileConfig {
+            release: Some(false),
+            jobs: Some(2),
+            ..Default::default()
+        };
 
-        let mut child = ProfileConfig::default();
-        child.inherits = Some("base".to_string());
-        child.jobs = Some(8);
+        let child = ProfileConfig {
+            inherits: Some("base".to_string()),
+            jobs: Some(8),
+            ..Default::default()
+        };
 
         let profs = profiles_from(&[("base", base), ("child", child)]);
         let r = resolve_profile("child", &profs).unwrap();
@@ -277,20 +284,24 @@ mod tests {
 
     #[test]
     fn cmake_replace_strategy() {
-        let mut base = ProfileConfig::default();
-        base.cmake = Some(ProfileCmake {
+        let base = ProfileConfig {
+            cmake: Some(ProfileCmake {
             merge: MergeStrategy::Replace,
             arguments: vec!["-DA=1".to_string()],
             ..Default::default()
-        });
+        }),
+            ..Default::default()
+        };
 
-        let mut child = ProfileConfig::default();
-        child.inherits = Some("base".to_string());
-        child.cmake = Some(ProfileCmake {
+        let child = ProfileConfig {
+            inherits: Some("base".to_string()),
+            cmake: Some(ProfileCmake {
             merge: MergeStrategy::Replace,
             arguments: vec!["-DB=2".to_string()],
             ..Default::default()
-        });
+        }),
+            ..Default::default()
+        };
 
         let profs = profiles_from(&[("base", base), ("child", child)]);
         let r = resolve_profile("child", &profs).unwrap();
@@ -299,20 +310,24 @@ mod tests {
 
     #[test]
     fn cmake_extend_strategy() {
-        let mut base = ProfileConfig::default();
-        base.cmake = Some(ProfileCmake {
+        let base = ProfileConfig {
+            cmake: Some(ProfileCmake {
             merge: MergeStrategy::Replace,
             arguments: vec!["-DA=1".to_string()],
             ..Default::default()
-        });
+        }),
+            ..Default::default()
+        };
 
-        let mut child = ProfileConfig::default();
-        child.inherits = Some("base".to_string());
-        child.cmake = Some(ProfileCmake {
+        let child = ProfileConfig {
+            inherits: Some("base".to_string()),
+            cmake: Some(ProfileCmake {
             merge: MergeStrategy::Extend,
             arguments: vec!["-DB=2".to_string()],
             ..Default::default()
-        });
+        }),
+            ..Default::default()
+        };
 
         let profs = profiles_from(&[("base", base), ("child", child)]);
         let r = resolve_profile("child", &profs).unwrap();
@@ -321,18 +336,22 @@ mod tests {
 
     #[test]
     fn features_extend_strategy() {
-        let mut base = ProfileConfig::default();
-        base.features = Some(ProfileListField {
+        let base = ProfileConfig {
+            features: Some(ProfileListField {
             merge: MergeStrategy::Replace,
             list: vec!["a".to_string()],
-        });
+        }),
+            ..Default::default()
+        };
 
-        let mut child = ProfileConfig::default();
-        child.inherits = Some("base".to_string());
-        child.features = Some(ProfileListField {
+        let child = ProfileConfig {
+            inherits: Some("base".to_string()),
+            features: Some(ProfileListField {
             merge: MergeStrategy::Extend,
             list: vec!["b".to_string()],
-        });
+        }),
+            ..Default::default()
+        };
 
         let profs = profiles_from(&[("base", base), ("child", child)]);
         let r = resolve_profile("child", &profs).unwrap();
@@ -341,8 +360,8 @@ mod tests {
 
     #[test]
     fn platform_cmake_resolved() {
-        let mut prof = ProfileConfig::default();
-        prof.platforms = Some(ProfilePlatforms {
+        let prof = ProfileConfig {
+            platforms: Some(ProfilePlatforms {
             android: Some(ProfilePlatformConfig {
                 build: Some(ProfilePlatformBuild {
                     cmake: Some(ProfileCmake {
@@ -354,7 +373,9 @@ mod tests {
                 }),
             }),
             ..Default::default()
-        });
+        }),
+            ..Default::default()
+        };
         let profs = profiles_from(&[("android_neon", prof)]);
         let r = resolve_profile("android_neon", &profs).unwrap();
         let android_cmake = r.platform_cmake.get("android").unwrap();
@@ -363,20 +384,24 @@ mod tests {
 
     #[test]
     fn dep_linkage_last_wins() {
-        let mut base = ProfileConfig::default();
-        base.dep_linkage = Some(ProfileDepLinkage {
+        let base = ProfileConfig {
+            dep_linkage: Some(ProfileDepLinkage {
             default: Some(Linkage::StaticEmbedded),
             on_shared: None,
             on_static: None,
-        });
+        }),
+            ..Default::default()
+        };
 
-        let mut child = ProfileConfig::default();
-        child.inherits = Some("base".to_string());
-        child.dep_linkage = Some(ProfileDepLinkage {
+        let child = ProfileConfig {
+            inherits: Some("base".to_string()),
+            dep_linkage: Some(ProfileDepLinkage {
             default: Some(Linkage::SharedExternal),
             on_shared: None,
             on_static: None,
-        });
+        }),
+            ..Default::default()
+        };
 
         let profs = profiles_from(&[("base", base), ("child", child)]);
         let r = resolve_profile("child", &profs).unwrap();
@@ -385,9 +410,11 @@ mod tests {
 
     #[test]
     fn inherits_builtin_debug() {
-        let mut child = ProfileConfig::default();
-        child.inherits = Some("debug".to_string());
-        child.jobs = Some(4);
+        let child = ProfileConfig {
+            inherits: Some("debug".to_string()),
+            jobs: Some(4),
+            ..Default::default()
+        };
 
         let profs = profiles_from(&[("mysanitize", child)]);
         let r = resolve_profile("mysanitize", &profs).unwrap();

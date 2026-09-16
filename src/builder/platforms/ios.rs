@@ -3,7 +3,7 @@
 //! Builds XCFrameworks for iOS using CMake with Xcode toolchain.
 //! Supports device (arm64) and simulator (arm64, x86_64) architectures.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -55,7 +55,7 @@ impl IosBuilder {
     fn merge_module_static_libs(
         &self,
         xcode: &XcodeToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -129,7 +129,7 @@ impl IosBuilder {
     fn merge_third_party_static_libs(
         &self,
         xcode: &XcodeToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -281,7 +281,7 @@ impl IosBuilder {
 
     /// Find library files in install directory
     /// Checks multiple possible locations: lib/, out/, and root
-    fn find_libraries(&self, install_dir: &PathBuf, is_shared: bool) -> Result<Vec<PathBuf>> {
+    fn find_libraries(&self, install_dir: &Path, is_shared: bool) -> Result<Vec<PathBuf>> {
         let extension = if is_shared { "dylib" } else { "a" };
         let mut libs = Vec::new();
 
@@ -329,7 +329,7 @@ impl IosBuilder {
         &self,
         xcode: &XcodeToolchain,
         arch_libs: &[PathBuf],
-        output: &PathBuf,
+        output: &Path,
     ) -> Result<()> {
         if arch_libs.len() == 1 {
             std::fs::copy(&arch_libs[0], output)?;
@@ -421,32 +421,28 @@ impl IosBuilder {
     }
 
     /// Find library directory, checking multiple possible locations
-    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+    fn find_lib_dir(&self, build_dir: &Path) -> Option<PathBuf> {
         let possible_dirs = vec![
             build_dir.join("lib"),
             build_dir.join("out"),
             build_dir.to_path_buf(),
         ];
 
-        for dir in possible_dirs {
-            if dir.exists()
-                && std::fs::read_dir(&dir)
+        possible_dirs.into_iter().find(|dir| {
+            dir.exists()
+                && std::fs::read_dir(dir)
                     .map(|d| d.count() > 0)
                     .unwrap_or(false)
-            {
-                return Some(dir);
-            }
-        }
-        None
+        })
     }
 
     /// Create XCFramework from device and simulator libraries
     fn create_xcframework(
         &self,
         xcode: &XcodeToolchain,
-        device_lib: &PathBuf,
-        simulator_lib: &PathBuf,
-        output: &PathBuf,
+        device_lib: &Path,
+        simulator_lib: &Path,
+        output: &Path,
         is_shared: bool,
         lib_name: &str,
     ) -> Result<()> {
@@ -849,7 +845,7 @@ impl Default for IosBuilder {
 }
 
 /// Copy a directory recursively
-fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> Result<()> {
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;

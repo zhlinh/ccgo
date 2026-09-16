@@ -4,7 +4,7 @@
 //! Supports device (arm64_32, armv7k) and simulator (arm64) architectures.
 //! Note: watchOS Simulator no longer supports x86_64 since Xcode 14.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -43,7 +43,7 @@ impl WatchosBuilder {
     fn merge_module_static_libs(
         &self,
         xcode: &XcodeToolchain,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
     ) -> Result<()> {
@@ -211,9 +211,9 @@ impl WatchosBuilder {
     fn create_xcframework(
         &self,
         _xcode: &XcodeToolchain,
-        device_lib: &PathBuf,
-        simulator_lib: &PathBuf,
-        output: &PathBuf,
+        device_lib: &Path,
+        simulator_lib: &Path,
+        output: &Path,
         is_shared: bool,
         lib_name: &str,
     ) -> Result<()> {

@@ -8,7 +8,7 @@
 //! - symbols/android/obj/{arch}/ - unstripped libraries (in symbols archive)
 //! - include/{lib_name}/ - header files
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -173,7 +173,7 @@ impl AndroidBuilder {
     /// Checks multiple possible locations including combined library output
     fn find_libraries(
         &self,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         is_shared: bool,
         link_type: &str,
         abi: AndroidAbi,
@@ -295,7 +295,7 @@ impl AndroidBuilder {
         ctx: &BuildContext,
         ndk: &AndroidNdkToolchain,
         abi_results: &[(AndroidAbi, PathBuf)],
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
     ) -> Result<()> {
         if ctx.options.verbose {
             eprintln!("Stripping shared libraries...");
@@ -408,8 +408,8 @@ impl AndroidBuilder {
 
     /// Copy .so files from a directory to symbols staging
     fn copy_so_files_to_symbols(
-        abi_dir: &PathBuf,
-        symbols_abi_dir: &PathBuf,
+        abi_dir: &Path,
+        symbols_abi_dir: &Path,
         verbose: bool,
     ) -> Result<()> {
         for entry in std::fs::read_dir(abi_dir)? {
@@ -435,7 +435,7 @@ impl AndroidBuilder {
         &self,
         ctx: &BuildContext,
         abis: &[AndroidAbi],
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
     ) -> Result<()> {
         if ctx.options.verbose {
             eprintln!("Copying unstripped libraries from merged_native_libs to symbols...");
@@ -478,23 +478,19 @@ impl AndroidBuilder {
     }
 
     /// Find library directory, checking multiple possible locations
-    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+    fn find_lib_dir(&self, build_dir: &Path) -> Option<PathBuf> {
         let possible_dirs = vec![
             build_dir.join("out"),
             build_dir.join("install/lib"),
             build_dir.join("lib"),
         ];
 
-        for dir in possible_dirs {
-            if dir.exists()
-                && std::fs::read_dir(&dir)
+        possible_dirs.into_iter().find(|dir| {
+            dir.exists()
+                && std::fs::read_dir(dir)
                     .map(|d| d.count() > 0)
                     .unwrap_or(false)
-            {
-                return Some(dir);
-            }
-        }
-        None
+        })
     }
 
     /// Copy shared libraries to jniLibs directory for Gradle AAR packaging
@@ -608,7 +604,7 @@ impl AndroidBuilder {
     }
 
     /// Run Gradle assemble task to build AAR
-    fn run_gradle_assemble(&self, ctx: &BuildContext, android_project: &PathBuf) -> Result<()> {
+    fn run_gradle_assemble(&self, ctx: &BuildContext, android_project: &Path) -> Result<()> {
         let gradlew = if cfg!(target_os = "windows") {
             "gradlew.bat"
         } else {
@@ -656,8 +652,8 @@ impl AndroidBuilder {
     fn find_and_copy_aar_to_output(
         &self,
         ctx: &BuildContext,
-        android_project: &PathBuf,
-        output_dir: &PathBuf,
+        android_project: &Path,
+        output_dir: &Path,
     ) -> Result<PathBuf> {
         let flavor = if ctx.options.release {
             "release"
@@ -704,8 +700,8 @@ impl AndroidBuilder {
     fn cleanup_old_aar_files(
         &self,
         ctx: &BuildContext,
-        output_dir: &PathBuf,
-        current_aar: &PathBuf,
+        output_dir: &Path,
+        current_aar: &Path,
     ) -> Result<()> {
         let old_aar = output_dir.join(format!("{}.aar", ctx.lib_name()));
         if old_aar.exists() && old_aar != *current_aar {
@@ -747,7 +743,7 @@ impl AndroidBuilder {
         &self,
         ctx: &BuildContext,
         _abis: &[AndroidAbi],
-        output_dir: &PathBuf,
+        output_dir: &Path,
     ) -> Result<()> {
         let android_project = ctx.project_root.join("android");
         if !android_project.exists() {
@@ -779,7 +775,7 @@ impl AndroidBuilder {
     fn create_symbols_archive_from_staging(
         &self,
         archive: &ArchiveBuilder,
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
     ) -> Result<PathBuf> {
         archive.create_symbols_archive(symbols_staging)
     }
@@ -957,7 +953,7 @@ impl AndroidBuilder {
         abis: &[AndroidAbi],
         api_level: u32,
         archive: &ArchiveBuilder,
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
     ) -> Result<Vec<&'static str>> {
         let mut built_link_types = Vec::new();
 
@@ -1018,7 +1014,7 @@ impl AndroidBuilder {
         &self,
         ctx: &BuildContext,
         built_link_types: &[&str],
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
         archive: &ArchiveBuilder,
     ) -> Result<Option<PathBuf>> {
         if !built_link_types.contains(&"shared") {
@@ -1092,7 +1088,7 @@ impl AndroidBuilder {
         ctx: &BuildContext,
         abis: &[AndroidAbi],
         built_link_types: &[&str],
-        symbols_staging: &PathBuf,
+        symbols_staging: &Path,
     ) -> Result<()> {
         if !built_link_types.contains(&"shared") {
             return Ok(());

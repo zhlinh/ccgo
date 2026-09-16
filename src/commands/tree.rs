@@ -1018,7 +1018,7 @@ impl TreeCommand {
             .filter(|(_, count)| *count > 1)
             .collect();
 
-        duplicates.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by count descending
+        duplicates.sort_by_key(|a| std::cmp::Reverse(a.1)); // Sort by count descending
 
         if self.format == OutputFormat::Json {
             #[derive(Serialize)]

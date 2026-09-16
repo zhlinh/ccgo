@@ -3,7 +3,7 @@
 //! Detects OHOS Native SDK installation and provides CMake configuration
 //! for building native libraries targeting OpenHarmony OS.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
@@ -93,7 +93,7 @@ impl OhosSdkToolchain {
             .or_else(|_| std::env::var("HOS_SDK_HOME"))
             .ok()
             .map(PathBuf::from)
-            .and_then(|p| if p.exists() { Some(p) } else { None });
+            .filter(|p| p.exists());
 
         let sdk_path = sdk_path.ok_or_else(|| {
             anyhow::anyhow!(
@@ -117,7 +117,7 @@ impl OhosSdkToolchain {
     }
 
     /// Detect SDK version from OHOS SDK
-    fn detect_version(sdk_path: &PathBuf) -> Option<String> {
+    fn detect_version(sdk_path: &Path) -> Option<String> {
         // Try to read version from native/version.txt if available
         let version_file = sdk_path.join("native").join("version.txt");
         if version_file.exists() {
@@ -197,7 +197,7 @@ impl OhosSdkToolchain {
     /// Bare `llvm-strip`, no `--strip-unneeded`: that is what the old build scripts
     /// ran, and the published artifacts match it byte for byte. `--strip-unneeded`
     /// leaves 456 more bytes per ABI, skipping the strip entirely leaves ~39% more.
-    pub fn strip_stl_library(&self, library_path: &PathBuf, verbose: bool) -> Result<()> {
+    pub fn strip_stl_library(&self, library_path: &Path, verbose: bool) -> Result<()> {
         let strip_path = self.strip_path();
 
         if !strip_path.exists() {
@@ -268,7 +268,7 @@ impl OhosSdkToolchain {
     }
 
     /// Merge multiple static libraries into a single library using llvm-ar
-    pub fn merge_static_libs(&self, src_libs: &[PathBuf], dst_lib: &PathBuf) -> Result<()> {
+    pub fn merge_static_libs(&self, src_libs: &[PathBuf], dst_lib: &Path) -> Result<()> {
         if src_libs.is_empty() {
             anyhow::bail!("No source libraries to merge");
         }

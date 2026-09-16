@@ -2,7 +2,7 @@
 //!
 //! Builds static and shared libraries for Linux using CMake with GCC or Clang.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
@@ -31,7 +31,7 @@ impl LinuxBuilder {
     /// This is essential for KMP cinterop which expects a single complete library
     fn merge_module_static_libs(
         &self,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
         toolchain: &LinuxToolchain,
@@ -179,7 +179,7 @@ impl LinuxBuilder {
     /// Merge third-party static libs (e.g. libzstd.a) from cmake build root into the main lib
     fn merge_third_party_static_libs(
         &self,
-        build_dir: &PathBuf,
+        build_dir: &Path,
         lib_name: &str,
         verbose: bool,
         toolchain: &LinuxToolchain,
@@ -423,7 +423,7 @@ impl LinuxBuilder {
 
     /// Find library directory in build output
     /// Prioritizes out/ directory where CCGO cmake puts the merged library
-    fn find_lib_dir(&self, build_dir: &PathBuf) -> Option<PathBuf> {
+    fn find_lib_dir(&self, build_dir: &Path) -> Option<PathBuf> {
         // CCGO cmake puts the combined/merged library in out/
         // e.g., static/out/libccgonow.a or shared/out/libccgonow.so
         // This is the preferred location as it contains only the final merged library
@@ -433,12 +433,7 @@ impl LinuxBuilder {
             build_dir.join("lib"),
         ];
 
-        for dir in possible_dirs {
-            if dir.exists() {
-                return Some(dir);
-            }
-        }
-        None
+        possible_dirs.into_iter().find(|dir| dir.exists())
     }
 }
 
