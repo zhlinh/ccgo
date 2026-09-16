@@ -305,6 +305,8 @@ impl AndroidNdkToolchain {
         &self,
         abi: AndroidAbi,
         api_level: u32,
+        // `c++_shared` or `c++_static`; resolved by the caller from --stl / CCGO.toml
+        stl: &str,
     ) -> Vec<(String, String)> {
         let host_tag = Self::host_tag();
         let toolchain_prefix = self
@@ -330,7 +332,7 @@ impl AndroidNdkToolchain {
                 "ANDROID_PLATFORM".to_string(),
                 format!("android-{}", api_level),
             ),
-            ("ANDROID_STL".to_string(), "c++_shared".to_string()),
+            ("ANDROID_STL".to_string(), stl.to_string()),
             // Explicitly set compilers to avoid detection issues
             ("CMAKE_C_COMPILER".to_string(), clang.display().to_string()),
             (
@@ -481,7 +483,7 @@ impl Toolchain for AndroidNdkToolchain {
 
     fn cmake_variables(&self) -> Vec<(String, String)> {
         // Default to arm64-v8a with API 24
-        self.cmake_variables_for_abi(AndroidAbi::Arm64V8a, DEFAULT_API_LEVEL)
+        self.cmake_variables_for_abi(AndroidAbi::Arm64V8a, DEFAULT_API_LEVEL, "c++_shared")
     }
 
     fn validate(&self) -> Result<()> {

@@ -184,6 +184,27 @@ pub fn parse_linkage_arg(
     Ok((default, per_dep))
 }
 
+/// C++ runtime to link against.
+#[derive(Debug, Clone, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum StlKind {
+    /// Link the shared C++ runtime; libc++_shared.so must be shipped alongside
+    #[default]
+    #[value(name = "c++_shared")]
+    CxxShared,
+    /// Embed the C++ runtime into the library (publishes as the -stdembed flavor)
+    #[value(name = "c++_static")]
+    CxxStatic,
+}
+
+impl StlKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StlKind::CxxShared => "c++_shared",
+            StlKind::CxxStatic => "c++_static",
+        }
+    }
+}
+
 /// Library linking type
 #[derive(Debug, Clone, Default, ValueEnum, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -284,6 +305,26 @@ pub struct BuildCommand {
     /// * `both`   — produce both (default)
     #[arg(long = "build-as", value_enum, default_value_t = LinkType::Both)]
     pub link_type: LinkType,
+
+    /// C++ runtime to link against (Android and OHOS only).
+    ///
+    /// * `c++_shared` — link the shared runtime. Consumers must also get
+    ///   libc++_shared.so, which is what the stdcomm package distributes.
+    /// * `c++_static` — embed the runtime. Publishes under the `-stdembed`
+    ///   artifact name and needs no companion runtime.
+    ///
+    /// Overrides `[android].stl` / `[ohos].stl` in CCGO.toml; defaults to
+    /// `c++_shared` when neither is set.
+    ///
+    /// One invocation produces one flavor, and both flavors currently write to
+    /// the same output directory — the second run overwrites the first. To keep
+    /// both, move the artifact out between runs:
+    ///
+    ///   ccgo build android --release
+    ///   mv target/release/android/*.aar /somewhere/shared/
+    ///   ccgo build android --release --stl c++_static
+    #[arg(long, value_enum, verbatim_doc_comment)]
+    pub stl: Option<StlKind>,
 
     /// Per-dependency linkage strategy (overrides CCGO.toml).
     ///
@@ -675,6 +716,7 @@ impl BuildCommand {
             jobs: self.jobs,
             ide_project: self.ide_project,
             release: self.release,
+            stl: self.stl.as_ref().map(|s| s.as_str().to_string()),
             native_only: self.native_only,
             toolchain: self.toolchain.clone(),
             verbose,

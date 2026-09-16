@@ -206,6 +206,8 @@ impl OhosSdkToolchain {
         &self,
         abi: OhosAbi,
         min_sdk_version: u32,
+        // `c++_shared` or `c++_static`; resolved by the caller from --stl / CCGO.toml
+        stl: &str,
     ) -> Vec<(String, String)> {
         let native_path = self.native_path();
         let toolchain_file = self.toolchain_file();
@@ -228,7 +230,7 @@ impl OhosSdkToolchain {
                 "OHOS_SDK_NATIVE_PLATFORM".to_string(),
                 format!("ohos-{}", min_sdk_version),
             ),
-            ("OHOS_STL".to_string(), "c++_shared".to_string()),
+            ("OHOS_STL".to_string(), stl.to_string()),
         ]
     }
 
@@ -336,7 +338,7 @@ impl Toolchain for OhosSdkToolchain {
 
     fn cmake_variables(&self) -> Vec<(String, String)> {
         // Default to arm64-v8a with default SDK version
-        self.cmake_variables_for_abi(OhosAbi::Arm64V8a, DEFAULT_MIN_SDK_VERSION)
+        self.cmake_variables_for_abi(OhosAbi::Arm64V8a, DEFAULT_MIN_SDK_VERSION, "c++_shared")
     }
 
     fn validate(&self) -> Result<()> {

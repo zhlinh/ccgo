@@ -159,7 +159,11 @@ impl OhosBuilder {
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
-        let cmake_vars = sdk.cmake_variables_for_abi(abi, min_sdk_version);
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.ohos.as_ref().and_then(|o| o.stl.as_deref()),
+        );
+        let cmake_vars = sdk.cmake_variables_for_abi(abi, min_sdk_version, &stl);
 
         let build_type = if ctx.options.release {
             BuildType::Release

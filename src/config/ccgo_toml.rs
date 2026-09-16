@@ -100,6 +100,17 @@ pub struct CcgoConfig {
     /// Platform-specific configurations
     pub platforms: Option<PlatformConfigs>,
 
+    /// Top-level `[android]` section — the one `ccgo` generates. Only the fields
+    /// the Rust side needs are declared; the gradle plugin reads the rest
+    /// (ndk_version, compile_sdk, ...). Not to be confused with
+    /// `[platforms.android]`, which carries dependency linkage.
+    #[serde(default)]
+    pub android: Option<AndroidSection>,
+
+    /// Top-level `[ohos]` section. Same split as `android` above.
+    #[serde(default)]
+    pub ohos: Option<OhosSection>,
+
     /// Binary targets
     #[serde(default, rename = "bin")]
     pub bins: Vec<BinConfig>,
@@ -1200,6 +1211,25 @@ pub struct PlatformBuildConfig {
 }
 
 /// Platform-specific configurations
+
+/// The `stl` knob from the top-level `[android]` section.
+///
+/// `--stl` overrides it. Whatever wins must reach both CMake (ANDROID_STL) and
+/// Gradle (which turns c++_static into the `-stdembed` artifact name), or you get
+/// a package named `-stdembed` whose .so still links the shared runtime.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AndroidSection {
+    #[serde(default)]
+    pub stl: Option<String>,
+}
+
+/// The `stl` knob from the top-level `[ohos]` section. See [`AndroidSection`].
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct OhosSection {
+    #[serde(default)]
+    pub stl: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlatformConfigs {
     /// Android configuration

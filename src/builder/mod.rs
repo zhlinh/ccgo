@@ -48,6 +48,18 @@ use serde::{Deserialize, Serialize};
 use crate::commands::build::{BuildTarget, LinkType, WindowsToolchain};
 use crate::config::CcgoConfig;
 
+
+/// Resolve the C++ runtime for Android/OHOS.
+///
+/// `--stl` wins, then `[android].stl` / `[ohos].stl` in CCGO.toml, then
+/// `c++_shared`. Kept in one place so the two platforms cannot drift, and so the
+/// value handed to CMake is the same one reported in build metadata and exported
+/// to Gradle (where it decides the `-stdembed` artifact name) — a mismatch there
+/// means an artifact named `-stdembed` that actually links the shared runtime.
+pub fn resolve_stl(cli: Option<&str>, from_toml: Option<&str>) -> String {
+    cli.or(from_toml).unwrap_or("c++_shared").to_string()
+}
+
 /// Build options passed to platform builders
 #[derive(Debug, Clone)]
 pub struct BuildOptions {
@@ -67,6 +79,9 @@ pub struct BuildOptions {
     pub ide_project: bool,
     /// Build in release mode
     pub release: bool,
+    /// C++ runtime to link against, `c++_shared` or `c++_static`.
+    /// `None` = fall back to CCGO.toml, then to `c++_shared`.
+    pub stl: Option<String>,
     /// Build only native libraries without packaging (AAR/HAR)
     pub native_only: bool,
     /// Windows toolchain (msvc, mingw, auto)
@@ -112,6 +127,7 @@ impl Default for BuildOptions {
             target: BuildTarget::Linux,
             architectures: Vec::new(),
             link_type: LinkType::Both,
+            stl: None,
             use_docker: false,
             auto_docker: false,
             jobs: None,

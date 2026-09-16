@@ -120,7 +120,11 @@ impl AndroidBuilder {
         let install_dir = build_dir.join("install");
 
         let build_shared = link_type == "shared";
-        let cmake_vars = ndk.cmake_variables_for_abi(abi, api_level);
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
+        );
+        let cmake_vars = ndk.cmake_variables_for_abi(abi, api_level, &stl);
 
         let build_type = if ctx.options.release {
             BuildType::RelWithDebInfo
@@ -579,9 +583,18 @@ impl AndroidBuilder {
 
         eprintln!("  Running Gradle {} task...", assemble_task);
 
+        // Hand the resolved runtime to Gradle. The plugin turns c++_static into the
+        // `-stdembed` artifact name, so if it read a different value than the one
+        // CMake just built with, the package name would contradict its own .so.
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
+        );
+
         let status = std::process::Command::new(gradlew)
             .arg(assemble_task)
             .arg("--no-daemon")
+            .env("CCGO_ANDROID_STL", &stl)
             .current_dir(android_project)
             .spawn()
             .with_context(|| format!("Failed to spawn Gradle in {}", android_project.display()))?
