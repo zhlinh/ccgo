@@ -222,8 +222,8 @@ impl OhosBuilder {
         &self,
         build_dir: &PathBuf,
         is_shared: bool,
-        _link_type: &str,
-        _abi: OhosAbi,
+        link_type: &str,
+        abi: OhosAbi,
         lib_name: &str,
     ) -> Result<Vec<PathBuf>> {
         let extension = if is_shared { "so" } else { "a" };
@@ -231,8 +231,15 @@ impl OhosBuilder {
 
         // build_dir is already the per-ABI dir (e.g. cmake_build/debug/ohos/static/arm64-v8a),
         // so the merged library from merge_module_static_libs lives in build_dir/out/.
+        //
+        // CMake also writes the main library one level deeper, under
+        // <link_type>/<abi>/out/ — the same doubled shape the Android builder already
+        // handles. Without that entry the shared library was never found on OHOS, so
+        // copy_libraries_to_libs saw an empty list, skipped the ABI, and the HAR
+        // shipped with no liblogcomm.so at all while the build reported success.
         let possible_dirs = vec![
             build_dir.join("out"), // Merged library — highest priority
+            build_dir.join(format!("{}/{}/out", link_type, abi.abi_string())),
             build_dir.join("install/lib"),
             build_dir.join("lib"),
         ];
