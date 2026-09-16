@@ -529,6 +529,13 @@ impl AndroidBuilder {
                 .as_ref()
                 .and_then(|a| a.distribute_stl)
                 .unwrap_or(false);
+
+        let export_own_lib = ctx
+            .config
+            .android
+            .as_ref()
+            .and_then(|c| c.export_own_lib)
+            .unwrap_or(true);
         let libs_dir = android_project.join("main_android_sdk/libs");
 
         // Clean jniLibs directory to avoid conflicts with old builds
@@ -564,7 +571,8 @@ impl AndroidBuilder {
             let abi_dir = jni_libs_dir.join(abi.abi_string());
             std::fs::create_dir_all(&abi_dir)?;
 
-            for lib in libs {
+            // A runtime-only package skips its own library; see export_own_lib.
+            for lib in if export_own_lib { libs } else { Vec::new() } {
                 let lib_name = lib.file_name().unwrap();
                 let dest = abi_dir.join(lib_name);
                 std::fs::copy(&lib, &dest)

@@ -470,6 +470,13 @@ impl OhosBuilder {
                 .and_then(|o| o.distribute_stl)
                 .unwrap_or(false);
 
+        let export_own_lib = ctx
+            .config
+            .ohos
+            .as_ref()
+            .and_then(|c| c.export_own_lib)
+            .unwrap_or(true);
+
         // Clean existing libs directory to avoid stale libraries
         if libs_dir.exists() {
             std::fs::remove_dir_all(&libs_dir)?;
@@ -494,7 +501,8 @@ impl OhosBuilder {
             let abi_dir = libs_dir.join(abi.abi_string());
             std::fs::create_dir_all(&abi_dir)?;
 
-            for lib in libs {
+            // A runtime-only package skips its own library; see export_own_lib.
+            for lib in if export_own_lib { libs } else { Vec::new() } {
                 let lib_name = lib.file_name().unwrap();
                 let dest = abi_dir.join(lib_name);
                 std::fs::copy(&lib, &dest)

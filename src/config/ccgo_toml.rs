@@ -1233,6 +1233,14 @@ pub struct AndroidSection {
     /// Ignored when the runtime is static: c++_static has nothing to ship.
     #[serde(default)]
     pub distribute_stl: Option<bool>,
+
+    /// Put this project's own shared library in the package. Defaults to true.
+    ///
+    /// Turn it off for a package whose whole payload is the runtime: stdcomm's
+    /// published AAR carries the three libc++_shared.so and no libstdcomm.so,
+    /// because its own library is a build intermediate nobody loads.
+    #[serde(default)]
+    pub export_own_lib: Option<bool>,
 }
 
 /// The `stl` knob from the top-level `[ohos]` section. See [`AndroidSection`].
@@ -1252,6 +1260,14 @@ pub struct OhosSection {
     /// Ignored when the runtime is static: c++_static has nothing to ship.
     #[serde(default)]
     pub distribute_stl: Option<bool>,
+
+    /// Put this project's own shared library in the package. Defaults to true.
+    ///
+    /// Turn it off for a package whose whole payload is the runtime: stdcomm's
+    /// published AAR carries the three libc++_shared.so and no libstdcomm.so,
+    /// because its own library is a build intermediate nobody loads.
+    #[serde(default)]
+    pub export_own_lib: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
