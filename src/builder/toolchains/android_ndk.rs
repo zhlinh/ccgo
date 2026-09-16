@@ -415,6 +415,34 @@ impl AndroidNdkToolchain {
             .join("libc++_shared.so")
     }
 
+    /// Strip a copy of libc++_shared.so that is about to be shipped.
+    ///
+    /// Bare `llvm-strip`, no `--strip-unneeded`: that is what the old build scripts
+    /// ran, and the published artifacts match it byte for byte. `--strip-unneeded`
+    /// leaves 456 more bytes per ABI, skipping the strip entirely leaves ~39% more.
+    pub fn strip_stl_library(&self, library_path: &PathBuf, verbose: bool) -> Result<()> {
+        let strip_path = self.llvm_strip_path();
+
+        if !strip_path.exists() {
+            bail!("llvm-strip not found at: {}", strip_path.display());
+        }
+
+        if verbose {
+            eprintln!("  Stripping {}...", library_path.display());
+        }
+
+        let status = std::process::Command::new(&strip_path)
+            .arg(library_path)
+            .status()
+            .with_context(|| format!("Failed to run llvm-strip on {}", library_path.display()))?;
+
+        if !status.success() {
+            bail!("llvm-strip failed for {}", library_path.display());
+        }
+
+        Ok(())
+    }
+
     /// Strip debug symbols from a shared library
     ///
     /// Uses llvm-strip with --strip-unneeded to remove debug symbols

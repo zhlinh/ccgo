@@ -1221,6 +1221,18 @@ pub struct PlatformBuildConfig {
 pub struct AndroidSection {
     #[serde(default)]
     pub stl: Option<String>,
+
+    /// Ship libc++_shared.so inside this project's package.
+    ///
+    /// Off by default, and it must stay that way: of everything published under
+    /// com.cyber.mna only stdcomm carries the runtime — logcomm, foundrycomm and
+    /// kvcomm all ship zero copies, because two packages carrying it means the
+    /// consumer's packager picks one arbitrarily. Turn it on in the one project
+    /// whose job is distributing the runtime.
+    ///
+    /// Ignored when the runtime is static: c++_static has nothing to ship.
+    #[serde(default)]
+    pub distribute_stl: Option<bool>,
 }
 
 /// The `stl` knob from the top-level `[ohos]` section. See [`AndroidSection`].
@@ -1228,6 +1240,18 @@ pub struct AndroidSection {
 pub struct OhosSection {
     #[serde(default)]
     pub stl: Option<String>,
+
+    /// Ship libc++_shared.so inside this project's package.
+    ///
+    /// Off by default, and it must stay that way: of everything published under
+    /// com.cyber.mna only stdcomm carries the runtime — logcomm, foundrycomm and
+    /// kvcomm all ship zero copies, because two packages carrying it means the
+    /// consumer's packager picks one arbitrarily. Turn it on in the one project
+    /// whose job is distributing the runtime.
+    ///
+    /// Ignored when the runtime is static: c++_static has nothing to ship.
+    #[serde(default)]
+    pub distribute_stl: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -433,6 +433,7 @@ impl OhosBuilder {
     fn copy_libraries_to_libs(
         &self,
         ctx: &BuildContext,
+        sdk: &OhosSdkToolchain,
         abis: &[OhosAbi],
         lib_name: &str,
     ) -> Result<()> {
@@ -449,6 +450,19 @@ impl OhosBuilder {
 
         let libs_dir = ohos_project.join("libs");
 
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.ohos.as_ref().and_then(|o| o.stl.as_deref()),
+        );
+        // c++_static embeds the runtime, so there is nothing left to ship.
+        let distribute_stl = stl == "c++_shared"
+            && ctx
+                .config
+                .ohos
+                .as_ref()
+                .and_then(|o| o.distribute_stl)
+                .unwrap_or(false);
+
         // Clean existing libs directory to avoid stale libraries
         if libs_dir.exists() {
             std::fs::remove_dir_all(&libs_dir)?;
@@ -462,7 +476,10 @@ impl OhosBuilder {
 
             let libs = self.find_libraries(&build_dir, true, "shared", *abi, lib_name)?;
 
-            if libs.is_empty() {
+            // A project can ship the runtime without producing a shared library of
+            // its own — that is exactly what stdcomm does on OHOS — so this guard
+            // has to consider both.
+            if libs.is_empty() && !distribute_stl {
                 continue;
             }
 
@@ -482,6 +499,28 @@ impl OhosBuilder {
                         lib_name.to_str().unwrap(),
                         dest.display()
                     );
+                }
+            }
+
+            // Ship the runtime alongside, for the one project that opts in.
+            // Mirrors the old build_ohos.py: copy from the SDK, then llvm-strip it —
+            // the unstripped copy is ~39% larger and does not match what was
+            // published before.
+            if distribute_stl {
+                let stl_src = sdk.stl_path(*abi);
+                if !stl_src.exists() {
+                    anyhow::bail!(
+                        "[ohos].distribute_stl is on but libc++_shared.so is missing at {}",
+                        stl_src.display()
+                    );
+                }
+                let stl_dest = abi_dir.join("libc++_shared.so");
+                std::fs::copy(&stl_src, &stl_dest).with_context(|| {
+                    format!("Failed to copy {} to libs", stl_src.display())
+                })?;
+                sdk.strip_stl_library(&stl_dest, ctx.options.verbose)?;
+                if ctx.options.verbose {
+                    eprintln!("  Copied libc++_shared.so to {}", stl_dest.display());
                 }
             }
         }
@@ -875,7 +914,7 @@ impl OhosBuilder {
             if ctx.options.verbose {
                 eprintln!("Copying libraries to libs for Hvigor...");
             }
-            self.copy_libraries_to_libs(ctx, abis, ctx.lib_name())?;
+            self.copy_libraries_to_libs(ctx, sdk, abis, ctx.lib_name())?;
         }
 
         Ok(built_link_types)

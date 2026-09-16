@@ -501,7 +501,12 @@ impl AndroidBuilder {
     ///
     /// This copies .so files from cmake_build to android/main_android_sdk/src/main/jniLibs/
     /// so that Gradle can package them into the AAR.
-    fn copy_libraries_to_jnilibs(&self, ctx: &BuildContext, abis: &[AndroidAbi]) -> Result<()> {
+    fn copy_libraries_to_jnilibs(
+        &self,
+        ctx: &BuildContext,
+        ndk: &AndroidNdkToolchain,
+        abis: &[AndroidAbi],
+    ) -> Result<()> {
         let android_project = ctx.project_root.join("android");
         if !android_project.exists() {
             if ctx.options.verbose {
@@ -511,6 +516,19 @@ impl AndroidBuilder {
         }
 
         let jni_libs_dir = android_project.join("main_android_sdk/src/main/jniLibs");
+
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
+        );
+        // c++_static embeds the runtime, so there is nothing left to ship.
+        let distribute_stl = stl == "c++_shared"
+            && ctx
+                .config
+                .android
+                .as_ref()
+                .and_then(|a| a.distribute_stl)
+                .unwrap_or(false);
         let libs_dir = android_project.join("main_android_sdk/libs");
 
         // Clean jniLibs directory to avoid conflicts with old builds
@@ -537,7 +555,9 @@ impl AndroidBuilder {
                 .join(format!("shared/{}", abi.abi_string()));
             let libs = self.find_libraries(&build_dir, true, "shared", *abi)?;
 
-            if libs.is_empty() {
+            // A project can ship the runtime without producing a shared library of
+            // its own, so this guard has to consider both.
+            if libs.is_empty() && !distribute_stl {
                 continue;
             }
 
@@ -556,6 +576,18 @@ impl AndroidBuilder {
                         lib_name.to_str().unwrap(),
                         dest.display()
                     );
+                }
+            }
+
+            // Ship the runtime alongside, for the one project that opts in.
+            // Mirrors the old build_android.py: copy from the NDK sysroot, then
+            // llvm-strip it — the unstripped copy is ~39% larger and does not match
+            // what was published before.
+            if distribute_stl {
+                let stl_dest = ndk.copy_stl_library(*abi, &abi_dir)?;
+                ndk.strip_stl_library(&stl_dest, ctx.options.verbose)?;
+                if ctx.options.verbose {
+                    eprintln!("  Copied libc++_shared.so to {}", stl_dest.display());
                 }
             }
         }
@@ -941,7 +973,7 @@ impl AndroidBuilder {
             if ctx.options.verbose {
                 eprintln!("Copying libraries to jniLibs for Gradle...");
             }
-            self.copy_libraries_to_jnilibs(ctx, abis)?;
+            self.copy_libraries_to_jnilibs(ctx, ndk, abis)?;
         }
 
         Ok(built_link_types)
