@@ -129,20 +129,20 @@ pub struct TestCommand {
 
 impl TestCommand {
     /// Execute the test command
-    pub fn execute(self, verbose: bool) -> Result<()> {
-        // Load project configuration
-        let config = CcgoConfig::load()?;
-        let project_root = std::env::current_dir()?;
-
-        let sanitizer = if self.asan {
+    /// Which sanitizer the CLI flags select, if any.
+    fn sanitizer_kind(&self) -> Option<crate::builder::sanitizer::SanitizerKind> {
+        if self.asan {
             Some(crate::builder::sanitizer::SanitizerKind::Address)
         } else if self.tsan {
             Some(crate::builder::sanitizer::SanitizerKind::Thread)
         } else {
             None
-        };
+        }
+    }
 
-        // Validate reserved profile names.
+    /// Reject `--profile debug` / `--profile release`: those names are the
+    /// build modes themselves and are selected with `--release` instead.
+    fn validate_profile_name(&self) -> Result<()> {
         if let Some(ref pname) = self.profile {
             if matches!(pname.as_str(), "debug" | "release") {
                 anyhow::bail!(
@@ -150,13 +150,25 @@ impl TestCommand {
                 );
             }
         }
+        Ok(())
+    }
+
+    pub fn execute(self, verbose: bool) -> Result<()> {
+        // Load project configuration
+        let config = CcgoConfig::load()?;
+        let project_root = std::env::current_dir()?;
+
+        let sanitizer = self.sanitizer_kind();
+        self.validate_profile_name()?;
 
         let release = self.release; // mode is CLI-only; profile.release is never applied
         let profile_name = self.profile.clone();
 
         // Create build context for tests
         let options = BuildOptions {
-            target: BuildTarget::Linux, // Placeholder, not used by tests
+            // Placeholder: host builds have no BuildTarget. The build directory
+            // name comes from new_with_platform_name() below, not from this.
+            target: BuildTarget::Linux,
             architectures: vec![],
             link_type: LinkType::Both,
             use_docker: false,
@@ -180,7 +192,12 @@ impl TestCommand {
             ..BuildOptions::default()
         };
 
-        let ctx = BuildContext::new(project_root.clone(), config, options);
+        let ctx = BuildContext::new_with_platform_name(
+            project_root.clone(),
+            config,
+            options,
+            "tests".to_string(),
+        );
         let builder = TestsBuilder::new();
 
         // Use the build directory from the build context (respects config and profile).
@@ -196,7 +213,17 @@ impl TestCommand {
             return builder.generate_ide_project(&ctx);
         }
 
-        // Build tests if needed
+        self.build_and_run(&builder, &ctx, verbose)?;
+        self.report_results(&project_root, &build_dir, verbose)
+    }
+
+    /// Build the test binaries and run them, honouring --build-only/--run-only.
+    fn build_and_run(
+        &self,
+        builder: &TestsBuilder,
+        ctx: &BuildContext,
+        verbose: bool,
+    ) -> Result<()> {
         if !self.run_only {
             if verbose {
                 eprintln!("Building tests...");
@@ -209,30 +236,32 @@ impl TestCommand {
                 eprintln!("📊 Coverage collection enabled");
             }
 
-            builder.build(&ctx)?;
+            builder.build(ctx)?;
         }
 
-        // Run tests if needed
         if !self.build_only {
             if verbose {
                 eprintln!("Running tests...");
             }
-            builder.run_tests(&ctx, self.filter.as_deref())?;
+            builder.run_tests(ctx, self.filter.as_deref())?;
         }
 
-        // Aggregate results if requested
+        Ok(())
+    }
+
+    /// Everything that consumes the test run's output: aggregation, CI
+    /// reporting and coverage collection.
+    fn report_results(&self, project_root: &Path, build_dir: &Path, verbose: bool) -> Result<()> {
         if self.aggregate {
-            self.aggregate_results(&build_dir, verbose)?;
+            self.aggregate_results(build_dir, verbose)?;
         }
 
-        // Handle CI integration
         if self.ci_format.is_some() || self.junit_xml.is_some() {
-            self.report_to_ci(&build_dir, verbose)?;
+            self.report_to_ci(build_dir, verbose)?;
         }
 
-        // Collect coverage if enabled
         if self.coverage && !self.build_only {
-            self.collect_coverage(&project_root, &build_dir, verbose)?;
+            self.collect_coverage(project_root, build_dir, verbose)?;
         }
 
         Ok(())

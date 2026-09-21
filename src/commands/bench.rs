@@ -129,7 +129,9 @@ impl BenchCommand {
 
         // Create build context for benchmarks
         let options = BuildOptions {
-            target: BuildTarget::Linux, // Placeholder, not used by benchmarks
+            // Placeholder: host builds have no BuildTarget. The build directory
+            // name comes from new_with_platform_name() below, not from this.
+            target: BuildTarget::Linux,
             architectures: vec![],
             link_type: LinkType::Both,
             use_docker: false,
@@ -153,7 +155,12 @@ impl BenchCommand {
             ..BuildOptions::default()
         };
 
-        let ctx = BuildContext::new(project_root.clone(), config, options);
+        let ctx = BuildContext::new_with_platform_name(
+            project_root.clone(),
+            config,
+            options,
+            "benches".to_string(),
+        );
         let builder = BenchesBuilder::new();
 
         // Use the build directory from the build context (respects config and profile).

@@ -182,6 +182,26 @@ impl BuildContext {
     pub fn new(project_root: PathBuf, config: CcgoConfig, options: BuildOptions) -> Self {
         // Convert platform name to lowercase for consistent directory structure
         let platform_name = options.target.to_string().to_lowercase();
+        Self::new_with_platform_name(project_root, config, options, platform_name)
+    }
+
+    /// Create a build context with an explicit platform directory name.
+    ///
+    /// `ccgo test` and `ccgo bench` build for the host, so they have no
+    /// meaningful `BuildTarget` to pass; both set `BuildTarget::Linux` as a
+    /// placeholder. That placeholder is NOT inert: `new()` derives the build
+    /// directory from it, so host test builds landed in
+    /// `ccgo_build/<mode>/linux/` on macOS and Windows too -- and, worse,
+    /// shared that directory with a real `ccgo build linux`, which
+    /// `TestsPlatform::build()` wipes on entry. These callers pass the name
+    /// their builder already reports from `platform_name()` ("tests",
+    /// "benches") instead.
+    pub fn new_with_platform_name(
+        project_root: PathBuf,
+        config: CcgoConfig,
+        options: BuildOptions,
+        platform_name: String,
+    ) -> Self {
 
         // Resolve the build directory name from config (default: "ccgo_build").
         let build_dir_name = config
