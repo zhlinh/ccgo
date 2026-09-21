@@ -111,6 +111,15 @@ pub struct PublishCommand {
     #[arg(long)]
     pub skip_build: bool,
 
+    /// C++ runtime to publish against (Android only).
+    ///
+    /// Mirrors `ccgo build android --stl`. The Gradle plugin derives the
+    /// `-stdembed` artifact name from this, so publishing has to state it too:
+    /// without it the plugin falls back to `[android].stl` in CCGO.toml and a
+    /// c++_static build gets published under the plain, shared-runtime name.
+    #[arg(long, value_enum)]
+    pub stl: Option<crate::commands::build::StlKind>,
+
     /// Skip confirmation prompts
     #[arg(short = 'y', long)]
     pub yes: bool,
@@ -316,6 +325,22 @@ impl PublishCommand {
         cmd.current_dir(&android_dir);
         cmd.arg(gradle_task);
         cmd.arg("--no-daemon");
+
+        // Hand the resolved runtime to Gradle, same as the android builder does.
+        // The plugin reads CCGO_ANDROID_STL first, then [android].stl from
+        // CCGO.toml; it decides the `-stdembed` artifact name. Publishing a
+        // c++_static build without this yields a package whose name says shared
+        // while its .so embeds the runtime -- worse than either choice alone.
+        let config = crate::config::CcgoConfig::load().ok();
+        let stl = crate::builder::resolve_stl(
+            self.stl.as_ref().map(|s| s.as_str()),
+            config
+                .as_ref()
+                .and_then(|c| c.android.as_ref())
+                .and_then(|a| a.stl.as_deref()),
+        );
+        cmd.env("CCGO_ANDROID_STL", &stl);
+        println!("  C++ runtime: {}", stl);
 
         if self.skip_build {
             cmd.arg("-x").arg("buildAAR");
@@ -713,6 +738,66 @@ impl PublishCommand {
         Ok(())
     }
 
+    /// The (version, tag) pair this invocation publishes.
+    ///
+    /// The index is append-only: one version per invocation, so at least one of
+    /// --index-version / --index-tag has to be given and the other is derived.
+    fn resolve_index_version_and_tag(&self) -> Result<(String, String)> {
+        Ok(match (&self.index_version, &self.index_tag) {
+            (Some(v), Some(t)) => (v.clone(), t.clone()),
+            (Some(v), None) => (v.clone(), default_tag_for_version(v)),
+            (None, Some(t)) => (derive_version_from_tag(t), t.clone()),
+            (None, None) => bail!(
+                "ccgo publish index requires --index-version and/or --index-tag.\n\n\
+                 The index is append-only — each invocation publishes exactly \
+                 one version. Examples:\n  \
+                   ccgo publish index --index-version 1.0.0\n  \
+                   ccgo publish index --index-tag v1.0.0\n  \
+                   ccgo publish index --index-version 1.0.0 --index-tag custom-prefix-v1.0.0"
+            ),
+        })
+    }
+
+    /// Merge this invocation's version into the package's index entry and write
+    /// it back. The index is append-only, so the existing versions are read
+    /// first and the new one folded in rather than replacing the file.
+    fn write_package_entry(
+        &self,
+        index_path: &std::path::Path,
+        config: &crate::config::CcgoConfig,
+        package: &crate::config::PackageConfig,
+        git_url: &str,
+        new_version_entry: crate::registry::VersionEntry,
+    ) -> Result<PackageEntry> {
+        let package_rel_path = PackageIndex::package_index_path(&package.name);
+        let package_file = index_path.join(&package_rel_path);
+
+        if let Some(parent) = package_file.parent() {
+            fs::create_dir_all(parent).context("Failed to create package directory")?;
+        }
+
+        let existing_versions = Self::read_existing_versions(&package_file)?;
+        let merged_versions = merge_version_entry(existing_versions, new_version_entry)?;
+
+        let package_entry = PackageEntry {
+            name: package.name.clone(),
+            description: package.description.clone().unwrap_or_default(),
+            repository: git_url.to_string(),
+            homepage: package.repository.clone(),
+            license: package.license.clone(),
+            keywords: Vec::new(),
+            platforms: self.get_supported_platforms(config),
+            versions: merged_versions,
+        };
+
+        let json = serde_json::to_string_pretty(&package_entry)
+            .context("Failed to serialize package entry")?;
+        fs::write(&package_file, &json).context("Failed to write package file")?;
+
+        println!("✅ Written: {}", package_rel_path.display());
+        Ok(package_entry)
+    }
+
     fn publish_index(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing to Package Index ===\n");
 
@@ -741,19 +826,7 @@ impl PublishCommand {
 
         // Resolve the (version, tag) pair to publish — one entry per
         // invocation, append-only. Mirrors `pod repo push`.
-        let (version, tag) = match (&self.index_version, &self.index_tag) {
-            (Some(v), Some(t)) => (v.clone(), t.clone()),
-            (Some(v), None) => (v.clone(), default_tag_for_version(v)),
-            (None, Some(t)) => (derive_version_from_tag(t), t.clone()),
-            (None, None) => bail!(
-                "ccgo publish index requires --index-version and/or --index-tag.\n\n\
-                 The index is append-only — each invocation publishes exactly \
-                 one version. Examples:\n  \
-                   ccgo publish index --index-version 1.0.0\n  \
-                   ccgo publish index --index-tag v1.0.0\n  \
-                   ccgo publish index --index-version 1.0.0 --index-tag custom-prefix-v1.0.0"
-            ),
-        };
+        let (version, tag) = self.resolve_index_version_and_tag()?;
 
         println!("\n🔖 Publishing single version:");
         println!("   version: {}", version);
@@ -786,33 +859,13 @@ impl PublishCommand {
         let index_path =
             crate::registry::index_writer::prepare_index_repo(&index_repo, &index_name, verbose)?;
 
-        // Read existing entry (if any), append our new version, sort.
-        let package_rel_path = PackageIndex::package_index_path(&package.name);
-        let package_file = index_path.join(&package_rel_path);
-
-        if let Some(parent) = package_file.parent() {
-            fs::create_dir_all(parent).context("Failed to create package directory")?;
-        }
-
-        let existing_versions = Self::read_existing_versions(&package_file)?;
-        let merged_versions = merge_version_entry(existing_versions, new_version_entry)?;
-
-        let package_entry = PackageEntry {
-            name: package.name.clone(),
-            description: package.description.clone().unwrap_or_default(),
-            repository: git_url.clone(),
-            homepage: package.repository.clone(),
-            license: package.license.clone(),
-            keywords: Vec::new(),
-            platforms: self.get_supported_platforms(&config),
-            versions: merged_versions,
-        };
-
-        let json = serde_json::to_string_pretty(&package_entry)
-            .context("Failed to serialize package entry")?;
-        fs::write(&package_file, &json).context("Failed to write package file")?;
-
-        println!("✅ Written: {}", package_rel_path.display());
+        let package_entry = self.write_package_entry(
+            &index_path,
+            &config,
+            &package,
+            &git_url,
+            new_version_entry,
+        )?;
 
         // Update index.json metadata
         crate::registry::index_writer::update_index_metadata(&index_path, &index_name)?;
@@ -832,10 +885,29 @@ impl PublishCommand {
 
         crate::registry::index_writer::commit_changes(&index_path, &commit_message, verbose)?;
 
-        // Push if requested
+        self.push_and_report(
+            &index_path,
+            &index_name,
+            &index_repo,
+            &package.name,
+            &package_entry,
+            verbose,
+        )
+    }
+
+    /// Push the index commit when asked, then print how to consume the package.
+    fn push_and_report(
+        &self,
+        index_path: &std::path::Path,
+        index_name: &str,
+        index_repo: &str,
+        package_name: &str,
+        package_entry: &PackageEntry,
+        verbose: bool,
+    ) -> Result<()> {
         if self.index_push {
             println!("\n📤 Pushing to remote...");
-            crate::registry::index_writer::push_changes(&index_path, verbose)?;
+            crate::registry::index_writer::push_changes(index_path, verbose)?;
             println!("✅ Pushed successfully!");
         } else {
             println!("\n💡 Changes committed locally. Use --index-push to push to remote.");
@@ -850,7 +922,7 @@ impl PublishCommand {
         println!("   2. Add dependency: [dependencies]");
         println!(
             "      {} = \"^{}\"",
-            package.name,
+            package_name,
             package_entry
                 .versions
                 .first()
@@ -1266,6 +1338,7 @@ mod tests {
             url: None,
             remote_name: None,
             skip_build: false,
+            stl: None,
             yes: true,
             manager: AppleManager::All,
             push: false,
@@ -1305,6 +1378,7 @@ mod tests {
             url: None,
             remote_name: None,
             skip_build: false,
+            stl: None,
             yes: true,
             manager: AppleManager::All,
             push: false,
