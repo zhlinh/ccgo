@@ -210,6 +210,21 @@ impl KmpBuilder {
         cmd.current_dir(&kmp_dir);
         cmd.args(args);
 
+        // Tell the build script which ccgo_build/<mode> tree holds the native
+        // libraries it should wire into cinterop and jniLibs. Gradle cannot work
+        // this out on its own -- ccgo passes neither -P properties nor
+        // ORG_GRADLE_PROJECT_* env vars -- so without it a project has to hardcode
+        // one mode and silently reads the wrong tree (or none at all, producing
+        // klibs with no native code) whenever the other mode is built.
+        cmd.arg(format!(
+            "-PccgoBuildType={}",
+            if ctx.options.release {
+                "release"
+            } else {
+                "debug"
+            }
+        ));
+
         // Add common Gradle options
         cmd.arg("--no-daemon");
         // Disable configuration cache to avoid Kotlin/Native issues
