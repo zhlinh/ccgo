@@ -30,6 +30,7 @@ pip install ccgo
 
 # 2. Install via Homebrew
 brew tap zhlinh/ccgo
+brew trust --formula zhlinh/ccgo/ccgo
 brew install ccgo
 
 # 3. Install from crates.io

@@ -343,6 +343,15 @@ impl CMakeConfig {
         let mut cmd = Command::new(&cmake);
         cmd.arg("--build").arg(&self.build_dir);
 
+        // Add config for multi-config generators (Windows).
+        // Visual Studio ignores CMAKE_BUILD_TYPE, so without this MSBuild builds the
+        // default config (Debug) while the generated cmake_install.cmake defaults its
+        // install config to CMAKE_BUILD_TYPE (Release) -- install then fails with
+        // "file INSTALL cannot find .../Release/<lib>". Same pattern as tests.rs/benches.rs.
+        if cfg!(target_os = "windows") {
+            cmd.arg("--config").arg(self.build_type.to_string());
+        }
+
         // Parallel jobs
         if let Some(jobs) = self.jobs {
             cmd.arg("-j").arg(jobs.to_string());
@@ -377,6 +386,12 @@ impl CMakeConfig {
 
         let mut cmd = Command::new(&cmake);
         cmd.arg("--install").arg(&self.build_dir);
+
+        // Keep the install config pinned to the same one we just built, instead of
+        // relying on cmake_install.cmake's CMAKE_BUILD_TYPE fallback.
+        if cfg!(target_os = "windows") {
+            cmd.arg("--config").arg(self.build_type.to_string());
+        }
 
         if self.verbose {
             eprintln!("Running: {:?}", cmd);

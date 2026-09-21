@@ -6,7 +6,14 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Restore world-readable bits on the apt keyrings before updating. Older Docker
+# (seen with 19.03.8) can drop them depending on the storage driver, after which
+# user '_apt' cannot read /etc/apt/trusted.gpg.d/*.gpg and every repository is
+# rejected as unsigned: "NO_PUBKEY 871920D1991BC93C" plus
+# "The key(s) ... are ignored as the file is not readable by user '_apt'".
+# No-op on modern Docker.
+RUN chmod 644 /etc/apt/trusted.gpg.d/*.gpg 2>/dev/null || true; \
+    apt-get update && apt-get install -y --no-install-recommends \
     mingw-w64 \
     libz-mingw-w64-dev \
     cmake \

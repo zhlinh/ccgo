@@ -1,12 +1,25 @@
 # Dockerfile for building Linux static libraries on any platform
 # Base image: Ubuntu 22.04 LTS with build essentials
-FROM ubuntu:22.04
+#
+# Force linux/amd64: this image builds x86_64 with the image's NATIVE gcc and
+# aarch64 with gcc-aarch64-linux-gnu. That split only holds on an amd64 host.
+# On an arm64 host (Apple Silicon) an unpinned FROM yields an arm64 image, so the
+# "native" leg silently produces aarch64 too -- both arches come out aarch64, the
+# x86_64 output directory is wrong, and nothing errors. Same pin as Dockerfile.openwrt.
+FROM --platform=linux/amd64 ubuntu:22.04
 
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies (includes aarch64 cross-compiler for --arch aarch64 builds)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Restore world-readable bits on the apt keyrings before updating. Older Docker
+# (seen with 19.03.8) can drop them depending on the storage driver, after which
+# user '_apt' cannot read /etc/apt/trusted.gpg.d/*.gpg and every repository is
+# rejected as unsigned: "NO_PUBKEY 871920D1991BC93C" plus
+# "The key(s) ... are ignored as the file is not readable by user '_apt'".
+# No-op on modern Docker.
+RUN chmod 644 /etc/apt/trusted.gpg.d/*.gpg 2>/dev/null || true; \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     git \
