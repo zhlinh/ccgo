@@ -65,6 +65,21 @@ impl TestsBuilder {
             flags.push("-DENABLE_BITCODE=0".to_string());
         }
 
+        // Pin the same compiler the platform builders pick. Without this CMake
+        // falls back to whatever cc/c++ resolve to, which is not necessarily what
+        // `ccgo build <platform>` used: detect_default_compiler() prefers clang,
+        // while CMake's default on a Linux host is usually gcc. That split is not
+        // cosmetic -- the two disagree on diagnostics (clang 16+ makes
+        // -Wimplicit-function-declaration an error, gcc 12 still warns), so a test
+        // run can pass while the real build of the same sources fails. MSVC is
+        // excluded: the Visual Studio generator picks its own toolset.
+        if !cfg!(target_os = "windows") {
+            if let Some(compiler) = crate::builder::toolchains::detect_default_compiler() {
+                flags.push(format!("-DCMAKE_C_COMPILER={}", compiler.cc.display()));
+                flags.push(format!("-DCMAKE_CXX_COMPILER={}", compiler.cxx.display()));
+            }
+        }
+
         // Add compiler cache if available
         if let Some(cache) = ctx.compiler_cache() {
             for (name, value) in cache.cmake_variables() {
@@ -76,23 +91,25 @@ impl TestsBuilder {
     }
 
     /// Configure and build tests using CMake
+    /// Wipe and recreate the test build directory.
+    fn reset_build_dir(build_dir: &std::path::Path, verbose: bool) -> Result<()> {
+        if build_dir.exists() {
+            std::fs::remove_dir_all(build_dir)
+                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
+        }
+        std::fs::create_dir_all(build_dir)
+            .with_context(|| format!("Failed to create {}", build_dir.display()))?;
+        if verbose {
+            eprintln!("Building tests in {}...", build_dir.display());
+        }
+        Ok(())
+    }
+
     fn build_tests(&self, ctx: &BuildContext) -> Result<()> {
         let build_dir = self.build_dir(ctx);
         let install_dir = self.install_dir(ctx);
 
-        // Clean build directory
-        if build_dir.exists() {
-            std::fs::remove_dir_all(&build_dir)
-                .with_context(|| format!("Failed to clean {}", build_dir.display()))?;
-        }
-
-        // Create build directory
-        std::fs::create_dir_all(&build_dir)
-            .with_context(|| format!("Failed to create {}", build_dir.display()))?;
-
-        if ctx.options.verbose {
-            eprintln!("Building tests in {}...", build_dir.display());
-        }
+        Self::reset_build_dir(&build_dir, ctx.options.verbose)?;
 
         // Configure with CMake
         // Use -S and -B to explicitly specify source and build directories
