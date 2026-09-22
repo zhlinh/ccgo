@@ -312,6 +312,7 @@ pub fn create_build_info_full(
     version: &str,
     platform: &str,
     project_root: &Path,
+    android_stl: &str,
 ) -> BuildInfoFull {
     let now = Local::now();
     let timestamp = now.timestamp();
@@ -320,7 +321,7 @@ pub fn create_build_info_full(
     let git_info = get_git_info_full(project_root);
 
     // Get platform-specific build info
-    let platform_info = get_platform_build_info(platform);
+    let platform_info = get_platform_build_info(platform, android_stl);
 
     // Get ccgo version from Cargo.toml or env
     let ccgo_version = env!("CARGO_PKG_VERSION").to_string();
@@ -502,7 +503,13 @@ fn get_os_version() -> String {
 }
 
 /// Get platform-specific build info
-fn get_platform_build_info(platform: &str) -> Option<PlatformBuildInfo> {
+/// Platform-specific fields for build_info.json.
+///
+/// `android_stl` is the runtime the build actually resolved to. It used to be
+/// hardcoded to "c++_shared" here, so a `--stl c++_static` build shipped
+/// metadata claiming the opposite -- consumers reading build_info.json to
+/// decide whether they still need libc++_shared.so were told the wrong thing.
+fn get_platform_build_info(platform: &str, android_stl: &str) -> Option<PlatformBuildInfo> {
     match platform.to_lowercase().as_str() {
         "ios" | "watchos" | "tvos" => {
             let (xcode_version, xcode_build) = get_xcode_version();
@@ -527,7 +534,7 @@ fn get_platform_build_info(platform: &str) -> Option<PlatformBuildInfo> {
             Some(PlatformBuildInfo::Android {
                 android: AndroidBuildInfo {
                     ndk_version,
-                    stl: "c++_shared".to_string(),
+                    stl: android_stl.to_string(),
                     min_sdk_version: min_sdk,
                 },
             })
@@ -615,6 +622,15 @@ pub struct ArchiveBuilder {
     version: String,
     /// Publish suffix (e.g., "beta.18-dirty" or "release")
     publish_suffix: String,
+    /// Build-variant markers: dimensions that change what is in the archive
+    /// rather than where the commit sits, e.g. "stdembed" for a c++_static
+    /// runtime or "oversea" for a region-specific macro set. Kept apart from
+    /// publish_suffix (git state) so the two can appear together.
+    ///
+    /// A list, not one string: the dimensions are independent and set from
+    /// different places, so a single field would let whichever ran last erase
+    /// the others.
+    variants: Vec<String>,
     /// Whether this is a release build
     is_release: bool,
     /// Platform name
@@ -626,6 +642,52 @@ pub struct ArchiveBuilder {
 }
 
 impl ArchiveBuilder {
+    /// Add one build-variant dimension to this archive's name.
+    ///
+    /// Two builds of the same version can differ in content without differing
+    /// in git state -- an Android c++_static build is the same commit as the
+    /// c++_shared one, and an "oversea" build only differs by CMake macros.
+    /// Without a distinct name the second overwrites the first in the output
+    /// directory and whoever archives them cannot tell them apart.
+    ///
+    /// Call it once per dimension; they compose. Duplicates are ignored so a
+    /// caller re-applying the same dimension cannot double it up.
+    pub fn with_variant(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        if !name.is_empty() && !self.variants.iter().any(|v| v == &name) {
+            self.variants.push(name);
+        }
+        self
+    }
+
+    /// `{PROJECT}_{PLATFORM}_SDK-{version}[-{variant}][-{publish}]{tail}`
+    pub(crate) fn archive_file_name(&self, tail: &str) -> String {
+        let mut name = format!(
+            "{}_{}_SDK-{}",
+            self.name.to_uppercase(),
+            self.platform.to_uppercase(),
+            self.version
+        );
+        // Sorted, not in call order: the same set of dimensions has to yield the
+        // same file name whichever code path happened to add them first,
+        // otherwise a refactor silently renames released artifacts.
+        // Uppercased here rather than at the call sites, so the convention holds
+        // however callers spell it -- the name's other fixed parts (project,
+        // platform, SDK) are uppercase too.
+        let mut variants: Vec<String> = self.variants.iter().map(|v| v.to_uppercase()).collect();
+        variants.sort();
+        for v in &variants {
+            name.push('-');
+            name.push_str(v);
+        }
+        if !self.publish_suffix.is_empty() {
+            name.push('-');
+            name.push_str(&self.publish_suffix);
+        }
+        name.push_str(tail);
+        name
+    }
+
     /// Create a new archive builder
     pub fn new(
         name: impl Into<String>,
@@ -646,6 +708,7 @@ impl ArchiveBuilder {
             name,
             version: version.into(),
             publish_suffix: publish_suffix.into(),
+            variants: Vec::new(),
             is_release,
             platform,
             staging_dir,
@@ -775,22 +838,7 @@ impl ArchiveBuilder {
         // Format: {PROJECT}_{PLATFORM}_SDK-{version}[-{publish_suffix}].zip
         // Example: CCGONOW_ANDROID_SDK-1.0.2-beta.18-dirty.zip
         // Example: CCGONOW_ANDROID_SDK-1.0.2.zip (when publish_suffix is empty)
-        let archive_name = if self.publish_suffix.is_empty() {
-            format!(
-                "{}_{}_SDK-{}.zip",
-                self.name.to_uppercase(),
-                self.platform.to_uppercase(),
-                self.version
-            )
-        } else {
-            format!(
-                "{}_{}_SDK-{}-{}.zip",
-                self.name.to_uppercase(),
-                self.platform.to_uppercase(),
-                self.version,
-                self.publish_suffix
-            )
-        };
+        let archive_name = self.archive_file_name(".zip");
         let archive_path = self.output_dir.join(&archive_name);
         std::fs::create_dir_all(&self.output_dir)?;
 
@@ -842,22 +890,7 @@ impl ArchiveBuilder {
         // Format: {PROJECT}_{PLATFORM}_SDK-{version}[-{publish_suffix}]-SYMBOLS.zip
         // Example: CCGONOW_ANDROID_SDK-1.0.2-beta.18-dirty-SYMBOLS.zip
         // Example: CCGONOW_ANDROID_SDK-1.0.2-SYMBOLS.zip (when publish_suffix is empty)
-        let archive_name = if self.publish_suffix.is_empty() {
-            format!(
-                "{}_{}_SDK-{}-SYMBOLS.zip",
-                self.name.to_uppercase(),
-                self.platform.to_uppercase(),
-                self.version
-            )
-        } else {
-            format!(
-                "{}_{}_SDK-{}-{}-SYMBOLS.zip",
-                self.name.to_uppercase(),
-                self.platform.to_uppercase(),
-                self.version,
-                self.publish_suffix
-            )
-        };
+        let archive_name = self.archive_file_name("-SYMBOLS.zip");
         let archive_path = self.output_dir.join(&archive_name);
 
         std::fs::create_dir_all(&self.output_dir)?;
@@ -1004,36 +1037,32 @@ pub fn print_zip_tree(archive_path: &Path, indent: &str) -> Result<()> {
 }
 
 /// Print the tree structure of a ZIP archive
-fn print_zip_tree_impl(archive_path: &Path, indent: &str) -> Result<()> {
+/// One `(path, size, library-info)` row per file in the archive.
+///
+/// Library members get their arch/linkage decoded here so the tree printer
+/// downstream only has to lay out strings; directory entries are dropped since
+/// the tree is rebuilt from the paths anyway.
+fn collect_zip_entries(
+    zip: &mut zip::ZipArchive<File>,
+) -> Result<Vec<(String, u64, String)>> {
     use super::elf::{get_library_info, is_library_file};
-    use zip::ZipArchive;
 
-    let file = File::open(archive_path)
-        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
-
-    let mut zip = ZipArchive::new(file)
-        .with_context(|| format!("Failed to read ZIP archive: {}", archive_path.display()))?;
-
-    // First pass: collect file info and library data
-    let mut file_infos: Vec<(String, u64, String)> = Vec::new(); // (path, size, lib_info)
+    let mut file_infos: Vec<(String, u64, String)> = Vec::new();
 
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i)?;
         let path = entry.name().to_string();
         let size = entry.size();
 
-        // Skip directories (entries ending with /)
         if path.ends_with('/') {
             continue;
         }
 
-        // Extract library info if this is a library file
-        let filename = path.split('/').next_back().unwrap_or(&path);
-        let lib_info = if is_library_file(filename, &path) {
-            // Read the file data for analysis
+        let filename = path.split('/').next_back().unwrap_or(&path).to_string();
+        let lib_info = if is_library_file(&filename, &path) {
             let mut data = Vec::with_capacity(size as usize);
             if entry.read_to_end(&mut data).is_ok() {
-                get_library_info(&data, filename, &path).to_display_string()
+                get_library_info(&data, &filename, &path).to_display_string()
             } else {
                 String::new()
             }
@@ -1043,6 +1072,20 @@ fn print_zip_tree_impl(archive_path: &Path, indent: &str) -> Result<()> {
 
         file_infos.push((path, size, lib_info));
     }
+
+    Ok(file_infos)
+}
+
+fn print_zip_tree_impl(archive_path: &Path, indent: &str) -> Result<()> {
+    use zip::ZipArchive;
+
+    let file = File::open(archive_path)
+        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+
+    let mut zip = ZipArchive::new(file)
+        .with_context(|| format!("Failed to read ZIP archive: {}", archive_path.display()))?;
+
+    let file_infos = collect_zip_entries(&mut zip)?;
 
     // Build directory tree structure with collected info
     let mut tree: BTreeMap<String, TreeNode> = BTreeMap::new();
@@ -1200,4 +1243,81 @@ fn print_targz_tree(archive_path: &Path, indent: &str) -> Result<()> {
     print_tree_level(&tree, indent, "");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+
+    fn builder(publish: &str, variants: &[&str]) -> ArchiveBuilder {
+        let mut b = ArchiveBuilder::new(
+            "logcomm",
+            "5.1.0",
+            publish,
+            true,
+            "Android",
+            std::path::PathBuf::from("/tmp"),
+        )
+        .unwrap();
+        for v in variants {
+            b = b.with_variant(*v);
+        }
+        b
+    }
+
+    #[test]
+    fn plain_build_keeps_its_name() {
+        assert_eq!(
+            builder("", &[]).archive_file_name(".zip"),
+            "LOGCOMM_ANDROID_SDK-5.1.0.zip"
+        );
+    }
+
+    #[test]
+    fn variant_is_uppercased_regardless_of_input() {
+        assert_eq!(
+            builder("", &["stdembed"]).archive_file_name(".zip"),
+            "LOGCOMM_ANDROID_SDK-5.1.0-STDEMBED.zip"
+        );
+    }
+
+    #[test]
+    fn variant_and_publish_suffix_coexist() {
+        assert_eq!(
+            builder("beta.18", &["stdembed"]).archive_file_name(".zip"),
+            "LOGCOMM_ANDROID_SDK-5.1.0-STDEMBED-beta.18.zip"
+        );
+    }
+
+    #[test]
+    fn symbols_archive_carries_the_variants_too() {
+        assert_eq!(
+            builder("", &["stdembed"]).archive_file_name("-SYMBOLS.zip"),
+            "LOGCOMM_ANDROID_SDK-5.1.0-STDEMBED-SYMBOLS.zip"
+        );
+    }
+
+    #[test]
+    fn dimensions_compose() {
+        assert_eq!(
+            builder("", &["stdembed", "oversea"]).archive_file_name(".zip"),
+            "LOGCOMM_ANDROID_SDK-5.1.0-OVERSEA-STDEMBED.zip"
+        );
+    }
+
+    #[test]
+    fn call_order_does_not_change_the_name() {
+        assert_eq!(
+            builder("", &["stdembed", "oversea"]).archive_file_name(".zip"),
+            builder("", &["oversea", "stdembed"]).archive_file_name(".zip")
+        );
+    }
+
+    #[test]
+    fn repeating_a_dimension_does_not_double_it() {
+        assert_eq!(
+            builder("", &["stdembed", "stdembed"]).archive_file_name(".zip"),
+            "LOGCOMM_ANDROID_SDK-5.1.0-STDEMBED.zip"
+        );
+    }
 }

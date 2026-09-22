@@ -479,6 +479,48 @@ ccgo build --no-default-features
 
 ---
 
+### 特性与产物名
+
+特性**不会**改变归档文件名。两个 flavor 完全可能共用同一个特性，靠 `-F` 推导
+名字会有歧义。要给产物命名就显式用 `--variant`：
+
+```bash
+ccgo build android --release -F oversea --variant oversea
+# -> NAME_ANDROID_SDK-1.0.0-OVERSEA.zip
+```
+
+变体名会转大写、排序、组合，与传入顺序无关。静态 STL 构建会自动带上 `STDEMBED`：
+
+```bash
+ccgo build android --release --variant oversea --stl c++_static
+# -> NAME_ANDROID_SDK-1.0.0-OVERSEA-STDEMBED.zip
+```
+
+### 在 CMake 中消费特性
+
+ccgo 会把已启用的特性以分号分隔的列表传给 CMake，变量名是
+`CCGO_FEATURE_DEFINITIONS`，每一项形如 `CCGO_FEATURE_<NAME>`。ccgo 不会替你
+定义任何宏——在 `CMakeLists.txt` 里映射到你自己的宏：
+
+```cmake
+if("CCGO_FEATURE_OVERSEA" IN_LIST CCGO_FEATURE_DEFINITIONS)
+    add_definitions(-DMYLIB_BUILD_CHANNEL_OVERSEA=1)
+endif()
+```
+
+没有启用任何特性时该变量未定义，`IN_LIST` 会当空列表处理，无需额外判空。
+
+复合特性照常可用，所以一个 `-F` 能驱动多个宏：
+
+```toml
+[features]
+oversea = ["oversea-dns", "oversea-cert"]
+oversea-dns = []
+oversea-cert = []
+```
+
+---
+
 ## [examples]
 
 定义示例程序。

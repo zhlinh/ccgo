@@ -437,6 +437,78 @@ impl OhosBuilder {
     }
 
     /// Copy libraries to ohos/main_ohos_sdk/libs/{arch}/ for HAR packaging
+    /// Stage one ABI's shared libraries (and optionally the C++ runtime) into
+    /// libs for Hvigor to package.
+    #[allow(clippy::too_many_arguments)]
+    fn copy_abi_to_libs(
+        &self,
+        ctx: &BuildContext,
+        libs_dir: &std::path::Path,
+        abi: OhosAbi,
+        sdk: &OhosSdkToolchain,
+        lib_name: &str,
+        export_own_lib: bool,
+        distribute_stl: bool,
+    ) -> Result<()> {
+        // Find shared libraries for this ABI
+        let build_dir = ctx
+            .cmake_build_dir
+            .join(format!("shared/{}", abi.abi_string()));
+
+        let libs = self.find_libraries(&build_dir, true, "shared", abi, lib_name)?;
+
+        // A project can ship the runtime without producing a shared library of
+        // its own — that is exactly what stdcomm does on OHOS — so this guard
+        // has to consider both.
+        if libs.is_empty() && !distribute_stl {
+            return Ok(());
+        }
+
+        // Create libs/{arch}/ directory
+        let abi_dir = libs_dir.join(abi.abi_string());
+        std::fs::create_dir_all(&abi_dir)?;
+
+        // A runtime-only package skips its own library; see export_own_lib.
+        for lib in if export_own_lib { libs } else { Vec::new() } {
+            let lib_name = lib.file_name().unwrap();
+            let dest = abi_dir.join(lib_name);
+            std::fs::copy(&lib, &dest)
+                .with_context(|| format!("Failed to copy {} to libs", lib.display()))?;
+
+            if ctx.options.verbose {
+                eprintln!(
+                "  Copied {} to {}",
+                lib_name.to_str().unwrap(),
+                dest.display()
+                );
+            }
+        }
+
+        // Ship the runtime alongside, for the one project that opts in.
+        // Mirrors the old build_ohos.py: copy from the SDK, then llvm-strip it —
+        // the unstripped copy is ~39% larger and does not match what was
+        // published before.
+        if distribute_stl {
+            let stl_src = sdk.stl_path(abi);
+            if !stl_src.exists() {
+                anyhow::bail!(
+                "[ohos].distribute_stl is on but libc++_shared.so is missing at {}",
+                stl_src.display()
+                );
+            }
+            let stl_dest = abi_dir.join("libc++_shared.so");
+            std::fs::copy(&stl_src, &stl_dest).with_context(|| {
+                format!("Failed to copy {} to libs", stl_src.display())
+            })?;
+            sdk.strip_stl_library(&stl_dest, ctx.options.verbose)?;
+            if ctx.options.verbose {
+                eprintln!("  Copied libc++_shared.so to {}", stl_dest.display());
+            }
+        }
+
+        Ok(())
+    }
+
     fn copy_libraries_to_libs(
         &self,
         ctx: &BuildContext,
@@ -483,61 +555,15 @@ impl OhosBuilder {
         }
 
         for abi in abis {
-            // Find shared libraries for this ABI
-            let build_dir = ctx
-                .cmake_build_dir
-                .join(format!("shared/{}", abi.abi_string()));
-
-            let libs = self.find_libraries(&build_dir, true, "shared", *abi, lib_name)?;
-
-            // A project can ship the runtime without producing a shared library of
-            // its own — that is exactly what stdcomm does on OHOS — so this guard
-            // has to consider both.
-            if libs.is_empty() && !distribute_stl {
-                continue;
-            }
-
-            // Create libs/{arch}/ directory
-            let abi_dir = libs_dir.join(abi.abi_string());
-            std::fs::create_dir_all(&abi_dir)?;
-
-            // A runtime-only package skips its own library; see export_own_lib.
-            for lib in if export_own_lib { libs } else { Vec::new() } {
-                let lib_name = lib.file_name().unwrap();
-                let dest = abi_dir.join(lib_name);
-                std::fs::copy(&lib, &dest)
-                    .with_context(|| format!("Failed to copy {} to libs", lib.display()))?;
-
-                if ctx.options.verbose {
-                    eprintln!(
-                        "  Copied {} to {}",
-                        lib_name.to_str().unwrap(),
-                        dest.display()
-                    );
-                }
-            }
-
-            // Ship the runtime alongside, for the one project that opts in.
-            // Mirrors the old build_ohos.py: copy from the SDK, then llvm-strip it —
-            // the unstripped copy is ~39% larger and does not match what was
-            // published before.
-            if distribute_stl {
-                let stl_src = sdk.stl_path(*abi);
-                if !stl_src.exists() {
-                    anyhow::bail!(
-                        "[ohos].distribute_stl is on but libc++_shared.so is missing at {}",
-                        stl_src.display()
-                    );
-                }
-                let stl_dest = abi_dir.join("libc++_shared.so");
-                std::fs::copy(&stl_src, &stl_dest).with_context(|| {
-                    format!("Failed to copy {} to libs", stl_src.display())
-                })?;
-                sdk.strip_stl_library(&stl_dest, ctx.options.verbose)?;
-                if ctx.options.verbose {
-                    eprintln!("  Copied libc++_shared.so to {}", stl_dest.display());
-                }
-            }
+            self.copy_abi_to_libs(
+                ctx,
+                &libs_dir,
+                *abi,
+                sdk,
+                lib_name,
+                export_own_lib,
+                distribute_stl,
+            )?;
         }
 
         if ctx.options.verbose {
@@ -759,14 +785,14 @@ impl PlatformBuilder for OhosBuilder {
 
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "ohos",
-            ctx.output_dir.clone(),
-        )?;
+        // Same reasoning as Android: a c++_static build shares its commit with
+        // the c++_shared one, so publish_suffix (git state) cannot separate
+        // them and the second run would overwrite the first.
+        let archive_stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.ohos.as_ref().and_then(|o| o.stl.as_deref()),
+        );
+        let archive = ctx.archive_builder("ohos", &archive_stl)?;
 
         let symbols_staging = ctx.output_dir.join(".symbols_staging");
         std::fs::create_dir_all(&symbols_staging)?;

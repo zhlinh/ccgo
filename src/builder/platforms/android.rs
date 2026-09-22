@@ -497,6 +497,63 @@ impl AndroidBuilder {
     ///
     /// This copies .so files from cmake_build to android/main_android_sdk/src/main/jniLibs/
     /// so that Gradle can package them into the AAR.
+    /// Stage one ABI's shared libraries (and optionally the C++ runtime) into
+    /// jniLibs for Gradle to package.
+    #[allow(clippy::too_many_arguments)]
+    fn copy_abi_to_jnilibs(
+        &self,
+        ctx: &BuildContext,
+        jni_libs_dir: &std::path::Path,
+        abi: AndroidAbi,
+        ndk: &AndroidNdkToolchain,
+        export_own_lib: bool,
+        distribute_stl: bool,
+    ) -> Result<()> {
+        let build_dir = ctx
+            .cmake_build_dir
+            .join(format!("shared/{}", abi.abi_string()));
+        let libs = self.find_libraries(&build_dir, true, "shared", abi)?;
+
+        // A project can ship the runtime without producing a shared library of
+        // its own, so this guard has to consider both.
+        if libs.is_empty() && !distribute_stl {
+            return Ok(());
+        }
+
+        let abi_dir = jni_libs_dir.join(abi.abi_string());
+        std::fs::create_dir_all(&abi_dir)?;
+
+        // A runtime-only package skips its own library; see export_own_lib.
+        for lib in if export_own_lib { libs } else { Vec::new() } {
+            let lib_name = lib.file_name().unwrap();
+            let dest = abi_dir.join(lib_name);
+            std::fs::copy(&lib, &dest)
+                .with_context(|| format!("Failed to copy {} to jniLibs", lib.display()))?;
+
+            if ctx.options.verbose {
+                eprintln!(
+                    "  Copied {} to {}",
+                    lib_name.to_str().unwrap(),
+                    dest.display()
+                );
+            }
+        }
+
+        // Ship the runtime alongside, for the one project that opts in.
+        // Mirrors the old build_android.py: copy from the NDK sysroot, then
+        // llvm-strip it — the unstripped copy is ~39% larger and does not match
+        // what was published before.
+        if distribute_stl {
+            let stl_dest = ndk.copy_stl_library(abi, &abi_dir)?;
+            ndk.strip_stl_library(&stl_dest, ctx.options.verbose)?;
+            if ctx.options.verbose {
+                eprintln!("  Copied libc++_shared.so to {}", stl_dest.display());
+            }
+        }
+
+        Ok(())
+    }
+
     fn copy_libraries_to_jnilibs(
         &self,
         ctx: &BuildContext,
@@ -553,47 +610,14 @@ impl AndroidBuilder {
 
         // Copy .so files to jniLibs
         for abi in abis {
-            let build_dir = ctx
-                .cmake_build_dir
-                .join(format!("shared/{}", abi.abi_string()));
-            let libs = self.find_libraries(&build_dir, true, "shared", *abi)?;
-
-            // A project can ship the runtime without producing a shared library of
-            // its own, so this guard has to consider both.
-            if libs.is_empty() && !distribute_stl {
-                continue;
-            }
-
-            let abi_dir = jni_libs_dir.join(abi.abi_string());
-            std::fs::create_dir_all(&abi_dir)?;
-
-            // A runtime-only package skips its own library; see export_own_lib.
-            for lib in if export_own_lib { libs } else { Vec::new() } {
-                let lib_name = lib.file_name().unwrap();
-                let dest = abi_dir.join(lib_name);
-                std::fs::copy(&lib, &dest)
-                    .with_context(|| format!("Failed to copy {} to jniLibs", lib.display()))?;
-
-                if ctx.options.verbose {
-                    eprintln!(
-                        "  Copied {} to {}",
-                        lib_name.to_str().unwrap(),
-                        dest.display()
-                    );
-                }
-            }
-
-            // Ship the runtime alongside, for the one project that opts in.
-            // Mirrors the old build_android.py: copy from the NDK sysroot, then
-            // llvm-strip it — the unstripped copy is ~39% larger and does not match
-            // what was published before.
-            if distribute_stl {
-                let stl_dest = ndk.copy_stl_library(*abi, &abi_dir)?;
-                ndk.strip_stl_library(&stl_dest, ctx.options.verbose)?;
-                if ctx.options.verbose {
-                    eprintln!("  Copied libc++_shared.so to {}", stl_dest.display());
-                }
-            }
+            self.copy_abi_to_jnilibs(
+                ctx,
+                &jni_libs_dir,
+                *abi,
+                ndk,
+                export_own_lib,
+                distribute_stl,
+            )?;
         }
 
         if ctx.options.verbose {
@@ -838,14 +862,16 @@ impl PlatformBuilder for AndroidBuilder {
 
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "Android",
-            ctx.output_dir.clone(),
-        )?;
+        // A c++_static build is the same commit as the c++_shared one, so
+        // publish_suffix (git state) cannot tell them apart -- both would land
+        // on the same archive name and the second run would overwrite the first.
+        // Mark the static one, matching the `-stdembed` name the Gradle plugin
+        // gives the Maven artifact.
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
+        );
+        let archive = ctx.archive_builder("Android", &stl)?;
 
         let symbols_staging = ctx.cmake_build_dir.join("symbols_staging");
         std::fs::create_dir_all(&symbols_staging)?;

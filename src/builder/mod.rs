@@ -96,6 +96,8 @@ pub struct BuildOptions {
     pub use_default_features: bool,
     /// Enable all available features
     pub all_features: bool,
+    /// Archive name variants from `--variant` (features do not affect the name)
+    pub variants: Vec<String>,
     /// Compiler cache type (ccache, sccache, auto, none)
     pub cache: Option<String>,
     /// Show build analytics summary
@@ -138,6 +140,7 @@ impl Default for BuildOptions {
             verbose: false,
             dev: false,
             features: Vec::new(),
+            variants: Vec::new(),
             use_default_features: true,
             all_features: false,
             cache: None,
@@ -501,6 +504,34 @@ impl BuildContext {
             .map(|f| format!("CCGO_FEATURE_{}", f.to_uppercase().replace('-', "_")))
             .collect();
         Ok(defines.join(";"))
+    }
+
+    /// An `ArchiveBuilder` with every name dimension already applied: the
+    /// static-STL `stdembed` marker plus any `--variant`.
+    ///
+    /// Features deliberately do NOT show up here. Two variants may share a
+    /// feature, so deriving the name from `-F` would be ambiguous; naming the
+    /// artifact stays an explicit `--variant` decision.
+    pub fn archive_builder(
+        &self,
+        platform: &str,
+        stl: &str,
+    ) -> Result<crate::builder::archive::ArchiveBuilder> {
+        let mut archive = crate::builder::archive::ArchiveBuilder::new(
+            self.lib_name(),
+            self.version(),
+            self.publish_suffix(),
+            self.options.release,
+            platform,
+            self.output_dir.clone(),
+        )?;
+        if stl.ends_with("_static") {
+            archive = archive.with_variant("stdembed");
+        }
+        for variant in &self.options.variants {
+            archive = archive.with_variant(variant.as_str());
+        }
+        Ok(archive)
     }
 
     /// Get enabled dependencies (non-optional + enabled optional deps)
@@ -1259,6 +1290,42 @@ mod tests {
 
     fn bare_options() -> BuildOptions {
         BuildOptions::default()
+    }
+
+    // --- archive name variants ---
+
+    fn variant_ctx(toml: &str, features: &[&str], variants: &[&str]) -> BuildContext {
+        let toml = format!("[package]\nname = \"demo\"\nversion = \"5.1.0\"\n\n{toml}");
+        let config: CcgoConfig = toml::from_str(&toml).expect("toml should parse");
+        let mut options = bare_options();
+        options.features = features.iter().map(|s| s.to_string()).collect();
+        options.variants = variants.iter().map(|s| s.to_string()).collect();
+        make_ctx(options, config)
+    }
+
+    fn variant_name(ctx: &BuildContext) -> String {
+        ctx.archive_builder("Android", "c++_shared")
+            .expect("archive builder")
+            .archive_file_name(".zip")
+    }
+
+    #[test]
+    fn features_do_not_change_the_archive_name() {
+        // Two variants could legitimately share a feature, so -F must never
+        // decide the suffix on its own.
+        let plain = variant_name(&variant_ctx("", &[], &[]));
+        let with_feature = variant_ctx("[features]\noversea = []\n", &["oversea"], &[]);
+        assert_eq!(variant_name(&with_feature), plain);
+    }
+
+    #[test]
+    fn cli_variant_is_what_names_the_archive() {
+        let ctx = variant_ctx("[features]\noversea = []\n", &["oversea"], &["oversea"]);
+        assert!(
+            variant_name(&ctx).contains("-OVERSEA"),
+            "expected -OVERSEA in {}",
+            variant_name(&ctx)
+        );
     }
 
     // --- tier 6: dep.linkage (dep only) ---

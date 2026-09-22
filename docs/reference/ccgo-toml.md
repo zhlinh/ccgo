@@ -485,6 +485,51 @@ ccgo build --no-default-features
 
 ---
 
+### Features and the artifact name
+
+Features do **not** change the archive file name. Two flavors can legitimately
+share a feature, so the name would be ambiguous. Name the artifact explicitly
+with `--variant`:
+
+```bash
+ccgo build android --release -F oversea --variant oversea
+# -> NAME_ANDROID_SDK-1.0.0-OVERSEA.zip
+```
+
+Variants are uppercased, sorted, and composed, so the name is stable regardless
+of order. A static-STL build contributes `STDEMBED` automatically:
+
+```bash
+ccgo build android --release --variant oversea --stl c++_static
+# -> NAME_ANDROID_SDK-1.0.0-OVERSEA-STDEMBED.zip
+```
+
+### Consuming features in CMake
+
+ccgo passes the enabled features to CMake as a semicolon-separated list in
+`CCGO_FEATURE_DEFINITIONS` (each entry is `CCGO_FEATURE_<NAME>`). It does not
+define any macro for you — map it to your own macro in `CMakeLists.txt`:
+
+```cmake
+if("CCGO_FEATURE_OVERSEA" IN_LIST CCGO_FEATURE_DEFINITIONS)
+    add_definitions(-DMYLIB_BUILD_CHANNEL_OVERSEA=1)
+endif()
+```
+
+The variable is undefined when no feature is enabled; `IN_LIST` treats that as
+an empty list, so no guard is needed.
+
+Composite features work as usual, so one `-F` can drive several macros:
+
+```toml
+[features]
+oversea = ["oversea-dns", "oversea-cert"]
+oversea-dns = []
+oversea-cert = []
+```
+
+---
+
 ## [examples]
 
 Defines example programs.

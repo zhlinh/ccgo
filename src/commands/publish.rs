@@ -862,7 +862,7 @@ impl PublishCommand {
         let package_entry = self.write_package_entry(
             &index_path,
             &config,
-            &package,
+            package,
             &git_url,
             new_version_entry,
         )?;

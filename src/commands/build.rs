@@ -94,21 +94,31 @@ pub fn parse_arch_arg(raw: &str, target: &BuildTarget) -> Vec<String> {
 /// platform — `v8` means `arm64-v8a` on Android/OHOS but `arm64` on
 /// macOS/iOS. Unrecognized strings pass through unchanged so the
 /// platform's own validator produces the final error message.
+/// Android and OHOS share the NDK ABI names.
+fn normalize_ndk_abi(lower: String) -> String {
+    match lower.as_str() {
+        "v8" | "a64" | "arm64" | "armv8" | "aarch64" => "arm64-v8a".to_string(),
+        "v7" | "a32" | "arm32" | "armv7" | "aarch32" => "armeabi-v7a".to_string(),
+        "x64" => "x86_64".to_string(),
+        _ => lower,
+    }
+}
+
+/// Apple platforms all use the plain `arm64` / `x86_64` spelling.
+fn normalize_apple_arch(lower: String) -> String {
+    match lower.as_str() {
+        "v8" | "a64" | "armv8" | "aarch64" => "arm64".to_string(),
+        "x64" => "x86_64".to_string(),
+        _ => lower,
+    }
+}
+
 pub fn normalize_arch_alias(raw: &str, target: &BuildTarget) -> String {
     let lower = raw.trim().to_lowercase();
     match target {
-        BuildTarget::Android | BuildTarget::Ohos => match lower.as_str() {
-            "v8" | "a64" | "arm64" | "armv8" | "aarch64" => "arm64-v8a".to_string(),
-            "v7" | "a32" | "arm32" | "armv7" | "aarch32" => "armeabi-v7a".to_string(),
-            "x64" => "x86_64".to_string(),
-            _ => lower,
-        },
+        BuildTarget::Android | BuildTarget::Ohos => normalize_ndk_abi(lower),
         BuildTarget::Macos | BuildTarget::Ios | BuildTarget::Tvos | BuildTarget::Watchos => {
-            match lower.as_str() {
-                "v8" | "a64" | "armv8" | "aarch64" => "arm64".to_string(),
-                "x64" => "x86_64".to_string(),
-                _ => lower,
-            }
+            normalize_apple_arch(lower)
         }
         BuildTarget::Linux | BuildTarget::Windows => match lower.as_str() {
             "x64" => "x86_64".to_string(),
@@ -434,6 +444,15 @@ pub struct BuildCommand {
     #[arg(long, short = 'F', value_delimiter = ',')]
     pub features: Vec<String>,
 
+    /// Archive name variants (comma-separated)
+    ///
+    /// Appended to the archive file name, uppercased. `--features` does not
+    /// affect the name; pass the flavor explicitly here.
+    ///
+    /// Example: --variant oversea  ->  NAME_ANDROID_SDK-1.0.0-OVERSEA.zip
+    #[arg(long, value_delimiter = ',')]
+    pub variant: Vec<String>,
+
     /// Do not enable default features
     ///
     /// By default, the features listed in [features].default are enabled.
@@ -722,6 +741,7 @@ impl BuildCommand {
             verbose,
             dev: self.dev,
             features: self.features.clone(),
+            variants: self.variant.clone(),
             use_default_features: !self.no_default_features,
             all_features: self.all_features,
             cache: Some(self.cache.clone()),
@@ -751,6 +771,12 @@ impl BuildCommand {
         verbose: bool,
     ) -> Result<()> {
         use crate::builder::docker::DockerBuilder;
+
+        // 先算好：ctx 在后面会被移走，而 build_info 需要这个值
+        let resolved_stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
+        );
 
         match self.target {
             BuildTarget::All | BuildTarget::Apple | BuildTarget::Kmp | BuildTarget::Conan => {
@@ -788,6 +814,7 @@ impl BuildCommand {
                     self.analytics,
                     cache_tool.as_deref(),
                     jobs,
+                    &resolved_stl,
                 );
                 Ok(())
             }
@@ -834,6 +861,10 @@ impl BuildCommand {
             self.analytics,
             cache_tool.as_deref(),
             jobs,
+            &crate::builder::resolve_stl(
+                ctx.options.stl.as_deref(),
+                ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
+            ),
         );
 
         Ok(())
@@ -1029,6 +1060,11 @@ impl BuildCommand {
 
         let options = self.create_build_options(verbose)?;
         let options = Self::apply_profile_scalars(options, &config, self)?;
+        // 先算好：config 随后被移进 BuildContext
+        let resolved_stl = crate::builder::resolve_stl(
+            self.stl.as_ref().map(|s| s.as_str()),
+            config.android.as_ref().and_then(|a| a.stl.as_deref()),
+        );
         let ctx = BuildContext::new(member_path.clone(), config, options);
 
         let cache_tool = ctx.compiler_cache().map(|c| c.tool_name().to_string());
@@ -1046,6 +1082,7 @@ impl BuildCommand {
             self.analytics,
             cache_tool.as_deref(),
             jobs,
+            &resolved_stl,
         );
 
         Ok(results)
@@ -1113,6 +1150,7 @@ impl BuildCommand {
         show_analytics: bool,
         cache_tool: Option<&str>,
         jobs: usize,
+        android_stl: &str,
     ) {
         let total_duration: f64 = results.iter().map(|r| r.duration_secs).sum();
 
@@ -1133,7 +1171,8 @@ impl BuildCommand {
             }
         }
 
-        let build_info = create_build_info_full(lib_name, version, platform, project_root);
+        let build_info =
+            create_build_info_full(lib_name, version, platform, project_root, android_stl);
         print_build_info_json(&build_info);
 
         eprintln!(
