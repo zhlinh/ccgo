@@ -699,8 +699,7 @@ impl AndroidBuilder {
             );
         }
 
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let dest_name = format!("{}_ANDROID_SDK-{}.aar", project_name_upper, ctx.version());
+        let dest_name = Self::aar_output_name(ctx);
         let dest = output_dir.join(&dest_name);
 
         if let Some(aar_file) = aar_files.first() {
@@ -720,7 +719,14 @@ impl AndroidBuilder {
         Ok(dest)
     }
 
-    /// Clean up old AAR files in output directory
+/// Clean up the legacy unversioned AAR in the output directory
+    ///
+    /// Only `{lib}.aar` — the name ccgo used before versioned names. A blanket
+    /// sweep of every `*.aar` used to be safe when the versioned name was
+    /// constant; now that it carries a variant tail it would delete the other
+    /// flavor's AAR, so a `--stl c++_static` run and a plain one can no longer
+    /// both leave their package behind. The SDK archives never had such a sweep
+    /// and accumulate across versions; the AAR now behaves the same.
     fn cleanup_old_aar_files(
         &self,
         ctx: &BuildContext,
@@ -730,23 +736,6 @@ impl AndroidBuilder {
         let old_aar = output_dir.join(format!("{}.aar", ctx.lib_name()));
         if old_aar.exists() && old_aar != *current_aar {
             let _ = std::fs::remove_file(&old_aar);
-        }
-
-        if output_dir.exists() {
-            for entry in std::fs::read_dir(output_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == "aar" && path != *current_aar {
-                            if ctx.options.verbose {
-                                eprintln!("  Removing old AAR: {}", path.display());
-                            }
-                            std::fs::remove_file(&path).ok();
-                        }
-                    }
-                }
-            }
         }
 
         Ok(())
@@ -1009,6 +998,24 @@ impl AndroidBuilder {
         Ok(built_link_types)
     }
 
+/// Name the AAR lands under in `target/<mode>/android/`.
+    ///
+    /// Carries the same variant tail as the SDK archive. Without it a
+    /// `--stl c++_static` run and a plain one write the same path and the
+    /// second silently overwrites the first.
+    fn aar_output_name(ctx: &BuildContext) -> String {
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
+        );
+        format!(
+            "{}_ANDROID_SDK-{}{}.aar",
+            ctx.lib_name().to_uppercase(),
+            ctx.version(),
+            ctx.variant_tail(&stl)
+        )
+    }
+
     /// Add AAR to archive if it exists
     fn add_aar_to_archive_if_needed(
         &self,
@@ -1019,9 +1026,7 @@ impl AndroidBuilder {
             return Ok(());
         }
 
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let aar_versioned_name =
-            format!("{}_ANDROID_SDK-{}.aar", project_name_upper, ctx.version());
+        let aar_versioned_name = Self::aar_output_name(ctx);
         let aar_path = ctx.output_dir.join(&aar_versioned_name);
 
         if aar_path.exists() {
@@ -1073,9 +1078,7 @@ impl AndroidBuilder {
             return None;
         }
 
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let aar_versioned_name =
-            format!("{}_ANDROID_SDK-{}.aar", project_name_upper, ctx.version());
+        let aar_versioned_name = Self::aar_output_name(ctx);
         let aar_path = ctx.output_dir.join(&aar_versioned_name);
 
         if aar_path.exists() {

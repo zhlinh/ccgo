@@ -506,7 +506,27 @@ impl BuildContext {
         Ok(defines.join(";"))
     }
 
-    /// An `ArchiveBuilder` with every name dimension already applied: the
+/// Variant tail for a component file name: `-OVERSEA-STDEMBED`, or empty.
+    ///
+    /// Same dimensions the SDK archive uses, so a component never collides with
+    /// the other flavor's copy in `target/<mode>/<platform>/`.
+    pub fn variant_tail(&self, stl: &str) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if stl.ends_with("_static") {
+            parts.push("stdembed".to_string());
+        }
+        parts.extend(self.options.variants.iter().cloned());
+        let mut parts: Vec<String> = parts.iter().map(|p| p.to_uppercase()).collect();
+        parts.sort();
+        parts.dedup();
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("-{}", parts.join("-"))
+        }
+    }
+
+        /// An `ArchiveBuilder` with every name dimension already applied: the
     /// static-STL `stdembed` marker plus any `--variant`.
     ///
     /// Features deliberately do NOT show up here. Two variants may share a
@@ -1316,6 +1336,19 @@ mod tests {
         let plain = variant_name(&variant_ctx("", &[], &[]));
         let with_feature = variant_ctx("[features]\noversea = []\n", &["oversea"], &[]);
         assert_eq!(variant_name(&with_feature), plain);
+    }
+
+    #[test]
+    fn aar_name_carries_the_same_variants_as_the_archive() {
+        // Two flavors write into the same target/<mode>/android/ dir; identical
+        // AAR names mean the second build silently overwrites the first.
+        let plain = variant_ctx("", &[], &[]);
+        assert_eq!(plain.variant_tail("c++_shared"), "");
+        assert_eq!(plain.variant_tail("c++_static"), "-STDEMBED");
+
+        let oversea = variant_ctx("", &[], &["oversea"]);
+        assert_eq!(oversea.variant_tail("c++_shared"), "-OVERSEA");
+        assert_eq!(oversea.variant_tail("c++_static"), "-OVERSEA-STDEMBED");
     }
 
     #[test]
