@@ -521,6 +521,37 @@ oversea-cert = []
 
 ---
 
+## [kmp]
+
+项目要出哪些 Kotlin Multiplatform 目标。
+
+```toml
+[kmp]
+targets = ["android"]
+```
+
+不写这一段就构建宿主能产出的全部目标（原有行为）。名字是目标**组**，不是 Kotlin
+的 target 名：
+
+| 组 | 对应的 gradle 工作 |
+|---|---|
+| `android` | `assembleRelease` / `assemble` |
+| `desktop` | `desktopJar` |
+| `ios` | `iosArm64` + `iosX64` + `iosSimulatorArm64` 的 klib |
+| `macos` | `macosArm64` + `macosX64` 的 klib |
+| `linux` | `linuxX64` + `linuxArm64` 的 klib |
+
+这个列表会与宿主能力取交集，所以在 Linux 上写 `ios` 只是被丢掉，不会失败。但名字
+**拼错要报错**——那是笔误，静默编出空包更糟。
+
+列表必须与 `kmp/build.gradle.kts` 里声明的 target 一致：声明了而没列进来只是不被
+请求；列了而没声明，gradle 会报 `Task 'xxxMainKlibrary' not found` 整条挂掉。
+
+没有 `ohos` 这一组。Kotlin/Native 没有鸿蒙目标，OHOS 走 `ccgo build ohos`
+（HAR/NAPI），是另一条流水线。
+
+---
+
 ## [examples]
 
 定义示例程序。

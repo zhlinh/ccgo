@@ -109,29 +109,105 @@ impl KmpBuilder {
     /// - Windows (on Windows)
     ///
     /// Skips platforms that already have native libraries built.
+/// Every KMP target group, in build order.
+    const ALL_TARGETS: &'static [&'static str] =
+        &["android", "desktop", "ios", "macos", "linux", "windows"];
+
+    /// Target groups this host can actually produce.
+    fn host_targets() -> Vec<&'static str> {
+        let mut t = vec!["android", "desktop"];
+        if cfg!(target_os = "macos") {
+            t.extend(["ios", "macos"]);
+        }
+        if cfg!(target_os = "linux") {
+            t.push("linux");
+        }
+        if cfg!(target_os = "windows") {
+            t.push("windows");
+        }
+        t
+    }
+
+    /// Target groups to build: `[kmp].targets` narrowed to what the host can
+    /// produce, or everything the host can produce when unset.
+    ///
+    /// Narrowing only — asking for `ios` on Linux drops it rather than failing,
+    /// same as the host gating this replaced. An unknown name is an error
+    /// though: it is a typo, and silently building nothing is worse.
+    fn selected_targets(ctx: &BuildContext) -> Result<Vec<&'static str>> {
+        let host = Self::host_targets();
+        let requested = ctx
+            .config
+            .kmp
+            .as_ref()
+            .map(|k| k.targets.as_slice())
+            .unwrap_or(&[]);
+
+        if requested.is_empty() {
+            return Ok(host);
+        }
+
+        let mut out: Vec<&'static str> = Vec::new();
+        for name in requested {
+            let known = Self::ALL_TARGETS
+                .iter()
+                .find(|t| t.eq_ignore_ascii_case(name))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Unknown [kmp].targets entry: '{}'. Known: {}",
+                        name,
+                        Self::ALL_TARGETS.join(", ")
+                    )
+                })?;
+            if host.contains(known) && !out.contains(known) {
+                out.push(known);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Gradle klib tasks for a target group. Android and desktop have none:
+    /// they are covered by `assemble*` and `desktopJar`.
+    fn gradle_tasks_for(target: &str) -> &'static [&'static str] {
+        match target {
+            "desktop" => &["desktopJar"],
+            "ios" => &[
+                "iosArm64MainKlibrary",
+                "iosX64MainKlibrary",
+                "iosSimulatorArm64MainKlibrary",
+            ],
+            "macos" => &["macosArm64MainKlibrary", "macosX64MainKlibrary"],
+            "linux" => &["linuxX64MainKlibrary", "linuxArm64MainKlibrary"],
+            _ => &[],
+        }
+    }
+
+/// Gradle tasks for the selected targets.
+    fn gradle_task_list(ctx: &BuildContext) -> Result<Vec<&'static str>> {
+        let selected = Self::selected_targets(ctx)?;
+        let mut tasks = vec!["clean"];
+
+        // `assemble*` is the androidTarget's task; skip it when Android is out.
+        if selected.contains(&"android") {
+            tasks.push(if ctx.options.release {
+                "assembleRelease"
+            } else {
+                "assemble"
+            });
+        }
+
+        for target in &selected {
+            tasks.extend(Self::gradle_tasks_for(target));
+        }
+        Ok(tasks)
+    }
+
     fn build_native_libraries(&self, ctx: &BuildContext) -> Result<()> {
         eprintln!("\n{}", "=".repeat(80));
         eprintln!("Building Native Libraries for KMP");
         eprintln!("{}\n", "=".repeat(80));
 
-        // Determine which platforms to build based on current OS
-        let mut platforms = vec!["android"]; // Always build Android
-
-        #[cfg(target_os = "macos")]
-        {
-            platforms.push("ios");
-            platforms.push("macos");
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            platforms.push("linux");
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            platforms.push("windows");
-        }
+        let platforms = Self::selected_targets(ctx)?;
 
         // Get the current executable path to call ccgo
         let ccgo_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ccgo"));
@@ -545,34 +621,7 @@ impl PlatformBuilder for KmpBuilder {
         eprintln!("Building Kotlin Multiplatform Library");
         eprintln!("{}\n", "=".repeat(80));
 
-        // Determine the Gradle tasks to run based on platform
-        let mut tasks = vec!["clean"];
-
-        if ctx.options.release {
-            tasks.push("assembleRelease");
-        } else {
-            tasks.push("assemble");
-        }
-
-        // Add desktop JAR task
-        tasks.push("desktopJar");
-
-        // Add platform-specific native targets
-        #[cfg(target_os = "macos")]
-        {
-            tasks.extend([
-                "iosArm64MainKlibrary",
-                "iosX64MainKlibrary",
-                "iosSimulatorArm64MainKlibrary",
-                "macosArm64MainKlibrary",
-                "macosX64MainKlibrary",
-            ]);
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            tasks.extend(["linuxX64MainKlibrary", "linuxArm64MainKlibrary"]);
-        }
+        let tasks = Self::gradle_task_list(ctx)?;
 
         // Run Gradle build with all tasks
         self.run_gradle(ctx, &tasks)?;
@@ -664,5 +713,65 @@ impl PlatformBuilder for KmpBuilder {
 impl Default for KmpBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use crate::builder::{BuildContext, BuildOptions};
+
+    fn ctx(toml: &str) -> BuildContext {
+        let toml = format!("[package]\nname = \"demo\"\nversion = \"1.0.0\"\n\n{toml}");
+        let config = toml::from_str(&toml).expect("toml should parse");
+        BuildContext::new(
+            std::path::PathBuf::from("/tmp/test"),
+            config,
+            BuildOptions::default(),
+        )
+    }
+
+    #[test]
+    fn unset_targets_keeps_every_host_target() {
+        let selected = KmpBuilder::selected_targets(&ctx("")).unwrap();
+        assert_eq!(selected, KmpBuilder::host_targets());
+        assert!(selected.contains(&"android"));
+    }
+
+    #[test]
+    fn android_only_drops_desktop_and_the_klib_tasks() {
+        let selected =
+            KmpBuilder::selected_targets(&ctx("[kmp]\ntargets = [\"android\"]\n")).unwrap();
+        assert_eq!(selected, vec!["android"]);
+        // android contributes assemble*, never a klib task
+        assert!(KmpBuilder::gradle_tasks_for("android").is_empty());
+        for dropped in ["desktop", "ios", "macos", "linux"] {
+            assert!(!selected.contains(&dropped), "{dropped} should be gone");
+        }
+    }
+
+    #[test]
+    fn a_target_the_host_cannot_build_is_dropped_not_fatal() {
+        // ios on Linux, linux on macOS: narrowing, same as the old host gating.
+        let selected =
+            KmpBuilder::selected_targets(&ctx("[kmp]\ntargets = [\"android\", \"ios\"]\n"))
+                .unwrap();
+        assert!(selected.contains(&"android"));
+        assert_eq!(
+            selected.contains(&"ios"),
+            KmpBuilder::host_targets().contains(&"ios")
+        );
+    }
+
+    #[test]
+    fn a_typo_is_an_error_not_an_empty_build() {
+        let err = KmpBuilder::selected_targets(&ctx("[kmp]\ntargets = [\"andriod\"]\n"))
+            .expect_err("typo must not silently build nothing");
+        assert!(err.to_string().contains("andriod"), "{err}");
+    }
+
+    #[test]
+    fn ohos_is_not_a_kmp_target() {
+        assert!(KmpBuilder::selected_targets(&ctx("[kmp]\ntargets = [\"ohos\"]\n")).is_err());
     }
 }

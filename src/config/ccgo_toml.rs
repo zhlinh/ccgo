@@ -111,6 +111,10 @@ pub struct CcgoConfig {
     #[serde(default)]
     pub ohos: Option<OhosSection>,
 
+    /// Top-level `[kmp]` section.
+    #[serde(default)]
+    pub kmp: Option<KmpSection>,
+
     /// Binary targets
     #[serde(default, rename = "bin")]
     pub bins: Vec<BinConfig>,
@@ -995,6 +999,28 @@ impl DependencyConfig {
 }
 
 /// Build configuration from [build] section
+/// Kotlin Multiplatform configuration
+///
+/// ```toml
+/// [kmp]
+/// # Which KMP targets this project ships. Omit for every target the build
+/// # host can produce (the historical behaviour).
+/// targets = ["android"]
+/// ```
+///
+/// Names are target groups, not Kotlin target names: `android`, `desktop`,
+/// `ios` (device + both simulators), `macos`, `linux`. They must match the
+/// targets declared in the project's `kmp/build.gradle.kts`.
+///
+/// There is deliberately no `ohos`: Kotlin/Native has no HarmonyOS target.
+/// OHOS ships through `ccgo build ohos` (HAR/NAPI), a separate pipeline.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct KmpSection {
+    /// Target groups to build. Empty means "whatever the host supports".
+    #[serde(default)]
+    pub targets: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct BuildConfig {
     /// Enable parallel builds

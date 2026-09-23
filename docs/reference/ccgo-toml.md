@@ -530,6 +530,39 @@ oversea-cert = []
 
 ---
 
+## [kmp]
+
+Which Kotlin Multiplatform targets the project ships.
+
+```toml
+[kmp]
+targets = ["android"]
+```
+
+Omit the section to build every target the host can produce (the historical
+behaviour). Names are target *groups*, not Kotlin target names:
+
+| Group | Gradle work |
+|---|---|
+| `android` | `assembleRelease` / `assemble` |
+| `desktop` | `desktopJar` |
+| `ios` | `iosArm64` + `iosX64` + `iosSimulatorArm64` klibs |
+| `macos` | `macosArm64` + `macosX64` klibs |
+| `linux` | `linuxX64` + `linuxArm64` klibs |
+
+The list is narrowed to what the build host supports, so asking for `ios` on
+Linux drops it rather than failing. An unknown name **is** an error — that is a
+typo, and silently building nothing is worse.
+
+The list must match the targets declared in `kmp/build.gradle.kts`: a target
+declared but not listed simply is not requested; a target listed but not
+declared makes Gradle fail with `Task 'xxxMainKlibrary' not found`.
+
+There is no `ohos` group. Kotlin/Native has no HarmonyOS target; OHOS ships
+through `ccgo build ohos` (HAR/NAPI), a separate pipeline.
+
+---
+
 ## [examples]
 
 Defines example programs.
