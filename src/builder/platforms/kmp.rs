@@ -284,6 +284,16 @@ impl KmpBuilder {
 
         let mut cmd = Command::new(gradlew);
         cmd.current_dir(&kmp_dir);
+        // Gradle calls `ccgo build ... --native-only` back through the plugin.
+        // Without this the nested build defaults to debug, so a `--release`
+        // KMP archive ends up carrying ccgo_build/debug libraries.
+        let build_type = if ctx.options.release {
+            "release"
+        } else {
+            "debug"
+        };
+        cmd.env("CCGO_BUILD_TYPE", build_type);
+        cmd.arg(format!("-PccgoBuildType={build_type}"));
         cmd.args(args);
 
         // Tell the build script which ccgo_build/<mode> tree holds the native

@@ -36,6 +36,9 @@ use crate::version::VersionReq;
 /// ccgo add mylib --path ../mylib
 /// ```
 #[derive(Args, Debug)]
+// `--version`/`-V` here is the dependency's version requirement, so the
+// auto-generated one has to go — clap refuses two arguments under one name.
+#[command(disable_version_flag = true)]
 pub struct AddCommand {
     /// Dependency name or Git shorthand (e.g., "github:user/repo", "gh:user/repo@v1.0")
     pub name: String,
@@ -75,6 +78,43 @@ pub struct AddCommand {
 
 impl AddCommand {
     /// Execute the add command
+/// Resolve `--latest` into a concrete tag, falling back to `main`.
+    ///
+    /// Discovery failing is not fatal: a branch still gives a usable dep, and
+    /// the reason is printed so the fallback is not silent.
+    fn apply_latest_version(&mut self) {
+        if !self.latest {
+            return;
+        }
+        let Some(ref git) = self.git else {
+            return;
+        };
+        println!("\n🔍 Discovering latest version from {}...", git);
+        match discover_latest_version(git, self.prerelease) {
+            Ok(Some(tag_info)) => {
+                println!(
+                    "   Found: {} ({})",
+                    tag_info.tag,
+                    if tag_info.semver.as_ref().is_some_and(|v| v.is_stable()) {
+                        "stable"
+                    } else {
+                        "prerelease"
+                    }
+                );
+                self.tag = Some(tag_info.tag);
+            }
+            Ok(None) => {
+                println!("   ⚠️  No version tags found, using branch 'main'");
+                self.branch = Some("main".to_string());
+            }
+            Err(e) => {
+                println!("   ⚠️  Failed to discover versions: {}", e);
+                println!("   Using branch 'main' as fallback");
+                self.branch = Some("main".to_string());
+            }
+        }
+    }
+
     pub fn execute(mut self, _verbose: bool) -> Result<()> {
         println!("{}", "=".repeat(80));
         println!("CCGO Add - Add Dependency to CCGO.toml");
@@ -103,35 +143,7 @@ impl AddCommand {
             );
         }
 
-        // Auto-discover latest version if requested
-        if self.latest {
-            if let Some(ref git) = self.git {
-                println!("\n🔍 Discovering latest version from {}...", git);
-                match discover_latest_version(git, self.prerelease) {
-                    Ok(Some(tag_info)) => {
-                        println!(
-                            "   Found: {} ({})",
-                            tag_info.tag,
-                            if tag_info.semver.as_ref().is_some_and(|v| v.is_stable()) {
-                                "stable"
-                            } else {
-                                "prerelease"
-                            }
-                        );
-                        self.tag = Some(tag_info.tag);
-                    }
-                    Ok(None) => {
-                        println!("   ⚠️  No version tags found, using branch 'main'");
-                        self.branch = Some("main".to_string());
-                    }
-                    Err(e) => {
-                        println!("   ⚠️  Failed to discover versions: {}", e);
-                        println!("   Using branch 'main' as fallback");
-                        self.branch = Some("main".to_string());
-                    }
-                }
-            }
-        }
+        self.apply_latest_version();
 
         // Validate version requirement if provided
         if let Some(ref version) = self.version {
@@ -165,33 +177,41 @@ impl AddCommand {
 
         println!("\n✓ Added '{}' to CCGO.toml", dep_name);
 
-        // Run install unless disabled
-        if !self.no_install {
-            println!("\n{}", "=".repeat(80));
-            println!("Installing dependency...");
-            println!("{}", "=".repeat(80));
-
-            let fetch_cmd = crate::commands::fetch::FetchCommand {
-                dependency: Some(dep_name.clone()),
-                force: false,
-                platform: None,
-                clean_cache: false,
-                copy: false,
-                locked: false,
-                conflict_strategy: crate::commands::fetch::ConflictStrategy::default(),
-                workspace: false,
-                package: None,
-            };
-
-            if let Err(e) = fetch_cmd.execute(_verbose) {
-                eprintln!("\n⚠️  Failed to fetch '{}': {}", dep_name, e);
-                eprintln!("   You can fetch manually with: ccgo fetch {}", dep_name);
-            }
-        } else {
-            println!("\n💡 Run 'ccgo fetch' to install the dependency");
-        }
+        self.fetch_after_add(&dep_name, _verbose);
 
         Ok(())
+    }
+
+    /// Fetch the dependency that was just written, unless --no-install.
+    ///
+    /// A failed fetch does not fail the add: CCGO.toml is already correct, and
+    /// `ccgo fetch` can be re-run. The error is printed with that hint.
+    fn fetch_after_add(&self, dep_name: &str, verbose: bool) {
+        if self.no_install {
+            println!("\n💡 Run 'ccgo fetch' to install the dependency");
+            return;
+        }
+
+        println!("\n{}", "=".repeat(80));
+        println!("Installing dependency...");
+        println!("{}", "=".repeat(80));
+
+        let fetch_cmd = crate::commands::fetch::FetchCommand {
+            dependency: Some(dep_name.to_string()),
+            force: false,
+            platform: None,
+            clean_cache: false,
+            copy: false,
+            locked: false,
+            conflict_strategy: crate::commands::fetch::ConflictStrategy::default(),
+            workspace: false,
+            package: None,
+        };
+
+        if let Err(e) = fetch_cmd.execute(verbose) {
+            eprintln!("\n⚠️  Failed to fetch '{}': {}", dep_name, e);
+            eprintln!("   You can fetch manually with: ccgo fetch {}", dep_name);
+        }
     }
 
     /// Resolve input - check if it's a Git shorthand and extract components

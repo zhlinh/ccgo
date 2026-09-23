@@ -111,6 +111,15 @@ pub struct PublishCommand {
     #[arg(long)]
     pub skip_build: bool,
 
+    /// Publish a release build instead of debug
+    ///
+    /// Mirrors `ccgo build --release`. Publishing runs Gradle, and the Gradle
+    /// plugin calls `ccgo build ... --native-only` back: without this the
+    /// nested build defaults to debug and the published artifact carries
+    /// `ccgo_build/debug` libraries.
+    #[arg(long)]
+    pub release: bool,
+
     /// C++ runtime to publish against (Android only).
     ///
     /// Mirrors `ccgo build android --stl`. The Gradle plugin derives the
@@ -342,6 +351,11 @@ impl PublishCommand {
         cmd.env("CCGO_ANDROID_STL", &stl);
         println!("  C++ runtime: {}", stl);
 
+        let build_type = if self.release { "release" } else { "debug" };
+        cmd.env("CCGO_BUILD_TYPE", build_type);
+        cmd.arg(format!("-PccgoBuildType={build_type}"));
+        println!("  Build type:  {}", build_type);
+
         if self.skip_build {
             cmd.arg("-x").arg("buildAAR");
         }
@@ -432,8 +446,16 @@ impl PublishCommand {
         println!("Running: ./gradlew {}", gradle_task);
         println!("{}", "-".repeat(60));
 
+        let build_type = if self.release { "release" } else { "debug" };
+        println!("Build type: {}", build_type);
+
         let mut cmd = Command::new("./gradlew");
         cmd.current_dir(&kmp_dir);
+        // Two channels, because two different consumers need it: the env var
+        // reaches the plugin's nested `ccgo build`, the property reaches the
+        // project's own build.gradle.kts (which picks the cinterop libraryPath).
+        cmd.env("CCGO_BUILD_TYPE", build_type);
+        cmd.arg(format!("-PccgoBuildType={build_type}"));
         cmd.arg(gradle_task);
         cmd.arg("--no-daemon");
 
@@ -1338,6 +1360,7 @@ mod tests {
             url: None,
             remote_name: None,
             skip_build: false,
+            release: false,
             stl: None,
             yes: true,
             manager: AppleManager::All,
@@ -1378,6 +1401,7 @@ mod tests {
             url: None,
             remote_name: None,
             skip_build: false,
+            release: false,
             stl: None,
             yes: true,
             manager: AppleManager::All,

@@ -11,7 +11,12 @@ use clap::Args;
 use crate::config::CcgoConfig;
 
 /// Create version tag from CCGO.toml
+///
+/// The auto-generated `--version` is off: this command's own `version` is the
+/// tag to create, and clap refuses two arguments under one name. `ccgo
+/// --version` still reports the tool's version.
 #[derive(Args, Debug)]
+#[command(disable_version_flag = true)]
 pub struct TagCommand {
     /// Tag version (e.g., v1.0.0). If not provided, auto-generated from CCGO.toml
     pub version: Option<String>,

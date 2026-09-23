@@ -651,10 +651,21 @@ impl AndroidBuilder {
             ctx.config.android.as_ref().and_then(|a| a.stl.as_deref()),
         );
 
+        // Same reason as the STL: the plugin calls `ccgo build ... --native-only`
+        // back, and without this that nested build defaults to debug — a
+        // --release AAR would be packed with ccgo_build/debug libraries.
+        let build_type = if ctx.options.release {
+            "release"
+        } else {
+            "debug"
+        };
+
         let status = std::process::Command::new(gradlew)
             .arg(assemble_task)
             .arg("--no-daemon")
+            .arg(format!("-PccgoBuildType={build_type}"))
             .env("CCGO_ANDROID_STL", &stl)
+            .env("CCGO_BUILD_TYPE", build_type)
             .current_dir(android_project)
             .spawn()
             .with_context(|| format!("Failed to spawn Gradle in {}", android_project.display()))?
