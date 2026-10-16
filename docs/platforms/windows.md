@@ -122,42 +122,31 @@ start cmake_build/windows/msvc/MyLib.sln
 
 ## Output Structure
 
-### Default Output (`target/windows/`)
+### Release Output (`target/release/windows/`)
 
-```
-target/windows/
-├── MyLib_Windows_SDK-1.0.0.zip          # Main package
-│   ├── lib/
-│   │   ├── static/
-│   │   │   ├── msvc/
-│   │   │   │   └── mylib.lib            # MSVC static library
-│   │   │   └── mingw/
-│   │   │       └── libmylib.a           # MinGW static library
-│   │   └── shared/
-│   │       ├── msvc/
-│   │       │   ├── mylib.dll            # MSVC DLL
-│   │       │   └── mylib.lib            # Import library
-│   │       └── mingw/
-│   │           ├── libmylib.dll         # MinGW DLL
-│   │           └── libmylib.dll.a       # Import library
-│   ├── bin/                             # DLLs (for runtime)
-│   │   ├── msvc/
-│   │   │   └── mylib.dll
-│   │   └── mingw/
-│   │       └── libmylib.dll
-│   ├── include/
-│   │   └── mylib/                       # Header files
-│   │       ├── mylib.h
-│   │       └── version.h
-│   └── build_info.json                  # Build metadata
-│
-└── MyLib_Windows_SDK-1.0.0-SYMBOLS.zip  # Debug symbols
-    └── symbols/
+```text
+target/release/windows/
+├── MYLIB_WINDOWS_SDK-1.0.0.zip
+│   ├── lib/windows/
+│   │   ├── static/<arch>/<msvc|mingw>/
+│   │   └── shared/<arch>/<msvc|mingw>/
+│   ├── include/mylib/
+│   └── meta/windows/
+│       ├── build_info.json
+│       └── archive_info.json
+└── MYLIB_WINDOWS_SDK-1.0.0-SYMBOLS.zip
+    └── symbols/windows/obj/<arch>/
         ├── msvc/
-        │   └── mylib.pdb                # MSVC debug symbols
-        └── mingw/
-            └── libmylib.dll.debug       # MinGW debug symbols
+        │   ├── static/<build-relative-path>/*.pdb
+        │   └── shared/<build-relative-path>/*.pdb
+        └── mingw/shared/*.dll
 ```
+
+Release builds use CMake `RelWithDebInfo` to retain debug information; Debug builds use `Debug` and write to `target/debug/windows/`. SDK naming and release output paths are unchanged. Only the selected toolchain, architectures and library types are included.
+
+MSVC symbols include compiler/linker PDBs found in each build tree. Relative paths are preserved to prevent same-name PDB collisions; static and shared builds are separated. MinGW symbols contain the original DLLs copied before release stripping, rather than separate `.dll.debug` files. MinGW static libraries retain their debug information in the SDK `.a` files.
+
+A symbols ZIP is created only when PDBs or DLLs are collected. Custom CMake settings that disable PDB generation can therefore leave an MSVC build without a symbols ZIP. Temporary symbol staging directories are removed after success or failure. `ccgo package` merges the symbols ZIP under the same `symbols/windows/` directory.
 
 ### Library Types
 

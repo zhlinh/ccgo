@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::builder::archive::{
     get_unified_include_path, ArchiveBuilder, ARCHIVE_DIR_OBJ, ARCHIVE_DIR_SHARED,
-    ARCHIVE_DIR_STATIC,
+    ARCHIVE_DIR_STATIC, ARCHIVE_DIR_SYMBOLS,
 };
 use crate::builder::cmake::{BuildType, CMakeConfig};
 #[cfg(target_os = "linux")]
@@ -36,7 +36,6 @@ impl LinuxBuilder {
         verbose: bool,
         toolchain: &LinuxToolchain,
     ) -> Result<()> {
-
         // Find the output directory where CMake puts libraries
         let out_dir = build_dir.join("out");
         if verbose {
@@ -53,53 +52,14 @@ impl LinuxBuilder {
         let main_lib_name = format!("lib{}.a", lib_name);
         let main_lib_path = out_dir.join(&main_lib_name);
 
-        if main_lib_path.exists() {
-            // Check if it's a non-empty file (CMake already created the merged library)
-            if let Ok(metadata) = std::fs::metadata(&main_lib_path) {
-                if metadata.len() > 0 {
-                    if verbose {
-                        eprintln!(
-                            "    [merge] Main library {} already exists, skipping merge",
-                            main_lib_name
-                        );
-                    }
-                    // Clean up module libraries (keep output directory clean)
-                    for entry in std::fs::read_dir(&out_dir)? {
-                        let entry = entry?;
-                        let path = entry.path();
-                        if path.is_file() && path != main_lib_path {
-                            if let Some(ext) = path.extension() {
-                                if ext == "a" {
-                                    let _ = std::fs::remove_file(&path);
-                                }
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
-            }
+        if Self::reuse_merged_library(&out_dir, &main_lib_path, verbose)? {
+            return Ok(());
         }
 
         // Find all .a files (module libraries)
-        let mut module_libs: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(&out_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "a" {
-                        module_libs.push(path);
-                    }
-                }
-            }
-        }
+        let mut module_libs = Self::module_libraries(&out_dir)?;
 
-        if verbose {
-            eprintln!("    [merge] Found {} .a files:", module_libs.len());
-            for lib in &module_libs {
-                eprintln!("      - {}", lib.file_name().unwrap().to_string_lossy());
-            }
-        }
+        Self::report_module_libraries(&module_libs, verbose);
 
         if module_libs.is_empty() {
             if verbose {
@@ -149,10 +109,25 @@ impl LinuxBuilder {
         // Merge all module libraries into the main library
         toolchain.merge_static_libs(&module_libs, &main_lib_path)?;
 
+        Self::remove_merged_modules(&module_libs, &main_lib_path, verbose);
+
+        Ok(())
+    }
+
+    fn report_module_libraries(module_libs: &[PathBuf], verbose: bool) {
+        if verbose {
+            eprintln!("    [merge] Found {} .a files:", module_libs.len());
+            for lib in module_libs {
+                eprintln!("      - {}", lib.file_name().unwrap().to_string_lossy());
+            }
+        }
+    }
+
+    fn remove_merged_modules(module_libs: &[PathBuf], main_lib_path: &Path, verbose: bool) {
         // Clean up module libraries after merge
         eprintln!("    Cleaning up {} module libraries...", module_libs.len());
-        for lib in &module_libs {
-            if lib != &main_lib_path {
+        for lib in module_libs {
+            if lib != main_lib_path {
                 match std::fs::remove_file(lib) {
                     Ok(_) => {
                         if verbose {
@@ -172,8 +147,55 @@ impl LinuxBuilder {
                 }
             }
         }
+    }
 
-        Ok(())
+    fn module_libraries(out_dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut module_libs: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(out_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == "a" {
+                        module_libs.push(path);
+                    }
+                }
+            }
+        }
+
+        Ok(module_libs)
+    }
+
+    fn reuse_merged_library(out_dir: &Path, main_lib_path: &Path, verbose: bool) -> Result<bool> {
+        let main_lib_name = main_lib_path.file_name().unwrap().to_string_lossy();
+        if main_lib_path.exists() {
+            // Check if it's a non-empty file (CMake already created the merged library)
+            if let Ok(metadata) = std::fs::metadata(main_lib_path) {
+                if metadata.len() > 0 {
+                    if verbose {
+                        eprintln!(
+                            "    [merge] Main library {} already exists, skipping merge",
+                            main_lib_name
+                        );
+                    }
+                    // Clean up module libraries (keep output directory clean)
+                    for entry in std::fs::read_dir(out_dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.is_file() && path != main_lib_path {
+                            if let Some(ext) = path.extension() {
+                                if ext == "a" {
+                                    let _ = std::fs::remove_file(&path);
+                                }
+                            }
+                        }
+                    }
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     /// Merge third-party static libs (e.g. libzstd.a) from cmake build root into the main lib
@@ -262,6 +284,44 @@ impl LinuxBuilder {
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
+        cmake = Self::configure_project_options(cmake, ctx);
+
+        // Inject toolchain compiler variables (required for cross-compilation)
+        for (key, val) in toolchain.cmake_variables() {
+            cmake = cmake.variable(key, val);
+        }
+
+        let user = ctx.cmake_user_config("linux");
+        cmake = cmake
+            .user_arguments(user.arguments)
+            .user_c_flags(user.c_flags)
+            .user_cpp_flags(user.cpp_flags)
+            .user_cmake_files(ctx.cmake_user_files("linux"));
+
+        cmake.configure_build_install()?;
+
+        // For static builds, merge all module libraries into a single library
+        // This is essential for KMP cinterop which expects a single complete library
+        if !build_shared {
+            self.merge_module_static_libs(
+                &build_dir,
+                ctx.lib_name(),
+                ctx.options.verbose,
+                toolchain,
+            )?;
+            self.merge_third_party_static_libs(
+                &build_dir,
+                ctx.lib_name(),
+                ctx.options.verbose,
+                toolchain,
+            )?;
+        }
+
+        // Return build_dir since CCGO cmake installs to build_dir/out/
+        Ok(build_dir)
+    }
+
+    fn configure_project_options(mut cmake: CMakeConfig, ctx: &BuildContext) -> CMakeConfig {
         // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
@@ -296,29 +356,7 @@ impl LinuxBuilder {
             cmake = cmake.compiler_cache(cache);
         }
 
-        // Inject toolchain compiler variables (required for cross-compilation)
-        for (key, val) in toolchain.cmake_variables() {
-            cmake = cmake.variable(key, val);
-        }
-
-        let user = ctx.cmake_user_config("linux");
-        cmake = cmake
-            .user_arguments(user.arguments)
-            .user_c_flags(user.c_flags)
-            .user_cpp_flags(user.cpp_flags)
-            .user_cmake_files(ctx.cmake_user_files("linux"));
-
-        cmake.configure_build_install()?;
-
-        // For static builds, merge all module libraries into a single library
-        // This is essential for KMP cinterop which expects a single complete library
-        if !build_shared {
-            self.merge_module_static_libs(&build_dir, ctx.lib_name(), ctx.options.verbose, toolchain)?;
-            self.merge_third_party_static_libs(&build_dir, ctx.lib_name(), ctx.options.verbose, toolchain)?;
-        }
-
-        // Return build_dir since CCGO cmake installs to build_dir/out/
-        Ok(build_dir)
+        cmake
     }
 
     /// Generate IDE project files for Linux
@@ -373,6 +411,19 @@ impl LinuxBuilder {
             bail!("CMake configure failed");
         }
 
+        Self::report_ide_files(ctx, &build_dir);
+
+        // Return a placeholder result for IDE generation
+        Ok(BuildResult {
+            sdk_archive: build_dir,
+            symbols_archive: None,
+            aar_archive: None,
+            duration_secs: 0.0,
+            architectures: vec![],
+        })
+    }
+
+    fn report_ide_files(ctx: &BuildContext, build_dir: &Path) {
         // Find and report project file
         let workspace_file = build_dir.join(format!("{}.workspace", ctx.lib_name()));
         let compile_commands = build_dir.join("compile_commands.json");
@@ -410,15 +461,109 @@ impl LinuxBuilder {
                 build_dir.display()
             );
         }
+    }
 
-        // Return a placeholder result for IDE generation
-        Ok(BuildResult {
-            sdk_archive: build_dir,
-            symbols_archive: None,
-            aar_archive: None,
-            duration_secs: 0.0,
-            architectures: vec![],
-        })
+    fn collect_symbols(&self, lib_dir: &Path, symbols_temp: &Path, arch: &str) -> Result<bool> {
+        let mut found_symbols = false;
+        // Collect unstripped .so files into symbols/linux/obj/{arch}/.
+        let obj_arch_dir = symbols_temp
+            .join(ARCHIVE_DIR_SYMBOLS)
+            .join(self.platform_name())
+            .join(ARCHIVE_DIR_OBJ)
+            .join(arch);
+        std::fs::create_dir_all(&obj_arch_dir)?;
+        for entry in std::fs::read_dir(lib_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "so") {
+                let file_name = path.file_name().unwrap();
+                std::fs::copy(&path, obj_arch_dir.join(file_name))?;
+                found_symbols = true;
+            }
+        }
+        Ok(found_symbols)
+    }
+
+    fn build_arch(
+        &self,
+        ctx: &BuildContext,
+        arch: &str,
+        archive: &ArchiveBuilder,
+        symbols_temp: &Path,
+    ) -> Result<bool> {
+        let mut found_symbols = false;
+        let linux_arch = LinuxArch::parse(arch)?;
+        let toolchain = LinuxToolchain::detect_for_arch(linux_arch)?;
+
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+            if ctx.options.verbose {
+                eprintln!("  Building static library...");
+            }
+            let build_dir = self.build_link_type_for_arch(ctx, "static", arch, &toolchain)?;
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                let archive_path = format!(
+                    "lib/{}/{}/{}",
+                    self.platform_name(),
+                    ARCHIVE_DIR_STATIC,
+                    arch
+                );
+                archive.add_directory_filtered(&lib_dir, &archive_path, &["a"])?;
+            }
+        }
+
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+            if ctx.options.verbose {
+                eprintln!("  Building shared library...");
+            }
+            let build_dir = self.build_link_type_for_arch(ctx, "shared", arch, &toolchain)?;
+            if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
+                let archive_path = format!(
+                    "lib/{}/{}/{}",
+                    self.platform_name(),
+                    ARCHIVE_DIR_SHARED,
+                    arch
+                );
+                archive.add_directory_filtered(&lib_dir, &archive_path, &["so", "a"])?;
+
+                found_symbols = self.collect_symbols(&lib_dir, symbols_temp, arch)?;
+            }
+        }
+        Ok(found_symbols)
+    }
+
+    fn add_include_files(ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+        // Add include files
+        let include_source = ctx.include_source_dir();
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn finish_symbols_archive(
+        archive: &ArchiveBuilder,
+        symbols_temp: &Path,
+        found_symbols: bool,
+    ) -> Result<Option<PathBuf>> {
+        let mut symbols_archive_result = None;
+        if found_symbols {
+            let symbols_archive_path = archive.create_symbols_archive(symbols_temp)?;
+            symbols_archive_result = Some(symbols_archive_path);
+        }
+        if symbols_temp.exists() {
+            std::fs::remove_dir_all(symbols_temp).ok();
+        }
+
+        Ok(symbols_archive_result)
     }
 
     /// Find library directory in build output
@@ -534,84 +679,17 @@ impl PlatformBuilder for LinuxBuilder {
                 eprintln!("Building for arch: {}", arch);
             }
 
-            let linux_arch = LinuxArch::parse(arch)?;
-            let toolchain = LinuxToolchain::detect_for_arch(linux_arch)?;
-
-            if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
-                if ctx.options.verbose {
-                    eprintln!("  Building static library...");
-                }
-                let build_dir =
-                    self.build_link_type_for_arch(ctx, "static", arch, &toolchain)?;
-                if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
-                    let archive_path = format!(
-                        "lib/{}/{}/{}",
-                        self.platform_name(),
-                        ARCHIVE_DIR_STATIC,
-                        arch
-                    );
-                    archive.add_directory_filtered(&lib_dir, &archive_path, &["a"])?;
-                }
-            }
-
-            if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-                if ctx.options.verbose {
-                    eprintln!("  Building shared library...");
-                }
-                let build_dir =
-                    self.build_link_type_for_arch(ctx, "shared", arch, &toolchain)?;
-                if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
-                    let archive_path = format!(
-                        "lib/{}/{}/{}",
-                        self.platform_name(),
-                        ARCHIVE_DIR_SHARED,
-                        arch
-                    );
-                    archive.add_directory_filtered(&lib_dir, &archive_path, &["so", "a"])?;
-
-                    // Collect unstripped .so files into obj/linux/{arch}/ for symbols archive
-                    let obj_arch_dir = symbols_temp
-                        .join(ARCHIVE_DIR_OBJ)
-                        .join(self.platform_name())
-                        .join(arch);
-                    std::fs::create_dir_all(&obj_arch_dir)?;
-                    for entry in std::fs::read_dir(&lib_dir)? {
-                        let entry = entry?;
-                        let path = entry.path();
-                        if path.extension().is_some_and(|ext| ext == "so") {
-                            let file_name = path.file_name().unwrap();
-                            std::fs::copy(&path, obj_arch_dir.join(file_name))?;
-                            found_symbols = true;
-                        }
-                    }
-                }
+            if self.build_arch(ctx, arch, &archive, &symbols_temp)? {
+                found_symbols = true;
             }
         }
 
-        // Add include files
-        let include_source = ctx.include_source_dir();
-        if include_source.exists() {
-            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
-            archive.add_directory(&include_source, &include_path)?;
-            if ctx.options.verbose {
-                eprintln!(
-                    "Added include files from {} to {}",
-                    include_source.display(),
-                    include_path
-                );
-            }
-        }
+        Self::add_include_files(ctx, &archive)?;
 
         let sdk_archive = archive.create_sdk_archive(&arches, &link_type_str)?;
 
-        let mut symbols_archive_result = None;
-        if found_symbols {
-            let symbols_archive_path = archive.create_symbols_archive(&symbols_temp)?;
-            symbols_archive_result = Some(symbols_archive_path);
-        }
-        if symbols_temp.exists() {
-            std::fs::remove_dir_all(&symbols_temp).ok();
-        }
+        let symbols_archive_result =
+            Self::finish_symbols_archive(&archive, &symbols_temp, found_symbols)?;
 
         let duration = start.elapsed();
 
@@ -672,5 +750,44 @@ impl PlatformBuilder for LinuxBuilder {
 impl Default for LinuxBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symbols_archive_nests_unstripped_libraries_under_platform() {
+        let root = tempfile::tempdir().unwrap();
+        let libraries = root.path().join("out");
+        std::fs::create_dir(&libraries).unwrap();
+        std::fs::write(libraries.join("libdemo.so"), b"unstripped library").unwrap();
+        std::fs::write(libraries.join("libdemo.a"), b"static library").unwrap();
+        let staging = root.path().join("symbols-staging");
+        assert!(LinuxBuilder::new()
+            .collect_symbols(&libraries, &staging, "x86_64")
+            .unwrap());
+        let archive = ArchiveBuilder::new(
+            "demo",
+            "1.2.3",
+            "",
+            true,
+            "linux",
+            root.path().join("archives"),
+        )
+        .unwrap();
+        let path = archive.create_symbols_archive(&staging).unwrap();
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        zip.by_name("symbols/linux/obj/x86_64/libdemo.so")
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(bytes, b"unstripped library");
+        assert!(!zip
+            .file_names()
+            .any(|name| name.starts_with("obj/") || name.ends_with(".a")));
     }
 }

@@ -122,42 +122,31 @@ start cmake_build/windows/msvc/MyLib.sln
 
 ## 输出结构
 
-### 默认输出 (`target/windows/`)
+### Release 输出 (`target/release/windows/`)
 
-```
-target/windows/
-├── MyLib_Windows_SDK-1.0.0.zip          # 主包
-│   ├── lib/
-│   │   ├── static/
-│   │   │   ├── msvc/
-│   │   │   │   └── mylib.lib            # MSVC 静态库
-│   │   │   └── mingw/
-│   │   │       └── libmylib.a           # MinGW 静态库
-│   │   └── shared/
-│   │       ├── msvc/
-│   │       │   ├── mylib.dll            # MSVC DLL
-│   │       │   └── mylib.lib            # 导入库
-│   │       └── mingw/
-│   │           ├── libmylib.dll         # MinGW DLL
-│   │           └── libmylib.dll.a       # 导入库
-│   ├── bin/                             # DLLs（用于运行时）
-│   │   ├── msvc/
-│   │   │   └── mylib.dll
-│   │   └── mingw/
-│   │       └── libmylib.dll
-│   ├── include/
-│   │   └── mylib/                       # 头文件
-│   │       ├── mylib.h
-│   │       └── version.h
-│   └── build_info.json                  # 构建元数据
-│
-└── MyLib_Windows_SDK-1.0.0-SYMBOLS.zip  # 调试符号
-    └── symbols/
+```text
+target/release/windows/
+├── MYLIB_WINDOWS_SDK-1.0.0.zip
+│   ├── lib/windows/
+│   │   ├── static/<arch>/<msvc|mingw>/
+│   │   └── shared/<arch>/<msvc|mingw>/
+│   ├── include/mylib/
+│   └── meta/windows/
+│       ├── build_info.json
+│       └── archive_info.json
+└── MYLIB_WINDOWS_SDK-1.0.0-SYMBOLS.zip
+    └── symbols/windows/obj/<arch>/
         ├── msvc/
-        │   └── mylib.pdb                # MSVC 调试符号
-        └── mingw/
-            └── libmylib.dll.debug       # MinGW 调试符号
+        │   ├── static/<build-relative-path>/*.pdb
+        │   └── shared/<build-relative-path>/*.pdb
+        └── mingw/shared/*.dll
 ```
+
+Release 构建使用 CMake `RelWithDebInfo` 保留调试信息；Debug 构建使用 `Debug`，输出到 `target/debug/windows/`。SDK 命名和 release 输出路径保持原样。归档只包含本次选定的工具链、架构和库类型。
+
+MSVC 收集各构建目录中的编译器和链接器 PDB，保留相对路径以避免同名文件冲突，并区分 static/shared。MinGW 保存 release strip 前的原始 DLL，不生成独立 `.dll.debug` 文件。MinGW 静态库的调试信息仍保留在 SDK 的 `.a` 文件中。
+
+只有收集到 PDB 或 DLL 才生成符号 ZIP；如果自定义 CMake 配置禁用了 PDB 生成，MSVC 构建可能没有符号 ZIP。成功或失败都会清理临时符号目录。`ccgo package` 合包后仍保留 `symbols/windows/` 层级。
 
 ### 库类型
 

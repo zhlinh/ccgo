@@ -16,6 +16,10 @@ use crate::builder::toolchains::Toolchain;
 use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
+#[path = "windows_symbols.rs"]
+mod symbols;
+use symbols::WindowsSymbols;
+
 /// Windows toolchain type
 // MSVC / IOS are how these platforms spell themselves; renaming them to Msvc /
 // Ios would churn every call site to satisfy a naming lint.
@@ -70,10 +74,9 @@ impl WindowsBuilder {
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension() {
-                    if ext == "a"
-                        && exclude_path != Some(&path) {
-                            libs.push(path);
-                        }
+                    if ext == "a" && exclude_path != Some(&path) {
+                        libs.push(path);
+                    }
                 }
             }
         }
@@ -298,12 +301,7 @@ impl WindowsBuilder {
     }
 
     /// Build for a specific link type with MinGW for a target architecture
-    fn build_with_mingw(
-        &self,
-        ctx: &BuildContext,
-        link_type: &str,
-        arch: &str,
-    ) -> Result<PathBuf> {
+    fn build_with_mingw(&self, ctx: &BuildContext, link_type: &str, arch: &str) -> Result<PathBuf> {
         let mingw_arch = MingwArch::parse(arch)?;
         let mingw = MingwToolchain::detect_for_arch(mingw_arch)?;
         let build_dir = ctx
@@ -317,7 +315,7 @@ impl WindowsBuilder {
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .generator("Unix Makefiles")
             .build_type(if ctx.options.release {
-                BuildType::Release
+                BuildType::RelWithDebInfo
             } else {
                 BuildType::Debug
             })
@@ -352,12 +350,7 @@ impl WindowsBuilder {
 
     /// Build for a specific link type with MSVC for a target architecture.
     /// Supports both native Windows (Visual Studio) and Linux (xwin + clang-cl).
-    fn build_with_msvc(
-        &self,
-        ctx: &BuildContext,
-        link_type: &str,
-        arch: &str,
-    ) -> Result<PathBuf> {
+    fn build_with_msvc(&self, ctx: &BuildContext, link_type: &str, arch: &str) -> Result<PathBuf> {
         let msvc = MsvcToolchain::detect_for_arch(arch)?;
         let build_dir = ctx
             .cmake_build_dir
@@ -368,7 +361,7 @@ impl WindowsBuilder {
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .generator(msvc.cmake_generator())
             .build_type(if ctx.options.release {
-                BuildType::Release
+                BuildType::RelWithDebInfo
             } else {
                 BuildType::Debug
             })
@@ -400,9 +393,9 @@ impl WindowsBuilder {
                         && !libs
                             .iter()
                             .any(|p: &PathBuf| p.file_name() == path.file_name())
-                        {
-                            libs.push(path);
-                        }
+                    {
+                        libs.push(path);
+                    }
                 }
             }
         }
@@ -723,8 +716,12 @@ impl WindowsBuilder {
         archive: &ArchiveBuilder,
         arch: &str,
         toolchain: WindowsToolchain,
+        symbols: &mut WindowsSymbols,
     ) -> Result<()> {
         let build_dir = self.build_link_type(ctx, "static", arch, toolchain)?;
+        if toolchain == WindowsToolchain::MSVC {
+            symbols.collect_pdbs(&build_dir, arch, "static")?;
+        }
         self.add_libraries_to_archive(archive, &build_dir, "static", arch, false, toolchain)
     }
 
@@ -735,8 +732,16 @@ impl WindowsBuilder {
         archive: &ArchiveBuilder,
         arch: &str,
         toolchain: WindowsToolchain,
+        symbols: &mut WindowsSymbols,
     ) -> Result<()> {
         let build_dir = self.build_link_type(ctx, "shared", arch, toolchain)?;
+
+        match toolchain {
+            WindowsToolchain::MSVC => symbols.collect_pdbs(&build_dir, arch, "shared")?,
+            WindowsToolchain::MinGW => {
+                symbols.collect_dlls(&self.find_libraries(&build_dir, true, toolchain)?, arch)?;
+            }
+        }
 
         // Strip shared libraries for release builds (MinGW only)
         if ctx.options.release && toolchain == WindowsToolchain::MinGW {
@@ -749,6 +754,28 @@ impl WindowsBuilder {
         }
 
         self.add_libraries_to_archive(archive, &build_dir, "shared", arch, true, toolchain)
+    }
+
+    fn build_arch(
+        &self,
+        ctx: &BuildContext,
+        archive: &ArchiveBuilder,
+        arch: &str,
+        toolchain: WindowsToolchain,
+        symbols: &mut WindowsSymbols,
+    ) -> Result<()> {
+        if ctx.options.verbose {
+            eprintln!("Building for arch: {}", arch);
+        }
+
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+            self.build_and_archive_static(ctx, archive, arch, toolchain, symbols)?;
+        }
+
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+            self.build_and_archive_shared(ctx, archive, arch, toolchain, symbols)?;
+        }
+        Ok(())
     }
 
     /// Add include files from the project's include directory into the archive
@@ -837,27 +864,19 @@ impl PlatformBuilder for WindowsBuilder {
             ctx.output_dir.clone(),
         )?;
 
+        let mut symbols = WindowsSymbols::new()?;
         let arches = resolve_arches(ctx);
         let link_type_str = ctx.options.link_type.to_string();
 
         for arch in &arches {
-            if ctx.options.verbose {
-                eprintln!("Building for arch: {}", arch);
-            }
-
-            if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
-                self.build_and_archive_static(ctx, &archive, arch, toolchain)?;
-            }
-
-            if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
-                self.build_and_archive_shared(ctx, &archive, arch, toolchain)?;
-            }
+            self.build_arch(ctx, &archive, arch, toolchain, &mut symbols)?;
         }
 
         Self::add_include_files(ctx, &archive)?;
 
         let sdk_archive = archive.create_sdk_archive(&arches, &link_type_str)?;
 
+        let symbols_archive = symbols.finish(&archive)?;
         let duration = start.elapsed();
 
         if ctx.options.verbose {
@@ -870,7 +889,7 @@ impl PlatformBuilder for WindowsBuilder {
 
         Ok(BuildResult {
             sdk_archive,
-            symbols_archive: None,
+            symbols_archive,
             aar_archive: None,
             duration_secs: duration.as_secs_f64(),
             architectures: arches,
