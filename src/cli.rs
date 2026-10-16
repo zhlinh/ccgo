@@ -10,8 +10,7 @@ use crate::commands::{
     new::NewCommand, package::PackageCommand, publish::PublishCommand, registry::RegistryCommand,
     release::ReleaseCommand, remove::RemoveCommand, run::RunCommand, search::SearchCommand,
     self_cmd::SelfCmdCommand, tag::TagCommand, test::TestCommand, tree::TreeCommand,
-    uninstall::UninstallCommand, update::UpdateCommand, vendor::VendorCommand,
-    yank::YankCommand,
+    uninstall::UninstallCommand, update::UpdateCommand, vendor::VendorCommand, yank::YankCommand,
 };
 
 /// CCGO - C++ Cross-platform Build Tool
@@ -59,6 +58,7 @@ pub enum Commands {
     Doc(DocCommand),
 
     /// Publish library to repository
+    #[command(disable_version_flag = true)]
     Publish(PublishCommand),
 
     /// Yank or unyank a published version in a registry index

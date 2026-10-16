@@ -11,6 +11,27 @@ use std::process::{Command, Stdio};
 use crate::config::CcgoConfig;
 use crate::registry::{PackageEntry, PackageIndex, VersionEntry};
 
+#[path = "publish_input.rs"]
+mod input;
+
+#[path = "publish_kmp_sdk.rs"]
+mod kmp_sdk;
+
+#[path = "publish_apple_artifact.rs"]
+mod apple_artifact;
+
+#[path = "publish_artifact.rs"]
+mod artifact;
+
+#[path = "publish_index_destination.rs"]
+mod index_destination;
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum ArtifactProvider {
+    Maven,
+    Github,
+}
+
 /// Publish target
 #[derive(Debug, Clone, ValueEnum)]
 pub enum PublishTarget {
@@ -99,17 +120,35 @@ pub struct PublishCommand {
     #[arg(long, value_enum, default_value_t = RegistryType::Local)]
     pub registry: RegistryType,
 
-    /// Custom registry URL (for private)
-    #[arg(long)]
-    pub url: Option<String>,
-
-    /// Remote name (for CocoaPods/Conan)
-    #[arg(long)]
-    pub remote_name: Option<String>,
+    /// Private destination: Maven/OHPM URL, or configured CocoaPods/Conan/SPM/Index repository name
+    #[arg(long, visible_aliases = ["url", "remote-name"], value_name = "URL_OR_NAME")]
+    pub remote: Option<String>,
 
     /// Skip build step
     #[arg(long)]
     pub skip_build: bool,
+
+    /// Publish from a project/SDK directory, platform file, or supported ZIP.
+    /// ZIP inputs are supported for Android, OHOS, KMP, Conan, Doc, and Apple with --artifact-provider.
+    /// Relative paths are resolved from the current working directory.
+    #[arg(long, value_name = "PATH")]
+    pub path: Option<PathBuf>,
+
+    /// Upload an Apple binary or Index package ZIP independently of the package registry
+    #[arg(long, value_enum)]
+    pub artifact_provider: Option<ArtifactProvider>,
+
+    /// Maven groupId for ZIP artifacts
+    #[arg(long, requires = "artifact_provider")]
+    pub artifact_group: Option<String>,
+
+    /// Maven artifactId (default: <project>-apple or <project>-ccgo for Index)
+    #[arg(long, requires = "artifact_provider")]
+    pub artifact_id: Option<String>,
+
+    /// GitHub owner/repository for release assets
+    #[arg(long, requires = "artifact_provider")]
+    pub github_repo: Option<String>,
 
     /// Publish a release build instead of debug
     ///
@@ -137,8 +176,8 @@ pub struct PublishCommand {
     #[arg(long, value_enum, default_value_t = AppleManager::All)]
     pub manager: AppleManager,
 
-    /// Push to remote (for SPM)
-    #[arg(long)]
+    /// Publish SPM/Index: create local state with registry local, or push to a remote
+    #[arg(long, visible_alias = "index-push")]
     pub push: bool,
 
     /// Apple platforms (for apple)
@@ -170,44 +209,25 @@ pub struct PublishCommand {
     pub doc_open: bool,
 
     // Index-specific options
-    /// Index repository URL or local path (for index target)
+    /// Local index directory (with --registry local)
     #[arg(long)]
     pub index_repo: Option<String>,
 
-    /// Index registry name (for index target, default: ccgo-packages)
+    /// Local index name (default: local; remote indexes use --remote)
     #[arg(long)]
     pub index_name: Option<String>,
-
-    /// Push changes to remote after updating index
-    #[arg(long)]
-    pub index_push: bool,
 
     /// Commit message for index update
     #[arg(long)]
     pub index_message: Option<String>,
 
-    /// Publish a SINGLE explicit version into the index (append-only,
-    /// CocoaPods `pod repo push`-style).
-    ///
-    /// When set, the index entry's existing `versions` array is preserved
-    /// and the new version is appended. Re-publishing the same version
-    /// is rejected. When ABSENT, the legacy auto-walk behavior runs and
-    /// the entry is rebuilt from `git tag -l`.
-    ///
-    /// `--index-version` is the SemVer string written into
-    /// `VersionEntry.version`. `--index-tag` is the actual git tag to
-    /// validate via `git rev-parse --verify`. Either can be derived
-    /// from the other:
-    ///   * `--index-tag v1.0.0` alone → version stripped to `1.0.0`
-    ///   * `--index-version 1.0.0` alone → tag defaults to `v1.0.0`
-    ///
-    /// Pass both explicitly when your tag convention isn't `v<version>`.
-    #[arg(long)]
-    pub index_version: Option<String>,
+    /// Release version for SPM/Index (default: project/package version in CCGO.toml)
+    #[arg(long, visible_alias = "index-version")]
+    pub version: Option<String>,
 
-    /// Git tag for the single-version publish — see `--index-version`.
-    #[arg(long)]
-    pub index_tag: Option<String>,
+    /// Release Git tag for SPM/Index (default: v<version>)
+    #[arg(long, visible_alias = "index-tag")]
+    pub tag: Option<String>,
 
     /// Generate SHA-256 checksums for each version recorded in the index.
     ///
@@ -253,7 +273,7 @@ fn substitute_archive_url(template: &str, name: &str, version: &str, tag: &str) 
 }
 
 /// Strip a single leading `v` or `V` from a git tag to derive a SemVer
-/// string. Used by `--index-tag` when `--index-version` is omitted.
+/// string. Used by `--tag` when `--version` is omitted.
 fn derive_version_from_tag(tag: &str) -> String {
     tag.strip_prefix('v')
         .or_else(|| tag.strip_prefix('V'))
@@ -261,9 +281,9 @@ fn derive_version_from_tag(tag: &str) -> String {
         .to_string()
 }
 
-/// Default tag form `v<version>`. Used by `--index-version` when
-/// `--index-tag` is omitted. Most projects follow this convention; pass
-/// `--index-tag` explicitly when yours doesn't.
+/// Default tag form `v<version>`. Used by `--version` when
+/// `--tag` is omitted. Most projects follow this convention; pass
+/// `--tag` explicitly when yours doesn't.
 fn default_tag_for_version(version: &str) -> String {
     format!("v{}", version)
 }
@@ -292,7 +312,34 @@ fn merge_version_entry(
 
 impl PublishCommand {
     /// Execute the publish command
-    pub fn execute(self, verbose: bool) -> Result<()> {
+    pub fn execute(mut self, verbose: bool) -> Result<()> {
+        if (self.version.is_some() || self.tag.is_some())
+            && !matches!(self.target, PublishTarget::Index)
+            && !(matches!(self.target, PublishTarget::Apple)
+                && (matches!(self.manager, AppleManager::Spm) || self.artifact_provider.is_some()))
+        {
+            bail!("--version/--tag are supported for index, apple --manager spm, or Apple binary hosting");
+        }
+        if matches!(self.target, PublishTarget::Apple)
+            && matches!(self.manager, AppleManager::Spm | AppleManager::All)
+        {
+            self.validate_spm_registry()?;
+        }
+        if self.artifact_provider.is_some() {
+            if !matches!(self.target, PublishTarget::Apple | PublishTarget::Index) {
+                bail!("--artifact-provider is supported only for apple and index");
+            }
+            if matches!(self.target, PublishTarget::Apple) {
+                return apple_artifact::publish(&self, verbose);
+            }
+            if self.archive_url_template.is_some() {
+                bail!("--artifact-provider generates the archive URL; omit --archive-url-template");
+            }
+            if self.archive_format != "zip" {
+                bail!("Index artifact providers support ZIP archives only");
+            }
+        }
+        let temporary_input = self.prepare_publish_path()?;
         println!("Publishing library project...\n");
 
         match self.target {
@@ -301,16 +348,133 @@ impl PublishCommand {
             PublishTarget::Kmp => self.publish_kmp(verbose),
             PublishTarget::Conan => self.publish_conan(verbose),
             PublishTarget::Apple => self.publish_apple(verbose),
-            PublishTarget::Doc => self.publish_doc(verbose),
+            PublishTarget::Doc => self.publish_doc(verbose, temporary_input.is_some()),
             PublishTarget::Index => self.publish_index(verbose),
         }
+    }
+
+    fn validate_publish_path(&self, path: &Path) -> Result<()> {
+        if !path.exists() {
+            bail!("Publish path does not exist: {}", path.display());
+        }
+        if matches!(self.target, PublishTarget::Index) {
+            if self.artifact_provider.is_none()
+                && (!self.checksum || self.archive_url_template.is_none())
+            {
+                bail!("--path for index requires --checksum and --archive-url-template; the archive must be hosted separately");
+            }
+            if self.archive_format != "zip" {
+                bail!("--path for index currently supports --archive-format zip only");
+            }
+        }
+        if path.is_dir() {
+            return Ok(());
+        }
+        let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        if matches!(self.target, PublishTarget::Apple) && extension == "zip" {
+            bail!("Apple ZIP input requires --artifact-provider maven or github");
+        }
+        let valid = match self.target {
+            PublishTarget::Android => matches!(extension, "aar" | "zip"),
+            PublishTarget::Ohos => matches!(extension, "har" | "zip"),
+            PublishTarget::Kmp | PublishTarget::Index => extension == "zip",
+            PublishTarget::Apple => match self.manager {
+                AppleManager::Cocoapods => extension == "podspec",
+                AppleManager::Spm => {
+                    path.file_name().and_then(|s| s.to_str()) == Some("Package.swift")
+                }
+                AppleManager::All => false,
+            },
+            PublishTarget::Conan => matches!(extension, "py" | "zip"),
+            PublishTarget::Doc => matches!(extension, "yml" | "yaml" | "zip"),
+        };
+        if !path.is_file() || !valid {
+            bail!("Unsupported --path input for {}: {}. Use a project/SDK directory or a platform-specific file (apple files require the matching --manager)", self.target, path.display());
+        }
+        Ok(())
+    }
+
+    fn prepare_publish_path(&mut self) -> Result<Option<tempfile::TempDir>> {
+        let Some(path) = self.path.as_deref() else {
+            return Ok(None);
+        };
+        self.validate_publish_path(path)?;
+        let mut path = fs::canonicalize(path)
+            .with_context(|| format!("Failed to resolve publish path {}", path.display()))?;
+        let mut temporary = None;
+        if matches!(
+            self.target,
+            PublishTarget::Android
+                | PublishTarget::Ohos
+                | PublishTarget::Conan
+                | PublishTarget::Doc
+        ) && path.is_file()
+            && path.extension().and_then(|s| s.to_str()) == Some("zip")
+        {
+            let directory = tempfile::tempdir()?;
+            input::extract_zip(&path, directory.path())?;
+            path = directory.path().to_path_buf();
+            temporary = Some(directory);
+        }
+        if path.is_dir() {
+            path = self.resolve_publish_directory(path, temporary.is_some())?;
+        }
+        self.path = Some(fs::canonicalize(&path).with_context(|| {
+            format!(
+                "Failed to resolve prepared publish input {}",
+                path.display()
+            )
+        })?);
+        Ok(temporary)
+    }
+
+    fn resolve_publish_directory(&self, path: PathBuf, extracted: bool) -> Result<PathBuf> {
+        Ok(match self.target {
+            PublishTarget::Android if !extracted && path.join("gradlew").is_file() => path,
+            PublishTarget::Android => input::unique_file(&path, "aar", true)?,
+            PublishTarget::Ohos if !extracted && path.join("oh-package.json5").is_file() => path,
+            PublishTarget::Ohos => input::unique_file(&path, "har", true)?,
+            PublishTarget::Kmp => path,
+            PublishTarget::Apple => {
+                if matches!(self.manager, AppleManager::Cocoapods | AppleManager::All) {
+                    input::unique_file(&path, "podspec", false)?;
+                }
+                if matches!(self.manager, AppleManager::Spm | AppleManager::All)
+                    && !path.join("Package.swift").is_file()
+                {
+                    bail!("Package.swift not found in {}", path.display());
+                }
+                path
+            }
+            PublishTarget::Conan if extracted => {
+                input::archive_descriptor(&path, &["conanfile.py"])?
+            }
+            PublishTarget::Conan => {
+                let recipe = path.join("conanfile.py");
+                if !recipe.is_file() {
+                    bail!("conanfile.py not found in {}", path.display());
+                }
+                recipe
+            }
+            PublishTarget::Doc if extracted => {
+                input::archive_descriptor(&path, &["mkdocs.yml", "mkdocs.yaml"])?
+            }
+            PublishTarget::Doc => input::mkdocs_config(&path)?,
+            PublishTarget::Index => input::unique_file(&path, "zip", true)?,
+        })
     }
 
     fn publish_android(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing Android to Maven ===\n");
 
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
-        let android_dir = cwd.join("android");
+        let artifact = self.path.as_ref().filter(|path| path.is_file());
+        let android_dir = self
+            .path
+            .as_ref()
+            .filter(|path| path.is_dir())
+            .cloned()
+            .unwrap_or_else(|| cwd.join("android"));
 
         if !android_dir.exists() || !android_dir.is_dir() {
             bail!(
@@ -332,15 +496,52 @@ impl PublishCommand {
 
         let mut cmd = Command::new("./gradlew");
         cmd.current_dir(&android_dir);
+        if matches!(self.registry, RegistryType::Private) {
+            if let Some(remote) = &self.remote {
+                cmd.env("CCGO_MAVEN_URL", remote);
+            }
+        }
         cmd.arg(gradle_task);
         cmd.arg("--no-daemon");
+
+        // Gradle silently accepts unknown -P properties. Fail before executing
+        // tasks if an older plugin would ignore the requested artifact path.
+        let publish_guard = if artifact.is_some() || self.skip_build {
+            let guard = tempfile::Builder::new().suffix(".gradle").tempfile()?;
+            fs::write(
+                guard.path(),
+                r#"
+gradle.taskGraph.whenReady {
+    if (gradle.rootProject.allprojects.any { it.projectDir.canonicalPath == System.getenv('CCGO_PUBLISH_PROJECT_DIR') } &&
+        !gradle.rootProject.allprojects.any {
+        it.extensions.extraProperties.has('ccgoPublishPathSupported') &&
+        it.extensions.extraProperties.get('ccgoPublishPathSupported') == true
+    }) {
+        throw new GradleException('This CCGO Gradle plugin does not support explicit publish paths/build skipping. Update the CCGO Gradle plugin together with the CLI.')
+    }
+}
+"#,
+            )?;
+            cmd.arg("--init-script").arg(guard.path());
+            cmd.env("CCGO_PUBLISH_PROJECT_DIR", fs::canonicalize(&android_dir)?);
+            Some(guard)
+        } else {
+            None
+        };
+
+        if let Some(path) = artifact {
+            cmd.arg(format!("-PccgoPublishPath={}", path.display()));
+        }
+        if self.skip_build || artifact.is_some() {
+            cmd.arg("-PccgoSkipPublishBuild=true");
+        }
 
         // Hand the resolved runtime to Gradle, same as the android builder does.
         // The plugin reads CCGO_ANDROID_STL first, then [android].stl from
         // CCGO.toml; it decides the `-stdembed` artifact name. Publishing a
         // c++_static build without this yields a package whose name says shared
         // while its .so embeds the runtime -- worse than either choice alone.
-        let config = crate::config::CcgoConfig::load().ok();
+        let config = self.android_publish_config(&android_dir);
         let stl = crate::builder::resolve_stl(
             self.stl.as_ref().map(|s| s.as_str()),
             config
@@ -365,6 +566,7 @@ impl PublishCommand {
         }
 
         let status = cmd.status().context("Failed to execute gradlew")?;
+        drop(publish_guard);
 
         if !status.success() {
             bail!(
@@ -377,39 +579,73 @@ impl PublishCommand {
         Ok(())
     }
 
+    fn android_publish_config(&self, android_dir: &Path) -> Option<CcgoConfig> {
+        if self.path.as_ref().is_some_and(|path| path.is_dir()) {
+            let local = android_dir.join("CCGO.toml");
+            let config_path = if local.is_file() {
+                local
+            } else {
+                android_dir
+                    .parent()
+                    .unwrap_or(android_dir)
+                    .join("CCGO.toml")
+            };
+            CcgoConfig::load_from_path(&config_path).ok()
+        } else {
+            CcgoConfig::load().ok()
+        }
+    }
+
     fn publish_ohos(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing OHOS to OHPM ===\n");
 
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
-        let ohos_dir = cwd.join("ohos");
+        let ohos_dir = self
+            .path
+            .as_ref()
+            .filter(|path| path.is_dir())
+            .cloned()
+            .unwrap_or_else(|| cwd.join("ohos"));
 
-        if !ohos_dir.exists() || !ohos_dir.is_dir() {
+        if self.path.is_none() && (!ohos_dir.exists() || !ohos_dir.is_dir()) {
             bail!("Error: ohos directory not found at {}", ohos_dir.display());
         }
 
-        // Determine OHPM registry
-        let registry_args = match self.registry {
-            RegistryType::Local => vec!["publish"],
-            RegistryType::Official => vec!["publish"],
-            RegistryType::Private => {
-                if let Some(url) = &self.url {
-                    vec!["publish", "--registry", url]
-                } else {
-                    bail!("Private registry requires --url");
-                }
-            }
+        let artifact = match self.path.as_ref().filter(|path| path.is_file()) {
+            Some(path) => path.clone(),
+            None => input::unique_file(&ohos_dir, "har", true).context(
+                "OHPM publish/prepublish requires a built HAR; use --path to select one",
+            )?,
         };
-
-        println!("Publishing to {} OHPM registry", self.registry);
-        println!("Running: ohpm {:?}", registry_args);
-        println!("{}", "-".repeat(60));
-
         let mut cmd = Command::new("ohpm");
-        cmd.current_dir(&ohos_dir);
-        cmd.args(&registry_args);
-
+        cmd.current_dir(if self.path.as_ref().is_some_and(|path| path.is_file()) {
+            &cwd
+        } else {
+            &ohos_dir
+        });
+        match self.registry {
+            RegistryType::Local => {
+                println!("Validating HAR locally with ohpm prepublish...");
+                cmd.arg("prepublish");
+            }
+            RegistryType::Official => {
+                cmd.args([
+                    "publish",
+                    "--publish_registry",
+                    "https://ohpm.openharmony.cn/ohpm/",
+                ]);
+            }
+            RegistryType::Private => {
+                let url = self
+                    .remote
+                    .as_deref()
+                    .context("Private OHPM registry requires --remote")?;
+                cmd.args(["publish", "--publish_registry", url]);
+            }
+        }
+        cmd.arg(&artifact);
         if verbose {
-            cmd.arg("--verbose");
+            println!("Running: {:?}", cmd);
         }
 
         let status = cmd.status().context("Failed to execute ohpm")?;
@@ -429,7 +665,17 @@ impl PublishCommand {
         println!("=== Publishing KMP to Maven ===\n");
 
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
-        let kmp_dir = cwd.join("kmp");
+        let sdk = self
+            .path
+            .as_deref()
+            .filter(|path| !path.join("gradlew").is_file())
+            .map(kmp_sdk::PreparedSdk::prepare)
+            .transpose()?;
+        let kmp_dir = if sdk.is_some() {
+            cwd.join("kmp")
+        } else {
+            self.path.clone().unwrap_or_else(|| cwd.join("kmp"))
+        };
 
         if !kmp_dir.exists() || !kmp_dir.is_dir() {
             bail!("Error: kmp directory not found at {}", kmp_dir.display());
@@ -437,6 +683,9 @@ impl PublishCommand {
 
         // Map registry to Gradle task
         let gradle_task = match self.registry {
+            RegistryType::Local if sdk.is_some() => "ccgoPublishToMavenLocal",
+            RegistryType::Official if sdk.is_some() => "ccgoPublishToMavenCentral",
+            RegistryType::Private if sdk.is_some() => "ccgoPublishToMavenCustom",
             RegistryType::Local => "publishToMavenLocal",
             RegistryType::Official => "publishAllPublicationsToMavenCentralRepository",
             RegistryType::Private => "publishAllPublicationsToMavenCustomRepository",
@@ -447,10 +696,25 @@ impl PublishCommand {
         println!("{}", "-".repeat(60));
 
         let build_type = if self.release { "release" } else { "debug" };
-        println!("Build type: {}", build_type);
+        if sdk.is_some() {
+            println!("Publishing prebuilt SDK artifacts (build skipped)");
+        } else {
+            println!("Build type: {}", build_type);
+        }
 
         let mut cmd = Command::new("./gradlew");
         cmd.current_dir(&kmp_dir);
+        if matches!(self.registry, RegistryType::Private) {
+            if let Some(remote) = &self.remote {
+                cmd.env("CCGO_MAVEN_URL", remote);
+            }
+        }
+        if let Some(sdk) = &sdk {
+            cmd.env("CCGO_PUBLISH_PROJECT_DIR", fs::canonicalize(&kmp_dir)?);
+            cmd.arg(format!("-PccgoKmpSdkManifest={}", sdk.manifest.display()));
+            cmd.arg("--no-configuration-cache");
+            cmd.arg("--init-script").arg(&sdk.guard);
+        }
         // Two channels, because two different consumers need it: the env var
         // reaches the plugin's nested `ccgo build`, the property reaches the
         // project's own build.gradle.kts (which picks the cinterop libraryPath).
@@ -481,8 +745,14 @@ impl PublishCommand {
 
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
 
-        // Find CCGO.toml
-        let project_dir = Self::find_project_dir(&cwd)?;
+        let project_dir = match &self.path {
+            Some(path) => path
+                .parent()
+                .context("Conan recipe has no parent directory")?
+                .to_path_buf(),
+            None => Self::find_project_dir(&cwd)?,
+        };
+        let recipe = self.path.as_deref().unwrap_or_else(|| Path::new("."));
 
         match self.registry {
             RegistryType::Local => {
@@ -490,7 +760,9 @@ impl PublishCommand {
 
                 let mut cmd = Command::new("conan");
                 cmd.current_dir(&project_dir);
-                cmd.args(["export", ".", "--user=ccgo", "--channel=stable"]);
+                cmd.arg("export")
+                    .arg(recipe)
+                    .args(["--user=ccgo", "--channel=stable"]);
 
                 if verbose {
                     cmd.arg("-vv");
@@ -502,34 +774,44 @@ impl PublishCommand {
                     bail!("Conan export failed");
                 }
             }
-            RegistryType::Official | RegistryType::Private => {
-                let remote = if let Some(remote_name) = &self.remote_name {
-                    remote_name.clone()
-                } else {
-                    // Get first available remote
-                    self.get_conan_remotes()?
-                        .first()
-                        .ok_or_else(|| anyhow::anyhow!("No Conan remotes configured"))?
-                        .clone()
-                };
-
+            RegistryType::Official => {
+                bail!("Conan official is ConanCenter (https://center2.conan.io). ConanCenter does not accept direct CLI uploads; submit a recipe PR to https://github.com/conan-io/conan-center-index. Use --registry private --remote <name> for a writable remote");
+            }
+            RegistryType::Private => {
+                let remote = self
+                    .remote
+                    .as_deref()
+                    .context("Private Conan registry requires --remote")?;
                 println!("Uploading to Conan remote: {}", remote);
 
                 // First export to local cache
                 let mut cmd = Command::new("conan");
                 cmd.current_dir(&project_dir);
-                cmd.args(["export", ".", "--user=ccgo", "--channel=stable"]);
+                cmd.arg("export")
+                    .arg(recipe)
+                    .args(["--user=ccgo", "--channel=stable"]);
 
-                let status = cmd.status().context("Failed to execute conan export")?;
-
-                if !status.success() {
+                cmd.arg("--format=json")
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit());
+                let output = cmd.output().context("Failed to execute conan export")?;
+                if !output.status.success() {
                     bail!("Conan export failed");
                 }
+                let exported: serde_json::Value = serde_json::from_slice(&output.stdout)
+                    .context("Conan export did not return JSON")?;
+                let reference = exported
+                    .get("reference")
+                    .and_then(|v| v.as_str())
+                    .filter(|value| {
+                        !value.is_empty() && !value.starts_with('-') && !value.contains(['*', '?'])
+                    })
+                    .context("Conan export did not return an exact recipe reference")?;
 
                 // Then upload to remote
                 let mut cmd = Command::new("conan");
                 cmd.current_dir(&project_dir);
-                cmd.args(["upload", "*", "--remote", &remote, "--confirm"]);
+                cmd.args(["upload", reference, "--remote", remote, "--confirm"]);
 
                 if verbose {
                     cmd.arg("-vv");
@@ -551,17 +833,28 @@ impl PublishCommand {
         println!("=== Publishing Apple platforms ===\n");
 
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
+        let project_dir = match &self.path {
+            Some(path) if path.is_dir() => path.as_path(),
+            Some(path) => path
+                .parent()
+                .context("Apple input has no parent directory")?,
+            None => cwd.as_path(),
+        };
 
         match self.manager {
             AppleManager::Cocoapods | AppleManager::All => {
-                self.publish_cocoapods(&cwd, verbose)?;
+                self.publish_cocoapods(
+                    project_dir,
+                    verbose,
+                    matches!(self.manager, AppleManager::All) && !self.push,
+                )?;
             }
             _ => {}
         }
 
         match self.manager {
             AppleManager::Spm | AppleManager::All => {
-                self.publish_spm(&cwd, verbose)?;
+                self.publish_spm(project_dir, verbose)?;
             }
             _ => {}
         }
@@ -570,13 +863,34 @@ impl PublishCommand {
         Ok(())
     }
 
-    fn publish_cocoapods(&self, project_dir: &Path, verbose: bool) -> Result<()> {
+    fn publish_cocoapods(
+        &self,
+        project_dir: &Path,
+        verbose: bool,
+        validation_only: bool,
+    ) -> Result<()> {
         println!("Publishing to CocoaPods...");
 
         // Find .podspec file
-        let podspec = self.find_file_with_extension(project_dir, ".podspec")?;
+        let podspec = match &self.path {
+            Some(path) if path.is_file() => path.clone(),
+            Some(path) => input::unique_file(path, "podspec", false)?,
+            None => self.find_file_with_extension(project_dir, ".podspec")?,
+        };
+        let project_dir = if self.path.is_some() {
+            podspec
+                .parent()
+                .context("Podspec has no parent directory")?
+        } else {
+            project_dir
+        };
 
-        match self.registry {
+        let registry = if validation_only {
+            RegistryType::Local
+        } else {
+            self.registry.clone()
+        };
+        match registry {
             RegistryType::Local => {
                 println!("Validating podspec locally...");
 
@@ -620,7 +934,7 @@ impl PublishCommand {
                 }
             }
             RegistryType::Private => {
-                if let Some(remote_name) = &self.remote_name {
+                if let Some(remote_name) = &self.remote {
                     println!("Publishing to private specs repo: {}", remote_name);
 
                     let mut cmd = Command::new("pod");
@@ -641,7 +955,7 @@ impl PublishCommand {
                         bail!("Pod repo push failed");
                     }
                 } else {
-                    bail!("Private registry requires --remote-name");
+                    bail!("Private registry requires --remote");
                 }
             }
         }
@@ -649,58 +963,130 @@ impl PublishCommand {
         Ok(())
     }
 
-    fn publish_spm(&self, project_dir: &Path, _verbose: bool) -> Result<()> {
-        println!("Publishing to Swift Package Manager...");
-
-        // Verify Package.swift exists
-        let package_swift = project_dir.join("Package.swift");
-        if !package_swift.exists() {
-            bail!("Package.swift not found");
-        }
-
-        if self.push {
-            println!("Pushing git tag...");
-
-            // Get version from Package.swift or CCGO.toml
-            let version = self.get_project_version(project_dir)?;
-
-            // Create and push tag
-            let mut cmd = Command::new("git");
-            cmd.current_dir(project_dir);
-            cmd.args(["tag", &version]);
-
-            let status = cmd.status().context("Failed to create git tag")?;
-
-            if !status.success() {
-                eprintln!("Warning: Tag creation failed (may already exist)");
+    fn validate_spm_registry(&self) -> Result<()> {
+        match self.registry {
+            RegistryType::Official => bail!("SPM has no official central publishing registry. Use --registry local to validate, or --registry private --remote <git-remote> --push to publish a version tag"),
+            RegistryType::Private => {
+                let remote = self.remote.as_deref().context("Private SPM publishing requires --remote <git-remote>")?;
+                if remote.is_empty() || remote.starts_with('-') { bail!("Invalid SPM Git remote name"); }
             }
-
-            let mut cmd = Command::new("git");
-            cmd.current_dir(project_dir);
-            cmd.args(["push", "origin", &version]);
-
-            let status = cmd.status().context("Failed to push git tag")?;
-
-            if !status.success() {
-                bail!("Failed to push git tag");
-            }
-
-            println!("Pushed tag: {}", version);
-        } else {
-            println!("Package.swift is ready for SPM (use --push to push git tag)");
+            RegistryType::Local => {}
         }
-
         Ok(())
     }
 
-    fn publish_doc(&self, verbose: bool) -> Result<()> {
+    fn publish_spm(&self, project_dir: &Path, verbose: bool) -> Result<()> {
+        self.validate_spm_registry()?;
+        if !project_dir.join("Package.swift").is_file() {
+            bail!("Package.swift not found");
+        }
+        if matches!(self.registry, RegistryType::Private) {
+            let remote = self.remote.as_deref().unwrap();
+            if !Command::new("git")
+                .current_dir(project_dir)
+                .args(["remote", "get-url", remote])
+                .output()?
+                .status
+                .success()
+            {
+                bail!("SPM Git remote '{remote}' not found; configure it with git remote add");
+            }
+        }
+        println!("Validating Swift package manifest...");
+        let mut swift = Command::new("swift");
+        swift
+            .current_dir(project_dir)
+            .args(["package", "dump-package"]);
+        if !verbose {
+            swift.stdout(Stdio::null());
+        }
+        if !swift
+            .status()
+            .context("Failed to execute swift package dump-package")?
+            .success()
+        {
+            bail!("Swift package manifest validation failed");
+        }
+        let configured_version = if self.version.is_some() || self.tag.is_some() {
+            String::new()
+        } else {
+            self.get_project_version(project_dir)?
+        };
+        let (version, tag) = self.resolve_version_and_tag(&configured_version)?;
+        if !Command::new("git")
+            .args(["check-ref-format", &format!("refs/tags/{tag}")])
+            .status()?
+            .success()
+        {
+            bail!("Invalid release Git tag: {tag}");
+        }
+        if !self.push {
+            println!("SPM validated: version {version}, tag {tag}. No tag created or pushed; use --push to publish.");
+            return Ok(());
+        }
+        self.publish_spm_tag(project_dir, &tag)
+    }
+
+    fn publish_spm_tag(&self, project_dir: &Path, tag: &str) -> Result<()> {
+        let git_output = |args: &[&str]| -> Result<std::process::Output> {
+            Command::new("git")
+                .current_dir(project_dir)
+                .args(args)
+                .output()
+                .context("Failed to execute git")
+        };
+        let status = git_output(&["status", "--porcelain"])?;
+        if !status.status.success() || !status.stdout.is_empty() {
+            bail!("Commit all SPM wrapper changes before creating/pushing its version tag");
+        }
+        let head = git_output(&["rev-parse", "HEAD"])?;
+        if !head.status.success() {
+            bail!("SPM repository has no committed HEAD");
+        }
+        let tag_ref = format!("refs/tags/{tag}");
+        let existing = git_output(&["rev-parse", "--verify", &format!("{tag_ref}^{{commit}}")])?;
+        if existing.status.success() {
+            if existing.stdout != head.stdout {
+                bail!("SPM tag {tag} already points to a different commit");
+            }
+        } else if !git_output(&["tag", tag])?.status.success() {
+            bail!("Failed to create SPM tag {tag}");
+        }
+        if matches!(self.registry, RegistryType::Local) {
+            println!("Created/validated local SPM tag {tag}; no remote was contacted.");
+            return Ok(());
+        }
+        let remote = self.remote.as_deref().unwrap();
+        let refspec = format!("{tag_ref}:{tag_ref}");
+        if !Command::new("git")
+            .current_dir(project_dir)
+            .args(["push", remote, &refspec])
+            .status()?
+            .success()
+        {
+            bail!("Failed to push SPM tag {tag} to {remote}");
+        }
+        println!("Pushed SPM tag {tag} to {remote}");
+        Ok(())
+    }
+
+    fn publish_doc(&self, verbose: bool, archive_input: bool) -> Result<()> {
         println!("=== Publishing Documentation ===\n");
 
         let cwd = std::env::current_dir().context("Failed to get current directory")?;
+        // MkDocs resolves content paths relative to its config. gh-deploy also
+        // needs a git checkout, so ZIP inputs deploy from the caller's repo.
+        let project_dir = match &self.path {
+            _ if archive_input => cwd.as_path(),
+            Some(path) => path
+                .parent()
+                .context("MkDocs config has no parent directory")?,
+            None => cwd.as_path(),
+        };
 
         // Check if docs are built
-        let docs_dir = cwd.join("site");
-        if !docs_dir.exists() {
+        let docs_dir = project_dir.join("site");
+        if self.path.is_none() && !docs_dir.exists() {
             println!("Building documentation...");
 
             let mut cmd = Command::new("mkdocs");
@@ -722,8 +1108,11 @@ impl PublishCommand {
         println!("Deploying to GitHub Pages (branch: {})...", self.doc_branch);
 
         let mut cmd = Command::new("mkdocs");
-        cmd.current_dir(&cwd);
+        cmd.current_dir(project_dir);
         cmd.args(["gh-deploy", "--branch", &self.doc_branch]);
+        if let Some(path) = &self.path {
+            cmd.arg("--config-file").arg(path);
+        }
 
         if self.doc_force {
             cmd.arg("--force");
@@ -742,6 +1131,7 @@ impl PublishCommand {
         if self.doc_open {
             // Get repository URL and open
             if let Ok(output) = Command::new("git")
+                .current_dir(project_dir)
                 .args(["remote", "get-url", "origin"])
                 .output()
             {
@@ -760,24 +1150,23 @@ impl PublishCommand {
         Ok(())
     }
 
-    /// The (version, tag) pair this invocation publishes.
-    ///
-    /// The index is append-only: one version per invocation, so at least one of
-    /// --index-version / --index-tag has to be given and the other is derived.
-    fn resolve_index_version_and_tag(&self) -> Result<(String, String)> {
-        Ok(match (&self.index_version, &self.index_tag) {
+    /// Resolve one version, falling back to the already loaded project config.
+    fn resolve_version_and_tag(&self, project_version: &str) -> Result<(String, String)> {
+        let (version, tag) = match (&self.version, &self.tag) {
             (Some(v), Some(t)) => (v.clone(), t.clone()),
             (Some(v), None) => (v.clone(), default_tag_for_version(v)),
             (None, Some(t)) => (derive_version_from_tag(t), t.clone()),
-            (None, None) => bail!(
-                "ccgo publish index requires --index-version and/or --index-tag.\n\n\
-                 The index is append-only — each invocation publishes exactly \
-                 one version. Examples:\n  \
-                   ccgo publish index --index-version 1.0.0\n  \
-                   ccgo publish index --index-tag v1.0.0\n  \
-                   ccgo publish index --index-version 1.0.0 --index-tag custom-prefix-v1.0.0"
+            (None, None) => (
+                project_version.to_owned(),
+                default_tag_for_version(project_version),
             ),
-        })
+        };
+        semver::Version::parse(&version)
+            .context("Invalid release version; use --version with --tag for custom tag prefixes")?;
+        if tag.is_empty() || tag.starts_with('-') {
+            bail!("Invalid release Git tag: {tag}");
+        }
+        Ok((version, tag))
     }
 
     /// Merge this invocation's version into the package's index entry and write
@@ -831,6 +1220,7 @@ impl PublishCommand {
         let config =
             CcgoConfig::load_from_path(&config_path).context("Failed to load CCGO.toml")?;
 
+        let destination = index_destination::resolve(self, &config)?;
         let package = config
             .package
             .as_ref()
@@ -848,46 +1238,61 @@ impl PublishCommand {
 
         // Resolve the (version, tag) pair to publish — one entry per
         // invocation, append-only. Mirrors `pod repo push`.
-        let (version, tag) = self.resolve_index_version_and_tag()?;
+        let (version, tag) = self.resolve_version_and_tag(&package.version)?;
 
         println!("\n🔖 Publishing single version:");
         println!("   version: {}", version);
         println!("   tag:     {}", tag);
 
         self.validate_tag_exists(&project_dir, &tag)?;
-        let new_version_entry = self.build_single_version_entry(
+        let mut new_version_entry =
+            self.build_single_version_entry(&project_dir, &package.name, &version, &tag, verbose)?;
+        let artifact = self.prepare_index_artifact(
             &project_dir,
+            &config_path,
             &package.name,
             &version,
             &tag,
-            verbose,
+            &mut new_version_entry,
         )?;
 
-        // Determine index repository
-        let index_repo = if let Some(repo) = &self.index_repo {
-            repo.clone()
+        let index_repo = destination.repository;
+        let index_name = destination.name;
+        println!("\nIndex repository: {}", index_repo);
+        if !self.push {
+            if destination.local {
+                let existing_file =
+                    Path::new(&index_repo).join(PackageIndex::package_index_path(&package.name));
+                merge_version_entry(
+                    Self::read_existing_versions(&existing_file)?,
+                    new_version_entry,
+                )?;
+            }
+            println!("Index validated: version {version}, tag {tag}. No index files, commits, or remotes changed; use --push to publish. Remote duplicate versions are checked at publication.");
+            return Ok(());
+        }
+        let index_path = if destination.local {
+            index_destination::prepare_local(&index_repo, &project_dir)?
         } else {
-            bail!("Please specify --index-repo <url> for the index repository");
+            crate::registry::index_writer::prepare_index_repo(&index_repo, &index_name, verbose)?
         };
 
-        let index_name = self
-            .index_name
-            .clone()
-            .unwrap_or_else(|| "custom-index".to_string());
-
-        println!("\n📂 Index repository: {}", index_repo);
-
-        // Clone or update index repository
-        let index_path =
-            crate::registry::index_writer::prepare_index_repo(&index_repo, &index_name, verbose)?;
-
-        let package_entry = self.write_package_entry(
-            &index_path,
-            &config,
-            package,
-            &git_url,
-            new_version_entry,
+        // Check the current destination before creating an immutable remote asset.
+        merge_version_entry(
+            Self::read_existing_versions(
+                &index_path.join(PackageIndex::package_index_path(&package.name)),
+            )?,
+            new_version_entry.clone(),
         )?;
+        if let Some((upload, snapshot)) = &artifact {
+            upload.upload(&snapshot.path)?;
+            println!(
+                "Artifact uploaded. If a later index step fails, the artifact remains at {}",
+                upload.url
+            );
+        }
+        let package_entry =
+            self.write_package_entry(&index_path, &config, package, &git_url, new_version_entry)?;
 
         // Update index.json metadata
         crate::registry::index_writer::update_index_metadata(&index_path, &index_name)?;
@@ -917,6 +1322,45 @@ impl PublishCommand {
         )
     }
 
+    fn prepare_index_artifact(
+        &self,
+        project_dir: &Path,
+        config_path: &Path,
+        package_name: &str,
+        version: &str,
+        tag: &str,
+        new_version_entry: &mut VersionEntry,
+    ) -> Result<Option<(artifact::PreparedUpload, artifact::ArchiveSnapshot)>> {
+        Ok(if self.artifact_provider.is_some() {
+            let archive = self.path.clone().unwrap_or_else(|| {
+                project_dir.join("target/release/package").join(format!(
+                    "{}_CCGO_PACKAGE-{version}.zip",
+                    package_name.to_uppercase()
+                ))
+            });
+            let snapshot = artifact::ArchiveSnapshot::new(&archive)?;
+            let raw_config: toml::Value = toml::from_str(&fs::read_to_string(config_path)?)?;
+            let upload = artifact::PreparedUpload::prepare(
+                self,
+                &raw_config,
+                package_name,
+                version,
+                tag,
+                "index",
+            )?;
+            new_version_entry.archive_url = Some(upload.url.clone());
+            new_version_entry.archive_format = Some("zip".to_owned());
+            new_version_entry.checksum = Some(snapshot.checksum.clone());
+            println!(
+                "Artifact URL: {}\nChecksum: {}",
+                upload.url, snapshot.checksum
+            );
+            Some((upload, snapshot))
+        } else {
+            None
+        })
+    }
+
     /// Push the index commit when asked, then print how to consume the package.
     fn push_and_report(
         &self,
@@ -927,12 +1371,16 @@ impl PublishCommand {
         package_entry: &PackageEntry,
         verbose: bool,
     ) -> Result<()> {
-        if self.index_push {
+        if self.push && !matches!(self.registry, RegistryType::Local) {
             println!("\n📤 Pushing to remote...");
             crate::registry::index_writer::push_changes(index_path, verbose)?;
             println!("✅ Pushed successfully!");
         } else {
-            println!("\n💡 Changes committed locally. Use --index-push to push to remote.");
+            if matches!(self.registry, RegistryType::Local) {
+                println!("\nIndex published locally; no remote was contacted.");
+            } else {
+                println!("\nChanges committed locally. Use --push to push to remote.");
+            }
         }
 
         println!("\n✅ Package index updated successfully!");
@@ -978,7 +1426,7 @@ impl PublishCommand {
     }
 
     /// Verify that `tag` exists in the project's local git repo. Catches
-    /// typos in `--index-tag` before we go through the rest of the publish
+    /// typos in `--tag` before we go through the rest of the publish
     /// dance and write a phantom tag into the index.
     fn validate_tag_exists(&self, project_dir: &Path, tag: &str) -> Result<()> {
         let refspec = format!("refs/tags/{}", tag);
@@ -1018,14 +1466,18 @@ impl PublishCommand {
             .map(|tpl| substitute_archive_url(tpl, package_name, version, tag));
         let archive_format = archive_url.as_ref().map(|_| self.archive_format.clone());
 
-        let checksum = if self.checksum {
+        let checksum = if self.checksum && self.artifact_provider.is_none() {
             if verbose {
                 println!("   Computing checksum for {}...", tag);
             }
             if archive_url.is_some() {
                 // Archive-mode: hash the zip consumers will download.
-                self.compute_archive_zip_checksum(project_dir, package_name, version)
-                    .ok()
+                let result = self.compute_archive_zip_checksum(project_dir, package_name, version);
+                if self.path.is_some() {
+                    Some(result?)
+                } else {
+                    result.ok()
+                }
             } else {
                 // Legacy git-source hash. Informational only — no fetch
                 // path verifies against this today.
@@ -1088,11 +1540,13 @@ impl PublishCommand {
             package_name.to_uppercase(),
             version
         );
-        let zip_path = project_dir
-            .join("target")
-            .join("release")
-            .join("package")
-            .join(&zip_name);
+        let zip_path = self.path.clone().unwrap_or_else(|| {
+            project_dir
+                .join("target")
+                .join("release")
+                .join("package")
+                .join(&zip_name)
+        });
         if !zip_path.is_file() {
             anyhow::bail!(
                 "expected archive at {} for index checksum; \
@@ -1242,46 +1696,14 @@ impl PublishCommand {
         let toml_path = project_dir.join("CCGO.toml");
         let content = fs::read_to_string(toml_path).context("Failed to read CCGO.toml")?;
 
-        // Parse version from TOML
-        for line in content.lines() {
-            if line.trim().starts_with("version") {
-                if let Some(version) = line.split('=').nth(1) {
-                    return Ok(version.trim().trim_matches('"').to_string());
-                }
-            }
-        }
-
-        bail!("Version not found in CCGO.toml");
-    }
-
-    fn get_conan_remotes(&self) -> Result<Vec<String>> {
-        let output = Command::new("conan")
-            .args(["remote", "list"])
-            .output()
-            .context("Failed to execute conan remote list")?;
-
-        if !output.status.success() {
-            bail!("Failed to get Conan remotes");
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let remotes: Vec<String> = stdout
-            .lines()
-            .filter_map(|line| {
-                if line.contains(':') {
-                    let parts: Vec<&str> = line.split(':').collect();
-                    if !parts.is_empty() {
-                        let name = parts[0].trim();
-                        if !name.is_empty() && !name.starts_with('#') && name != "conancenter" {
-                            return Some(name.to_string());
-                        }
-                    }
-                }
-                None
-            })
-            .collect();
-
-        Ok(remotes)
+        let config: toml::Value = toml::from_str(&content)?;
+        config
+            .get("project")
+            .or_else(|| config.get("package"))
+            .and_then(|package| package.get("version"))
+            .and_then(|version| version.as_str())
+            .map(str::to_owned)
+            .context("Project version not found in CCGO.toml")
     }
 
     fn git_url_to_pages_url(&self, git_url: &str) -> Option<String> {
@@ -1316,6 +1738,130 @@ mod tests {
     use super::*;
 
     #[test]
+    fn remote_and_legacy_aliases_share_one_destination() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            publish: PublishCommand,
+        }
+        for flag in ["--remote", "--url", "--remote-name"] {
+            let parsed =
+                Cli::try_parse_from(["ccgo", "ohos", flag, "https://repo.example"]).unwrap();
+            assert_eq!(
+                parsed.publish.remote.as_deref(),
+                Some("https://repo.example")
+            );
+        }
+        for (first, second) in [
+            ("--remote", "--url"),
+            ("--remote", "--remote-name"),
+            ("--url", "--remote-name"),
+        ] {
+            assert!(Cli::try_parse_from(["ccgo", "ohos", first, "one", second, "two"]).is_err());
+        }
+    }
+
+    fn parse_publish(args: &[&str]) -> PublishCommand {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from(
+            ["ccgo", "publish"].into_iter().chain(args.iter().copied()),
+        )
+        .unwrap();
+        match cli.command {
+            crate::cli::Commands::Publish(command) => command,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn publish_path_validates_platform_and_file_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let aar = tmp.path().join("custom.aar");
+        fs::write(&aar, b"aar").unwrap();
+        assert!(parse_publish(&["android"])
+            .validate_publish_path(&aar)
+            .is_ok());
+        assert!(parse_publish(&["ohos"])
+            .validate_publish_path(&aar)
+            .is_err());
+        assert!(parse_publish(&["android"])
+            .validate_publish_path(tmp.path())
+            .is_ok());
+        assert!(parse_publish(&["android"])
+            .validate_publish_path(&tmp.path().join("missing.aar"))
+            .is_err());
+        for target in ["conan", "doc", "kmp", "apple"] {
+            assert!(parse_publish(&[target])
+                .validate_publish_path(&aar)
+                .is_err());
+        }
+        let podspec = tmp.path().join("Library.podspec");
+        fs::write(&podspec, b"spec").unwrap();
+        assert!(parse_publish(&["apple", "--manager", "cocoapods"])
+            .validate_publish_path(&podspec)
+            .is_ok());
+        fs::write(tmp.path().join("gradlew"), b"wrapper").unwrap();
+        assert!(parse_publish(&["kmp"])
+            .validate_publish_path(tmp.path())
+            .is_ok());
+    }
+
+    #[test]
+    fn index_path_hashes_explicit_archive_and_propagates_read_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip = tmp.path().join("custom.zip");
+        let payload = b"custom archive";
+        fs::write(&zip, payload).unwrap();
+        assert!(parse_publish(&["index"])
+            .validate_publish_path(&zip)
+            .is_err());
+        let mut command = parse_publish(&[
+            "index",
+            "--checksum",
+            "--archive-url-template",
+            "https://cdn.example/{version}.zip",
+        ]);
+        command.validate_publish_path(&zip).unwrap();
+        command.path = Some(zip.clone());
+        let entry = command
+            .build_single_version_entry(tmp.path(), "lib", "1.0.0", "v1.0.0", false)
+            .unwrap();
+        assert_eq!(
+            entry.checksum,
+            Some(format!("sha256:{:x}", Sha256::digest(payload)))
+        );
+        fs::remove_file(zip).unwrap();
+        assert!(command
+            .build_single_version_entry(tmp.path(), "lib", "1.0.0", "v1.0.0", false)
+            .is_err());
+    }
+
+    #[test]
+    fn index_directory_resolves_one_archive_and_rejects_ambiguity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("SDK.zip");
+        fs::write(&archive, b"sdk").unwrap();
+        let mut command = parse_publish(&[
+            "index",
+            "--checksum",
+            "--archive-url-template",
+            "https://cdn.example/sdk.zip",
+        ]);
+        command.path = Some(tmp.path().to_path_buf());
+        command.prepare_publish_path().unwrap();
+        assert_eq!(command.path, Some(fs::canonicalize(&archive).unwrap()));
+        fs::write(tmp.path().join("another.zip"), b"sdk").unwrap();
+        command.path = Some(tmp.path().to_path_buf());
+        assert!(command
+            .prepare_publish_path()
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Multiple .zip"));
+    }
+
+    #[test]
     fn substitute_archive_url_replaces_all_placeholders() {
         let template = "https://cdn.example.com/{name}/{name}_CCGO_PACKAGE-{version}.zip";
         let result = substitute_archive_url(template, "stdcomm", "1.0.0", "v1.0.0");
@@ -1348,18 +1894,18 @@ mod tests {
         let pkg_dir = project_dir.join("target/release/package");
         std::fs::create_dir_all(&pkg_dir).unwrap();
         let payload = b"synthetic-zip-bytes-for-checksum-test";
-        std::fs::write(
-            pkg_dir.join("STDCOMM_CCGO_PACKAGE-1.0.0.zip"),
-            payload,
-        )
-        .unwrap();
+        std::fs::write(pkg_dir.join("STDCOMM_CCGO_PACKAGE-1.0.0.zip"), payload).unwrap();
 
         let cmd = PublishCommand {
             target: PublishTarget::Index,
             registry: RegistryType::Local,
-            url: None,
-            remote_name: None,
+            remote: None,
             skip_build: false,
+            path: None,
+            artifact_provider: None,
+            artifact_group: None,
+            artifact_id: None,
+            github_repo: None,
             release: false,
             stl: None,
             yes: true,
@@ -1374,13 +1920,12 @@ mod tests {
             doc_open: false,
             index_repo: None,
             index_name: None,
-            index_push: false,
             index_message: None,
             checksum: true,
             archive_url_template: None,
             archive_format: "zip".into(),
-            index_version: None,
-            index_tag: None,
+            version: None,
+            tag: None,
         };
 
         let got = cmd
@@ -1398,9 +1943,13 @@ mod tests {
         let cmd = PublishCommand {
             target: PublishTarget::Index,
             registry: RegistryType::Local,
-            url: None,
-            remote_name: None,
+            remote: None,
             skip_build: false,
+            path: None,
+            artifact_provider: None,
+            artifact_group: None,
+            artifact_id: None,
+            github_repo: None,
             release: false,
             stl: None,
             yes: true,
@@ -1415,13 +1964,12 @@ mod tests {
             doc_open: false,
             index_repo: None,
             index_name: None,
-            index_push: false,
             index_message: None,
             checksum: true,
             archive_url_template: None,
             archive_format: "zip".into(),
-            index_version: None,
-            index_tag: None,
+            version: None,
+            tag: None,
         };
 
         let err = cmd
@@ -1465,17 +2013,34 @@ mod tests {
     #[test]
     fn derive_version_does_not_touch_tags_with_other_prefixes() {
         // We don't auto-strip random prefixes; if you want to publish a
-        // tag like `release-1.0.0`, pass --index-version explicitly.
+        // tag like `release-1.0.0`, pass --version explicitly.
         assert_eq!(derive_version_from_tag("release-1.0.0"), "release-1.0.0");
     }
 
     #[test]
     fn default_tag_prepends_v() {
         assert_eq!(default_tag_for_version("1.0.0"), "v1.0.0");
-        assert_eq!(
-            default_tag_for_version("25.2.9519653"),
-            "v25.2.9519653"
-        );
+        assert_eq!(default_tag_for_version("25.2.9519653"), "v25.2.9519653");
+    }
+
+    #[test]
+    fn index_version_defaults_to_config_and_preserves_explicit_overrides() {
+        for (args, expected_version, expected_tag) in [
+            (vec!["index"], "1.2.3", "v1.2.3"),
+            (vec!["index", "--version", "2.0.0"], "2.0.0", "v2.0.0"),
+            (vec!["index", "--tag", "v3.0.0"], "3.0.0", "v3.0.0"),
+            (
+                vec!["index", "--version", "4.0.0", "--tag", "release-4"],
+                "4.0.0",
+                "release-4",
+            ),
+        ] {
+            let command = parse_publish(&args);
+            assert_eq!(
+                command.resolve_version_and_tag("1.2.3").unwrap(),
+                (expected_version.to_owned(), expected_tag.to_owned())
+            );
+        }
     }
 
     #[test]

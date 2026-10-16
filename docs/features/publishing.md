@@ -13,7 +13,26 @@ CCGO provides unified publishing capabilities across multiple platforms and pack
 - **KMP**: Kotlin Multiplatform Maven publishing
 - **Documentation**: GitHub Pages
 
-All publishing commands use a consistent `--registry` flag for target selection.
+Publishing defaults to `--registry local`. Doc uses `--doc-*` and does not read `--registry`.
+
+| Target | `local` | `official` | `private` |
+| --- | --- | --- | --- |
+| Android / KMP | Maven Local | Maven Central | Configured custom Maven repositories |
+| OHOS | Local HAR validation with `ohpm prepublish` | Fixed official OHPM URL | OHPM URL supplied by `--remote` |
+| CocoaPods | Validate podspec | CocoaPods Trunk | Specs repository selected by `--remote` |
+| SPM | Validate manifest; `--push` creates a local version tag | No official central publishing endpoint; errors | Git remote selected by `--remote`; `--push` publishes a version tag |
+| Conan | Export to local cache | Fixed ConanCenter contribution workflow; errors with PR guidance, no direct upload | Conan remote selected by `--remote` |
+| Index | Validate input; `--push` updates/commits the local index | Default CCGO index | Configured CCGO registry selected by `--remote` |
+
+SPM and Index require `--push` to publish. Without it, they validate only: no tags, index writes/commits, or index clones/pulls. `local --push` writes locally; remote registries push remotely. The old `--index-push` is a compatibility alias. Apple binary hosting involving SPM also validates only without `--push`; explicit CocoaPods-only artifact-provider uploads retain their existing behavior.
+
+Private destinations use `--remote <URL_OR_NAME>` consistently: Android/KMP and OHOS accept repository URLs; CocoaPods, Conan, SPM and Index accept configured repository names. The old `--url` and `--remote-name` are compatibility aliases for the same option; supplying more than one is rejected. For Android/KMP, `--remote` overrides `CCGO_MAVEN_URL` in the Gradle publishing process only; omitting it preserves existing Maven configuration.
+
+For Apple, `--remote` selects the package descriptor destination (Specs name or SPM Git remote). It does not override ZIP storage for `--artifact-provider maven`, which still uses `CCGO_MAVEN_URL` and its credential variables.
+
+SPM and Index share `--version` and `--tag`: version defaults to `CCGO.toml`, and tag defaults to `v<version>`, matching `ccgo tag`. Use `--version` to override the version or `--tag` to override the tag. A tag alone derives the version by stripping v/V; custom prefixes require an explicit version. `--index-version` and `--index-tag` remain compatibility aliases. Top-level `ccgo --version` still displays the CLI version.
+
+SPM distributes packages directly from their Git repositories and version tags, including private repositories with consumer credentials. An Index is an optional package name/version directory: each selected index aggregates entries, and multiple public/private indexes can coexist. Index publication references an existing source tag, while SPM publication can create one. Their publication responsibilities differ, while options and validation behavior match.
 
 ## Quick Start
 
@@ -27,21 +46,21 @@ ccgo publish android --registry local
 ccgo publish android --registry official
 
 # Publish to private Maven repository
-ccgo publish android --registry private --url https://maven.example.com
+ccgo publish android --registry private --remote https://maven.example.com
 
 # Publish iOS/macOS libraries
 ccgo publish apple --manager cocoapods      # CocoaPods
-ccgo publish apple --manager spm --push     # Swift Package Manager
-ccgo publish apple --manager all --push     # Both
+ccgo publish apple --manager spm --registry private --remote origin --push     # Swift Package Manager
+ccgo publish apple --manager all --registry private --remote company --push     # Both
 
 # Publish OpenHarmony library
 ccgo publish ohos --registry official       # Official OHPM
-ccgo publish ohos --registry private --url https://ohpm.example.com
+ccgo publish ohos --registry private --remote https://ohpm.example.com
 
 # Publish Conan package
 ccgo publish conan --registry local         # Conan local cache
-ccgo publish conan --registry official      # First configured remote
-ccgo publish conan --registry private --remote-name myrepo --url URL
+ccgo publish conan --registry official      # ConanCenter: PR guidance, no direct upload
+ccgo publish conan --registry private --remote myrepo
 
 # Publish documentation
 ccgo publish doc --doc-branch gh-pages --doc-open
@@ -58,6 +77,106 @@ ccgo publish android --registry local --skip-build
 # Use existing HAR
 ccgo publish ohos --registry official --skip-build
 ```
+
+## Explicit Publish Paths
+
+Omit `--path` to keep the existing defaults. Relative paths are resolved against the invocation directory. Invalid paths, mismatched file types, and unsupported targets fail before publishing.
+
+Use `--path` for the publish input: a directory or the platform's artifact/descriptor file. Android, OHOS, and KMP also accept SDK ZIPs; Conan and Doc accept ZIPs containing their recipe or MkDocs project.
+
+| Target | Directory input | File input | Default without `--path` |
+| --- | --- | --- | --- |
+| Android | Project containing `gradlew`, or artifacts with exactly one AAR | `.aar`, SDK `.zip` containing exactly one AAR | `android/` project and default AAR path |
+| OHOS | Package containing `oh-package.json5`, or artifacts with exactly one HAR | `.har`, SDK `.zip` containing exactly one HAR | Run OHPM in `ohos/` |
+| KMP | Gradle project or CCGO KMP SDK directory | CCGO KMP SDK `.zip` | `kmp/` project |
+| Apple / CocoaPods | Podspec directory; binary directory with `--artifact-provider` | `.podspec`; `.zip` with a provider | Current podspec; release Apple SDK ZIP with provider |
+| Apple / SPM | Package directory; binary directory with a provider | `Package.swift`; `.zip` with a provider | Current directory; release Apple SDK ZIP with provider |
+| Conan | Recipe directory containing `conanfile.py` | Python recipe, usually `conanfile.py`, or a `.zip` containing it | Existing CCGO project discovery |
+| Doc | Project containing `mkdocs.yml` or `mkdocs.yaml` | MkDocs `.yml` / `.yaml` config, or a MkDocs project `.zip` | Current project's MkDocs config |
+| Index | Directory containing exactly one SDK ZIP | SDK `.zip` to checksum | Default `target/release/package/` path |
+
+Android/OHOS artifact directories and SDK ZIPs are searched recursively; Index directories are searched recursively for ZIPs. Multiple candidates fail and require an exact file path. Project directories take precedence, identified by `gradlew` for Android and `oh-package.json5` for OHOS. CocoaPods searches only the specified directory's immediate files. Apple file inputs require the corresponding `--manager`; directories used with `--manager all` must contain both a podspec and `Package.swift`.
+
+Explicit artifacts (files, artifact directories, and SDK ZIPs) are reused without rebuilding. Project directories use the platform's existing publishing workflow. ZIPs are extracted temporarily; cleanup removes only directories created by the command, never the original ZIP or input directory.
+
+```bash
+ccgo publish android --path ./artifacts/library.aar --registry local
+ccgo publish ohos --path ./artifacts/library.har --registry official
+ccgo publish apple --manager cocoapods --path ./specs/Library.podspec
+ccgo publish kmp --path ./custom-kmp --registry local
+ccgo publish android --path ./ANDROID_SDK.zip --registry local
+ccgo publish ohos --path ./OHOS_SDK.zip --registry official
+ccgo publish apple --manager spm --path ./swift-package
+ccgo publish conan --path ./recipes/conanfile.py --registry local
+ccgo publish doc --path ./docs-project/mkdocs.yml
+ccgo publish doc --path ./docs-project.zip
+ccgo publish conan --path ./conan-project.zip --registry local
+ccgo publish index --version 1.2.3 --index-repo ./package-index \
+  --path ./artifacts/SDK.zip --checksum \
+  --archive-url-template 'https://cdn.example.com/{name}-{version}.zip'
+```
+
+Android artifact inputs still use the current project's `android/` Gradle project. A project directory containing `gradlew` uses that directory instead. The Gradle project supplies Maven coordinates, POM, signing, and repository configuration. Coordinates come from project configuration, not the AAR filename. `--release` and `--stl` do not transform an existing AAR; ensure its contents match the configuration. Update both the CLI and the CCGO Gradle plugin: the plugin must support `ccgoPublishPath` and `ccgoSkipPublishBuild`. The CLI checks plugin support before executing tasks and rejects older plugins.
+
+CocoaPods runs in the specified podspec's directory. Without an artifact provider, an explicit Index archive requires both `--checksum` and `--archive-url-template`, supports only `--archive-format zip`, and fails on errors reading an explicit archive. Host the ZIP separately at the template URL; this mode does not upload it.
+
+KMP accepts a Gradle project directory containing `gradlew` (build and publish), or a prebuilt CCGO SDK directory/ZIP containing `lib/kmp/` and `meta/kmp/build_info.json`. A ZIP may have one enclosing directory. SDK mode uses the current project's `kmp/` project and updated CCGO Gradle plugin configuration, publishing only the bundled files without rebuilding.
+
+```bash
+ccgo publish kmp --path ./STDCOMM_KMP_SDK-0.0.5.zip --registry local
+ccgo publish kmp --path ./unpacked-sdk --registry private --remote https://maven.example.com
+```
+
+SDK versions come from `build_info.json`; its project name must match the current project. Group/base artifact IDs come from `[publish.kmp.maven]`, with the plugin's existing fallbacks. An Android-only SDK publishes `<group_id>:<artifact_id>-android:<sdk-version>`. Desktop JARs use `-desktop`; native KLIBs use the lowercase target suffix (for example `-iosarm64`), with cinterop KLIBs attached as classifiers.
+
+These SDKs lack complete POM/Gradle module metadata. SDK mode publishes directly addressable platform modules, without synthesizing a root KMP module or commonMain automatic variant selection. POM dependencies come from configured KMP dependencies; ensure they are complete. Maven Central still requires its metadata, signing, and accompanying artifacts; SDK mode does not invent sources/javadoc. ZIPs are extracted into temporary directories and cleaned up afterwards. Unsafe paths, symlinks, missing metadata, and ambiguous main artifacts are rejected.
+
+Doc ZIPs must contain exactly one `mkdocs.yml` or `mkdocs.yaml`; Conan ZIPs must contain exactly one `conanfile.py`. Enclosing directories are allowed: descriptors are searched recursively, with missing or ambiguous inputs rejected. Include all files referenced by relative paths; the archive layout is preserved. Temporary extraction is removed after success or failure, leaving the original ZIP untouched.
+
+For Doc ZIPs, run the command from the Git repository whose documentation you want to deploy. `mkdocs gh-deploy` runs from that checkout while loading the extracted config by absolute path. The ZIP contains a MkDocs project and source documents, not just prebuilt HTML. Conan ZIPs run the existing export/upload workflow from the extracted recipe directory; arbitrary binary ZIPs are not automatically converted into Conan packages.
+
+### Index Artifact Hosting
+
+Index supports `--artifact-provider maven|github`. Pass a ZIP or a directory containing a unique ZIP with `--path`; the default is `target/release/package/<NAME_UPPER>_CCGO_PACKAGE-<version>.zip`. The command uploads the existing archive and records its download URL and SHA-256 automatically. Do not combine a provider with `--archive-url-template`.
+
+```bash
+ccgo publish index --registry private --remote company \
+  --artifact-provider maven --artifact-group com.example \
+  --path ./STDCOMM_CCGO_PACKAGE-0.0.5.zip --push
+```
+
+`--registry` and `--remote` select the package index. Maven ZIP storage uses `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME`, and `CCGO_MAVEN_PASSWORD`. The group comes from `--artifact-group` or `[publish.index.maven].group_id`; the default artifact ID is `<project>-ccgo`, overridable with `--artifact-id`. For GitHub, use `--artifact-provider github --github-repo company/library`; the release for the selected tag must already exist.
+
+The source Git tag must exist before publishing; Index does not create or push it. You can reuse the same source tag across platforms. Without `--push`, the command only validates, without uploads or index changes. With `--push`, it checks for duplicate indexed versions before uploading. A subsequent failure can leave uploaded artifacts; uploads are not rolled back. Temporary copies are cleaned up on success or failure; the original ZIP is preserved.
+
+### Apple Binary Hosting
+
+Use `--artifact-provider maven|github` to upload an Apple binary directory, a single `.xcframework` directory, or a ZIP via `--path`. Run from a project containing `CCGO.toml` and the existing podspec / `Package.swift` for the selected manager. The default manager is `all`; select `--manager cocoapods` for CocoaPods alone.
+
+`--artifact-provider` selects binary storage. Independently, `--registry local|official|private` selects CocoaPods validation, Trunk, or a private Specs Git repository (`--remote` required). For Apple, `--registry` controls CocoaPods Specs publishing, independently of Maven/GitHub binary storage. SPM local/private select wrapper validation or Git tag publishing; official has no direct upload endpoint.
+
+```bash
+ccgo publish apple --manager cocoapods \
+  --path ./STDCOMM_APPLE_SDK-0.0.5.zip \
+  --artifact-provider maven --artifact-group com.example \
+  --registry private --remote company-specs
+
+ccgo publish apple --manager spm \
+  --path ./Library.xcframework \
+  --artifact-provider github --github-repo company/library --push
+```
+
+Maven reuses a single `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME`, and `CCGO_MAVEN_PASSWORD`. The repository must support hosted Maven PUT uploads, rather than being a read-only proxy or Central Portal. Set groupId with `--artifact-group` or `[publish.apple.maven].group_id`. ArtifactId defaults to `<project>-apple`, overridable with `--artifact-id`; version comes from `CCGO.toml` and must match the podspec. The ZIP, a POM with ZIP packaging, and their SHA-256 sidecars are uploaded. Comma-separated repository URLs are not supported in this mode.
+
+GitHub uses authenticated `gh` and requires `--github-repo owner/repo` plus an existing `v<version>` Release. The asset is named `<artifactId>-<version>.zip`; existing assets are not overwritten.
+
+Without `--path`, provider mode selects one SDK ZIP for the current project version from `target/release/ios/` and `target/release/macos/`, excluding `-SYMBOLS.zip`. Use `--platform ios|macos` to narrow this down; missing or ambiguous inputs fail. This mode does not build.
+
+ZIP bytes are preserved; directories are temporarily zipped. Directory symlinks must resolve within the input directory. Temporary files are cleaned on success and failure; original inputs remain intact. Generated manifests remain under `target/ccgo-publish/apple/<version>/` for inspection. Source manifests are unchanged. CocoaPods preserves existing metadata and vendored paths, replacing only HTTP source and SHA-256; ensure those paths match the archive.
+
+SPM currently requires one XCFramework at the ZIP root and an existing manifest containing one remote `binaryTarget` with literal URL/checksum strings. Provider mode validates only without `--push`; with `--push` it uploads the ZIP and generates `Package.swift`. Commit that generated file to the wrapper repository, then use ordinary SPM publishing to push its version tag. This avoids tagging a wrapper that still references the old artifact. Nested SDK archives or multiple XCFrameworks can use CocoaPods; the command does not convert them into SPM archives.
+
+Publishing credentials are not embedded in manifests or propagated to consumers. Private downloads need consumer-side authentication. Explicit provider uploads still occur with `--registry local`, followed by `pod spec lint` against the remote ZIP. Uploads are not transactional: later failures do not roll back previously uploaded artifacts; inspect remote state before retrying.
 
 ## Android Publishing (Maven)
 
@@ -112,7 +231,7 @@ ccgo publish android --registry official
 
 # Publish to private Maven
 ccgo publish android --registry private \
-    --url https://maven.example.com \
+    --remote https://maven.example.com \
     --username admin \
     --password secret
 
@@ -184,13 +303,13 @@ pod trunk register your@email.com 'Your Name'
 
 ```bash
 # Publish to CocoaPods Trunk (official)
-ccgo publish apple --manager cocoapods
+ccgo publish apple --manager cocoapods --registry official
 
 # Publish to private spec repo
 ccgo publish apple --manager cocoapods \
     --registry private \
-    --remote-name myspecs \
-    --url https://github.com/company/specs.git
+    --remote myspecs \
+    --remote https://github.com/company/specs.git
 ```
 
 **Podspec validation:**
@@ -204,6 +323,8 @@ pod spec lint MyLib.podspec --verbose
 ```
 
 ### Swift Package Manager Publishing
+
+Local mode validates the manifest with `swift package dump-package`; adding `--push` creates only the local version tag, without contacting a remote. Private mode means a custom Git remote, which may host a public or private repository: select it with `--remote origin` and add `--push` to create/push the project version tag. Configure that remote with `git remote add`. Commit all wrapper files first. With `--push`, a missing tag is created; an existing tag pointing at HEAD is reused, including repeated pushes. A tag pointing at another commit is rejected and never overwritten. Official mode errors because SPM has no central publishing service equivalent to CocoaPods Trunk. This implements Git-based SPM publishing, not the Swift Package Registry HTTP protocol or Swift Package Index registration.
 
 **Setup:**
 
@@ -219,7 +340,7 @@ git commit -m "Initial commit"
 
 ```bash
 # Tag and push (SPM publishing)
-ccgo publish apple --manager spm --push
+ccgo publish apple --manager spm --registry private --remote origin --push
 
 # This creates git tag and pushes to remote
 # SPM users can then reference your repository
@@ -240,17 +361,19 @@ git push origin 1.0.0
 
 ```bash
 # Publish to both CocoaPods and SPM
-ccgo publish apple --manager all --push
+ccgo publish apple --manager all --registry private --remote company --push
 
-# This:
-# 1. Publishes to CocoaPods Trunk
-# 2. Creates git tag for SPM
-# 3. Pushes tag to remote
+# company must be both a configured CocoaPods Specs repository and a Git remote
+# Run the managers separately if the names differ
+# Commit the SPM wrapper before publishing
 ```
 
 ## OpenHarmony Publishing (OHPM)
 
 ### Registry Types
+
+**local**: Run `ohpm prepublish <HAR>` for local content validation. This neither uploads nor installs into a consuming project. Requires an OHPM version supporting `prepublish` and an already built HAR. A project directory must contain exactly one HAR, or select it with `--path`; publishing does not build automatically.
+
 
 **official**: OpenHarmony Package Manager (ohpm.openharmony.cn)
 - Official registry
@@ -275,7 +398,7 @@ npm install -g @ohos/hpm-cli
 ohpm login
 
 # Configure private registry
-ohpm config set registry https://ohpm.example.com
+ohpm config set publish_registry https://ohpm.example.com
 ```
 
 ### Publishing Commands
@@ -285,12 +408,11 @@ ohpm config set registry https://ohpm.example.com
 ccgo publish ohos --registry official
 
 # Publish to private OHPM
-ccgo publish ohos --registry private --url https://ohpm.example.com
+ccgo publish ohos --registry private --remote https://ohpm.example.com
 
 # Publish with authentication
 ccgo publish ohos --registry private \
-    --url https://ohpm.example.com \
-    --token your-auth-token
+    --remote https://ohpm.example.com
 
 # Skip build and use existing HAR
 ccgo publish ohos --skip-build
@@ -298,11 +420,10 @@ ccgo publish ohos --skip-build
 
 ### HAR Publishing Process
 
-1. CCGO builds HAR package
-2. Validates oh-package.json5
-3. Uploads to registry
-4. Registry validates package
-5. Package becomes available
+1. Select an existing HAR from `--path` (file / SDK ZIP / directory), or the default `ohos/` directory
+2. Local mode runs `ohpm prepublish` and stops
+3. Official mode uploads with `--publish_registry https://ohpm.openharmony.cn/ohpm/`
+4. Private mode uploads with `--publish_registry <url>`, using OHPM authentication configuration
 
 **Required metadata:**
 
@@ -321,17 +442,19 @@ repository = "https://github.com/user/mylib"
 
 ### Registry Types
 
-**local**: Conan local cache (~/.conan/data/)
+**local**: Conan 2 local cache (~/.conan2/)
 - No network required
 - Immediate availability
 - Testing only
 
-**official**: First configured Conan remote
-- Usually Conan Center
-- Public packages
-- Requires review
+**official**: Fixed ConanCenter (`https://center2.conan.io`)
+- Never falls back to the first remote or a `--remote` override
+- ConanCenter does not accept ordinary CLI uploads; this mode errors with the [recipe PR contribution link](https://github.com/conan-io/conan-center-index)
+- Does not create a PR or upload elsewhere automatically
 
 **private**: Custom Conan remote
+- Requires `--remote`; never chooses the first remote automatically
+- Uploads the exact exported recipe reference, never `*`
 - Company repositories
 - Authentication required
 - Immediate availability
@@ -345,11 +468,11 @@ repository = "https://github.com/user/mylib"
 pip install conan
 
 # Add Conan Center
-conan remote add conancenter https://center.conan.io
+conan remote add conancenter https://center2.conan.io
 
 # Add private remote
 conan remote add myrepo https://conan.example.com
-conan user -p password -r myrepo username
+conan remote login myrepo username
 ```
 
 ### Publishing Commands
@@ -358,13 +481,12 @@ conan user -p password -r myrepo username
 # Export to local cache
 ccgo publish conan --registry local
 
-# Publish to Conan Center (requires PR)
+# Show ConanCenter PR guidance (returns an error; no direct upload)
 ccgo publish conan --registry official
 
 # Publish to private remote
 ccgo publish conan --registry private \
-    --remote-name myrepo \
-    --url https://conan.example.com
+    --remote myrepo
 
 # Skip build, only export recipe
 ccgo publish conan --skip-build
@@ -692,7 +814,7 @@ echo "Publishing version $VERSION to all platforms..."
 ccgo publish android --registry official
 
 # iOS/macOS
-ccgo publish apple --manager all --push
+ccgo publish apple --manager all --registry private --remote company --push
 
 # OpenHarmony
 ccgo publish ohos --registry official
@@ -820,3 +942,31 @@ conan user -r myrepo
 - [iOS Platform](../platforms/ios.md)
 - [OpenHarmony Platform](../platforms/openharmony.md)
 - [CCGO.toml Reference](../reference/ccgo-toml.md)
+
+## Index Registry Selection
+
+Index `--registry` selects the index Git repository; the package source URL still comes from the project's `origin`.
+
+The version defaults to `[project].version` or `[package].version` in `CCGO.toml`; `--version` is optional. Its existing Git tag defaults to `v<version>`; Index does not create or push source tags. Override the version with `--version` or the tag with `--tag`. With a tag alone, the version is derived by stripping a leading v/V. Supply both flags for custom tag prefixes. Each invocation appends one version; duplicate versions remain errors.
+
+```bash
+# Validate the configured version and existing source tag, without updating the index
+ccgo publish index --registry local
+
+# Publish to the offline local index, default $CCGO_HOME/registry/publish/local
+ccgo publish index --registry local --push
+
+# Dedicated local index directory, separate from the package source repository
+ccgo publish index --registry local --index-repo ./package-index --push
+
+# Fixed official CCGO index; pushing requires write access
+ccgo publish index --registry official --push
+
+# Configure a private index (or use [registries] in CCGO.toml)
+ccgo registry add company git@github.com:company/ccgo-index.git
+ccgo publish index --registry private --remote company --push
+```
+
+Official mode uses `https://github.com/aspect-build/ccgo-packages.git`. Private mode resolves `--remote` from project `[registries]` first, then global `ccgo registry add` configuration. Unknown names fail without falling back. This name identifies a CCGO registry, not a Git remote of the source project. Remote working copies live under `$CCGO_HOME/registry/publish/<name>/` (`$CCGO_HOME` defaults to `~/.ccgo`). Without `--push`, validation does not create/update an index checkout, write commits, or clone/pull. Remote duplicate versions cannot be verified at that stage; actual publication pulls the index and checks duplicates.
+
+`--index-repo` now specifies a local directory only, and `--index-name` only names a local index. Migrate old remote URL usage to `ccgo registry add` plus `--registry private --remote`. `--index-push` remains an alias for `--push`. Local mode never clones/pulls; `local --push` updates and commits the local index without a network push. Pull failures preserve local changes; commit failures stop before pushing.

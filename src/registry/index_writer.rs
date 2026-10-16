@@ -18,7 +18,7 @@ use super::index::{IndexMetadata, PackageIndex};
 /// `~/.ccgo/registry/publish/<name>/`. Returns the local path.
 ///
 /// First-time clone is `--depth 1`. If an existing clone is present, runs
-/// `git pull --rebase`. Pull failures fall back to a fresh clone. If the
+/// `git pull --rebase`. Pull failures preserve local commits and return an error. If the
 /// remote doesn't exist yet (typical on the very first publish to a new
 /// index repo), initializes a local git repo with the remote configured
 /// and seeds an empty `index.json`.
@@ -27,6 +27,16 @@ pub fn prepare_index_repo(repo_url: &str, name: &str, verbose: bool) -> Result<P
     let work_dir = ccgo_home.join("registry").join("publish").join(name);
 
     if work_dir.exists() {
+        let origin = Command::new("git")
+            .current_dir(&work_dir)
+            .args(["remote", "get-url", "origin"])
+            .output()?;
+        if !origin.status.success() || String::from_utf8_lossy(&origin.stdout).trim() != repo_url {
+            anyhow::bail!(
+                "Index clone {} has a different origin; use a separate registry name",
+                work_dir.display()
+            );
+        }
         println!("📥 Updating existing index clone...");
         let mut cmd = Command::new("git");
         cmd.current_dir(&work_dir);
@@ -36,13 +46,7 @@ pub fn prepare_index_repo(repo_url: &str, name: &str, verbose: bool) -> Result<P
         }
         let status = cmd.status().context("Failed to pull index repository")?;
         if !status.success() {
-            // Pull failed (probably divergent / corrupted local clone) —
-            // wipe and re-clone. Recursion would be infinite if the
-            // wipe-then-clone path itself fails, so just inline the
-            // re-clone steps below.
-            println!("⚠️  Pull failed, re-cloning...");
-            std::fs::remove_dir_all(&work_dir)?;
-            return clone_or_init(repo_url, name, &work_dir, verbose);
+            anyhow::bail!("Failed to update index clone {}; resolve Git/network issues there and retry. Local changes are preserved", work_dir.display());
         }
         Ok(work_dir)
     } else {
@@ -57,13 +61,17 @@ fn clone_or_init(repo_url: &str, name: &str, work_dir: &Path, verbose: bool) -> 
     }
 
     let mut cmd = Command::new("git");
-    cmd.args(["clone", "--depth", "1", repo_url, work_dir.to_str().unwrap()]);
+    cmd.args([
+        "clone",
+        "--depth",
+        "1",
+        repo_url,
+        work_dir.to_str().unwrap(),
+    ]);
     if !verbose {
         cmd.stdout(Stdio::null()).stderr(Stdio::null());
     }
-    let status = cmd
-        .status()
-        .context("Failed to clone index repository")?;
+    let status = cmd.status().context("Failed to clone index repository")?;
 
     if !status.success() {
         // Clone failed — typical reason is "remote repo doesn't exist yet"
@@ -152,13 +160,18 @@ pub fn commit_changes(index_path: &Path, message: &str, verbose: bool) -> Result
     if !verbose {
         cmd.stdout(Stdio::null());
     }
-    cmd.status().context("Failed to stage changes")?;
+    if !cmd.status().context("Failed to stage changes")?.success() {
+        anyhow::bail!("Failed to stage index changes");
+    }
 
     let output = Command::new("git")
         .current_dir(index_path)
         .args(["status", "--porcelain"])
         .output()
         .context("Failed to check git status")?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to check index Git status");
+    }
     if output.stdout.is_empty() {
         println!("ℹ️  No changes to commit");
         return Ok(());
@@ -170,9 +183,12 @@ pub fn commit_changes(index_path: &Path, message: &str, verbose: bool) -> Result
         cmd.stdout(Stdio::null());
     }
     let status = cmd.status().context("Failed to commit changes")?;
-    if status.success() {
-        println!("✅ Committed: {}", message);
+    if !status.success() {
+        anyhow::bail!(
+            "Failed to commit index changes; check Git identity and hooks before retrying"
+        );
     }
+    println!("✅ Committed: {}", message);
     Ok(())
 }
 
