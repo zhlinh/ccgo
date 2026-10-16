@@ -41,7 +41,7 @@ clone 后无需再构建，消费侧不再编译源码。
 ```toml
 [registries]
 mna = "git@git.example.com:org/ccgo-index.git"
-public = "https://github.com/example-org/ccgo-packages.git"
+public = "https://github.com/example-org/ccgo-index.git"
 
 [[dependencies]]
 name = "stdcomm"
@@ -113,7 +113,7 @@ fetch 时下到的 CDN 字节流是同一份。
 | 4+ 字符 | `{[0:2]}/{[2:4]}/{name}.json` | `spdlog` → `sp/dl/spdlog.json` |
 
 ```
-ccgo-packages/
+ccgo-index/
 ├── index.json              # 注册表元信息
 ├── 1/
 │   └── a.json              # 1 字符的包
@@ -139,12 +139,12 @@ ccgo-packages/
 
 ```json
 {
-  "name": "ccgo-packages",
+  "name": "ccgo-index",
   "description": "Official CCGO package index",
   "version": "1.0.0",
   "package_count": 42,
   "updated_at": "2026-01-24T12:00:00Z",
-  "homepage": "https://github.com/ArcticLampyrid/ccgo-packages"
+  "homepage": "https://github.com/zhlinh/ccgo-index"
 }
 ```
 
@@ -190,7 +190,7 @@ CCGO 自带一个已配置的默认注册表：
 
 ```toml
 # 隐式默认 —— 无需配置
-# 默认：https://github.com/ArcticLampyrid/ccgo-packages.git
+# 默认：git@github.com:zhlinh/ccgo-index.git
 ```
 
 ### 自定义注册表
@@ -268,8 +268,8 @@ CCGO Registry - Configured Registries
 
 Registries:
 
-  ✓ ccgo-packages (default)
-    URL: https://github.com/ArcticLampyrid/ccgo-packages.git
+  ✓ ccgo-index (default)
+    URL: git@github.com:zhlinh/ccgo-index.git
 
   ✓ company
     URL: https://github.com/company/packages.git
@@ -301,7 +301,7 @@ ccgo registry remove company
 显示注册表详情：
 
 ```bash
-ccgo registry info ccgo-packages
+ccgo registry info ccgo-index
 ```
 
 输出：
@@ -310,8 +310,8 @@ ccgo registry info ccgo-packages
 CCGO Registry - Registry Information
 ================================================================================
 
-Registry: ccgo-packages
-  URL: https://github.com/ArcticLampyrid/ccgo-packages.git
+Registry: ccgo-index
+  URL: git@github.com:zhlinh/ccgo-index.git
   Cached: true
 
 Index Metadata:
@@ -320,7 +320,7 @@ Index Metadata:
   Version: 1.0.0
   Packages: 42
   Last Updated: 2026-01-24T12:00:00Z
-  Homepage: https://github.com/ArcticLampyrid/ccgo-packages
+  Homepage: https://github.com/zhlinh/ccgo-index
 ```
 
 ### ccgo registry search
@@ -351,7 +351,7 @@ ccgo search json --details          # 显示详细信息
 
 ```
 ~/.ccgo/registries/
-├── ccgo-packages/           # 已克隆的索引仓库
+├── ccgo-index/           # 已克隆的索引仓库
 │   ├── index.json
 │   └── ...
 └── company/

@@ -44,7 +44,7 @@ is the registry name; the value is the index repository's Git URL.
 ```toml
 [registries]
 mna = "git@git.example.com:org/ccgo-index.git"
-public = "https://github.com/example-org/ccgo-packages.git"
+public = "https://github.com/example-org/ccgo-index.git"
 
 [[dependencies]]
 name = "stdcomm"
@@ -122,7 +122,7 @@ Following Rust's crates.io-index naming convention for optimal Git performance:
 | 4+ chars | `{[0:2]}/{[2:4]}/{name}.json` | `spdlog` → `sp/dl/spdlog.json` |
 
 ```
-ccgo-packages/
+ccgo-index/
 ├── index.json              # Registry metadata
 ├── 1/
 │   └── a.json              # 1-char package
@@ -148,12 +148,12 @@ This directory structure:
 
 ```json
 {
-  "name": "ccgo-packages",
+  "name": "ccgo-index",
   "description": "Official CCGO package index",
   "version": "1.0.0",
   "package_count": 42,
   "updated_at": "2026-01-24T12:00:00Z",
-  "homepage": "https://github.com/ArcticLampyrid/ccgo-packages"
+  "homepage": "https://github.com/zhlinh/ccgo-index"
 }
 ```
 
@@ -200,7 +200,7 @@ CCGO comes with a default registry configured:
 
 ```toml
 # Implicit default - no configuration needed
-# Default: https://github.com/ArcticLampyrid/ccgo-packages.git
+# Default: git@github.com:zhlinh/ccgo-index.git
 ```
 
 ### Custom Registries
@@ -278,8 +278,8 @@ CCGO Registry - Configured Registries
 
 Registries:
 
-  ✓ ccgo-packages (default)
-    URL: https://github.com/ArcticLampyrid/ccgo-packages.git
+  ✓ ccgo-index (default)
+    URL: git@github.com:zhlinh/ccgo-index.git
 
   ✓ company
     URL: https://github.com/company/packages.git
@@ -311,7 +311,7 @@ Note: Cannot remove the default registry.
 Show registry details:
 
 ```bash
-ccgo registry info ccgo-packages
+ccgo registry info ccgo-index
 ```
 
 Output:
@@ -320,8 +320,8 @@ Output:
 CCGO Registry - Registry Information
 ================================================================================
 
-Registry: ccgo-packages
-  URL: https://github.com/ArcticLampyrid/ccgo-packages.git
+Registry: ccgo-index
+  URL: git@github.com:zhlinh/ccgo-index.git
   Cached: true
 
 Index Metadata:
@@ -330,7 +330,7 @@ Index Metadata:
   Version: 1.0.0
   Packages: 42
   Last Updated: 2026-01-24T12:00:00Z
-  Homepage: https://github.com/ArcticLampyrid/ccgo-packages
+  Homepage: https://github.com/zhlinh/ccgo-index
 ```
 
 ### ccgo registry search
@@ -361,7 +361,7 @@ Registry indices are cached locally:
 
 ```
 ~/.ccgo/registries/
-├── ccgo-packages/           # Cloned index repository
+├── ccgo-index/           # Cloned index repository
 │   ├── index.json
 │   └── ...
 └── company/

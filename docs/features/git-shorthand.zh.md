@@ -156,7 +156,7 @@ ccgo registry update           # 更新所有注册表
 ccgo registry update company   # 更新指定注册表
 
 # 显示注册表信息
-ccgo registry info ccgo-packages
+ccgo registry info ccgo-index
 
 # 搜索包
 ccgo registry search json
@@ -175,8 +175,8 @@ private = "git@github.com:company/private-index.git"
 
 ### 默认注册表
 
-CCGO 使用 `ccgo-packages` 作为默认注册表，托管于：
-`https://github.com/ArcticLampyrid/ccgo-packages.git`
+CCGO 使用 `ccgo-index` 作为默认注册表，托管于：
+`git@github.com:zhlinh/ccgo-index.git`
 
 ### 注册表解析的工作原理
 

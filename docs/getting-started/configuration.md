@@ -307,7 +307,7 @@ packages by name + version in `[[dependencies]]`:
 [registries]
 # Map key = registry name, value = index repository URL
 mna = "git@git.example.com:org/ccgo-index.git"
-public = "https://github.com/example-org/ccgo-packages.git"
+public = "https://github.com/example-org/ccgo-index.git"
 
 [[dependencies]]
 name = "stdcomm"

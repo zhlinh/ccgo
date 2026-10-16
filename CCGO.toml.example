@@ -532,5 +532,5 @@
 # ============================================================
 
 # [registries]
-# company = "https://github.com/company/ccgo-packages.git"
+# company = "https://github.com/company/ccgo-index.git"
 # private  = "git@gitlab.internal:packages/ccgo-index.git"

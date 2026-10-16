@@ -13,7 +13,7 @@
 //! - 4+ char names: `{first-two}/{third-fourth}/{name}.json`
 //!
 //! ```text
-//! ccgo-packages/
+//! ccgo-index/
 //! ├── index.json              # Index metadata
 //! ├── 1/
 //! │   └── a.json              # 1-char package
@@ -40,7 +40,7 @@
 //!
 //! # Custom private index
 //! [registries]
-//! company = "https://github.com/company/ccgo-packages.git"
+//! company = "https://github.com/company/ccgo-index.git"
 //!
 //! [dependencies]
 //! internal-lib = { registry = "company", version = "^2.0" }
@@ -54,10 +54,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Default registry name
-pub const DEFAULT_REGISTRY: &str = "ccgo-packages";
+pub const DEFAULT_REGISTRY: &str = "ccgo-index";
 
 /// Default registry URL
-pub const DEFAULT_REGISTRY_URL: &str = "https://github.com/aspect-build/ccgo-packages.git";
+pub const DEFAULT_REGISTRY_URL: &str = "git@github.com:zhlinh/ccgo-index.git";
 
 /// Index metadata (index.json)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -724,9 +724,9 @@ mod tests {
     fn test_index_metadata_serialization() {
         let metadata = IndexMetadata {
             version: 1,
-            name: "ccgo-packages".to_string(),
+            name: "ccgo-index".to_string(),
             description: "Official CCGO package index".to_string(),
-            homepage: Some("https://github.com/ccgo-packages".to_string()),
+            homepage: Some("https://github.com/zhlinh/ccgo-index".to_string()),
             package_count: 100,
             updated_at: "2026-01-24T00:00:00Z".to_string(),
         };

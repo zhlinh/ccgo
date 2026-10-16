@@ -84,7 +84,7 @@ pub struct CcgoConfig {
     ///
     /// ```toml
     /// [registries]
-    /// company = "https://github.com/company/ccgo-packages.git"
+    /// company = "https://github.com/company/ccgo-index.git"
     /// private = "git@gitlab.internal:packages/ccgo-index.git"
     /// ```
     #[serde(default)]
@@ -165,7 +165,7 @@ pub struct IncludeConfig {
 ///
 /// ```toml
 /// [registries]
-/// company = "https://github.com/company/ccgo-packages.git"
+/// company = "https://github.com/company/ccgo-index.git"
 /// private = "git@gitlab.internal:packages/ccgo-index.git"
 /// ```
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -229,7 +229,7 @@ pub struct SimplifiedDepSpec {
     /// Version requirement
     pub version: String,
 
-    /// Registry name (defaults to "ccgo-packages")
+    /// Registry name (defaults to "ccgo-index")
     pub registry: Option<String>,
 
     /// Features to enable

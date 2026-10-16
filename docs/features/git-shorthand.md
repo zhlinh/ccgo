@@ -156,7 +156,7 @@ ccgo registry update           # Update all registries
 ccgo registry update company   # Update specific registry
 
 # Show registry information
-ccgo registry info ccgo-packages
+ccgo registry info ccgo-index
 
 # Search packages
 ccgo registry search json
@@ -175,8 +175,8 @@ private = "git@github.com:company/private-index.git"
 
 ### Default Registry
 
-CCGO uses `ccgo-packages` as the default registry, hosted at:
-`https://github.com/ArcticLampyrid/ccgo-packages.git`
+CCGO uses `ccgo-index` as the default registry, hosted at:
+`git@github.com:zhlinh/ccgo-index.git`
 
 ### How Registry Resolution Works
 

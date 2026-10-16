@@ -970,6 +970,8 @@ ccgo registry add company git@github.com:company/ccgo-index.git
 ccgo publish index --registry private --remote company --push
 ```
 
-`official` 固定为 `https://github.com/aspect-build/ccgo-packages.git`。`private` 按 `--remote` 先查项目 `[registries]`，再查全局 `ccgo registry add` 配置；未配置时明确报错，不会回退到其他仓库。这里的 remote 是 CCGO registry 名称，不是项目 Git remote 名称。远端索引准备在 `$CCGO_HOME/registry/publish/<名称>/`（默认 `$CCGO_HOME` 为 `~/.ccgo`）。不加 `--push` 时只做本地校验，不创建/更新索引工作目录或提交，也不 clone/pull。该阶段无法确认远端重复版本；实际发布时会拉取索引并检查重复版本。
+`official` 固定为 `git@github.com:zhlinh/ccgo-index.git`。`private` 按 `--remote` 先查项目 `[registries]`，再查全局 `ccgo registry add` 配置；未配置时明确报错，不会回退到其他仓库。这里的 remote 是 CCGO registry 名称，不是项目 Git remote 名称。远端索引准备在 `$CCGO_HOME/registry/publish/<名称>/`（默认 `$CCGO_HOME` 为 `~/.ccgo`）。不加 `--push` 时只做本地校验，不创建/更新索引工作目录或提交，也不 clone/pull。该阶段无法确认远端重复版本；实际发布时会拉取索引并检查重复版本。
+
+官方索引内部名称为 `ccgo-index`。SSH 地址要求配置 GitHub SSH 访问，发布还需仓库写权限。新索引需要根目录的 `index.json`（符合 `IndexMetadata` 格式），并将初始提交推送到默认分支；包文件会在发布时自动创建。如果已有发布缓存仍指向旧官方地址，请先保留其中的本地提交，再将旧工作目录移走后重试；CCGO 会拒绝 origin 不匹配，不会自动切换仓库。已显式保存的 registry URL 不会被自动重写。
 
 `--index-repo` 现在仅用于 local 的目录路径，`--index-name` 仅命名 local 索引；远程 URL 的旧用法请迁移到 `ccgo registry add` 配合 `--registry private --remote`。`--index-push` 保留兼容，与 `--push` 完全相同。local 不会 clone/pull；`local --push` 更新并提交本地索引，不推送到网络。拉取失败保留工作目录；Git 提交失败返回错误，不会继续推送旧提交。

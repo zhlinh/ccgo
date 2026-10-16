@@ -307,7 +307,7 @@ core = { path = "./libs/core" }
 [registries]
 # map 的键 = 注册表名称，值 = 索引仓库 URL
 mna = "git@git.example.com:org/ccgo-index.git"
-public = "https://github.com/example-org/ccgo-packages.git"
+public = "https://github.com/example-org/ccgo-index.git"
 
 [[dependencies]]
 name = "stdcomm"
