@@ -59,7 +59,7 @@ pub enum Commands {
 
     /// Publish library to repository
     #[command(disable_version_flag = true)]
-    Publish(PublishCommand),
+    Publish(Box<PublishCommand>),
 
     /// Yank or unyank a published version in a registry index
     Yank(YankCommand),

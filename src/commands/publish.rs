@@ -1921,7 +1921,7 @@ mod tests {
         )
         .unwrap();
         match cli.command {
-            crate::cli::Commands::Publish(command) => command,
+            crate::cli::Commands::Publish(command) => *command,
             _ => unreachable!(),
         }
     }
