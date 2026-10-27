@@ -75,6 +75,7 @@ fn doc_and_conan_accept_zipped_projects_and_preserve_original_archives() {
                     .env("PUBLISH_EXIT", exit_code)
                     .args(["publish", target, "--path"])
                     .arg(&archive)
+                    .args(if target == "conan" { vec!["--skip-build"] } else { vec![] })
                     .assert();
                 if exit_code == "0" {
                     result.success();
@@ -265,7 +266,7 @@ fn apple_conan_and_doc_accept_directory_or_descriptor() {
     }
     for (target, filename, extra) in [
         ("apple", "Library.podspec", vec!["--manager", "cocoapods"]),
-        ("conan", "conanfile.py", vec![]),
+        ("conan", "conanfile.py", vec!["--skip-build"]),
         ("doc", "mkdocs.yml", vec![]),
     ] {
         let project = tmp.path().join(format!("custom-{target}"));
@@ -726,4 +727,98 @@ fn spm_binary_without_push_does_not_upload_or_generate_manifests() {
         fs::read_to_string(tmp.path().join("Package.swift")).unwrap(),
         manifest
     );
+}
+
+#[test]
+fn doc_maven_builds_fresh_site_and_uploads_only_with_push() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(
+        tmp.path().join("CCGO.toml"),
+        "[project]\nname = 'demo'\nversion = '1.2.3'\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("mkdocs.yml"), "site_name: Demo").unwrap();
+    let tool = bin.join("mkdocs");
+    fs::write(&tool, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$PUBLISH_CAPTURE\"\nwhile [ \"$#\" -gt 0 ]; do\nif [ \"$1\" = --site-dir ]; then shift; mkdir -p \"$1\"; printf fresh > \"$1/index.html\"; fi\nshift\ndone\n").unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}/releases", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        for _ in 0..4 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+                .unwrap();
+            let mut data = Vec::new();
+            let mut buf = [0; 4096];
+            loop {
+                let size = stream.read(&mut buf).unwrap();
+                assert!(size > 0);
+                data.extend_from_slice(&buf[..size]);
+                if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&data[..end]).to_lowercase();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length: "))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if data.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            requests.push(data);
+        }
+        requests
+    });
+
+    let capture = tmp.path().join("args");
+    for push in [false, true] {
+        let mut command = command_with_tools(tmp.path(), &bin, &capture);
+        command.env("CCGO_MAVEN_URL", &base).args([
+            "publish",
+            "doc",
+            "--artifact-provider",
+            "maven",
+            "--artifact-group",
+            "com.example",
+        ]);
+        if push {
+            command.arg("--push");
+        }
+        command.assert().success();
+        let args = fs::read_to_string(&capture).unwrap();
+        assert!(args.starts_with("build\n"));
+        assert!(!args.contains("gh-deploy"));
+        let site = args
+            .lines()
+            .skip_while(|line| *line != "--site-dir")
+            .nth(1)
+            .unwrap();
+        assert!(!Path::new(site).exists());
+    }
+    let requests = server.join().unwrap();
+    assert!(String::from_utf8_lossy(&requests[0])
+        .starts_with("PUT /releases/com/example/demo-doc/1.2.3/demo-doc-1.2.3.zip HTTP/1.1"));
+    let data = &requests[0];
+    let end = data.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&data[end..])).unwrap();
+    let mut html = String::new();
+    zip.by_name("index.html")
+        .unwrap()
+        .read_to_string(&mut html)
+        .unwrap();
+    assert_eq!(html, "fresh");
+    assert!(String::from_utf8_lossy(&requests[2]).contains("<packaging>zip</packaging>"));
 }

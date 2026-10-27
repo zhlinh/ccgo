@@ -481,7 +481,7 @@ conan remote login myrepo username
 ### 发布命令
 
 ```bash
-# 导出到本地缓存
+# 创建二进制包到本地缓存（默认 Debug，静态和动态各一份）
 ccgo publish conan --registry local
 
 # 显示 ConanCenter 的 PR 贡献入口（返回错误，不执行直传）
@@ -493,7 +493,20 @@ ccgo publish conan --registry private \
 
 # 跳过构建，仅导出配方
 ccgo publish conan --skip-build
+
+# host profile × build type × 链接类型矩阵，全部成功后上传
+ccgo publish conan --registry private --remote myrepo \
+    --profile linux-x64,linux-arm64 --build-profile default \
+    --conan-build-types Debug,Release --link-type both \
+    --conan-setting compiler.cppstd=17 --conan-option '*:fPIC=True'
 ```
+
+需要 Conan 2 和已配置的 profiles；`--release` 将默认构建类型改为 Release。
+`--conan-setting` 和 `--conan-option` 可以重复指定；构建类型和 shared 选项分别由
+`--conan-build-types` 和 `--link-type` 控制。上传清单只包含本次矩阵的精确配方、
+package ID 和包修订，不包含依赖包或缓存中的其他配置。任一配置失败均停止上传，
+本地缓存保留，修复后可重试。私有仓库认证使用 `conan remote login`；
+`--skip-build --registry private --remote myrepo` 仅上传配方。
 
 ### Conan 包配方
 
@@ -975,3 +988,21 @@ ccgo publish index --registry private --remote company --push
 官方索引内部名称为 `ccgo-index`。SSH 地址要求配置 GitHub SSH 访问，发布还需仓库写权限。新索引需要根目录的 `index.json`（符合 `IndexMetadata` 格式），并将初始提交推送到默认分支；包文件会在发布时自动创建。如果已有发布缓存仍指向旧官方地址，请先保留其中的本地提交，再将旧工作目录移走后重试；CCGO 会拒绝 origin 不匹配，不会自动切换仓库。已显式保存的 registry URL 不会被自动重写。
 
 `--index-repo` 现在仅用于 local 的目录路径，`--index-name` 仅命名 local 索引；远程 URL 的旧用法请迁移到 `ccgo registry add` 配合 `--registry private --remote`。`--index-push` 保留兼容，与 `--push` 完全相同。local 不会 clone/pull；`local --push` 更新并提交本地索引，不推送到网络。拉取失败保留工作目录；Git 提交失败返回错误，不会继续推送旧提交。
+
+### 文档归档到 Maven
+
+不指定 provider 时，`ccgo publish doc` 继续发布到 GitHub Pages。指定 Maven 时，构建静态站点并打包成 ZIP；不加 `--push` 只构建和校验，加 `--push` 才上传。此模式不读取 `--registry` / `--remote`，不部署在线站点。
+
+```bash
+export CCGO_MAVEN_URL='https://maven.example.com/repository/releases'
+export CCGO_MAVEN_USERNAME='publisher'
+read -rs CCGO_MAVEN_PASSWORD
+export CCGO_MAVEN_PASSWORD
+
+ccgo publish doc --artifact-provider maven --artifact-group com.example
+ccgo publish doc --artifact-provider maven --artifact-group com.example --push
+```
+
+当前工作目录需要 `CCGO.toml`，版本默认来自项目配置；支持 `--version` 覆盖。artifactId 默认 `<项目名>-doc`，可用 `--artifact-id` 覆盖；groupId 也可配置在 `[publish.doc.maven].group_id`。上传 ZIP、POM 和各自的 SHA-256 文件，上传中途失败不会撤回已上传文件。
+
+`--path` 可指定 MkDocs 工程目录、配置文件或包含唯一 MkDocs 配置的工程 ZIP。每次在临时目录构建并打包，ZIP 根目录直接包含 `index.html`，临时产物自动清理。此模式不支持 `--skip-build`、`--doc-open`、`--doc-force`，也不支持 GitHub artifact provider。Maven 归档供下载；在线浏览需要另行解压部署到静态站点。

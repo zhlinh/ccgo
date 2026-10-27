@@ -134,6 +134,7 @@ fn conan_official_never_falls_back_and_private_uploads_exact_recipe() {
         .args([
             "publish",
             "conan",
+            "--skip-build",
             "--path",
             "conanfile.py",
             "--registry",
@@ -149,6 +150,7 @@ fn conan_official_never_falls_back_and_private_uploads_exact_recipe() {
         .args([
             "publish",
             "conan",
+            "--skip-build",
             "--path",
             "conanfile.py",
             "--registry",
@@ -162,6 +164,7 @@ fn conan_official_never_falls_back_and_private_uploads_exact_recipe() {
         .args([
             "publish",
             "conan",
+            "--skip-build",
             "--path",
             "conanfile.py",
             "--registry",
@@ -172,9 +175,9 @@ fn conan_official_never_falls_back_and_private_uploads_exact_recipe() {
         .assert()
         .success();
     let actual = fs::read_to_string(root.join("commands")).unwrap();
-    assert!(
-        actual.contains("upload\ndemo/1.2.3@ccgo/stable#revision\n--remote\ncompany\n--confirm")
-    );
+    assert!(actual.contains(
+        "upload\ndemo/1.2.3@ccgo/stable#revision\n--only-recipe\n--remote\ncompany\n--confirm"
+    ));
     assert!(!actual.lines().any(|line| line == "*"));
 }
 
@@ -930,4 +933,112 @@ fn index_maven_upload_uses_zip_coordinates_and_automatic_checksum() {
     );
     assert!(!entry.to_string().contains("secret"));
     assert_eq!(fs::read(archive).unwrap(), original);
+}
+
+#[test]
+fn conan_binary_matrix_uploads_exact_packages_after_all_creates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(root.join("conanfile.py"), "fixture").unwrap();
+    tool(
+        &bin.join("conan"),
+        r#"
+printf '%s\n' "$@" >> "$PUBLISH_CAPTURE"
+case "$1" in
+export) echo '{"reference":"demo/1.2.3@ccgo/stable#revision"}' ;;
+create)
+    if [ "$FAIL_CREATE" = 1 ]; then exit 3; fi
+    package=$(printf '%s' "$*" | cksum | cut -d ' ' -f 1)
+    printf '{"graph":{"nodes":{"0":{"ref":"dependency/1#r","package_id":"unrelated","prev":"r"},"1":{"ref":"demo/1.2.3@ccgo/stable#revision","package_id":"%s","prev":"p"}}}}' "$package"
+    ;;
+upload)
+    shift
+    test "$1" = --list || exit 4
+    cp "$2" "$PACKAGE_CAPTURE"
+    ;;
+esac
+"#,
+    );
+    for fail in [true, false] {
+        let mut cmd = command(root, &bin);
+        cmd.env("PACKAGE_CAPTURE", root.join("packages.json"))
+            .env("FAIL_CREATE", if fail { "1" } else { "0" })
+            .args([
+                "publish",
+                "conan",
+                "--path",
+                "conanfile.py",
+                "--registry",
+                "private",
+                "--remote",
+                "company",
+                "--profile",
+                "linux,windows",
+                "--build-profile",
+                "builder",
+                "--conan-build-types",
+                "Debug,Release",
+                "--link-type",
+                "both",
+                "--conan-setting",
+                "compiler.cppstd=17",
+                "--conan-option",
+                "*:fPIC=True",
+            ]);
+        if fail {
+            cmd.assert().failure();
+            assert!(!root.join("packages.json").exists());
+            assert!(!fs::read_to_string(root.join("commands"))
+                .unwrap()
+                .lines()
+                .any(|l| l == "upload"));
+            fs::remove_file(root.join("commands")).unwrap();
+        } else {
+            cmd.assert().success();
+        }
+    }
+    let args = fs::read_to_string(root.join("commands")).unwrap();
+    assert_eq!(args.lines().filter(|l| *l == "create").count(), 8);
+    assert_eq!(args.lines().filter(|l| *l == "upload").count(), 1);
+    assert!(args.contains("-pr:b=builder\n"));
+    assert!(args.contains("-s:h=compiler.cppstd=17\n"));
+    let packages: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("packages.json")).unwrap()).unwrap();
+    let cache = packages["Local Cache"].as_object().unwrap();
+    assert_eq!(cache.len(), 1);
+    assert_eq!(
+        cache["demo/1.2.3@ccgo/stable"]["revisions"]["revision"]["packages"]
+            .as_object()
+            .unwrap()
+            .len(),
+        8
+    );
+}
+
+#[test]
+fn conan_rejects_invalid_matrix_before_export() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(root.join("conanfile.py"), "fixture").unwrap();
+    tool(&bin.join("conan"), "echo invoked >> \"$PUBLISH_CAPTURE\"");
+    for args in [
+        vec!["--profile", "default,,other"],
+        vec!["--build-profile", " "],
+        vec!["--conan-build-types", "Invalid"],
+        vec!["--conan-setting", "build_type=Release"],
+        vec!["--conan-option", "*:shared=True"],
+        vec!["--link-type", "invalid"],
+        vec!["--registry", "private", "--remote", " "],
+    ] {
+        command(root, &bin)
+            .args(["publish", "conan", "--path", "conanfile.py"])
+            .args(args)
+            .assert()
+            .failure();
+        assert!(!root.join("commands").exists());
+    }
 }

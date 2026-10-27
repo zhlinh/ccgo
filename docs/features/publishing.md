@@ -478,7 +478,7 @@ conan remote login myrepo username
 ### Publishing Commands
 
 ```bash
-# Export to local cache
+# Create binaries in the local cache (Debug, both static and shared by default)
 ccgo publish conan --registry local
 
 # Show ConanCenter PR guidance (returns an error; no direct upload)
@@ -490,7 +490,22 @@ ccgo publish conan --registry private \
 
 # Skip build, only export recipe
 ccgo publish conan --skip-build
+
+# Host profile × build type × linkage matrix; upload after all builds succeed
+ccgo publish conan --registry private --remote myrepo \
+    --profile linux-x64,linux-arm64 --build-profile default \
+    --conan-build-types Debug,Release --link-type both \
+    --conan-setting compiler.cppstd=17 --conan-option '*:fPIC=True'
 ```
+
+Requires Conan 2 and configured profiles. `--release` changes the default build type
+to Release. Repeat `--conan-setting` and `--conan-option` for additional settings and
+options; control build_type and shared through `--conan-build-types` and
+`--link-type`. Uploads select only the exact recipe, package IDs and package
+revisions from this matrix, excluding dependencies and unrelated cached packages.
+Any failed configuration prevents uploading; local packages remain available for
+retry. Authenticate with `conan remote login`.
+`--skip-build --registry private --remote myrepo` uploads only the recipe.
 
 ### Conan Package Recipe
 
@@ -972,3 +987,16 @@ Official mode uses `git@github.com:zhlinh/ccgo-index.git`. Private mode resolves
 The official registry uses the internal name `ccgo-index`. Its SSH URL requires GitHub SSH access, and publishing requires repository write access. A new index needs a root `index.json` matching `IndexMetadata` and an initial commit pushed to its default branch; package files are created on publication. If an existing publishing checkout points to the previous official repository, preserve any local commits and move that checkout aside before retrying; CCGO rejects an origin mismatch instead of silently switching repositories. Existing explicitly saved registry URLs are not rewritten automatically.
 
 `--index-repo` now specifies a local directory only, and `--index-name` only names a local index. Migrate old remote URL usage to `ccgo registry add` plus `--registry private --remote`. `--index-push` remains an alias for `--push`. Local mode never clones/pulls; `local --push` updates and commits the local index without a network push. Pull failures preserve local changes; commit failures stop before pushing.
+
+### Documentation archives in Maven
+
+Without an artifact provider, `ccgo publish doc` continues to deploy to GitHub Pages. Maven mode builds a fresh static site into a temporary directory and archives its contents with `index.html` at the ZIP root. Without `--push`, it only builds and validates; add `--push` to upload. It does not deploy a website or use `--registry` / `--remote`.
+
+```bash
+ccgo publish doc --artifact-provider maven --artifact-group com.example
+ccgo publish doc --artifact-provider maven --artifact-group com.example --push
+```
+
+Configure `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME` and `CCGO_MAVEN_PASSWORD` for a hosted Maven repository. The working directory must contain `CCGO.toml`; the version comes from its project configuration unless overridden with `--version`. The default artifactId is `<project>-doc` (`--artifact-id` overrides it). Set the group with `--artifact-group` or `[publish.doc.maven].group_id`.
+
+`--path` accepts a MkDocs project directory, config file or project ZIP containing a unique MkDocs config. Temporary files are cleaned up. This mode rejects `--skip-build`, `--doc-open`, `--doc-force` and the GitHub artifact provider. It uploads ZIP, POM and SHA-256 files; partial uploads are not rolled back. For online browsing, extract and deploy the archive to a static web host.

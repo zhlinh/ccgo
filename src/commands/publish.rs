@@ -23,6 +23,12 @@ mod apple_artifact;
 #[path = "publish_artifact.rs"]
 mod artifact;
 
+#[path = "publish_doc_artifact.rs"]
+mod doc_artifact;
+
+#[path = "publish_conan.rs"]
+mod conan;
+
 #[path = "publish_index_destination.rs"]
 mod index_destination;
 
@@ -134,7 +140,7 @@ pub struct PublishCommand {
     #[arg(long, value_name = "PATH")]
     pub path: Option<PathBuf>,
 
-    /// Upload an Apple binary or Index package ZIP independently of the package registry
+    /// Upload an Apple binary, Index package or documentation ZIP
     #[arg(long, value_enum)]
     pub artifact_provider: Option<ArtifactProvider>,
 
@@ -142,7 +148,7 @@ pub struct PublishCommand {
     #[arg(long, requires = "artifact_provider")]
     pub artifact_group: Option<String>,
 
-    /// Maven artifactId (default: <project>-apple or <project>-ccgo for Index)
+    /// Maven artifactId (default: <project>-apple, <project>-ccgo or <project>-doc)
     #[arg(long, requires = "artifact_provider")]
     pub artifact_id: Option<String>,
 
@@ -176,7 +182,7 @@ pub struct PublishCommand {
     #[arg(long, value_enum, default_value_t = AppleManager::All)]
     pub manager: AppleManager,
 
-    /// Publish SPM/Index: create local state with registry local, or push to a remote
+    /// Publish SPM/Index state, or upload a Doc artifact (otherwise validate only)
     #[arg(long, visible_alias = "index-push")]
     pub push: bool,
 
@@ -188,7 +194,10 @@ pub struct PublishCommand {
     #[arg(long, default_value_t = true)]
     pub allow_warnings: bool,
 
-    /// Conan profile
+    #[command(flatten)]
+    pub conan: conan::ConanOptions,
+
+    /// Conan host profiles (comma-separated matrix)
     #[arg(long, default_value = "default")]
     pub profile: String,
 
@@ -314,11 +323,12 @@ impl PublishCommand {
     /// Execute the publish command
     pub fn execute(mut self, verbose: bool) -> Result<()> {
         if (self.version.is_some() || self.tag.is_some())
+            && !(matches!(self.target, PublishTarget::Doc) && self.artifact_provider.is_some())
             && !matches!(self.target, PublishTarget::Index)
             && !(matches!(self.target, PublishTarget::Apple)
                 && (matches!(self.manager, AppleManager::Spm) || self.artifact_provider.is_some()))
         {
-            bail!("--version/--tag are supported for index, apple --manager spm, or Apple binary hosting");
+            bail!("--version/--tag are supported for index, apple --manager spm, or Apple/Doc artifact hosting");
         }
         if matches!(self.target, PublishTarget::Apple)
             && matches!(self.manager, AppleManager::Spm | AppleManager::All)
@@ -326,8 +336,15 @@ impl PublishCommand {
             self.validate_spm_registry()?;
         }
         if self.artifact_provider.is_some() {
-            if !matches!(self.target, PublishTarget::Apple | PublishTarget::Index) {
-                bail!("--artifact-provider is supported only for apple and index");
+            if !matches!(
+                self.target,
+                PublishTarget::Apple | PublishTarget::Index | PublishTarget::Doc
+            ) {
+                bail!("--artifact-provider is supported only for apple, index and doc");
+            }
+            if matches!(self.target, PublishTarget::Doc) {
+                let _temporary_input = self.prepare_publish_path()?;
+                return doc_artifact::publish(&self, verbose);
             }
             if matches!(self.target, PublishTarget::Apple) {
                 return apple_artifact::publish(&self, verbose);
@@ -741,92 +758,7 @@ gradle.taskGraph.whenReady {
     }
 
     fn publish_conan(&self, verbose: bool) -> Result<()> {
-        println!("=== Publishing to Conan ===\n");
-
-        let cwd = std::env::current_dir().context("Failed to get current directory")?;
-
-        let project_dir = match &self.path {
-            Some(path) => path
-                .parent()
-                .context("Conan recipe has no parent directory")?
-                .to_path_buf(),
-            None => Self::find_project_dir(&cwd)?,
-        };
-        let recipe = self.path.as_deref().unwrap_or_else(|| Path::new("."));
-
-        match self.registry {
-            RegistryType::Local => {
-                println!("Exporting to local Conan cache");
-
-                let mut cmd = Command::new("conan");
-                cmd.current_dir(&project_dir);
-                cmd.arg("export")
-                    .arg(recipe)
-                    .args(["--user=ccgo", "--channel=stable"]);
-
-                if verbose {
-                    cmd.arg("-vv");
-                }
-
-                let status = cmd.status().context("Failed to execute conan export")?;
-
-                if !status.success() {
-                    bail!("Conan export failed");
-                }
-            }
-            RegistryType::Official => {
-                bail!("Conan official is ConanCenter (https://center2.conan.io). ConanCenter does not accept direct CLI uploads; submit a recipe PR to https://github.com/conan-io/conan-center-index. Use --registry private --remote <name> for a writable remote");
-            }
-            RegistryType::Private => {
-                let remote = self
-                    .remote
-                    .as_deref()
-                    .context("Private Conan registry requires --remote")?;
-                println!("Uploading to Conan remote: {}", remote);
-
-                // First export to local cache
-                let mut cmd = Command::new("conan");
-                cmd.current_dir(&project_dir);
-                cmd.arg("export")
-                    .arg(recipe)
-                    .args(["--user=ccgo", "--channel=stable"]);
-
-                cmd.arg("--format=json")
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit());
-                let output = cmd.output().context("Failed to execute conan export")?;
-                if !output.status.success() {
-                    bail!("Conan export failed");
-                }
-                let exported: serde_json::Value = serde_json::from_slice(&output.stdout)
-                    .context("Conan export did not return JSON")?;
-                let reference = exported
-                    .get("reference")
-                    .and_then(|v| v.as_str())
-                    .filter(|value| {
-                        !value.is_empty() && !value.starts_with('-') && !value.contains(['*', '?'])
-                    })
-                    .context("Conan export did not return an exact recipe reference")?;
-
-                // Then upload to remote
-                let mut cmd = Command::new("conan");
-                cmd.current_dir(&project_dir);
-                cmd.args(["upload", reference, "--remote", remote, "--confirm"]);
-
-                if verbose {
-                    cmd.arg("-vv");
-                }
-
-                let status = cmd.status().context("Failed to execute conan upload")?;
-
-                if !status.success() {
-                    bail!("Conan upload failed");
-                }
-            }
-        }
-
-        println!("\n✅ Publish completed successfully!");
-        Ok(())
+        conan::publish(self, verbose)
     }
 
     fn publish_apple(&self, verbose: bool) -> Result<()> {
@@ -1913,6 +1845,7 @@ mod tests {
             push: false,
             platform: None,
             allow_warnings: true,
+            conan: Default::default(),
             profile: "default".into(),
             link_type: "both".into(),
             doc_branch: "gh-pages".into(),
@@ -1957,6 +1890,7 @@ mod tests {
             push: false,
             platform: None,
             allow_warnings: true,
+            conan: Default::default(),
             profile: "default".into(),
             link_type: "both".into(),
             doc_branch: "gh-pages".into(),
