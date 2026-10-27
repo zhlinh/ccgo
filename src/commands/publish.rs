@@ -325,14 +325,7 @@ fn merge_version_entry(
 impl PublishCommand {
     /// Execute the publish command
     pub fn execute(mut self, verbose: bool) -> Result<()> {
-        if (self.version.is_some() || self.tag.is_some())
-            && !(matches!(self.target, PublishTarget::Doc) && self.artifact_provider.is_some())
-            && !matches!(self.target, PublishTarget::Index)
-            && !(matches!(self.target, PublishTarget::Apple)
-                && (matches!(self.manager, AppleManager::Spm) || self.artifact_provider.is_some()))
-        {
-            bail!("--version/--tag are supported for index, apple --manager spm, or Apple/Doc artifact hosting");
-        }
+        self.validate_version_options()?;
         if matches!(self.target, PublishTarget::Apple)
             && matches!(self.manager, AppleManager::Spm | AppleManager::All)
         {
@@ -362,15 +355,104 @@ impl PublishCommand {
         let temporary_input = self.prepare_publish_path()?;
         println!("Publishing library project...\n");
 
+        self.publish_target(verbose, temporary_input.is_some())
+    }
+
+    fn publish_target(&self, verbose: bool, temporary_input: bool) -> Result<()> {
         match self.target {
             PublishTarget::Android => self.publish_android(verbose),
             PublishTarget::Ohos => self.publish_ohos(verbose),
             PublishTarget::Kmp => self.publish_kmp(verbose),
             PublishTarget::Conan => self.publish_conan(verbose),
             PublishTarget::Apple => self.publish_apple(verbose),
-            PublishTarget::Doc => self.publish_doc(verbose, temporary_input.is_some()),
+            PublishTarget::Doc => self.publish_doc(verbose, temporary_input),
             PublishTarget::Index => self.publish_index(verbose),
         }
+    }
+
+    fn validate_version_options(&self) -> Result<()> {
+        if (self.version.is_some() || self.tag.is_some())
+            && !(matches!(self.target, PublishTarget::Doc) && self.artifact_provider.is_some())
+            && !matches!(self.target, PublishTarget::Index)
+            && !(matches!(self.target, PublishTarget::Apple)
+                && (matches!(self.manager, AppleManager::Spm) || self.artifact_provider.is_some()))
+        {
+            bail!("--version/--tag are supported for index, apple --manager spm, or Apple/Doc artifact hosting");
+        }
+        Ok(())
+    }
+
+    fn accepts_publish_file(&self, path: &Path, extension: &str) -> bool {
+        match self.target {
+            PublishTarget::Android => matches!(extension, "aar" | "zip"),
+            PublishTarget::Ohos => matches!(extension, "har" | "zip"),
+            PublishTarget::Kmp | PublishTarget::Index => extension == "zip",
+            PublishTarget::Apple => match self.manager {
+                AppleManager::Cocoapods => extension == "podspec",
+                AppleManager::Spm => {
+                    path.file_name().and_then(|s| s.to_str()) == Some("Package.swift")
+                }
+                AppleManager::All => false,
+            },
+            PublishTarget::Conan => matches!(extension, "py" | "zip"),
+            PublishTarget::Doc => matches!(extension, "yml" | "yaml" | "zip"),
+        }
+    }
+
+    fn configure_android_runtime(&self, cmd: &mut Command, android_dir: &Path) {
+        // Hand the resolved runtime to Gradle, same as the android builder does.
+        // The plugin reads CCGO_ANDROID_STL first, then [android].stl from
+        // CCGO.toml; it decides the `-stdembed` artifact name. Publishing a
+        // c++_static build without this yields a package whose name says shared
+        // while its .so embeds the runtime -- worse than either choice alone.
+        let config = self.android_publish_config(android_dir);
+        let stl = crate::builder::resolve_stl(
+            self.stl.as_ref().map(|s| s.as_str()),
+            config
+                .as_ref()
+                .and_then(|c| c.android.as_ref())
+                .and_then(|a| a.stl.as_deref()),
+        );
+        cmd.env("CCGO_ANDROID_STL", &stl);
+        println!("  C++ runtime: {}", stl);
+
+        let build_type = if self.release { "release" } else { "debug" };
+        cmd.env("CCGO_BUILD_TYPE", build_type);
+        cmd.arg(format!("-PccgoBuildType={build_type}"));
+        println!("  Build type:  {}", build_type);
+    }
+
+    fn open_published_documentation(&self, project_dir: &Path) {
+        if self.doc_open {
+            // Get repository URL and open
+            if let Ok(output) = Command::new("git")
+                .current_dir(project_dir)
+                .args(["remote", "get-url", "origin"])
+                .output()
+            {
+                if let Ok(url) = String::from_utf8(output.stdout) {
+                    let url = url.trim();
+                    // Convert git URL to GitHub pages URL
+                    if let Some(pages_url) = self.git_url_to_pages_url(url) {
+                        println!("Opening documentation at: {}", pages_url);
+                        let _ = open::that(pages_url);
+                    }
+                }
+            }
+        }
+    }
+
+    fn validate_publication_worktree(
+        work_path: &Path,
+        destination: &index_destination::Destination,
+    ) -> Result<()> {
+        if work_path.join(".git/ccgo-yank.json").exists() {
+            bail!("An interrupted yank is pending; retry that yank command before publishing");
+        }
+        if !destination.local && work_path.join(".git").exists() {
+            crate::registry::index_writer::verify_origin(work_path, &destination.repository)?;
+        }
+        Ok(())
     }
 
     fn validate_publish_path(&self, path: &Path) -> Result<()> {
@@ -394,20 +476,7 @@ impl PublishCommand {
         if matches!(self.target, PublishTarget::Apple) && extension == "zip" {
             bail!("Apple ZIP input requires --artifact-provider maven or github");
         }
-        let valid = match self.target {
-            PublishTarget::Android => matches!(extension, "aar" | "zip"),
-            PublishTarget::Ohos => matches!(extension, "har" | "zip"),
-            PublishTarget::Kmp | PublishTarget::Index => extension == "zip",
-            PublishTarget::Apple => match self.manager {
-                AppleManager::Cocoapods => extension == "podspec",
-                AppleManager::Spm => {
-                    path.file_name().and_then(|s| s.to_str()) == Some("Package.swift")
-                }
-                AppleManager::All => false,
-            },
-            PublishTarget::Conan => matches!(extension, "py" | "zip"),
-            PublishTarget::Doc => matches!(extension, "yml" | "yaml" | "zip"),
-        };
+        let valid = self.accepts_publish_file(path, extension);
         if !path.is_file() || !valid {
             bail!("Unsupported --path input for {}: {}. Use a project/SDK directory or a platform-specific file (apple files require the matching --manager)", self.target, path.display());
         }
@@ -455,33 +524,42 @@ impl PublishCommand {
             PublishTarget::Ohos if !extracted && path.join("oh-package.json5").is_file() => path,
             PublishTarget::Ohos => input::unique_file(&path, "har", true)?,
             PublishTarget::Kmp => path,
-            PublishTarget::Apple => {
-                if matches!(self.manager, AppleManager::Cocoapods | AppleManager::All) {
-                    input::unique_file(&path, "podspec", false)?;
-                }
-                if matches!(self.manager, AppleManager::Spm | AppleManager::All)
-                    && !path.join("Package.swift").is_file()
-                {
-                    bail!("Package.swift not found in {}", path.display());
-                }
-                path
-            }
-            PublishTarget::Conan if extracted => {
-                input::archive_descriptor(&path, &["conanfile.py"])?
-            }
-            PublishTarget::Conan => {
-                let recipe = path.join("conanfile.py");
-                if !recipe.is_file() {
-                    bail!("conanfile.py not found in {}", path.display());
-                }
-                recipe
-            }
-            PublishTarget::Doc if extracted => {
-                input::archive_descriptor(&path, &["mkdocs.yml", "mkdocs.yaml"])?
-            }
-            PublishTarget::Doc => input::mkdocs_config(&path)?,
+            PublishTarget::Apple => self.validate_apple_directory(path)?,
+            PublishTarget::Conan => Self::resolve_conan_directory(path, extracted)?,
+            PublishTarget::Doc => Self::resolve_doc_directory(path, extracted)?,
             PublishTarget::Index => input::unique_file(&path, "zip", true)?,
         })
+    }
+
+    fn resolve_doc_directory(path: PathBuf, extracted: bool) -> Result<PathBuf> {
+        if extracted {
+            input::archive_descriptor(&path, &["mkdocs.yml", "mkdocs.yaml"])
+        } else {
+            input::mkdocs_config(&path)
+        }
+    }
+
+    fn resolve_conan_directory(path: PathBuf, extracted: bool) -> Result<PathBuf> {
+        if extracted {
+            return input::archive_descriptor(&path, &["conanfile.py"]);
+        }
+        let recipe = path.join("conanfile.py");
+        if !recipe.is_file() {
+            bail!("conanfile.py not found in {}", path.display());
+        }
+        Ok(recipe)
+    }
+
+    fn validate_apple_directory(&self, path: PathBuf) -> Result<PathBuf> {
+        if matches!(self.manager, AppleManager::Cocoapods | AppleManager::All) {
+            input::unique_file(&path, "podspec", false)?;
+        }
+        if matches!(self.manager, AppleManager::Spm | AppleManager::All)
+            && !path.join("Package.swift").is_file()
+        {
+            bail!("Package.swift not found in {}", path.display());
+        }
+        Ok(path)
     }
 
     fn publish_android(&self, verbose: bool) -> Result<()> {
@@ -526,28 +604,8 @@ impl PublishCommand {
 
         // Gradle silently accepts unknown -P properties. Fail before executing
         // tasks if an older plugin would ignore the requested artifact path.
-        let publish_guard = if artifact.is_some() || self.skip_build {
-            let guard = tempfile::Builder::new().suffix(".gradle").tempfile()?;
-            fs::write(
-                guard.path(),
-                r#"
-gradle.taskGraph.whenReady {
-    if (gradle.rootProject.allprojects.any { it.projectDir.canonicalPath == System.getenv('CCGO_PUBLISH_PROJECT_DIR') } &&
-        !gradle.rootProject.allprojects.any {
-        it.extensions.extraProperties.has('ccgoPublishPathSupported') &&
-        it.extensions.extraProperties.get('ccgoPublishPathSupported') == true
-    }) {
-        throw new GradleException('This CCGO Gradle plugin does not support explicit publish paths/build skipping. Update the CCGO Gradle plugin together with the CLI.')
-    }
-}
-"#,
-            )?;
-            cmd.arg("--init-script").arg(guard.path());
-            cmd.env("CCGO_PUBLISH_PROJECT_DIR", fs::canonicalize(&android_dir)?);
-            Some(guard)
-        } else {
-            None
-        };
+        let publish_guard =
+            self.configure_android_publish_input(&mut cmd, &android_dir, artifact)?;
 
         if let Some(path) = artifact {
             cmd.arg(format!("-PccgoPublishPath={}", path.display()));
@@ -556,26 +614,7 @@ gradle.taskGraph.whenReady {
             cmd.arg("-PccgoSkipPublishBuild=true");
         }
 
-        // Hand the resolved runtime to Gradle, same as the android builder does.
-        // The plugin reads CCGO_ANDROID_STL first, then [android].stl from
-        // CCGO.toml; it decides the `-stdembed` artifact name. Publishing a
-        // c++_static build without this yields a package whose name says shared
-        // while its .so embeds the runtime -- worse than either choice alone.
-        let config = self.android_publish_config(&android_dir);
-        let stl = crate::builder::resolve_stl(
-            self.stl.as_ref().map(|s| s.as_str()),
-            config
-                .as_ref()
-                .and_then(|c| c.android.as_ref())
-                .and_then(|a| a.stl.as_deref()),
-        );
-        cmd.env("CCGO_ANDROID_STL", &stl);
-        println!("  C++ runtime: {}", stl);
-
-        let build_type = if self.release { "release" } else { "debug" };
-        cmd.env("CCGO_BUILD_TYPE", build_type);
-        cmd.arg(format!("-PccgoBuildType={build_type}"));
-        println!("  Build type:  {}", build_type);
+        self.configure_android_runtime(&mut cmd, &android_dir);
 
         if self.skip_build {
             cmd.arg("-x").arg("buildAAR");
@@ -597,6 +636,36 @@ gradle.taskGraph.whenReady {
 
         println!("\n✅ Publish completed successfully!");
         Ok(())
+    }
+
+    fn configure_android_publish_input(
+        &self,
+        cmd: &mut Command,
+        android_dir: &Path,
+        artifact: Option<&PathBuf>,
+    ) -> Result<Option<tempfile::NamedTempFile>> {
+        Ok(if artifact.is_some() || self.skip_build {
+            let guard = tempfile::Builder::new().suffix(".gradle").tempfile()?;
+            fs::write(
+                guard.path(),
+                r#"
+gradle.taskGraph.whenReady {
+    if (gradle.rootProject.allprojects.any { it.projectDir.canonicalPath == System.getenv('CCGO_PUBLISH_PROJECT_DIR') } &&
+        !gradle.rootProject.allprojects.any {
+        it.extensions.extraProperties.has('ccgoPublishPathSupported') &&
+        it.extensions.extraProperties.get('ccgoPublishPathSupported') == true
+    }) {
+        throw new GradleException('This CCGO Gradle plugin does not support explicit publish paths/build skipping. Update the CCGO Gradle plugin together with the CLI.')
+    }
+}
+"#,
+            )?;
+            cmd.arg("--init-script").arg(guard.path());
+            cmd.env("CCGO_PUBLISH_PROJECT_DIR", fs::canonicalize(android_dir)?);
+            Some(guard)
+        } else {
+            None
+        })
     }
 
     fn android_publish_config(&self, android_dir: &Path) -> Option<CcgoConfig> {
@@ -681,6 +750,17 @@ gradle.taskGraph.whenReady {
         Ok(())
     }
 
+    fn kmp_publish_task(&self, prebuilt: bool) -> &'static str {
+        match self.registry {
+            RegistryType::Local if prebuilt => "ccgoPublishToMavenLocal",
+            RegistryType::Official if prebuilt => "ccgoPublishToMavenCentral",
+            RegistryType::Private if prebuilt => "ccgoPublishToMavenCustom",
+            RegistryType::Local => "publishToMavenLocal",
+            RegistryType::Official => "publishAllPublicationsToMavenCentralRepository",
+            RegistryType::Private => "publishAllPublicationsToMavenCustomRepository",
+        }
+    }
+
     fn publish_kmp(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing KMP to Maven ===\n");
 
@@ -702,14 +782,7 @@ gradle.taskGraph.whenReady {
         }
 
         // Map registry to Gradle task
-        let gradle_task = match self.registry {
-            RegistryType::Local if sdk.is_some() => "ccgoPublishToMavenLocal",
-            RegistryType::Official if sdk.is_some() => "ccgoPublishToMavenCentral",
-            RegistryType::Private if sdk.is_some() => "ccgoPublishToMavenCustom",
-            RegistryType::Local => "publishToMavenLocal",
-            RegistryType::Official => "publishAllPublicationsToMavenCentralRepository",
-            RegistryType::Private => "publishAllPublicationsToMavenCustomRepository",
-        };
+        let gradle_task = self.kmp_publish_task(sdk.is_some());
 
         println!("Publishing to {} Maven repository", self.registry);
         println!("Running: ./gradlew {}", gradle_task);
@@ -798,6 +871,15 @@ gradle.taskGraph.whenReady {
         Ok(())
     }
 
+    fn configure_pod_options(&self, cmd: &mut Command, verbose: bool) {
+        if self.allow_warnings {
+            cmd.arg("--allow-warnings");
+        }
+        if verbose {
+            cmd.arg("--verbose");
+        }
+    }
+
     fn publish_cocoapods(
         &self,
         project_dir: &Path,
@@ -825,6 +907,16 @@ gradle.taskGraph.whenReady {
         } else {
             self.registry.clone()
         };
+        self.run_pod_publish(project_dir, &podspec, registry, verbose)
+    }
+
+    fn run_pod_publish(
+        &self,
+        project_dir: &Path,
+        podspec: &Path,
+        registry: RegistryType,
+        verbose: bool,
+    ) -> Result<()> {
         match registry {
             RegistryType::Local => {
                 println!("Validating podspec locally...");
@@ -833,13 +925,7 @@ gradle.taskGraph.whenReady {
                 cmd.current_dir(project_dir);
                 cmd.args(["lib", "lint", podspec.to_str().unwrap()]);
 
-                if self.allow_warnings {
-                    cmd.arg("--allow-warnings");
-                }
-
-                if verbose {
-                    cmd.arg("--verbose");
-                }
+                self.configure_pod_options(&mut cmd, verbose);
 
                 let status = cmd.status().context("Failed to execute pod lib lint")?;
 
@@ -854,13 +940,7 @@ gradle.taskGraph.whenReady {
                 cmd.current_dir(project_dir);
                 cmd.args(["trunk", "push", podspec.to_str().unwrap()]);
 
-                if self.allow_warnings {
-                    cmd.arg("--allow-warnings");
-                }
-
-                if verbose {
-                    cmd.arg("--verbose");
-                }
+                self.configure_pod_options(&mut cmd, verbose);
 
                 let status = cmd.status().context("Failed to execute pod trunk push")?;
 
@@ -876,13 +956,7 @@ gradle.taskGraph.whenReady {
                     cmd.current_dir(project_dir);
                     cmd.args(["repo", "push", remote_name, podspec.to_str().unwrap()]);
 
-                    if self.allow_warnings {
-                        cmd.arg("--allow-warnings");
-                    }
-
-                    if verbose {
-                        cmd.arg("--verbose");
-                    }
+                    self.configure_pod_options(&mut cmd, verbose);
 
                     let status = cmd.status().context("Failed to execute pod repo push")?;
 
@@ -1063,23 +1137,7 @@ gradle.taskGraph.whenReady {
             bail!("Documentation deployment failed");
         }
 
-        if self.doc_open {
-            // Get repository URL and open
-            if let Ok(output) = Command::new("git")
-                .current_dir(project_dir)
-                .args(["remote", "get-url", "origin"])
-                .output()
-            {
-                if let Ok(url) = String::from_utf8(output.stdout) {
-                    let url = url.trim();
-                    // Convert git URL to GitHub pages URL
-                    if let Some(pages_url) = self.git_url_to_pages_url(url) {
-                        println!("Opening documentation at: {}", pages_url);
-                        let _ = open::that(pages_url);
-                    }
-                }
-            }
-        }
+        self.open_published_documentation(project_dir);
 
         println!("\n✅ Documentation published successfully!");
         Ok(())
@@ -1191,91 +1249,184 @@ gradle.taskGraph.whenReady {
             &mut new_version_entry,
         )?;
 
-        let index_repo = destination.repository;
-        let index_name = destination.name;
+        self.publish_prepared_index(
+            &project_dir,
+            &config,
+            &git_url,
+            destination,
+            (new_version_entry, artifact),
+            verbose,
+        )
+    }
+
+    fn publish_prepared_index(
+        &self,
+        project_dir: &Path,
+        config: &CcgoConfig,
+        git_url: &str,
+        destination: index_destination::Destination,
+        prepared: (
+            VersionEntry,
+            Option<(artifact::PreparedUpload, artifact::ArchiveSnapshot)>,
+        ),
+        verbose: bool,
+    ) -> Result<()> {
+        let package = config
+            .package
+            .as_ref()
+            .context("Missing package configuration")?;
+        let (mut new_version_entry, artifact) = prepared;
+        let index_repo = &destination.repository;
+        let index_name = &destination.name;
         println!("\nIndex repository: {}", index_repo);
         if !self.push {
-            if destination.local {
-                let existing_file =
-                    Path::new(&index_repo).join(PackageIndex::package_index_path(&package.name));
-                merge_version_entry(
-                    Self::read_existing_versions(&existing_file)?,
-                    new_version_entry,
-                )?;
-            }
-            println!("Index validated: version {version}, tag {tag}. No index files, commits, or remotes changed; use --push to publish. Remote duplicate versions are checked at publication.");
+            Self::validate_index_preview(&destination, &package.name, new_version_entry)?;
             return Ok(());
         }
         let work_path = if destination.local {
-            PathBuf::from(&index_repo)
+            PathBuf::from(index_repo)
         } else {
-            crate::registry::index_writer::publish_work_dir(&index_name)
+            crate::registry::index_writer::publish_work_dir(index_name)
         };
         let _write_lock = crate::registry::index_writer::lock_index(&work_path)?;
-        if work_path.join(".git/ccgo-yank.json").exists() {
-            bail!("An interrupted yank is pending; retry that yank command before publishing");
-        }
-        if !destination.local && work_path.join(".git").exists() {
-            crate::registry::index_writer::verify_origin(&work_path, &index_repo)?;
-        }
+        Self::validate_publication_worktree(&work_path, &destination)?;
         let pending = index_recovery::Publication::resume(
             &work_path,
             &package.name,
-            &git_url,
+            git_url,
             &new_version_entry,
             verbose,
         )?;
         if let Some(pending) = &pending {
             new_version_entry = pending.version.clone();
         }
-        let index_path = if destination.local {
-            index_destination::prepare_local(&index_repo, &project_dir)?
-        } else {
-            crate::registry::index_writer::prepare_index_repo(&index_repo, &index_name, verbose)?
-        };
+        let index_path = Self::prepare_publication_index(&destination, project_dir, verbose)?;
         crate::registry::index_writer::require_clean(&index_path)?;
 
-        if let Some(pending) = &pending {
-            let file = index_path.join(PackageIndex::package_index_path(&package.name));
-            let versions = Self::read_existing_versions(&file)?;
-            if versions
-                .iter()
-                .any(|version| version.version == new_version_entry.version)
-            {
-                pending.verify_entry(&index_path)?;
-                if !pending.uploaded {
-                    bail!("Pending publication has no completed artifact upload");
-                }
-                let entry = serde_json::from_slice(&fs::read(file)?)?;
-                self.push_and_report(
-                    &index_path,
-                    &index_name,
-                    &index_repo,
-                    &package.name,
-                    &entry,
-                    verbose,
-                )?;
-                pending.finish(&index_path)?;
+        if let Some(receipt) = &pending {
+            if self.complete_pending_publication(
+                &index_path,
+                (index_name, index_repo),
+                &package.name,
+                receipt,
+                verbose,
+            )? {
                 return Ok(());
             }
         }
+        let mut pending = Self::prepare_publication_receipt(
+            &index_path,
+            &package.name,
+            git_url,
+            &new_version_entry,
+            pending,
+        )?;
+        Self::upload_index_artifact(&index_path, &mut pending, artifact.as_ref())?;
+        let package_entry =
+            self.write_package_entry(&index_path, config, package, git_url, new_version_entry)?;
+
+        self.commit_index_publication(&index_path, index_name, &package_entry, verbose)?;
+
+        self.push_and_report(
+            &index_path,
+            index_name,
+            index_repo,
+            &package.name,
+            &package_entry,
+            verbose,
+        )?;
+        pending.finish(&index_path)
+    }
+
+    fn prepare_publication_index(
+        destination: &index_destination::Destination,
+        project_dir: &Path,
+        verbose: bool,
+    ) -> Result<PathBuf> {
+        if destination.local {
+            index_destination::prepare_local(&destination.repository, project_dir)
+        } else {
+            crate::registry::index_writer::prepare_index_repo(
+                &destination.repository,
+                &destination.name,
+                verbose,
+            )
+        }
+    }
+
+    fn prepare_publication_receipt(
+        index_path: &Path,
+        package_name: &str,
+        git_url: &str,
+        new_version_entry: &VersionEntry,
+        pending: Option<index_recovery::Publication>,
+    ) -> Result<index_recovery::Publication> {
         // Check the current destination before creating an immutable remote asset.
         merge_version_entry(
             Self::read_existing_versions(
-                &index_path.join(PackageIndex::package_index_path(&package.name)),
+                &index_path.join(PackageIndex::package_index_path(package_name)),
             )?,
             new_version_entry.clone(),
         )?;
-        let mut pending = match pending {
+        Ok(match pending {
             Some(pending) => pending,
             None => index_recovery::Publication::start(
-                &index_path,
-                &package.name,
-                &git_url,
+                index_path,
+                package_name,
+                git_url,
                 new_version_entry.clone(),
             )?,
-        };
-        if let Some((upload, snapshot)) = &artifact {
+        })
+    }
+
+    fn commit_index_publication(
+        &self,
+        index_path: &Path,
+        index_name: &str,
+        package_entry: &PackageEntry,
+        verbose: bool,
+    ) -> Result<()> {
+        // Update index.json metadata
+        crate::registry::index_writer::update_index_metadata(index_path, index_name)?;
+
+        // Commit changes
+        let commit_message = self.index_message.clone().unwrap_or_else(|| {
+            format!(
+                "Update {} to {}",
+                package_entry.name,
+                package_entry
+                    .versions
+                    .first()
+                    .map(|v| v.version.as_str())
+                    .unwrap_or("unknown")
+            )
+        });
+
+        crate::registry::index_writer::commit_changes(index_path, &commit_message, verbose)?;
+
+        Ok(())
+    }
+
+    fn validate_index_preview(
+        destination: &index_destination::Destination,
+        package: &str,
+        version: VersionEntry,
+    ) -> Result<()> {
+        if destination.local {
+            let file =
+                Path::new(&destination.repository).join(PackageIndex::package_index_path(package));
+            merge_version_entry(Self::read_existing_versions(&file)?, version.clone())?;
+        }
+        println!("Index validated: version {}, tag {}. No index files, commits, or remotes changed; use --push to publish. Remote duplicate versions are checked at publication.", version.version, version.tag);
+        Ok(())
+    }
+
+    fn upload_index_artifact(
+        index_path: &Path,
+        pending: &mut index_recovery::Publication,
+        artifact: Option<&(artifact::PreparedUpload, artifact::ArchiveSnapshot)>,
+    ) -> Result<()> {
+        if let Some((upload, snapshot)) = artifact {
             if !pending.uploaded {
                 upload.upload_registry(&snapshot.path)?;
             }
@@ -1285,37 +1436,42 @@ gradle.taskGraph.whenReady {
             );
         }
         pending.uploaded = true;
-        pending.save(&index_path)?;
-        let package_entry =
-            self.write_package_entry(&index_path, &config, package, &git_url, new_version_entry)?;
+        pending.save(index_path)?;
+        Ok(())
+    }
 
-        // Update index.json metadata
-        crate::registry::index_writer::update_index_metadata(&index_path, &index_name)?;
-
-        // Commit changes
-        let commit_message = self.index_message.clone().unwrap_or_else(|| {
-            format!(
-                "Update {} to {}",
-                package.name,
-                package_entry
-                    .versions
-                    .first()
-                    .map(|v| v.version.as_str())
-                    .unwrap_or("unknown")
-            )
-        });
-
-        crate::registry::index_writer::commit_changes(&index_path, &commit_message, verbose)?;
-
-        self.push_and_report(
-            &index_path,
-            &index_name,
-            &index_repo,
-            &package.name,
-            &package_entry,
-            verbose,
-        )?;
-        pending.finish(&index_path)
+    fn complete_pending_publication(
+        &self,
+        index_path: &Path,
+        destination: (&str, &str),
+        package_name: &str,
+        pending: &index_recovery::Publication,
+        verbose: bool,
+    ) -> Result<bool> {
+        let (index_name, index_repo) = destination;
+        let file = index_path.join(PackageIndex::package_index_path(package_name));
+        let versions = Self::read_existing_versions(&file)?;
+        if versions
+            .iter()
+            .any(|version| version.version == pending.version.version)
+        {
+            pending.verify_entry(index_path)?;
+            if !pending.uploaded {
+                bail!("Pending publication has no completed artifact upload");
+            }
+            let entry = serde_json::from_slice(&fs::read(file)?)?;
+            self.push_and_report(
+                index_path,
+                index_name,
+                index_repo,
+                package_name,
+                &entry,
+                verbose,
+            )?;
+            pending.finish(index_path)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     fn prepare_index_artifact(
