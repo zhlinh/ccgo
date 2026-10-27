@@ -32,6 +32,9 @@ mod conan;
 #[path = "publish_index_destination.rs"]
 mod index_destination;
 
+#[path = "publish_index_recovery.rs"]
+mod index_recovery;
+
 #[derive(Debug, Clone, ValueEnum)]
 pub enum ArtifactProvider {
     Maven,
@@ -309,8 +312,7 @@ fn merge_version_entry(
     if let Some(dup) = existing.iter().find(|v| v.version == new.version) {
         anyhow::bail!(
             "version '{}' is already in the index (tag '{}'); the index is \
-             append-only by design. Yank or hand-edit the JSON first if you \
-             really intend to overwrite.",
+             append-only by design. Publish a new version to change its content.",
             new.version,
             dup.tag
         );
@@ -1204,12 +1206,59 @@ gradle.taskGraph.whenReady {
             println!("Index validated: version {version}, tag {tag}. No index files, commits, or remotes changed; use --push to publish. Remote duplicate versions are checked at publication.");
             return Ok(());
         }
+        let work_path = if destination.local {
+            PathBuf::from(&index_repo)
+        } else {
+            crate::registry::index_writer::publish_work_dir(&index_name)
+        };
+        let _write_lock = crate::registry::index_writer::lock_index(&work_path)?;
+        if work_path.join(".git/ccgo-yank.json").exists() {
+            bail!("An interrupted yank is pending; retry that yank command before publishing");
+        }
+        if !destination.local && work_path.join(".git").exists() {
+            crate::registry::index_writer::verify_origin(&work_path, &index_repo)?;
+        }
+        let pending = index_recovery::Publication::resume(
+            &work_path,
+            &package.name,
+            &git_url,
+            &new_version_entry,
+            verbose,
+        )?;
+        if let Some(pending) = &pending {
+            new_version_entry = pending.version.clone();
+        }
         let index_path = if destination.local {
             index_destination::prepare_local(&index_repo, &project_dir)?
         } else {
             crate::registry::index_writer::prepare_index_repo(&index_repo, &index_name, verbose)?
         };
+        crate::registry::index_writer::require_clean(&index_path)?;
 
+        if let Some(pending) = &pending {
+            let file = index_path.join(PackageIndex::package_index_path(&package.name));
+            let versions = Self::read_existing_versions(&file)?;
+            if versions
+                .iter()
+                .any(|version| version.version == new_version_entry.version)
+            {
+                pending.verify_entry(&index_path)?;
+                if !pending.uploaded {
+                    bail!("Pending publication has no completed artifact upload");
+                }
+                let entry = serde_json::from_slice(&fs::read(file)?)?;
+                self.push_and_report(
+                    &index_path,
+                    &index_name,
+                    &index_repo,
+                    &package.name,
+                    &entry,
+                    verbose,
+                )?;
+                pending.finish(&index_path)?;
+                return Ok(());
+            }
+        }
         // Check the current destination before creating an immutable remote asset.
         merge_version_entry(
             Self::read_existing_versions(
@@ -1217,13 +1266,26 @@ gradle.taskGraph.whenReady {
             )?,
             new_version_entry.clone(),
         )?;
+        let mut pending = match pending {
+            Some(pending) => pending,
+            None => index_recovery::Publication::start(
+                &index_path,
+                &package.name,
+                &git_url,
+                new_version_entry.clone(),
+            )?,
+        };
         if let Some((upload, snapshot)) = &artifact {
-            upload.upload(&snapshot.path)?;
+            if !pending.uploaded {
+                upload.upload_registry(&snapshot.path)?;
+            }
             println!(
                 "Artifact uploaded. If a later index step fails, the artifact remains at {}",
                 upload.url
             );
         }
+        pending.uploaded = true;
+        pending.save(&index_path)?;
         let package_entry =
             self.write_package_entry(&index_path, &config, package, &git_url, new_version_entry)?;
 
@@ -1252,7 +1314,8 @@ gradle.taskGraph.whenReady {
             &package.name,
             &package_entry,
             verbose,
-        )
+        )?;
+        pending.finish(&index_path)
     }
 
     fn prepare_index_artifact(
@@ -1306,7 +1369,7 @@ gradle.taskGraph.whenReady {
     ) -> Result<()> {
         if self.push && !matches!(self.registry, RegistryType::Local) {
             println!("\n📤 Pushing to remote...");
-            crate::registry::index_writer::push_changes(index_path, verbose)?;
+            crate::registry::index_writer::push_changes_retry(index_path, index_name, verbose)?;
             println!("✅ Pushed successfully!");
         } else {
             if matches!(self.registry, RegistryType::Local) {

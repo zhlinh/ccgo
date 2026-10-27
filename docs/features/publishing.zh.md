@@ -153,7 +153,9 @@ ccgo publish package --registry private --remote company \
 
 `--registry` 与 `--remote` 选择包索引仓库。Maven 的 ZIP 存储地址和凭据仍使用 `CCGO_MAVEN_URL`、`CCGO_MAVEN_USERNAME`、`CCGO_MAVEN_PASSWORD`。group 来自 `--artifact-group` 或 `[publish.index.maven].group_id`；artifact ID 默认为 `<项目名>-ccgo`，可用 `--artifact-id` 覆盖。GitHub 则使用 `--artifact-provider github --github-repo company/library`，选定 tag 对应的 Release 必须已经存在。
 
-发布前源 Git tag 必须已存在，Index 不创建或推送源 tag；各平台可复用同一源 tag。不加 `--push` 只校验，不上传、不修改索引。加 `--push` 时先检查索引版本是否重复，再上传产物。后续步骤失败可能留下已上传的产物，不自动回滚。成功或失败都会清理临时副本，原始 ZIP 保留。
+发布前源 Git tag 必须已存在，Index 不创建或推送源 tag；各平台可复用同一源 tag。不加 `--push` 只校验，不上传、不修改索引。加 `--push` 时先检查索引版本是否重复，再上传产物。后续步骤失败可能留下已上传的产物，不自动回滚。使用相同制品重试原命令可以继续待完成的发布，已确认成功的上传不会重复执行。成功或失败都会清理临时副本，原始 ZIP 保留。
+
+publish 和 yank 对共享索引工作目录加互斥锁。推送被拒绝后，可以按版本记录合并不同版本的兼容更新；同一版本的冲突修改会被拒绝，不覆盖历史。包上传复用字节一致的已有对象，拒绝覆盖不同内容。Maven 服务端必须支持条件创建（`If-None-Match: *`）或禁止覆盖 release 坐标，才能防止不同发布客户端之间的竞争覆盖。待完成的发布或 yank 会阻止该工作目录中的其他修改；修复失败原因后重试原命令即可继续，yank 和 unyank 的提交/推送失败也支持恢复。协议、人工恢复边界与验证命令见[发布恢复说明](../development/registry-publication-recovery.md)。
 
 ### Apple 二进制托管
 

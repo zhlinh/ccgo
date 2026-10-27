@@ -25,6 +25,9 @@ use crate::registry::{
     index_writer, PackageEntry, PackageIndex,
 };
 
+#[path = "yank_recovery.rs"]
+mod recovery;
+
 /// Yank (or unyank) a published package version in a registry index.
 ///
 /// Mirrors `cargo yank --vers <V> [--undo] [<crate>]`. The package name
@@ -106,7 +109,29 @@ impl YankCommand {
         );
 
         // 3. Clone/pull the index repo, locate the package's JSON entry.
+        let _write_lock = index_writer::lock_index(&index_writer::publish_work_dir(&index_name))?;
+        if index_writer::publish_work_dir(&index_name)
+            .join(".git/ccgo-publication.json")
+            .exists()
+        {
+            bail!("An interrupted publication is pending; retry that publish command before yanking");
+        }
+        let pending = recovery::PendingYank::resume(
+            &index_writer::publish_work_dir(&index_name),
+            &self,
+            &package_name,
+            verbose,
+        )?;
         let index_path = index_writer::prepare_index_repo(&index_repo, &index_name, verbose)?;
+        if let Some(pending) = pending {
+            pending.verify_target(&index_path)?;
+            if self.push {
+                index_writer::push_changes_retry(&index_path, &index_name, verbose)?;
+            }
+            pending.finish(&index_path)?;
+            println!("✅ Interrupted yank operation completed");
+            return Ok(());
+        }
         let package_rel_path = PackageIndex::package_index_path(&package_name);
         let package_file = index_path.join(&package_rel_path);
 
@@ -177,9 +202,20 @@ impl YankCommand {
         }
 
         // 5. Write back, refresh metadata, commit, optionally push.
+        let desired = v.clone();
         let json = serde_json::to_string_pretty(&entry)
             .context("failed to serialize updated package entry")?;
-        std::fs::write(&package_file, json)
+        let before = std::fs::read(&package_file)?;
+        let pending = recovery::PendingYank::start(
+            &index_path,
+            &index_repo,
+            &package_name,
+            desired,
+            &before,
+            json.as_bytes(),
+            self.push,
+        )?;
+        recovery::write_atomic(&package_file, json.as_bytes())
             .with_context(|| format!("failed to write {}", package_file.display()))?;
 
         index_writer::update_index_metadata(&index_path, &index_name)?;
@@ -200,13 +236,13 @@ impl YankCommand {
 
         if self.push {
             println!("\n📤 Pushing to remote...");
-            index_writer::push_changes(&index_path, verbose)?;
+            index_writer::push_changes_retry(&index_path, &index_name, verbose)?;
             println!("✅ Pushed successfully!");
         } else {
             println!("\n💡 Changes committed locally. Use --push to push to remote.");
         }
 
-        Ok(())
+        pending.finish(&index_path)
     }
 
     fn read_package_name_from_cwd() -> Result<String> {

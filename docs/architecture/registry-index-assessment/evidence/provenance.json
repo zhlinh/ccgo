@@ -46,14 +46,16 @@
   ],
   "files": [
     {
-      "path": "Cargo.lock",
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/Cargo.lock",
       "bytes": 73034,
-      "sha256": "8de1907679bee2f689c8f349707a6912f4c20def6583f829c26ea2abefb25cc8"
+      "sha256": "8de1907679bee2f689c8f349707a6912f4c20def6583f829c26ea2abefb25cc8",
+      "original_path": "Cargo.lock"
     },
     {
-      "path": "Cargo.toml",
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/Cargo.toml",
       "bytes": 2217,
-      "sha256": "f4611805ff69fc6bfcb53efcaced7e96d7f6221ad480fc5b487a6109535ce3ed"
+      "sha256": "f4611805ff69fc6bfcb53efcaced7e96d7f6221ad480fc5b487a6109535ce3ed",
+      "original_path": "Cargo.toml"
     },
     {
       "path": "docs/architecture/registry-index-assessment/MEASUREMENTS.md",
