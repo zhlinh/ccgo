@@ -18,13 +18,13 @@ CCGO 现在支持自动传递依赖解析。运行 `ccgo install` 时，它会�
 3. **`zip = "..."`** —— 归档依赖。`https://` 直接下载，`file://` 或本地
    路径直接读取，再解压到 `.ccgo/deps/<name>/`。
 4. **注册表解析** —— 当 `[registries]` 非空、且该依赖未写
-   `path`/`git`/`zip` 源时启用。ccgo 按 TOML 声明顺序遍历所有注册表
-   （或 `[[dependencies]].registry` 指定的那一个），取首个未 yanked、
-   版本号精确匹配的 `VersionEntry`,然后走两条子路径之一:
+   `path`/`git`/`zip` 源时启用。ccgo 检查所有注册表
+   （或 `[[dependencies]].registry` 指定的那一个），要求未 yanked、
+   版本号精确匹配的来源唯一，然后走两条子路径之一:
    * **Archive** —— 当 `VersionEntry.archive_url` 已填:下载该字节流、
      SHA-256 校验、解压。
    * **Git+tag 回退** —— 当 `archive_url` 为空,但 `PackageEntry.repository`
-     已填(`ccgo publish index` 总会从项目的 `git remote` 自动写入):
+     已填(`ccgo publish package` 总会从项目的 `git remote` 自动写入):
      执行 `git clone --branch <tag>` 拉源码仓库。Lockfile 记录
      `source = "registry+<index-url>"` 加 `locked.git.revision`,保证
      `--locked` 重新拉取的字节确定性。
@@ -37,10 +37,15 @@ CCGO 现在支持自动传递依赖解析。运行 `ccgo install` 时，它会�
    `.ccgo/deps/<name>/`。这与 Cargo / Maven 的工作流一致 —— 依赖以
    名称+版本号识别，位置完全在开发机缓存里。
 
-当第 4 步返回"未命中"时会平滑落到第 5 步 —— 已有的、不在任何已配置
+未显式指定 registry 时，第 4 步返回"未命中"才会落到第 5 步 —— 已有的、不在任何已配置
 注册表中的 `version`-only 依赖仍可正常工作。`[registries]` 为空时，
 第 4 步整段跳过。这就是注册表层既可选又可渐进的原因：旧的
 `git`/`zip` 声明永远有效。
+
+锁定获取会固定使用 `CCGO.lock` 中的注册表地址，允许获取已经锁定的 yank
+版本，校验锁中的 SHA-256 或完整 Git commit，并保持锁文件不变。新解析同时
+命中多个注册表时需要显式选择来源；指定或锁定注册表后不会回退到其他注册表
+或本地包缓存。旧锁文件的兼容规则见注册表指南。
 
 ## 功能
 

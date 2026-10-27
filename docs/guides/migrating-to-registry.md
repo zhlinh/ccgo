@@ -58,12 +58,12 @@ registry = "org"
 * Consumers download a single archive zip from a CDN. No git history
   transfer, no post-clone build step on the consumer side.
 * Adding a new sibling library requires zero changes to existing
-  consumers — only a new `ccgo publish index` run from the new project.
+  consumers — only a new `ccgo publish package` run from the new project.
 
 ## Step 1 — Bootstrap the index repo
 
 Create one Git repository to hold the package index. It starts empty
-and gets populated by every project's `ccgo publish index` runs.
+and gets populated by every project's `ccgo publish package` runs.
 
 ```bash
 # On your Git host: create a fresh repo, e.g. org/ccgo-index.git
@@ -86,7 +86,7 @@ git push origin master
 ```
 
 That's it for bootstrap. The directory layout (one JSON per package,
-sharded by name) is created lazily by each `ccgo publish index` call.
+sharded by name) is created lazily by each `ccgo publish package` call.
 
 ## Step 2 — Per-project CI workflow
 
@@ -107,15 +107,15 @@ ccgo package --release
 
 # 3. Upload the zip to your CDN / artifactory.
 #    (Plug in your existing release upload script. The destination URL
-#    must match the template you'll pass to `ccgo publish index`.)
+#    must match the template you'll pass to `ccgo publish package`.)
 your-upload-script target/release/macos/STDCOMM_CCGO_PACKAGE-25.2.9519653.zip \
   https://artifacts.example.com/stdcomm/
 
-# 4. Append the new version to the shared index. Each `ccgo publish index`
+# 4. Append the new version to the shared index. Each `ccgo publish package`
 #    call publishes EXACTLY ONE version (append-only — duplicates are
 #    rejected). Use `--index-version` (and/or `--index-tag` when your tag
 #    convention isn't `v<version>`).
-ccgo publish index \
+ccgo publish package \
   --index-repo git@git.example.com:org/ccgo-index.git \
   --index-name org-index \
   --index-version 25.2.9519653 \

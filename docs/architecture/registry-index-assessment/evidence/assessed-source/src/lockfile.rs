@@ -1,0 +1,494 @@
+//! CCGO.lock - Lockfile management for reproducible builds
+//!
+//! The lockfile records the exact versions and sources of all dependencies
+//! to ensure reproducible builds across different environments.
+//!
+//! # File Format
+//!
+//! ```toml
+//! # CCGO.lock - Auto-generated lockfile
+//! version = 1
+//!
+//! [[package]]
+//! name = "fmt"
+//! version = "10.2.1"
+//! source = "git+https://github.com/fmtlib/fmt.git#abc123def456"
+//! checksum = "sha256:..."
+//!
+//! [[package]]
+//! name = "spdlog"
+//! version = "1.12.0"
+//! source = "path+../spdlog"
+//! ```
+
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+
+use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
+
+/// Lockfile filename
+pub const LOCKFILE_NAME: &str = "CCGO.lock";
+
+/// Current lockfile format version
+pub const LOCKFILE_VERSION: u32 = 1;
+
+/// The complete lockfile structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Lockfile {
+    /// Lockfile format version
+    pub version: u32,
+
+    /// Metadata about the lockfile
+    #[serde(default)]
+    pub metadata: LockfileMetadata,
+
+    /// Locked packages
+    #[serde(default, rename = "package")]
+    pub packages: Vec<LockedPackage>,
+}
+
+/// Lockfile metadata
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LockfileMetadata {
+    /// When the lockfile was generated
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated_at: Option<String>,
+
+    /// CCGO version that generated the lockfile
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ccgo_version: Option<String>,
+}
+
+/// A locked package with exact version and source information
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LockedPackage {
+    /// Package name
+    pub name: String,
+
+    /// Exact version (resolved from version requirement)
+    pub version: String,
+
+    /// Source specification
+    /// Format: "git+URL#COMMIT", "path+PATH", "registry+NAME@VERSION"
+    pub source: String,
+
+    /// Content checksum for verification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+
+    /// Dependencies of this package
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+
+    /// Git-specific information
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<LockedGitInfo>,
+
+    /// Installation timestamp
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<String>,
+
+    /// Patch information if this package was patched
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch: Option<PatchInfo>,
+}
+
+/// Information about a patched dependency
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PatchInfo {
+    /// Source of the patch (e.g., "crates-io" or the original repository URL)
+    pub patched_source: String,
+
+    /// The actual source used after patching
+    pub replacement_source: String,
+
+    /// Whether this is a path-based patch
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_path_patch: bool,
+}
+
+/// Git-specific locked information
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LockedGitInfo {
+    /// Full commit hash
+    pub revision: String,
+
+    /// Branch name (if specified)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+
+    /// Tag name (if specified)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+
+    /// Whether the repository had uncommitted changes
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dirty: bool,
+}
+
+impl Default for Lockfile {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Lockfile {
+    /// Create a new empty lockfile
+    pub fn new() -> Self {
+        Self {
+            version: LOCKFILE_VERSION,
+            metadata: LockfileMetadata {
+                generated_at: Some(chrono::Local::now().to_rfc3339()),
+                ccgo_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            },
+            packages: Vec::new(),
+        }
+    }
+
+    /// Load lockfile from the default location in project directory
+    pub fn load(project_dir: &Path) -> Result<Option<Self>> {
+        let lockfile_path = project_dir.join(LOCKFILE_NAME);
+        Self::load_from(&lockfile_path)
+    }
+
+    /// Load lockfile from a specific path
+    pub fn load_from(path: &Path) -> Result<Option<Self>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read lockfile: {}", path.display()))?;
+
+        let lockfile: Self = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse lockfile: {}", path.display()))?;
+
+        // Validate version
+        if lockfile.version > LOCKFILE_VERSION {
+            bail!(
+                "Lockfile version {} is newer than supported version {}. \
+                 Please upgrade ccgo.",
+                lockfile.version,
+                LOCKFILE_VERSION
+            );
+        }
+
+        Ok(Some(lockfile))
+    }
+
+    /// Save lockfile to the default location in project directory
+    pub fn save(&self, project_dir: &Path) -> Result<()> {
+        let lockfile_path = project_dir.join(LOCKFILE_NAME);
+        self.save_to(&lockfile_path)
+    }
+
+    /// Save lockfile to a specific path
+    pub fn save_to(&self, path: &Path) -> Result<()> {
+        let mut content = String::new();
+
+        // Header comment
+        content.push_str("# This file is automatically generated by ccgo.\n");
+        content.push_str("# It is not intended for manual editing.\n");
+        content.push_str("# Regenerate with: ccgo fetch\n\n");
+
+        // Version
+        content.push_str(&format!("version = {}\n\n", self.version));
+
+        // Metadata
+        content.push_str("[metadata]\n");
+        if let Some(ref generated_at) = self.metadata.generated_at {
+            content.push_str(&format!("generated_at = \"{}\"\n", generated_at));
+        }
+        if let Some(ref ccgo_version) = self.metadata.ccgo_version {
+            content.push_str(&format!("ccgo_version = \"{}\"\n", ccgo_version));
+        }
+        content.push('\n');
+
+        // Packages
+        for package in &self.packages {
+            content.push_str("[[package]]\n");
+            content.push_str(&format!("name = \"{}\"\n", package.name));
+            content.push_str(&format!("version = \"{}\"\n", package.version));
+            content.push_str(&format!("source = \"{}\"\n", package.source));
+
+            if let Some(ref checksum) = package.checksum {
+                content.push_str(&format!("checksum = \"{}\"\n", checksum));
+            }
+
+            if !package.dependencies.is_empty() {
+                let deps: Vec<String> = package
+                    .dependencies
+                    .iter()
+                    .map(|d| format!("\"{}\"", d))
+                    .collect();
+                content.push_str(&format!("dependencies = [{}]\n", deps.join(", ")));
+            }
+
+            if let Some(ref installed_at) = package.installed_at {
+                content.push_str(&format!("installed_at = \"{}\"\n", installed_at));
+            }
+
+            if let Some(ref git) = package.git {
+                content.push_str(&format!("git.revision = \"{}\"\n", git.revision));
+                if let Some(ref branch) = git.branch {
+                    content.push_str(&format!("git.branch = \"{}\"\n", branch));
+                }
+                if let Some(ref tag) = git.tag {
+                    content.push_str(&format!("git.tag = \"{}\"\n", tag));
+                }
+                if git.dirty {
+                    content.push_str("git.dirty = true\n");
+                }
+            }
+
+            if let Some(ref patch) = package.patch {
+                content.push_str(&format!(
+                    "patch.patched_source = \"{}\"\n",
+                    patch.patched_source
+                ));
+                content.push_str(&format!(
+                    "patch.replacement_source = \"{}\"\n",
+                    patch.replacement_source
+                ));
+                if patch.is_path_patch {
+                    content.push_str("patch.is_path_patch = true\n");
+                }
+            }
+
+            content.push('\n');
+        }
+
+        fs::write(path, content)
+            .with_context(|| format!("Failed to write lockfile: {}", path.display()))?;
+
+        Ok(())
+    }
+
+    /// Get a locked package by name
+    pub fn get_package(&self, name: &str) -> Option<&LockedPackage> {
+        self.packages.iter().find(|p| p.name == name)
+    }
+
+    /// Add or update a package in the lockfile
+    pub fn upsert_package(&mut self, package: LockedPackage) {
+        if let Some(existing) = self.packages.iter_mut().find(|p| p.name == package.name) {
+            *existing = package;
+        } else {
+            self.packages.push(package);
+        }
+
+        // Keep packages sorted by name for deterministic output
+        self.packages.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    /// Update metadata timestamp
+    pub fn touch(&mut self) {
+        self.metadata.generated_at = Some(chrono::Local::now().to_rfc3339());
+        self.metadata.ccgo_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    }
+
+    /// Build a map of package name to locked package for quick lookup
+    pub fn packages_map(&self) -> HashMap<&str, &LockedPackage> {
+        self.packages.iter().map(|p| (p.name.as_str(), p)).collect()
+    }
+
+    /// Check if lockfile is outdated compared to CCGO.toml
+    ///
+    /// Returns list of dependencies that are in CCGO.toml but not in lockfile,
+    /// or have different version requirements.
+    pub fn check_outdated(&self, config_deps: &[crate::config::DependencyConfig]) -> Vec<String> {
+        let locked_map = self.packages_map();
+        let mut outdated = Vec::new();
+
+        for dep in config_deps {
+            match locked_map.get(dep.name.as_str()) {
+                None => {
+                    // New dependency not in lockfile
+                    outdated.push(dep.name.clone());
+                }
+                Some(locked) => {
+                    // Check if source changed
+                    let current_source = Self::build_source_string(dep);
+                    if !Self::source_matches(&locked.source, &current_source) {
+                        outdated.push(dep.name.clone());
+                    }
+                }
+            }
+        }
+
+        outdated
+    }
+
+    /// Build a source string from dependency config
+    fn build_source_string(dep: &crate::config::DependencyConfig) -> String {
+        if let Some(ref git) = dep.git {
+            format!("git+{}", git)
+        } else if let Some(ref path) = dep.path {
+            format!("path+{}", path)
+        } else if let Some(ref zip) = dep.zip {
+            format!("zip+{}", zip)
+        } else {
+            format!("registry+{}@{}", dep.name, dep.version)
+        }
+    }
+
+    /// Check if two source strings match (ignoring commit hash for git)
+    fn source_matches(locked: &str, current: &str) -> bool {
+        if locked.starts_with("git+") && current.starts_with("git+") {
+            // For git sources, compare URL without commit hash
+            let locked_url = locked.strip_prefix("git+").unwrap_or(locked);
+            let current_url = current.strip_prefix("git+").unwrap_or(current);
+
+            // Remove commit hash from locked URL if present
+            let locked_base = locked_url.split('#').next().unwrap_or(locked_url);
+
+            locked_base == current_url
+        } else {
+            locked == current
+        }
+    }
+}
+
+impl LockedPackage {
+    /// Parse the source string to extract type and location
+    pub fn parse_source(&self) -> (SourceType, String) {
+        if let Some(rest) = self.source.strip_prefix("git+") {
+            let url = rest.split('#').next().unwrap_or(rest);
+            (SourceType::Git, url.to_string())
+        } else if let Some(rest) = self.source.strip_prefix("path+") {
+            (SourceType::Path, rest.to_string())
+        } else if let Some(rest) = self.source.strip_prefix("registry+") {
+            (SourceType::Registry, rest.to_string())
+        } else if let Some(rest) = self.source.strip_prefix("zip+") {
+            (SourceType::Zip, rest.to_string())
+        } else {
+            (SourceType::Unknown, self.source.clone())
+        }
+    }
+
+    /// Get the git commit hash if this is a git source
+    pub fn git_revision(&self) -> Option<&str> {
+        self.git.as_ref().map(|g| g.revision.as_str())
+    }
+}
+
+/// Source type enum for parsed sources
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceType {
+    Git,
+    Path,
+    Registry,
+    Zip,
+    Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lockfile_roundtrip() {
+        let mut lockfile = Lockfile::new();
+        lockfile.upsert_package(LockedPackage {
+            name: "fmt".to_string(),
+            version: "10.2.1".to_string(),
+            source: "git+https://github.com/fmtlib/fmt.git#abc123".to_string(),
+            checksum: Some("sha256:test".to_string()),
+            dependencies: vec!["base".to_string()],
+            git: Some(LockedGitInfo {
+                revision: "abc123".to_string(),
+                branch: Some("main".to_string()),
+                tag: None,
+                dirty: false,
+            }),
+            installed_at: Some("2024-01-01T00:00:00Z".to_string()),
+            patch: None,
+        });
+
+        // Save to temp file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let lock_path = temp_dir.path().join(LOCKFILE_NAME);
+        lockfile.save_to(&lock_path).unwrap();
+
+        // Load back
+        let loaded = Lockfile::load_from(&lock_path).unwrap().unwrap();
+        assert_eq!(loaded.packages.len(), 1);
+        assert_eq!(loaded.packages[0].name, "fmt");
+        assert_eq!(loaded.packages[0].version, "10.2.1");
+    }
+
+    #[test]
+    fn test_package_lookup() {
+        let mut lockfile = Lockfile::new();
+        lockfile.upsert_package(LockedPackage {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            source: "path+./test".to_string(),
+            checksum: None,
+            dependencies: vec![],
+            git: None,
+            installed_at: None,
+            patch: None,
+        });
+
+        assert!(lockfile.get_package("test").is_some());
+        assert!(lockfile.get_package("other").is_none());
+    }
+
+    #[test]
+    fn test_source_parsing() {
+        let git_pkg = LockedPackage {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            source: "git+https://github.com/test/test.git#abc123".to_string(),
+            checksum: None,
+            dependencies: vec![],
+            git: None,
+            installed_at: None,
+            patch: None,
+        };
+        let (src_type, url) = git_pkg.parse_source();
+        assert_eq!(src_type, SourceType::Git);
+        assert_eq!(url, "https://github.com/test/test.git");
+
+        let path_pkg = LockedPackage {
+            name: "local".to_string(),
+            version: "1.0.0".to_string(),
+            source: "path+../local".to_string(),
+            checksum: None,
+            dependencies: vec![],
+            git: None,
+            installed_at: None,
+            patch: None,
+        };
+        let (src_type, path) = path_pkg.parse_source();
+        assert_eq!(src_type, SourceType::Path);
+        assert_eq!(path, "../local");
+    }
+
+    #[test]
+    fn locked_package_round_trip_for_registry_source() {
+        let pkg = LockedPackage {
+            name: "leaf".into(),
+            version: "1.0.0".into(),
+            source: "registry+git@example.com:my/index.git".into(),
+            checksum: Some("sha256:abc123".into()),
+            dependencies: vec![],
+            git: None,
+            installed_at: None,
+            patch: None,
+        };
+        let serialized = toml::to_string(&pkg).expect("LockedPackage should serialize");
+        let parsed: LockedPackage = toml::from_str(&serialized).expect("should round-trip");
+        assert_eq!(parsed.name, "leaf");
+        assert_eq!(parsed.version, "1.0.0");
+        assert_eq!(parsed.source, "registry+git@example.com:my/index.git");
+        assert_eq!(parsed.checksum.as_deref(), Some("sha256:abc123"));
+
+        let (kind, url) = parsed.parse_source();
+        assert_eq!(kind, SourceType::Registry);
+        assert_eq!(url, "git@example.com:my/index.git");
+    }
+}

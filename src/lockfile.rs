@@ -311,7 +311,15 @@ impl Lockfile {
                 Some(locked) => {
                     // Check if source changed
                     let current_source = Self::build_source_string(dep);
-                    if !Self::source_matches(&locked.source, &current_source) {
+                    let registry_dep = dep.git.is_none() && dep.path.is_none() && dep.zip.is_none();
+                    // Registry locks record the selected URL; configuration names the package.
+                    // Fetch validates the URL against the configured registry before using it.
+                    let matches = if registry_dep && locked.source.starts_with("registry+") {
+                        locked.version == dep.version
+                    } else {
+                        Self::source_matches(&locked.source, &current_source)
+                    };
+                    if !matches {
                         outdated.push(dep.name.clone());
                     }
                 }

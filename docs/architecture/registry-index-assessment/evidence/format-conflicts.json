@@ -1,0 +1,134 @@
+{
+  "note": "Git/layout model, separate from real CLI fault tests",
+  "cases": [
+    {
+      "format": "array",
+      "shared_root": false,
+      "different_packages": false,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "st/dc/stdcomm.json"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/array-False-False/remote\n   ff5a860..b1823bf  main       -> origin/main\nRebasing (1/1)\rerror: could not apply f7d77f6... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply f7d77f6... # publish b\n"
+    },
+    {
+      "format": "array",
+      "shared_root": false,
+      "different_packages": true,
+      "initial_push_rejected": true,
+      "rebase_code": 0,
+      "conflicts": [],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/array-False-True/remote\n   0a1407b..ebbd79e  main       -> origin/main\nRebasing (1/1)\rSuccessfully rebased and updated refs/heads/main.\n"
+    },
+    {
+      "format": "array",
+      "shared_root": true,
+      "different_packages": false,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "index.json",
+        "st/dc/stdcomm.json"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/array-True-False/remote\n   0a1407b..e2bbe77  main       -> origin/main\nRebasing (1/1)\rerror: could not apply f80e8cc... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply f80e8cc... # publish b\n"
+    },
+    {
+      "format": "array",
+      "shared_root": true,
+      "different_packages": true,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "index.json"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/array-True-True/remote\n   0a1407b..935bfab  main       -> origin/main\nRebasing (1/1)\rerror: could not apply f398d3a... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply f398d3a... # publish b\n"
+    },
+    {
+      "format": "jsonl",
+      "shared_root": false,
+      "different_packages": false,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "st/dc/stdcomm.jsonl"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/jsonl-False-False/remote\n   9460acd..624359f  main       -> origin/main\nRebasing (1/1)\rerror: could not apply 6ff4868... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply 6ff4868... # publish b\n"
+    },
+    {
+      "format": "jsonl",
+      "shared_root": false,
+      "different_packages": true,
+      "initial_push_rejected": true,
+      "rebase_code": 0,
+      "conflicts": [],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/jsonl-False-True/remote\n   9460acd..624359f  main       -> origin/main\nRebasing (1/1)\rSuccessfully rebased and updated refs/heads/main.\n"
+    },
+    {
+      "format": "jsonl",
+      "shared_root": true,
+      "different_packages": false,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "index.json",
+        "st/dc/stdcomm.jsonl"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/jsonl-True-False/remote\n   c7f2784..c7cdd11  main       -> origin/main\nRebasing (1/1)\rerror: could not apply 9cdce31... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply 9cdce31... # publish b\n"
+    },
+    {
+      "format": "jsonl",
+      "shared_root": true,
+      "different_packages": true,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "index.json"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/jsonl-True-True/remote\n   c7f2784..c7cdd11  main       -> origin/main\nRebasing (1/1)\rerror: could not apply 2bc784f... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply 2bc784f... # publish b\n"
+    },
+    {
+      "format": "split",
+      "shared_root": false,
+      "different_packages": false,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "st/dc/stdcomm/versions.json"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/split-False-False/remote\n   913f523..83bae11  main       -> origin/main\nRebasing (1/1)\rerror: could not apply b7f0a83... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply b7f0a83... # publish b\n"
+    },
+    {
+      "format": "split",
+      "shared_root": false,
+      "different_packages": true,
+      "initial_push_rejected": true,
+      "rebase_code": 0,
+      "conflicts": [],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/split-False-True/remote\n   913f523..83bae11  main       -> origin/main\nRebasing (1/1)\rSuccessfully rebased and updated refs/heads/main.\n"
+    },
+    {
+      "format": "split",
+      "shared_root": true,
+      "different_packages": false,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "index.json",
+        "st/dc/stdcomm/versions.json"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/split-True-False/remote\n   913f523..609e19a  main       -> origin/main\nRebasing (1/1)\rerror: could not apply 111838c... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply 111838c... # publish b\n"
+    },
+    {
+      "format": "split",
+      "shared_root": true,
+      "different_packages": true,
+      "initial_push_rejected": true,
+      "rebase_code": 1,
+      "conflicts": [
+        "index.json"
+      ],
+      "stderr": "From file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-layout-conflicts-krzot0hh/split-True-True/remote\n   cf77f5a..bbbade8  main       -> origin/main\nRebasing (1/1)\rerror: could not apply 4136ff7... publish b\nhint: Resolve all conflicts manually, mark them as resolved with\nhint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\".\nhint: You can instead skip this commit: run \"git rebase --skip\".\nhint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\".\nhint: Disable this message with \"git config set advice.mergeConflict false\"\nCould not apply 4136ff7... # publish b\n"
+    }
+  ]
+}

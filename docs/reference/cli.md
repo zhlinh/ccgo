@@ -793,7 +793,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 
 ### Arguments
 
-- `<PLATFORM>` - Platform to publish: android, ios, macos, apple, ohos, conan, kmp
+- `<PLATFORM>` - Platform to publish: android, apple, ohos, conan, kmp, package, doc
 
 ### Options
 

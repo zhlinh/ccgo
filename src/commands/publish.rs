@@ -53,7 +53,8 @@ pub enum PublishTarget {
     Kmp,
     /// Documentation
     Doc,
-    /// Package index (registry)
+    /// CCGO package (registry; index is a compatibility alias)
+    #[value(name = "package", alias = "index")]
     Index,
 }
 
@@ -66,7 +67,7 @@ impl std::fmt::Display for PublishTarget {
             PublishTarget::Conan => write!(f, "conan"),
             PublishTarget::Kmp => write!(f, "kmp"),
             PublishTarget::Doc => write!(f, "doc"),
-            PublishTarget::Index => write!(f, "index"),
+            PublishTarget::Index => write!(f, "package"),
         }
     }
 }
@@ -1704,6 +1705,21 @@ mod tests {
             crate::cli::Commands::Publish(command) => command,
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn package_publish_accepts_legacy_index_alias() {
+        for target in ["package", "index"] {
+            let command = parse_publish(&[target]);
+            assert!(matches!(command.target, PublishTarget::Index));
+            assert_eq!(command.target.to_string(), "package");
+        }
+        let targets: Vec<_> = PublishTarget::value_variants()
+            .iter()
+            .map(|target| target.to_possible_value().unwrap().get_name().to_owned())
+            .collect();
+        assert!(targets.iter().any(|target| target == "package"));
+        assert!(!targets.iter().any(|target| target == "index"));
     }
 
     #[test]

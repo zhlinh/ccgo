@@ -46,6 +46,19 @@ impl RegistryCache {
             .with_context(|| format!("failed to create registries dir for '{}'", self.name))?;
 
         if path.join(".git").is_dir() {
+            let origin = std::process::Command::new("git")
+                .args(["remote", "get-url", "origin"])
+                .current_dir(&path)
+                .output()
+                .context("failed to inspect registry cache origin")?;
+            if !origin.status.success()
+                || String::from_utf8_lossy(&origin.stdout).trim() != self.url
+            {
+                anyhow::bail!(
+                    "Registry cache {} has a different origin; use a different registry name or clear that cache",
+                    path.display()
+                );
+            }
             self.run_git(&["fetch", "--quiet", "origin"], &path, verbose)?;
             self.run_git(
                 &["reset", "--hard", "--quiet", "FETCH_HEAD"],

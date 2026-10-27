@@ -96,7 +96,7 @@
 - [x] Registry management commands (`ccgo registry add/list/remove/update/info`) ✅
 
 **Phase 3 - Publishing Tools (v3.2.1)** ✅
-- [x] `ccgo publish index` command ✅
+- [x] `ccgo publish package` command ✅
 - [x] Auto-generate package metadata JSON from CCGO.toml ✅
 - [x] Version discovery from Git tags ✅
 - [x] SHA-256 checksum generation via `--checksum` flag ✅

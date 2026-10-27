@@ -1,0 +1,176 @@
+{
+  "note": "Received Git PACK stream over file:// upload-pack. Excludes protocol framing, SSH/TLS, latency and checkout. Snapshot contains one baseline commit; history costs measured separately.",
+  "scenarios": [
+    {
+      "format": "array",
+      "versions": 1000,
+      "full_clone_pack_bytes": [
+        58269,
+        58269,
+        58269
+      ],
+      "shallow_clone_pack_bytes": [
+        58269,
+        58269,
+        58269
+      ],
+      "one_release_fetch_pack_bytes": [
+        472,
+        471,
+        475
+      ]
+    },
+    {
+      "format": "jsonl",
+      "versions": 1000,
+      "full_clone_pack_bytes": [
+        57363,
+        57363,
+        57363
+      ],
+      "shallow_clone_pack_bytes": [
+        57363,
+        57363,
+        57363
+      ],
+      "one_release_fetch_pack_bytes": [
+        513,
+        510,
+        513
+      ]
+    },
+    {
+      "format": "split",
+      "versions": 1000,
+      "full_clone_pack_bytes": [
+        255955,
+        255955,
+        255955
+      ],
+      "shallow_clone_pack_bytes": [
+        255955,
+        255955,
+        255955
+      ],
+      "one_release_fetch_pack_bytes": [
+        774,
+        776,
+        775
+      ]
+    },
+    {
+      "format": "array",
+      "versions": 10000,
+      "full_clone_pack_bytes": [
+        577740,
+        577740,
+        577740
+      ],
+      "shallow_clone_pack_bytes": [
+        577740,
+        577740,
+        577740
+      ],
+      "one_release_fetch_pack_bytes": [
+        559,
+        566,
+        555
+      ]
+    },
+    {
+      "format": "jsonl",
+      "versions": 10000,
+      "full_clone_pack_bytes": [
+        570461,
+        570461,
+        570461
+      ],
+      "shallow_clone_pack_bytes": [
+        570461,
+        570461,
+        570461
+      ],
+      "one_release_fetch_pack_bytes": [
+        577,
+        590,
+        572
+      ]
+    },
+    {
+      "format": "split",
+      "versions": 10000,
+      "full_clone_pack_bytes": [
+        2569725,
+        2569725,
+        2569725
+      ],
+      "shallow_clone_pack_bytes": [
+        2569725,
+        2569725,
+        2569725
+      ],
+      "one_release_fetch_pack_bytes": [
+        794,
+        798,
+        798
+      ]
+    },
+    {
+      "format": "array",
+      "versions": 100000,
+      "full_clone_pack_bytes": [
+        5775851,
+        5775851,
+        5775851
+      ],
+      "shallow_clone_pack_bytes": [
+        5775851,
+        5775851,
+        5775851
+      ],
+      "one_release_fetch_pack_bytes": [
+        1560,
+        1564,
+        1566
+      ]
+    },
+    {
+      "format": "jsonl",
+      "versions": 100000,
+      "full_clone_pack_bytes": [
+        5700357,
+        5700357,
+        5700357
+      ],
+      "shallow_clone_pack_bytes": [
+        5700357,
+        5700357,
+        5700357
+      ],
+      "one_release_fetch_pack_bytes": [
+        1393,
+        1405,
+        1396
+      ]
+    },
+    {
+      "format": "split",
+      "versions": 100000,
+      "full_clone_pack_bytes": [
+        25790167,
+        25790167,
+        25790167
+      ],
+      "shallow_clone_pack_bytes": [
+        25790167,
+        25790167,
+        25790167
+      ],
+      "one_release_fetch_pack_bytes": [
+        950,
+        934,
+        942
+      ]
+    }
+  ]
+}

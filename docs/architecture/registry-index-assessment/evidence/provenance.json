@@ -1,0 +1,264 @@
+{
+  "recorded_at": "2026-10-27T03:58:57.795161+00:00",
+  "git_head": "e54043cdf50a07bc93d151043427773fde1de533",
+  "note": "Includes the previously authorized, uncommitted publish package naming changes. Content hashes identify the assessed code; upstream HEAD alone does not.",
+  "sources": [
+    {
+      "id": "cargo-index",
+      "url": "https://doc.rust-lang.org/cargo/reference/registry-index.html",
+      "snapshot": "evidence/cargo-index.source"
+    },
+    {
+      "id": "cargo-yank",
+      "url": "https://doc.rust-lang.org/cargo/commands/cargo-yank.html",
+      "snapshot": "evidence/cargo-yank.source"
+    },
+    {
+      "id": "swift-registry",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift-package-manager/main/Documentation/PackageRegistry/Registry.md",
+      "snapshot": "evidence/swift-registry.source"
+    },
+    {
+      "id": "swift-registry-spec",
+      "url": "https://raw.githubusercontent.com/swiftlang/swift-evolution/main/proposals/0292-package-registry-service.md",
+      "snapshot": "evidence/swift-registry-spec.source"
+    },
+    {
+      "id": "cocoapods-cdn",
+      "url": "https://raw.githubusercontent.com/CocoaPods/cdn.cocoapods.org/master/README.md",
+      "snapshot": "evidence/cocoapods-cdn.source"
+    },
+    {
+      "id": "cocoapods-cdn-design",
+      "url": "https://blog.cocoapods.org/CocoaPods-1.7.2/",
+      "snapshot": "evidence/cocoapods-cdn-design.source"
+    },
+    {
+      "id": "conan-revisions",
+      "url": "https://docs.conan.io/2/tutorial/versioning/revisions.html",
+      "snapshot": "evidence/conan-revisions.source"
+    },
+    {
+      "id": "conan-api",
+      "url": "https://docs.conan.io/2/reference/commands/list.html",
+      "snapshot": "evidence/conan-api.source"
+    }
+  ],
+  "files": [
+    {
+      "path": "Cargo.lock",
+      "bytes": 73034,
+      "sha256": "8de1907679bee2f689c8f349707a6912f4c20def6583f829c26ea2abefb25cc8"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 2217,
+      "sha256": "f4611805ff69fc6bfcb53efcaced7e96d7f6221ad480fc5b487a6109535ce3ed"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/MEASUREMENTS.md",
+      "bytes": 9896,
+      "sha256": "7c385bd67b2d4ff4f87b88fecb4ceda40138bb1c8499f35edf6832ccb7e0b997"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/README.md",
+      "bytes": 28946,
+      "sha256": "6784fc7e245662ead16a359ee09561a5fe5852a637d32dd90db0bccd89034a0d"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/REPRODUCING.md",
+      "bytes": 8050,
+      "sha256": "13358b5a54c325bfeef28f95784a04c218d32b1d00458507bb6d52e630ee594b"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/benchmark.json",
+      "bytes": 110969,
+      "sha256": "ab86e1579adae840ab3516b76d5333d613d329f119f9158e7b5fafa284f68bb7"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/cargo-index.source",
+      "bytes": 44109,
+      "sha256": "9e458427827df353c5e4f311fe066731489d89aa4a87f09bc5e92794b6ad76fa"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/cargo-yank.source",
+      "bytes": 35598,
+      "sha256": "489b8f39fa1889728d2738b0f1caceffc1ad0479c3cfd15aab141f9cf314c35b"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/cocoapods-cdn-design.source",
+      "bytes": 18902,
+      "sha256": "c6bd5246bfe916b0bce6b9a5126244361503f6341e1a1bdf369168485fa5b89b"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/cocoapods-cdn.source",
+      "bytes": 3117,
+      "sha256": "bfffa4cad946f3bb6e618492baff44e17845d445535503fed6bf5b5377a90bb5"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/conan-api.source",
+      "bytes": 57114,
+      "sha256": "5299fffb868c5e93e0813c17e32546cf94be69c6a8fd46ddb30d3216df221e7f"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/conan-revisions.source",
+      "bytes": 47007,
+      "sha256": "f370a0dd82b19165349936c8fbc93c2a03786bc8eb6d5361400046a5614c306d"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/faults.json",
+      "bytes": 26040,
+      "sha256": "57f453e8f7e88107bff08d49084a87b24cfc30b766f5d03b4a77fe3b51c16739"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/format-conflicts.json",
+      "bytes": 9526,
+      "sha256": "35a29b49ef45d59ed2bd95163c205b4f5e6a35ba17295022ad4120b5623fe1b0"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/native.json",
+      "bytes": 16726,
+      "sha256": "03a2411f591fc88eb0bf563893de20a0bc6abb4252bbc2fe11cefa7d3f0dcebf"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/swift-registry-spec.source",
+      "bytes": 49867,
+      "sha256": "86b11c93cc04a58321444758ffee30e1fd0e9d2af6fe4c9f86f73e5106f4f78a"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/swift-registry.source",
+      "bytes": 55128,
+      "sha256": "4a63c9658fffbafbf8f42b86aa7729e4f069a264069818323b16844fd50dd131"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/transport.json",
+      "bytes": 3214,
+      "sha256": "91b5104703b544382881084751ea7a1763fe7bef5a97181490e24964f1d1c85e"
+    },
+    {
+      "path": "scripts/registry-index-assessment/benchmark.py",
+      "bytes": 14520,
+      "sha256": "ac2251b91940f655d785fb81ef75b3e76010983c5e801299fb531f79d6a6c6e5"
+    },
+    {
+      "path": "scripts/registry-index-assessment/faults.py",
+      "bytes": 12698,
+      "sha256": "408a1954068abd300ea15d696d8f7336dfdcca00826cede45c56e456cd49756c"
+    },
+    {
+      "path": "scripts/registry-index-assessment/format_conflicts.py",
+      "bytes": 3054,
+      "sha256": "30ea67b4beec94fe25ce21a6b9f843596e0c26441885928a22631d8a8b252e19"
+    },
+    {
+      "path": "scripts/registry-index-assessment/native.py",
+      "bytes": 5420,
+      "sha256": "8b18d032759ec190a05460de8007fb45c8a7349ae655965d380f8f1ce0c69efe"
+    },
+    {
+      "path": "scripts/registry-index-assessment/native.rs",
+      "bytes": 982,
+      "sha256": "39be2561926a10f667723dc0ac85ad20a6475caeebc045ddacd0c1ef00a043bb"
+    },
+    {
+      "path": "scripts/registry-index-assessment/provenance.py",
+      "bytes": 3987,
+      "sha256": "04b372f46b409c23df65e8542ab2e54e625db808ce1117d35282438daeace11f"
+    },
+    {
+      "path": "scripts/registry-index-assessment/summarize.py",
+      "bytes": 6145,
+      "sha256": "bc1b4dbfb585be06f1670c76c6c3ed10f47a7509571338ebb66aa48890264dd8"
+    },
+    {
+      "path": "scripts/registry-index-assessment/transport.py",
+      "bytes": 3115,
+      "sha256": "c1d3562ab2b636095a34acb47406c02f28450df26b8d7803f939b228319eceb3"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/commands/fetch.rs",
+      "bytes": 60135,
+      "sha256": "fae49954fba61d108415a2b18b8ed32702cf6f3004ff458294aaf6ebf5d236f0",
+      "original_path": "src/commands/fetch.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/commands/publish.rs",
+      "bytes": 73891,
+      "sha256": "dbbc3832d654d814f0bf58b3175e8659d999ed65ba50e71d1a9ae28c8bcab629",
+      "original_path": "src/commands/publish.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/commands/publish_artifact.rs",
+      "bytes": 9992,
+      "sha256": "dbb7c3c5438c3d806edd658a267952d2695cd20376e7999a90bf3bae3606c934",
+      "original_path": "src/commands/publish_artifact.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/commands/publish_index_destination.rs",
+      "bytes": 5867,
+      "sha256": "48b883e28dd3c5c102742486dc58c81c2f1e6f51632bdafb0503ae6c73a03662",
+      "original_path": "src/commands/publish_index_destination.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/commands/yank.rs",
+      "bytes": 12711,
+      "sha256": "b946a2ff5e975fcfeeae2ccbe741966e73d93d1d6d61b5cd6733bda1691fe913",
+      "original_path": "src/commands/yank.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/config/ccgo_toml.rs",
+      "bytes": 75016,
+      "sha256": "1be6f93aa622dc40e7e3d5b41920de2b519432f2be913107f8881c9a979e9d7a",
+      "original_path": "src/config/ccgo_toml.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/lockfile.rs",
+      "bytes": 16598,
+      "sha256": "f6b841b21c57a25276e174a2e2b9d6f530837ef3e534881177f555d1b57e684f",
+      "original_path": "src/lockfile.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/registry/cache.rs",
+      "bytes": 8606,
+      "sha256": "11a7c44b6f1b7492eb0b56567f41b546e63c6da313f5de952b234366d0cd8559",
+      "original_path": "src/registry/cache.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/registry/index.rs",
+      "bytes": 27046,
+      "sha256": "b37973a9ba331562fa2fa2cefb5901f5c8c198aa6e74d2ff5117441b370f9b64",
+      "original_path": "src/registry/index.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/registry/index_writer.rs",
+      "bytes": 7504,
+      "sha256": "071ff835e801c25123c47b48cd0e15f35e35a3371a512f25a9cf63b240544822",
+      "original_path": "src/registry/index_writer.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/registry/mod.rs",
+      "bytes": 1419,
+      "sha256": "caed94b3577cd4302a46dc948f67f0b742fa0f7f18b233e6fb9a947a089d6a36",
+      "original_path": "src/registry/mod.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/registry/resolve.rs",
+      "bytes": 7481,
+      "sha256": "4b743645c4f5d9426075e8d79d433f7b490722606de6bb2b4b9f7611e76f0c4b",
+      "original_path": "src/registry/resolve.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/registry/shorthand.rs",
+      "bytes": 13457,
+      "sha256": "991523dd8f27fbe3d774b342be450ebba8663b415b6aebf55676c2f754b928e2",
+      "original_path": "src/registry/shorthand.rs"
+    },
+    {
+      "path": "docs/architecture/registry-index-assessment/evidence/assessed-source/src/registry/version_discovery.rs",
+      "bytes": 9672,
+      "sha256": "06040251acbfb96fe88124305fee91b56359c6fa06268d7769675142a61ce8ac",
+      "original_path": "src/registry/version_discovery.rs"
+    }
+  ],
+  "implementation_snapshot": "Assessed source is frozen under evidence/assessed-source; subsequent fixes do not change the historical benchmark inputs."
+}

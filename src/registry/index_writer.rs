@@ -1,6 +1,6 @@
 //! Shared helpers for "write to a package-index Git repository".
 //!
-//! Both `ccgo publish index` (append a new VersionEntry) and `ccgo yank`
+//! Both `ccgo publish package` (append a new VersionEntry) and `ccgo yank`
 //! (flip yanked: true on an existing entry) clone the same kind of
 //! Git-based index repo, edit one JSON file, commit, and optionally push.
 //! This module owns the clone-edit-commit-push plumbing so the two

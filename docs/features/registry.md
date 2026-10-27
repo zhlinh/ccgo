@@ -20,7 +20,7 @@ CCGO splits "what packages exist" from "where the bytes live":
 **Tier 1 — Discovery (the index repo).** A Git repository whose JSON files
 list every published package and version. Browseable on the web, auditable
 via `git log`, queryable with `ccgo registry search`. Publishers run
-`ccgo publish index` to append a new `VersionEntry` whenever they ship.
+`ccgo publish package` to append a new `VersionEntry` whenever they ship.
 Because the index is just text in Git, code review, branch protection, and
 signed commits all apply for free.
 
@@ -54,18 +54,19 @@ registry = "mna"           # explicit selector
 [[dependencies]]
 name = "fmt"
 version = "10.2.1"
-# no registry = ... — ccgo walks all declared registries in declaration order,
-# first match wins
+# no registry = ... — exactly one registry must match this package/version
 ```
 
 The `[[dependencies]].registry` field is optional. When set, it pins the
 lookup to a single registry (and errors if the name is not in
-`[registries]`). When absent, ccgo iterates registries in TOML declaration
-order and takes the first match — same precedence rule as Cargo.
+`[registries]`). When absent, ccgo checks all configured registries and rejects
+multiple matching sources. Select a registry explicitly to resolve ambiguity.
+An explicit registry with no matching version fails instead of falling back to
+the local packages cache.
 
 ## Publisher CI workflow
 
-`ccgo publish index` is **append-only and per-version** (CocoaPods
+`ccgo publish package` is **append-only and per-version** (CocoaPods
 `pod repo push`-style). One invocation publishes exactly one tag into
 the index — re-publishing the same version is rejected. Pass
 `--index-version` and/or `--index-tag` to identify the version:
@@ -74,7 +75,7 @@ the index — re-publishing the same version is rejected. Pass
 ccgo build all --release
 ccgo package --release        # produces NAME_CCGO_PACKAGE-VERSION.zip
 # upload zip to your CDN/artifactory  (your script)
-ccgo publish index \
+ccgo publish package \
   --index-repo git@example.com:org/index.git \
   --index-name org-index \
   --index-version 25.2.9519653 \
@@ -90,7 +91,7 @@ don't follow the `v<version>` convention (e.g. `release-v1.0.0`, or a
 monorepo prefix like `stdcomm-v1.0.0`), pass both flags explicitly:
 
 ```bash
-ccgo publish index ... --index-version 1.0.0 --index-tag stdcomm-v1.0.0
+ccgo publish package ... --index-version 1.0.0 --index-tag stdcomm-v1.0.0
 ```
 
 Before publishing, ccgo runs `git rev-parse --verify <tag>` to make
@@ -403,20 +404,35 @@ To create your own package registry:
 
 When `ccgo fetch` resolves a `version`-only dependency through `[registries]`:
 
-1. Walk declared registries in TOML declaration order (or the single
+1. Check declared registries (or the single
    registry named by `[[dependencies]].registry`).
 2. For each registry, ensure the index is cloned into
    `~/.ccgo/registries/<name>/` (or pulled if already present).
 3. Look up the package's sharded JSON entry.
 4. Filter the entry's `versions[]` to non-yanked exact-version matches.
-5. **First match wins.** Take the first `VersionEntry` with a matching
-   `version`; subsequent registries are not consulted.
+5. Require a unique matching registry. Multiple matches require an explicit
+   `registry` selector; there is no implicit registry priority.
 6. If the entry has an `archive_url`, download it, verify
    SHA-256 against `checksum` (when present), and extract to
    `.ccgo/deps/<name>/`.
-7. The lockfile records `source = "registry+<index-url>"` plus the
-   `checksum`, so `ccgo fetch --locked` reproduces the same bytes
-   without re-resolving.
+7. The lockfile records `source = "registry+<index-url>"` and the SHA-256 of
+   downloaded bytes, including when the index omitted its optional checksum.
+   Git source fallback records the full commit instead.
+
+`ccgo fetch --locked` validates the configured registry identity, uses the exact
+locked version (including yanked versions), and verifies its locked checksum or
+Git commit. It never rewrites `CCGO.lock`, including timestamps. The registry
+and content are checked again even if an installation already exists; current
+locked retrieval still needs the registry and artifact/source to be accessible.
+A changed index checksum fails; removing that optional field cannot disable the
+locked checksum. A new archive URL is allowed when it serves identical bytes.
+Registry archives currently support ZIP only.
+
+Legacy `registry+<name>@<version>` locks are accepted when an explicit selector
+or a single configured registry identifies their source. Legacy locks missing
+a content anchor require `ccgo fetch --force` without `--locked` to regenerate.
+The cache honors `CCGO_HOME` and rejects reuse of a registry name whose cached
+Git origin differs from the configured URL.
 
 Note: this iteration does **not** parse semver requirements like `^1.0`
 or `~2.1`. The `version = "x.y.z"` value is matched as an exact string
@@ -424,25 +440,25 @@ against `VersionEntry.version`. Range support is a planned follow-up.
 
 ## Publishing to Index
 
-Use `ccgo publish index` to add your package to an index repository:
+Use `ccgo publish package` to add your package to an index repository:
 
 ```bash
 # Publish to a custom index
-ccgo publish index --index-repo https://github.com/user/my-packages.git
+ccgo publish package --index-repo https://github.com/user/my-packages.git
 
 # With custom name and push
-ccgo publish index \
+ccgo publish package \
   --index-repo https://github.com/company/packages.git \
   --index-name company \
   --index-push
 
 # Custom commit message
-ccgo publish index \
+ccgo publish package \
   --index-repo git@github.com:user/packages.git \
   --index-message "Add mylib v2.0.0"
 
 # Generate SHA-256 checksums for each version
-ccgo publish index \
+ccgo publish package \
   --index-repo https://github.com/user/packages.git \
   --checksum \
   --index-push

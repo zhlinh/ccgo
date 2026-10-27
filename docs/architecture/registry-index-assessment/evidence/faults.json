@@ -1,0 +1,142 @@
+{
+  "binary": "/Users/jaredhuang/Documents/Project/ccgo-group/ccgo/target/debug/ccgo",
+  "binary_sha256": "0163657b3215451620f25c8420912f4fa096fb26256b9eea5e068d25be8c9891",
+  "note": "Characterization assertions pin current observed behavior, including defects; not all are desired invariants.",
+  "cases": [
+    {
+      "case": "different_version_race",
+      "outcomes": [
+        {
+          "code": 0,
+          "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:f883253f39f2fe45f5276f2f32e84ed1191e524cfbea58f5994c0b664a3964c5\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/different/remote.git\n\ud83d\udce5 Updating existing index clone...\nUploading artifact to https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nArtifact uploaded. If a later index step fails, the artifact remains at https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\n\u2705 Written: de/mo/demo.json\n\ud83d\udcca Index metadata updated: 1 package(s)\n\u2705 Committed: Update demo to 1.2.3\n\n\ud83d\udce4 Pushing to remote...\n\u2705 Pushed successfully!\n\n\u2705 Package index updated successfully!\n\n\ud83d\udccb To use this package:\n   1. Add registry: ccgo registry add company file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/different/remote.git\n   2. Add dependency: [dependencies]\n      demo = \"^1.2.3\"\n",
+          "stderr": ""
+        },
+        {
+          "code": 1,
+          "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.4\n   tag:     v1.2.4\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.4/demo-ccgo-1.2.4.zip\nChecksum: sha256:f883253f39f2fe45f5276f2f32e84ed1191e524cfbea58f5994c0b664a3964c5\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/different/remote.git\n\ud83d\udce5 Updating existing index clone...\nUploading artifact to https://github.com/example/sdk/releases/download/v1.2.4/demo-ccgo-1.2.4.zip\nArtifact uploaded. If a later index step fails, the artifact remains at https://github.com/example/sdk/releases/download/v1.2.4/demo-ccgo-1.2.4.zip\n\u2705 Written: de/mo/demo.json\n\ud83d\udcca Index metadata updated: 1 package(s)\n\u2705 Committed: Update demo to 1.2.4\n\n\ud83d\udce4 Pushing to remote...\n",
+          "stderr": "Error: Failed to push to remote\n"
+        }
+      ],
+      "remote_versions": [
+        "1.2.3"
+      ],
+      "retry": {
+        "code": 1,
+        "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.4\n   tag:     v1.2.4\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.4/demo-ccgo-1.2.4.zip\nChecksum: sha256:f883253f39f2fe45f5276f2f32e84ed1191e524cfbea58f5994c0b664a3964c5\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/different/remote.git\n\ud83d\udce5 Updating existing index clone...\n",
+        "stderr": "Error: Failed to update index clone /var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/different/b/registry/publish/company; resolve Git/network issues there and retry. Local changes are preserved\n"
+      },
+      "orphan_assets": 1
+    },
+    {
+      "case": "same_version_race",
+      "outcomes": [
+        {
+          "code": 0,
+          "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:f883253f39f2fe45f5276f2f32e84ed1191e524cfbea58f5994c0b664a3964c5\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/same/remote.git\n\ud83d\udce5 Updating existing index clone...\nUploading artifact to https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nArtifact uploaded. If a later index step fails, the artifact remains at https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\n\u2705 Written: de/mo/demo.json\n\ud83d\udcca Index metadata updated: 1 package(s)\n\u2705 Committed: Update demo to 1.2.3\n\n\ud83d\udce4 Pushing to remote...\n\u2705 Pushed successfully!\n\n\u2705 Package index updated successfully!\n\n\ud83d\udccb To use this package:\n   1. Add registry: ccgo registry add company file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/same/remote.git\n   2. Add dependency: [dependencies]\n      demo = \"^1.2.3\"\n",
+          "stderr": ""
+        },
+        {
+          "code": 1,
+          "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:f883253f39f2fe45f5276f2f32e84ed1191e524cfbea58f5994c0b664a3964c5\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/same/remote.git\n\ud83d\udce5 Updating existing index clone...\nUploading artifact to https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\n",
+          "stderr": "Error: GitHub release asset upload failed\n"
+        }
+      ],
+      "remote_versions": [
+        "1.2.3"
+      ]
+    },
+    {
+      "case": "upload_then_commit_failure",
+      "first": {
+        "code": 1,
+        "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:24e5e668d99d04b5f5a805b5d9ae8ca3e71dcdcfdb3ff28da1b3c91053f7e504\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/commit/remote.git\n\ud83d\udce5 Updating existing index clone...\nUploading artifact to https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nArtifact uploaded. If a later index step fails, the artifact remains at https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\n\u2705 Written: de/mo/demo.json\n\ud83d\udcca Index metadata updated: 1 package(s)\n",
+        "stderr": "Error: Failed to commit index changes; check Git identity and hooks before retrying\n"
+      },
+      "retry": {
+        "code": 1,
+        "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:24e5e668d99d04b5f5a805b5d9ae8ca3e71dcdcfdb3ff28da1b3c91053f7e504\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/commit/remote.git\n\ud83d\udce5 Updating existing index clone...\n",
+        "stderr": "Error: Failed to update index clone /var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/commit/one/registry/publish/company; resolve Git/network issues there and retry. Local changes are preserved\n"
+      },
+      "manual_recovery": "commit staged state and push succeeds"
+    },
+    {
+      "case": "push_rejected_and_retry",
+      "first": {
+        "code": 1,
+        "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:24e5e668d99d04b5f5a805b5d9ae8ca3e71dcdcfdb3ff28da1b3c91053f7e504\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/push/remote.git\n\ud83d\udce5 Updating existing index clone...\nUploading artifact to https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nArtifact uploaded. If a later index step fails, the artifact remains at https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\n\u2705 Written: de/mo/demo.json\n\ud83d\udcca Index metadata updated: 1 package(s)\n\u2705 Committed: Update demo to 1.2.3\n\n\ud83d\udce4 Pushing to remote...\n",
+        "stderr": "Error: Failed to push to remote\n"
+      },
+      "retry": {
+        "code": 1,
+        "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:24e5e668d99d04b5f5a805b5d9ae8ca3e71dcdcfdb3ff28da1b3c91053f7e504\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/push/remote.git\n\ud83d\udce5 Updating existing index clone...\n",
+        "stderr": "Error: version '1.2.3' is already in the index (tag 'v1.2.3'); the index is append-only by design. Yank or hand-edit the JSON first if you really intend to overwrite.\n"
+      },
+      "duplicate": {
+        "code": 1,
+        "stdout": "Publishing library project...\n\n=== Publishing to Package Index ===\n\n\ud83d\udce6 Package: demo\n\ud83d\udcdd Description: No description\n\ud83d\udd17 Repository: https://example.invalid/demo.git\n\n\ud83d\udd16 Publishing single version:\n   version: 1.2.3\n   tag:     v1.2.3\nArtifact URL: https://github.com/example/sdk/releases/download/v1.2.3/demo-ccgo-1.2.3.zip\nChecksum: sha256:24e5e668d99d04b5f5a805b5d9ae8ca3e71dcdcfdb3ff28da1b3c91053f7e504\n\nIndex repository: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/push/remote.git\n\ud83d\udce5 Updating existing index clone...\n",
+        "stderr": "Error: version '1.2.3' is already in the index (tag 'v1.2.3'); the index is append-only by design. Yank or hand-edit the JSON first if you really intend to overwrite.\n"
+      },
+      "manual_recovery": "push retained commit succeeds"
+    },
+    {
+      "case": "locked_yank",
+      "initial": {
+        "code": 0,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/yank/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\nFound 1 dependency(ies) to install:\n  - leaf\n\n\ud83d\udcca Resolving dependency graph...\n   Strategy: first\n\n================================================================================\nInstalling Dependencies\n================================================================================\n\n\ud83d\udce6 Installing leaf...\n\ud83d\udce6 Resolving leaf 1.0.0 via registry 'company' (archive)\n   Archive: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/yank/leaf.zip\n   \u2713 Installed to /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/yank/consumer/.ccgo/deps/leaf\n\n\ud83d\udcdd Updated CCGO.lock\n   Added .ccgo/ to .gitignore\n   Added ccgo_build/ to .gitignore\n   Updated .vscode/settings.json (files.exclude / search.exclude)\n\n================================================================================\nInstallation Summary\n================================================================================\n\n\u2713 Successfully installed: 1\n  Dependencies installed to: .ccgo/deps/\n\n",
+        "stderr": "\n\u26a0\ufe0f  Warning: Failed to resolve transitive dependencies: Dependency 'leaf' version 1.0.0 not found in local cache (/Users/jaredhuang/.ccgo/packages/leaf/1.0.0).\nHint: in the source project run `ccgo install`\nto populate the cache, or add a git/path/zip source.\n   Continuing with direct dependencies only...\n"
+      },
+      "unmodified_locked_preflight": {
+        "code": 1,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/yank/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\ud83d\udccb Found existing CCGO.lock\n",
+        "stderr": "Error: Dependencies have changed since lockfile was generated.\nChanged dependencies: leaf\nRun 'ccgo fetch' to update the lockfile, or remove --locked flag.\n"
+      },
+      "diagnostic_workaround": "manually normalize lock source to registry+leaf@1.0.0 to reach later code",
+      "refetch": {
+        "code": 1,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/yank/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\ud83d\udccb Found existing CCGO.lock\n\nFound 1 dependency(ies) to install:\n  - leaf (locked: 1.0.0)\n\n\ud83d\udcca Resolving dependency graph...\n   Strategy: first\n\n================================================================================\nInstalling Dependencies\n================================================================================\n\n\ud83d\udce6 Installing leaf...\n   Removing existing installation...\n\n================================================================================\nInstallation Summary\n================================================================================\n\n\u2713 Successfully installed: 0\n  Dependencies installed to: .ccgo/deps/\n\u2717 Failed: 1\n\n",
+        "stderr": "\n\u26a0\ufe0f  Warning: Failed to resolve transitive dependencies: Dependency 'leaf' version 1.0.0 not found in local cache (/Users/jaredhuang/.ccgo/packages/leaf/1.0.0).\nHint: in the source project run `ccgo install`\nto populate the cache, or add a git/path/zip source.\n   Continuing with direct dependencies only...\n   \u2717 Failed to install leaf: Dependency 'leaf' v1.0.0 not found in local packages cache.\nExpected at: /Users/jaredhuang/.ccgo/packages/leaf/1.0.0\nIn the source project, run: ccgo install\nError: Some dependencies failed to install\n"
+      },
+      "lock_changed": true
+    },
+    {
+      "case": "locked_replace_both",
+      "initial": {
+        "code": 0,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_both/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\nFound 1 dependency(ies) to install:\n  - leaf\n\n\ud83d\udcca Resolving dependency graph...\n   Strategy: first\n\n================================================================================\nInstalling Dependencies\n================================================================================\n\n\ud83d\udce6 Installing leaf...\n\ud83d\udce6 Resolving leaf 1.0.0 via registry 'company' (archive)\n   Archive: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_both/leaf.zip\n   \u2713 Installed to /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_both/consumer/.ccgo/deps/leaf\n\n\ud83d\udcdd Updated CCGO.lock\n   Added .ccgo/ to .gitignore\n   Added ccgo_build/ to .gitignore\n   Updated .vscode/settings.json (files.exclude / search.exclude)\n\n================================================================================\nInstallation Summary\n================================================================================\n\n\u2713 Successfully installed: 1\n  Dependencies installed to: .ccgo/deps/\n\n",
+        "stderr": "\n\u26a0\ufe0f  Warning: Failed to resolve transitive dependencies: Dependency 'leaf' version 1.0.0 not found in local cache (/Users/jaredhuang/.ccgo/packages/leaf/1.0.0).\nHint: in the source project run `ccgo install`\nto populate the cache, or add a git/path/zip source.\n   Continuing with direct dependencies only...\n"
+      },
+      "unmodified_locked_preflight": {
+        "code": 1,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_both/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\ud83d\udccb Found existing CCGO.lock\n",
+        "stderr": "Error: Dependencies have changed since lockfile was generated.\nChanged dependencies: leaf\nRun 'ccgo fetch' to update the lockfile, or remove --locked flag.\n"
+      },
+      "diagnostic_workaround": "manually normalize lock source to registry+leaf@1.0.0 to reach later code",
+      "refetch": {
+        "code": 0,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_both/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\ud83d\udccb Found existing CCGO.lock\n\nFound 1 dependency(ies) to install:\n  - leaf (locked: 1.0.0)\n\n\ud83d\udcca Resolving dependency graph...\n   Strategy: first\n\n================================================================================\nInstalling Dependencies\n================================================================================\n\n\ud83d\udce6 Installing leaf...\n   Removing existing installation...\n\ud83d\udce6 Resolving leaf 1.0.0 via registry 'company' (archive)\n   Archive: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_both/leaf.zip\n   \u2713 Installed to /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_both/consumer/.ccgo/deps/leaf\n\n\ud83d\udcdd Updated CCGO.lock\n\n================================================================================\nInstallation Summary\n================================================================================\n\n\u2713 Successfully installed: 1\n  Dependencies installed to: .ccgo/deps/\n\n",
+        "stderr": "\n\u26a0\ufe0f  Warning: Failed to resolve transitive dependencies: Dependency 'leaf' version 1.0.0 not found in local cache (/Users/jaredhuang/.ccgo/packages/leaf/1.0.0).\nHint: in the source project run `ccgo install`\nto populate the cache, or add a git/path/zip source.\n   Continuing with direct dependencies only...\n"
+      },
+      "lock_changed": true
+    },
+    {
+      "case": "locked_replace_bytes",
+      "initial": {
+        "code": 0,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_bytes/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\nFound 1 dependency(ies) to install:\n  - leaf\n\n\ud83d\udcca Resolving dependency graph...\n   Strategy: first\n\n================================================================================\nInstalling Dependencies\n================================================================================\n\n\ud83d\udce6 Installing leaf...\n\ud83d\udce6 Resolving leaf 1.0.0 via registry 'company' (archive)\n   Archive: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_bytes/leaf.zip\n   \u2713 Installed to /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_bytes/consumer/.ccgo/deps/leaf\n\n\ud83d\udcdd Updated CCGO.lock\n   Added .ccgo/ to .gitignore\n   Added ccgo_build/ to .gitignore\n   Updated .vscode/settings.json (files.exclude / search.exclude)\n\n================================================================================\nInstallation Summary\n================================================================================\n\n\u2713 Successfully installed: 1\n  Dependencies installed to: .ccgo/deps/\n\n",
+        "stderr": "\n\u26a0\ufe0f  Warning: Failed to resolve transitive dependencies: Dependency 'leaf' version 1.0.0 not found in local cache (/Users/jaredhuang/.ccgo/packages/leaf/1.0.0).\nHint: in the source project run `ccgo install`\nto populate the cache, or add a git/path/zip source.\n   Continuing with direct dependencies only...\n"
+      },
+      "unmodified_locked_preflight": {
+        "code": 1,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_bytes/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\ud83d\udccb Found existing CCGO.lock\n",
+        "stderr": "Error: Dependencies have changed since lockfile was generated.\nChanged dependencies: leaf\nRun 'ccgo fetch' to update the lockfile, or remove --locked flag.\n"
+      },
+      "diagnostic_workaround": "manually normalize lock source to registry+leaf@1.0.0 to reach later code",
+      "refetch": {
+        "code": 1,
+        "stdout": "================================================================================\nCCGO Install - Install Project Dependencies\n================================================================================\n\nProject directory: /private/var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_bytes/consumer\nGlobal CCGO home: /Users/jaredhuang/.ccgo\n\n\ud83d\udcd6 Reading dependencies from CCGO.toml...\n\ud83d\udccb Found existing CCGO.lock\n\nFound 1 dependency(ies) to install:\n  - leaf (locked: 1.0.0)\n\n\ud83d\udcca Resolving dependency graph...\n   Strategy: first\n\n================================================================================\nInstalling Dependencies\n================================================================================\n\n\ud83d\udce6 Installing leaf...\n   Removing existing installation...\n\ud83d\udce6 Resolving leaf 1.0.0 via registry 'company' (archive)\n   Archive: file:///var/folders/c2/knld2h1d6czg0rkh9fgnyww00000gn/T/ccgo-index-faults-b6mcxbt_/replace_bytes/leaf.zip\n\n================================================================================\nInstallation Summary\n================================================================================\n\n\u2713 Successfully installed: 0\n  Dependencies installed to: .ccgo/deps/\n\u2717 Failed: 1\n\n",
+        "stderr": "\n\u26a0\ufe0f  Warning: Failed to resolve transitive dependencies: Dependency 'leaf' version 1.0.0 not found in local cache (/Users/jaredhuang/.ccgo/packages/leaf/1.0.0).\nHint: in the source project run `ccgo install`\nto populate the cache, or add a git/path/zip source.\n   Continuing with direct dependencies only...\n   \u2717 Failed to install leaf: checksum mismatch for leaf 1.0.0: index says sha256:f478d1116e5462370127665a52bbfe945f8cc897c538cbe2946d1b5e9f8699a2, downloaded sha256:beeedaff3fc0e5745230fc32f6632117ef67e33fb946a723664471f3aeaaac86\nError: Some dependencies failed to install\n"
+      },
+      "lock_changed": true
+    }
+  ]
+}

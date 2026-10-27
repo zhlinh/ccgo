@@ -1,0 +1,243 @@
+{
+  "binary": "/Users/jaredhuang/Documents/Project/ccgo-group/ccgo/target/debug/ccgo",
+  "binary_sha256": "0163657b3215451620f25c8420912f4fa096fb26256b9eea5e068d25be8c9891",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+  "note": "Resolver: release-optimized temporary crate importing production modules. CLI: supplied binary (debug in recorded run). Cold means fresh process, OS page cache not flushed.",
+  "scenarios": [
+    {
+      "versions": 1000,
+      "resolver_in_process": {
+        "samples_ms": [
+          0.480917,
+          0.336583,
+          0.33158299999999996,
+          0.33095800000000003,
+          0.330625,
+          0.416666,
+          0.332375,
+          0.329625,
+          0.332208,
+          0.327584,
+          0.432417,
+          0.346666,
+          0.34775,
+          0.34175,
+          0.340916,
+          0.419459,
+          0.341166,
+          0.335417,
+          0.34133399999999997,
+          0.3305,
+          0.41970799999999997,
+          0.33599999999999997,
+          0.33216700000000005,
+          0.331416,
+          0.331667
+        ],
+        "median_ms": 0.33599999999999997,
+        "min_ms": 0.327584,
+        "max_ms": 0.480917
+      },
+      "fresh_process_five_lookups": {
+        "samples_ms": [
+          370.268042,
+          7.036792,
+          6.861125,
+          6.8545,
+          6.946
+        ],
+        "median_ms": 6.946,
+        "min_ms": 6.8545,
+        "max_ms": 370.268042
+      },
+      "max_rss_bytes_macos": [
+        7045120,
+        7028736,
+        7012352,
+        7077888,
+        7094272
+      ],
+      "cli_publish_local": {
+        "samples_ms": [
+          109.374917,
+          102.364125,
+          101.579875,
+          101.849833,
+          112.545541
+        ],
+        "median_ms": 102.364125,
+        "min_ms": 101.579875,
+        "max_ms": 112.545541
+      },
+      "cli_yank_remote_file": {
+        "samples_ms": [
+          180.27425,
+          213.900916,
+          223.020875,
+          216.42825,
+          218.17725
+        ],
+        "median_ms": 216.42825,
+        "min_ms": 180.27425,
+        "max_ms": 223.020875
+      }
+    },
+    {
+      "versions": 10000,
+      "resolver_in_process": {
+        "samples_ms": [
+          3.764542,
+          3.149125,
+          3.0390420000000002,
+          3.103958,
+          3.085167,
+          3.84325,
+          3.170083,
+          3.2412500000000004,
+          3.2200420000000003,
+          3.120917,
+          3.873083,
+          3.237625,
+          3.344875,
+          3.184375,
+          3.125875,
+          3.812208,
+          3.184084,
+          3.130959,
+          3.105792,
+          3.145709,
+          3.7611670000000004,
+          3.1756670000000002,
+          3.177167,
+          3.247167,
+          3.148125
+        ],
+        "median_ms": 3.177167,
+        "min_ms": 3.0390420000000002,
+        "max_ms": 3.873083
+      },
+      "fresh_process_five_lookups": {
+        "samples_ms": [
+          22.256083,
+          22.38175,
+          22.535958,
+          22.118958,
+          22.1885
+        ],
+        "median_ms": 22.256083,
+        "min_ms": 22.118958,
+        "max_ms": 22.535958
+      },
+      "max_rss_bytes_macos": [
+        16203776,
+        17645568,
+        17612800,
+        16154624,
+        17629184
+      ],
+      "cli_publish_local": {
+        "samples_ms": [
+          288.162667,
+          276.820667,
+          298.219083,
+          292.166167,
+          289.312
+        ],
+        "median_ms": 289.312,
+        "min_ms": 276.820667,
+        "max_ms": 298.219083
+      },
+      "cli_yank_remote_file": {
+        "samples_ms": [
+          422.051667,
+          463.54375,
+          476.56025,
+          479.646291,
+          481.480417
+        ],
+        "median_ms": 476.56025,
+        "min_ms": 422.051667,
+        "max_ms": 481.480417
+      }
+    },
+    {
+      "versions": 100000,
+      "resolver_in_process": {
+        "samples_ms": [
+          38.755917000000004,
+          36.330957999999995,
+          33.586625000000005,
+          33.144833999999996,
+          33.249209,
+          38.325917000000004,
+          35.902334,
+          32.704666,
+          32.769084,
+          32.352417,
+          38.531000000000006,
+          36.432832999999995,
+          32.81,
+          33.274792,
+          33.239583,
+          37.131125000000004,
+          36.220042,
+          32.565958,
+          32.634833,
+          33.251541,
+          38.005458,
+          35.597708999999995,
+          33.026666000000006,
+          32.926249999999996,
+          32.982791
+        ],
+        "median_ms": 33.251541,
+        "min_ms": 32.352417,
+        "max_ms": 38.755917000000004
+      },
+      "fresh_process_five_lookups": {
+        "samples_ms": [
+          183.828416,
+          180.261959,
+          182.428916,
+          180.015791,
+          180.712708
+        ],
+        "median_ms": 180.712708,
+        "min_ms": 180.015791,
+        "max_ms": 183.828416
+      },
+      "max_rss_bytes_macos": [
+        164790272,
+        164773888,
+        160153600,
+        164806656,
+        164741120
+      ],
+      "cli_publish_local": {
+        "samples_ms": [
+          2249.328083,
+          2227.544,
+          2233.742875,
+          2224.563083,
+          2250.673666
+        ],
+        "median_ms": 2233.742875,
+        "min_ms": 2224.563083,
+        "max_ms": 2250.673666
+      },
+      "cli_yank_remote_file": {
+        "samples_ms": [
+          2973.692541,
+          3364.284209,
+          3302.731041,
+          3293.162708,
+          3344.322959
+        ],
+        "median_ms": 3302.731041,
+        "min_ms": 2973.692541,
+        "max_ms": 3364.284209
+      }
+    }
+  ],
+  "probe_cargo_lock": "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"android_system_properties\"\nversion = \"0.1.5\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311\"\ndependencies = [\n \"libc\",\n]\n\n[[package]]\nname = \"anyhow\"\nversion = \"1.0.100\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61\"\n\n[[package]]\nname = \"autocfg\"\nversion = \"1.5.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8\"\n\n[[package]]\nname = \"bumpalo\"\nversion = \"3.19.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510\"\n\n[[package]]\nname = \"cc\"\nversion = \"1.2.51\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"7a0aeaff4ff1a90589618835a598e545176939b97874f7abc7851caa0618f203\"\ndependencies = [\n \"find-msvc-tools\",\n \"shlex\",\n]\n\n[[package]]\nname = \"ccgo-index-native\"\nversion = \"0.1.0\"\ndependencies = [\n \"anyhow\",\n \"chrono\",\n \"serde\",\n \"serde_json\",\n \"walkdir\",\n]\n\n[[package]]\nname = \"cfg-if\"\nversion = \"1.0.4\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801\"\n\n[[package]]\nname = \"chrono\"\nversion = \"0.4.42\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2\"\ndependencies = [\n \"iana-time-zone\",\n \"js-sys\",\n \"num-traits\",\n \"wasm-bindgen\",\n \"windows-link\",\n]\n\n[[package]]\nname = \"core-foundation-sys\"\nversion = \"0.8.7\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b\"\n\n[[package]]\nname = \"find-msvc-tools\"\nversion = \"0.1.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"645cbb3a84e60b7531617d5ae4e57f7e27308f6445f5abf653209ea76dec8dff\"\n\n[[package]]\nname = \"iana-time-zone\"\nversion = \"0.1.64\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"33e57f83510bb73707521ebaffa789ec8caf86f9657cad665b092b581d40e9fb\"\ndependencies = [\n \"android_system_properties\",\n \"core-foundation-sys\",\n \"iana-time-zone-haiku\",\n \"js-sys\",\n \"log\",\n \"wasm-bindgen\",\n \"windows-core\",\n]\n\n[[package]]\nname = \"iana-time-zone-haiku\"\nversion = \"0.1.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f\"\ndependencies = [\n \"cc\",\n]\n\n[[package]]\nname = \"itoa\"\nversion = \"1.0.17\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2\"\n\n[[package]]\nname = \"js-sys\"\nversion = \"0.3.83\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8\"\ndependencies = [\n \"once_cell\",\n \"wasm-bindgen\",\n]\n\n[[package]]\nname = \"libc\"\nversion = \"0.2.178\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091\"\n\n[[package]]\nname = \"log\"\nversion = \"0.4.29\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897\"\n\n[[package]]\nname = \"memchr\"\nversion = \"2.7.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273\"\n\n[[package]]\nname = \"num-traits\"\nversion = \"0.2.19\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841\"\ndependencies = [\n \"autocfg\",\n]\n\n[[package]]\nname = \"once_cell\"\nversion = \"1.21.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d\"\n\n[[package]]\nname = \"proc-macro2\"\nversion = \"1.0.104\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9695f8df41bb4f3d222c95a67532365f569318332d03d5f3f67f37b20e6ebdf0\"\ndependencies = [\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"quote\"\nversion = \"1.0.42\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"a338cc41d27e6cc6dce6cefc13a0729dfbb81c262b1f519331575dd80ef3067f\"\ndependencies = [\n \"proc-macro2\",\n]\n\n[[package]]\nname = \"rustversion\"\nversion = \"1.0.22\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d\"\n\n[[package]]\nname = \"same-file\"\nversion = \"1.0.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502\"\ndependencies = [\n \"winapi-util\",\n]\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.228\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e\"\ndependencies = [\n \"serde_core\",\n \"serde_derive\",\n]\n\n[[package]]\nname = \"serde_core\"\nversion = \"1.0.228\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad\"\ndependencies = [\n \"serde_derive\",\n]\n\n[[package]]\nname = \"serde_derive\"\nversion = \"1.0.228\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn\",\n]\n\n[[package]]\nname = \"serde_json\"\nversion = \"1.0.148\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3084b546a1dd6289475996f182a22aba973866ea8e8b02c51d9f46b1336a22da\"\ndependencies = [\n \"itoa\",\n \"memchr\",\n \"serde\",\n \"serde_core\",\n \"zmij\",\n]\n\n[[package]]\nname = \"shlex\"\nversion = \"1.3.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64\"\n\n[[package]]\nname = \"syn\"\nversion = \"2.0.112\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"21f182278bf2d2bcb3c88b1b08a37df029d71ce3d3ae26168e3c653b213b99d4\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"unicode-ident\"\nversion = \"1.0.22\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"9312f7c4f6ff9069b165498234ce8be658059c6728633667c526e27dc2cf1df5\"\n\n[[package]]\nname = \"walkdir\"\nversion = \"2.5.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b\"\ndependencies = [\n \"same-file\",\n \"winapi-util\",\n]\n\n[[package]]\nname = \"wasm-bindgen\"\nversion = \"0.2.106\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"0d759f433fa64a2d763d1340820e46e111a7a5ab75f993d1852d70b03dbb80fd\"\ndependencies = [\n \"cfg-if\",\n \"once_cell\",\n \"rustversion\",\n \"wasm-bindgen-macro\",\n \"wasm-bindgen-shared\",\n]\n\n[[package]]\nname = \"wasm-bindgen-macro\"\nversion = \"0.2.106\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"48cb0d2638f8baedbc542ed444afc0644a29166f1595371af4fecf8ce1e7eeb3\"\ndependencies = [\n \"quote\",\n \"wasm-bindgen-macro-support\",\n]\n\n[[package]]\nname = \"wasm-bindgen-macro-support\"\nversion = \"0.2.106\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cefb59d5cd5f92d9dcf80e4683949f15ca4b511f4ac0a6e14d4e1ac60c6ecd40\"\ndependencies = [\n \"bumpalo\",\n \"proc-macro2\",\n \"quote\",\n \"syn\",\n \"wasm-bindgen-shared\",\n]\n\n[[package]]\nname = \"wasm-bindgen-shared\"\nversion = \"0.2.106\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"cbc538057e648b67f72a982e708d485b2efa771e1ac05fec311f9f63e5800db4\"\ndependencies = [\n \"unicode-ident\",\n]\n\n[[package]]\nname = \"winapi-util\"\nversion = \"0.1.11\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22\"\ndependencies = [\n \"windows-sys\",\n]\n\n[[package]]\nname = \"windows-core\"\nversion = \"0.62.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb\"\ndependencies = [\n \"windows-implement\",\n \"windows-interface\",\n \"windows-link\",\n \"windows-result\",\n \"windows-strings\",\n]\n\n[[package]]\nname = \"windows-implement\"\nversion = \"0.60.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn\",\n]\n\n[[package]]\nname = \"windows-interface\"\nversion = \"0.59.3\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358\"\ndependencies = [\n \"proc-macro2\",\n \"quote\",\n \"syn\",\n]\n\n[[package]]\nname = \"windows-link\"\nversion = \"0.2.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5\"\n\n[[package]]\nname = \"windows-result\"\nversion = \"0.4.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5\"\ndependencies = [\n \"windows-link\",\n]\n\n[[package]]\nname = \"windows-strings\"\nversion = \"0.5.1\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091\"\ndependencies = [\n \"windows-link\",\n]\n\n[[package]]\nname = \"windows-sys\"\nversion = \"0.61.2\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc\"\ndependencies = [\n \"windows-link\",\n]\n\n[[package]]\nname = \"zmij\"\nversion = \"1.0.6\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\nchecksum = \"aac060176f7020d62c3bcc1cdbcec619d54f48b07ad1963a3f80ce7a0c17755f\"\n"
+}

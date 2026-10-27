@@ -4,6 +4,9 @@
 
 ## 概述
 
+使用 `ccgo publish package` 将 CCGO 包发布到注册表。原来的
+`ccgo publish index` 保留为兼容别名；现有 `--index-*` 参数与索引配置保持不变。
+
 CCGO 提供跨多个平台和包管理器的统一发布功能：
 
 - **Android**: Maven Local、Maven Central、私有 Maven 仓库
@@ -22,7 +25,7 @@ CCGO 提供跨多个平台和包管理器的统一发布功能：
 | CocoaPods | 校验 podspec | CocoaPods Trunk | `--remote` 指定 Specs 仓库 |
 | SPM | 校验 manifest；`--push` 创建本地版本 tag | 无统一官方直传入口，明确报错 | `--remote` 指定 Git remote，`--push` 推版本 tag |
 | Conan | 导出到本地缓存 | 固定 ConanCenter 贡献流程，提示提交 PR；不直传 | `--remote` 指定 Conan remote |
-| Index | 校验索引输入；`--push` 更新并提交本地索引 | 默认 CCGO 索引仓库 | `--remote` 查找已配置的 CCGO 索引仓库 |
+| Package | 校验索引输入；`--push` 更新并提交本地索引 | 默认 CCGO 索引仓库 | `--remote` 查找已配置的 CCGO 索引仓库 |
 
 SPM 与 Index 统一用 `--push` 执行发布。不传时只校验，不创建 tag、不更新或提交索引，也不 clone/pull 索引仓库。`local --push` 只写入本地；远端 registry 的 `--push` 才推送。旧 `--index-push` 是兼容别名。Apple 二进制托管包含 SPM 时也遵循不加 `--push` 只校验的规则；仅 CocoaPods 的显式 artifact-provider 上传流程保持原行为。
 
@@ -93,7 +96,7 @@ ccgo publish ohos --registry official --skip-build
 | Apple / SPM | 含 `Package.swift` 的包仓库目录；指定 provider 时为二进制目录 | `Package.swift`；指定 provider 时支持 `.zip` | 当前目录；provider 模式查找 release Apple SDK ZIP |
 | Conan | 含 `conanfile.py` 的 recipe 目录 | Python recipe 文件（通常为 `conanfile.py`）、包含该 recipe 的 `.zip` | 按原逻辑查找 CCGO 工程 |
 | Doc | 含 `mkdocs.yml` 或 `mkdocs.yaml` 的工程目录 | MkDocs `.yml` / `.yaml` 配置文件、包含 MkDocs 工程的 `.zip` | 当前工程的 MkDocs 配置 |
-| Index | 含唯一 SDK ZIP 的目录 | SDK `.zip`，用于计算 checksum | 默认 `target/release/package/` 路径 |
+| Package | 含唯一 SDK ZIP 的目录 | SDK `.zip`，用于计算 checksum | 默认 `target/release/package/` 路径 |
 
 Android/OHOS 产物目录和 SDK ZIP 中会递归查找对应文件，Index 目录递归查找 ZIP；多个候选文件会报错，需指定精确文件。工程目录优先按工程发布：Android 以 `gradlew`、OHOS 以 `oh-package.json5` 为标识。CocoaPods 只在指定目录本层查找 podspec。Apple 的文件输入需要对应 `--manager`；`--manager all` 的目录必须同时含 podspec 和 `Package.swift`。
 
@@ -111,7 +114,7 @@ ccgo publish conan --path ./recipes/conanfile.py --registry local
 ccgo publish doc --path ./docs-project/mkdocs.yml
 ccgo publish doc --path ./docs-project.zip
 ccgo publish conan --path ./conan-project.zip --registry local
-ccgo publish index --version 1.2.3 --index-repo ./package-index \
+ccgo publish package --version 1.2.3 --index-repo ./package-index \
   --path ./artifacts/SDK.zip --checksum \
   --archive-url-template 'https://cdn.example.com/{name}-{version}.zip'
 ```
@@ -143,7 +146,7 @@ Doc ZIP 发布从执行命令时所在的 Git 仓库运行 `mkdocs gh-deploy`，
 Index 支持 `--artifact-provider maven|github`。`--path` 可指定 ZIP 或包含唯一 ZIP 的目录；默认查找 `target/release/package/<大写项目名>_CCGO_PACKAGE-<版本>.zip`。直接上传已有 ZIP，自动生成下载 URL 并计算 SHA-256 写入索引，无需手写 URL 或添加 `--checksum`。provider 模式不能同时指定 `--archive-url-template`。
 
 ```bash
-ccgo publish index --registry private --remote company \
+ccgo publish package --registry private --remote company \
   --artifact-provider maven --artifact-group com.example \
   --path ./STDCOMM_CCGO_PACKAGE-0.0.5.zip --push
 ```
@@ -967,20 +970,20 @@ Index 的 `--registry` 决定索引 Git 仓库，包的源仓库仍由项目 `or
 
 ```bash
 # 校验默认版本和已有源 tag，不更新索引
-ccgo publish index --registry local
+ccgo publish package --registry local
 
 # 离线更新并提交本地索引，默认 $CCGO_HOME/registry/publish/local
-ccgo publish index --registry local --push
+ccgo publish package --registry local --push
 
 # 指定独立的本地索引目录（不能是项目源仓库或其父目录）
-ccgo publish index --registry local --index-repo ./package-index --push
+ccgo publish package --registry local --index-repo ./package-index --push
 
 # 官方索引：固定使用 CCGO 默认仓库；--push 需要对应写权限
-ccgo publish index --registry official --push
+ccgo publish package --registry official --push
 
 # 先配置私有索引；也可使用 CCGO.toml 的 [registries]
 ccgo registry add company git@github.com:company/ccgo-index.git
-ccgo publish index --registry private --remote company --push
+ccgo publish package --registry private --remote company --push
 ```
 
 `official` 固定为 `git@github.com:zhlinh/ccgo-index.git`。`private` 按 `--remote` 先查项目 `[registries]`，再查全局 `ccgo registry add` 配置；未配置时明确报错，不会回退到其他仓库。这里的 remote 是 CCGO registry 名称，不是项目 Git remote 名称。远端索引准备在 `$CCGO_HOME/registry/publish/<名称>/`（默认 `$CCGO_HOME` 为 `~/.ccgo`）。不加 `--push` 时只做本地校验，不创建/更新索引工作目录或提交，也不 clone/pull。该阶段无法确认远端重复版本；实际发布时会拉取索引并检查重复版本。

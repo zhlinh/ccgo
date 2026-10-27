@@ -793,7 +793,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 
 ### 参数
 
-- `<PLATFORM>` - 要发布的平台：android、ios、macos、apple、ohos、conan、kmp
+- `<PLATFORM>` - 要发布的平台：android、apple、ohos、conan、kmp、package、doc
 
 ### 选项
 

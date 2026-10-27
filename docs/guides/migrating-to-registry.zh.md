@@ -52,12 +52,12 @@ registry = "org"
 * 消费方从 CDN 直接下载一个归档 zip。不传 git 历史，消费侧 clone 后
   也不必再构建。
 * 加一个新的兄弟库时，对现有消费方零改动 —— 只要新项目跑一次
-  `ccgo publish index` 即可。
+  `ccgo publish package` 即可。
 
 ## 第一步 —— 引导索引仓库
 
 新建一个 Git 仓库专门承载包索引。它一开始是空的，由各项目的
-`ccgo publish index` 逐步填充。
+`ccgo publish package` 逐步填充。
 
 ```bash
 # 在你的 Git 服务上：先建一个空仓库，例如 org/ccgo-index.git
@@ -80,7 +80,7 @@ git push origin master
 ```
 
 引导到这一步就够了。具体目录结构（按包名分片，每个包一个 JSON）由
-后续每次 `ccgo publish index` 调用按需创建。
+后续每次 `ccgo publish package` 调用按需创建。
 
 ## 第二步 —— 每个项目的 CI 工作流
 
@@ -100,14 +100,14 @@ ccgo package --release
 
 # 3. 把 zip 上传到你的 CDN / artifactory。
 #    （沿用你已有的发布上传脚本即可。目标 URL 必须与下面
-#    `ccgo publish index` 里传的模板一致。）
+#    `ccgo publish package` 里传的模板一致。）
 your-upload-script target/release/macos/STDCOMM_CCGO_PACKAGE-25.2.9519653.zip \
   https://artifacts.example.com/stdcomm/
 
-# 4. 把新版本追加到共享索引里。每次 `ccgo publish index` 仅发布
+# 4. 把新版本追加到共享索引里。每次 `ccgo publish package` 仅发布
 #    一个版本(append-only,重复版本会被拒绝)。用 `--index-version`
 #    指定版本号(tag 约定不是 `v<version>` 时再加 `--index-tag`)。
-ccgo publish index \
+ccgo publish package \
   --index-repo git@git.example.com:org/ccgo-index.git \
   --index-name org-index \
   --index-version 25.2.9519653 \
