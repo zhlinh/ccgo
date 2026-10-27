@@ -69,11 +69,11 @@ wall-clock performance claim.
 
 The snapshot is per registry, not a transaction spanning multiple registries.
 Two concurrent commands each perform their own synchronization; they serialize
-cache mutation but do not share a freshness TTL. Direct Git source checkout
-caches, concurrent writes to the same project's installation directory and
-external tools deleting cache directories are outside this registry-index
-protocol. Cache cleanup coordinates registry users, not every other CCGO cache
-consumer.
+cache mutation but do not share a freshness TTL. Fetch's Git source checkout
+protocol is described in [git-checkout-cache.md](git-checkout-cache.md). Concurrent
+writes to the same project's installation directory and external tools deleting
+cache directories remain outside these protocols. Cache cleanup coordinates
+fetch, registry and resolver users, not every other CCGO cache consumer.
 
 OS locks release when a process exits. A forced termination can leave a snapshot
 ref, its token file or a clone staging directory; those do not block subsequent

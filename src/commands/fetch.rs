@@ -136,6 +136,9 @@ impl FetchCommand {
         println!("Global CCGO home: {}", ccgo_home.display());
 
         self.clean_global_cache(&ccgo_home)?;
+        let _home_guard = crate::registry::cache_access::home_lock(&ccgo_home, false)?;
+
+        let _project_guard = crate::registry::cache_access::project_lock(&project_dir)?;
 
         // Load CCGO.toml
         println!("\n📖 Reading dependencies from CCGO.toml...");
@@ -444,12 +447,6 @@ impl FetchCommand {
             return Ok(installed);
         }
 
-        // Remove existing installation if force
-        if install_path.exists() {
-            println!("   Removing existing installation...");
-            Self::clean_install_path(&install_path)?;
-        }
-
         self.install_patched_dependency(dep, context, locked, &install_path)
     }
 
@@ -675,6 +672,9 @@ impl FetchCommand {
         let config = context.config;
         let registries = &mut *context.registries;
         // Install based on effective source type
+        if source.path.is_some() || source.git.is_none() {
+            Self::clean_install_path(install_path)?;
+        }
         if let Some(path) = source.path {
             // Local path dependency
             self.install_from_local_path(&dep.name, &dep.version, path, project_dir, install_path)
@@ -1281,29 +1281,24 @@ impl FetchCommand {
         }
         println!("   Installing from git repository...");
 
-        // Global git cache layout (Cargo-inspired):
-        //   $CCGO_HOME/git/checkouts/<hash>/  — working tree
-        // Legacy layout (pre-v3.5), still read by the resolver for back-compat:
-        //   $CCGO_HOME/registry/<name>-<hash16>/
-        let hash_input = match locked_rev {
-            Some(rev) => format!("{dep_name}:{git_url}:{rev}"),
-            None => format!("{dep_name}:{git_url}"),
-        };
-        let full_hash = format!("{:x}", md5::compute(hash_input.as_bytes()));
-        let checkouts_dir = ccgo_home.join("git").join("checkouts");
-        fs::create_dir_all(&checkouts_dir)?;
-        let registry_path = checkouts_dir.join(&full_hash);
+        let checkout = crate::registry::git_cache::prepare(
+            ccgo_home,
+            &crate::registry::git_cache::GitCacheSpec {
+                name: dep_name,
+                url: git_url,
+                branch,
+                revision: locked_rev,
+            },
+            self.force,
+        )?;
+        let registry_path = &checkout.path;
 
-        self.prepare_git_checkout(&registry_path, git_url, branch)?;
-
-        Self::checkout_locked_revision(&registry_path, locked_rev)?;
-
-        let git_info = Self::get_git_info(&registry_path);
+        let git_info = Self::get_git_info(registry_path);
         if locked_rev.is_some() && git_info.as_ref().and_then(|info| info.dirty) == Some(true) {
             bail!("Locked Git checkout is dirty; use --force to retrieve the locked commit again");
         }
 
-        Self::link_validated_checkout(&registry_path, install_path, self.copy)?;
+        Self::link_validated_checkout(registry_path, install_path, self.copy)?;
 
         println!("   ✓ Installed to {}", install_path.display());
 
@@ -1315,7 +1310,7 @@ impl FetchCommand {
 
         // Try to get version from dependency's CCGO.toml if not specified
         let resolved_version = if version.is_empty() {
-            Self::get_dep_version(&registry_path).unwrap_or_else(|| "0.0.0".to_string())
+            Self::get_dep_version(registry_path).unwrap_or_else(|| "0.0.0".to_string())
         } else {
             version.to_string()
         };
@@ -1352,61 +1347,6 @@ impl FetchCommand {
             }
         }
         Self::create_symlink_or_copy(registry_path, install_path, copy)?;
-
-        Ok(())
-    }
-
-    fn checkout_locked_revision(registry_path: &Path, locked_rev: Option<&str>) -> Result<()> {
-        if let Some(rev) = locked_rev {
-            println!(
-                "   Checking out locked revision {}...",
-                &rev[..8.min(rev.len())]
-            );
-            let checkout = std::process::Command::new("git")
-                .args(["checkout", "--detach", rev])
-                .current_dir(registry_path)
-                .output()
-                .context("Failed to checkout revision")?;
-            if !checkout.status.success() {
-                bail!(
-                    "Git checkout failed: {}",
-                    String::from_utf8_lossy(&checkout.stderr)
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    fn prepare_git_checkout(
-        &self,
-        registry_path: &Path,
-        git_url: &str,
-        branch: Option<&str>,
-    ) -> Result<()> {
-        // Clone or update if not exists or force
-        if !registry_path.exists() || self.force {
-            if registry_path.exists() {
-                fs::remove_dir_all(registry_path)?;
-            }
-
-            println!("   Cloning repository...");
-            let mut cmd = std::process::Command::new("git");
-            cmd.args(["clone", git_url, registry_path.to_string_lossy().as_ref()]);
-
-            if let Some(branch_name) = branch {
-                cmd.args(["--branch", branch_name]);
-            }
-
-            let output = cmd.output().context("Failed to execute git clone")?;
-            if !output.status.success() {
-                bail!(
-                    "Git clone failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            println!("   ✓ Cloned to {}", registry_path.display());
-        }
 
         Ok(())
     }
@@ -1558,6 +1498,7 @@ impl FetchCommand {
         let ccgo_home = Self::get_ccgo_home();
 
         self.clean_global_cache(&ccgo_home)?;
+        let _home_guard = crate::registry::cache_access::home_lock(&ccgo_home, false)?;
 
         let mut success_count = 0;
         let mut failed_members: Vec<String> = Vec::new();
@@ -1637,6 +1578,7 @@ impl FetchCommand {
         _verbose: bool,
         registries: &mut RegistrySession,
     ) -> Result<usize> {
+        let _project_guard = crate::registry::cache_access::project_lock(member_path)?;
         // Load member's CCGO.toml
         let config_path = member_path.join("CCGO.toml");
         if !config_path.exists() {

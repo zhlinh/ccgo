@@ -264,3 +264,314 @@ fn clean_cache_waits_for_live_snapshot_then_rebuilds() {
     success(cleaner.wait_with_output().unwrap());
     assert_eq!(trace.count("clone"), 2);
 }
+
+fn git_source(fixture: &Fixture) -> PathBuf {
+    let source = fixture.tmp.path().join("git-source");
+    fs::create_dir(&source).unwrap();
+    git(&source, &["init", "-b", "main"]);
+    fs::write(
+        source.join("CCGO.toml"),
+        "[package]\nname='leaf'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(source.join("payload.txt"), "original").unwrap();
+    git(&source, &["add", "-A"]);
+    git(&source, &["commit", "-m", "source"]);
+    source
+}
+
+fn git_consumer(directory: &Path, source: &Path, branch: &str) {
+    fs::create_dir_all(directory).unwrap();
+    fs::write(directory.join("CCGO.toml"), format!("[package]\nname='consumer'\nversion='1.0.0'\n[[dependencies]]\nname='leaf'\nversion='1.0.0'\ngit='{}'\nbranch='{branch}'\n", file_url(source))).unwrap();
+}
+
+#[test]
+fn concurrent_git_checkouts_publish_one_complete_generation() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git_consumer(&fixture.consumer, &source, "main");
+    let second = fixture.tmp.path().join("git-consumer-two");
+    git_consumer(&second, &source, "main");
+    let trace = GitTrace::new(&fixture);
+    let first = trace
+        .command(&fixture, &fixture.consumer, &["fetch"], "clone")
+        .spawn()
+        .unwrap();
+    trace.wait_until_paused();
+    let mut next = trace
+        .command(&fixture, &second, &["fetch"], "")
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(next.try_wait().unwrap().is_none());
+    trace.release();
+    success(first.wait_with_output().unwrap());
+    success(next.wait_with_output().unwrap());
+    assert_eq!(trace.count("clone"), 1);
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(
+        fs::read_to_string(second.join(".ccgo/deps/leaf/payload.txt")).unwrap(),
+        "original"
+    );
+}
+
+#[test]
+fn force_git_refresh_preserves_old_generation_and_failed_refresh_preserves_installation() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git_consumer(&fixture.consumer, &source, "main");
+    success(fixture.fetch(&[]));
+    let original_tree = fs::read_link(fixture.consumer.join(".ccgo/deps/leaf")).unwrap();
+    let lock = fixture.lock();
+    let moved = fixture.tmp.path().join("git-source-unavailable");
+    fs::rename(&source, &moved).unwrap();
+    failure(fixture.fetch(&["--force"]), "Git clone failed");
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), lock);
+    assert_eq!(
+        fs::read_link(fixture.consumer.join(".ccgo/deps/leaf")).unwrap(),
+        original_tree
+    );
+    fs::rename(moved, &source).unwrap();
+    success(fixture.fetch(&["--force"]));
+    let replacement = fs::read_link(fixture.consumer.join(".ccgo/deps/leaf")).unwrap();
+    assert_ne!(replacement, original_tree);
+    assert_eq!(
+        fs::read_to_string(original_tree.join("payload.txt")).unwrap(),
+        "original"
+    );
+}
+
+#[test]
+fn concurrent_branches_have_separate_cache_identities() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git(&source, &["checkout", "-b", "other"]);
+    fs::write(source.join("payload.txt"), "other").unwrap();
+    git(&source, &["add", "-A"]);
+    git(&source, &["commit", "-m", "other branch"]);
+    git_consumer(&fixture.consumer, &source, "main");
+    let second = fixture.tmp.path().join("other-branch-consumer");
+    git_consumer(&second, &source, "other");
+    let trace = GitTrace::new(&fixture);
+    let first = trace
+        .command(&fixture, &fixture.consumer, &["fetch"], "clone")
+        .spawn()
+        .unwrap();
+    trace.wait_until_paused();
+    success(
+        trace
+            .command(&fixture, &second, &["fetch"], "")
+            .output()
+            .unwrap(),
+    );
+    trace.release();
+    success(first.wait_with_output().unwrap());
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(
+        fs::read_to_string(second.join(".ccgo/deps/leaf/payload.txt")).unwrap(),
+        "other"
+    );
+    assert_eq!(trace.count("clone"), 2);
+}
+
+#[test]
+fn dependency_graph_reads_transitive_dependencies_from_generation_pointer() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    fs::create_dir(source.join("child")).unwrap();
+    fs::write(
+        source.join("child/CCGO.toml"),
+        "[package]\nname='child'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(source.join("CCGO.toml"), "[package]\nname='leaf'\nversion='1.0.0'\n[[dependencies]]\nname='child'\nversion='1.0.0'\npath='child'\n").unwrap();
+    git(&source, &["add", "-A"]);
+    git(&source, &["commit", "-m", "transitive dependency"]);
+    git_consumer(&fixture.consumer, &source, "main");
+    success(fixture.fetch(&[]));
+    let second = fixture.tmp.path().join("transitive-consumer");
+    git_consumer(&second, &source, "main");
+    success(fixture.ccgo_at(&second, &["fetch"]));
+    assert!(second.join(".ccgo/deps/child/CCGO.toml").is_file());
+    assert!(fs::read_to_string(second.join("CCGO.lock"))
+        .unwrap()
+        .contains("name = \"child\""));
+}
+
+#[test]
+fn legacy_checkout_remains_readable_and_force_never_deletes_it() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git_consumer(&fixture.consumer, &source, "main");
+    let manifest = fixture.consumer.join("CCGO.toml");
+    fs::write(
+        &manifest,
+        fs::read_to_string(&manifest)
+            .unwrap()
+            .replace("branch='main'\n", ""),
+    )
+    .unwrap();
+    let key = format!("{:x}", md5::compute(format!("leaf:{}", file_url(&source))));
+    let old = fixture.tmp.path().join("home/git/checkouts").join(key);
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    git(
+        fixture.tmp.path(),
+        &["clone", &file_url(&source), old.to_str().unwrap()],
+    );
+    success(fixture.fetch(&[]));
+    assert_eq!(
+        fs::read_link(fixture.consumer.join(".ccgo/deps/leaf"))
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
+        old.canonicalize().unwrap()
+    );
+    success(fixture.fetch(&["--force"]));
+    assert_eq!(
+        fs::read_to_string(old.join("payload.txt")).unwrap(),
+        "original"
+    );
+    assert_ne!(
+        fs::read_link(fixture.consumer.join(".ccgo/deps/leaf")).unwrap(),
+        old
+    );
+}
+
+#[test]
+fn relative_git_source_and_cache_home_remain_supported() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git_consumer(&fixture.consumer, &source, "main");
+    let manifest = fixture.consumer.join("CCGO.toml");
+    fs::write(
+        &manifest,
+        fs::read_to_string(&manifest)
+            .unwrap()
+            .replace(&file_url(&source), "../git-source"),
+    )
+    .unwrap();
+    let trace = GitTrace::new(&fixture);
+    success(
+        trace
+            .command(&fixture, &fixture.consumer, &["fetch"], "")
+            .env("CCGO_HOME", "relative-cache")
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(fixture.payload(), "original");
+}
+
+#[test]
+fn locked_git_tag_can_disappear_without_breaking_force_refetch() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git(&source, &["tag", "v1.0.0"]);
+    git_consumer(&fixture.consumer, &source, "v1.0.0");
+    success(fixture.fetch(&[]));
+    let lock = fixture.lock();
+    git(&source, &["tag", "-d", "v1.0.0"]);
+    success(fixture.fetch(&["--locked", "--force"]));
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), lock);
+}
+
+#[test]
+fn another_projects_force_refresh_does_not_change_locked_dependency_graph() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git_consumer(&fixture.consumer, &source, "main");
+    success(fixture.fetch(&[]));
+    let before = fixture.lock();
+    fs::create_dir(source.join("new-child")).unwrap();
+    fs::write(
+        source.join("new-child/CCGO.toml"),
+        "[package]\nname='new-child'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(source.join("CCGO.toml"), "[package]\nname='leaf'\nversion='1.0.0'\n[[dependencies]]\nname='new-child'\nversion='1.0.0'\npath='new-child'\n").unwrap();
+    fs::write(source.join("payload.txt"), "replacement").unwrap();
+    git(&source, &["add", "-A"]);
+    git(&source, &["commit", "-m", "new dependency"]);
+    let second = fixture.tmp.path().join("refresh-consumer");
+    git_consumer(&second, &source, "main");
+    success(fixture.ccgo_at(&second, &["fetch", "--force"]));
+    assert_eq!(
+        fs::read_to_string(second.join(".ccgo/deps/leaf/payload.txt")).unwrap(),
+        "replacement"
+    );
+    success(fixture.fetch(&["--locked"]));
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), before);
+    assert!(!fixture.consumer.join(".ccgo/deps/new-child").exists());
+}
+
+fn project_fetch_waits_for_writer(alias: bool, workspace: bool) {
+    let fixture = Fixture::new();
+    let trace = GitTrace::new(&fixture);
+    let (cwd, args) = if workspace {
+        fs::write(
+            fixture.tmp.path().join("CCGO.toml"),
+            "[workspace]\nmembers=['consumer']\n",
+        )
+        .unwrap();
+        (fixture.tmp.path(), vec!["fetch", "--workspace"])
+    } else {
+        (fixture.consumer.as_path(), vec!["fetch"])
+    };
+    let first = trace
+        .command(&fixture, cwd, &args, "clone")
+        .spawn()
+        .unwrap();
+    trace.wait_until_paused();
+    let second_cwd = if alias {
+        let path = fixture.tmp.path().join("consumer-alias");
+        std::os::unix::fs::symlink(&fixture.consumer, &path).unwrap();
+        path
+    } else {
+        fixture.consumer.clone()
+    };
+    let mut second = trace
+        .command(&fixture, &second_cwd, &["fetch", "--locked"], "")
+        .env("CCGO_HOME", fixture.tmp.path().join("independent-home"))
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        second.try_wait().unwrap().is_none(),
+        "fetch must wait before reading the missing lockfile"
+    );
+    trace.release();
+    success(first.wait_with_output().unwrap());
+    let lock = fixture.lock();
+    success(second.wait_with_output().unwrap());
+    assert_eq!(fixture.lock(), lock);
+    assert_eq!(fixture.payload(), "original");
+}
+
+#[test]
+fn same_project_fetch_serializes_across_cache_homes() {
+    project_fetch_waits_for_writer(false, false);
+}
+
+#[test]
+fn project_alias_fetch_uses_the_same_installation_lock() {
+    project_fetch_waits_for_writer(true, false);
+}
+
+#[test]
+fn workspace_and_member_fetch_share_the_installation_lock() {
+    project_fetch_waits_for_writer(false, true);
+}
+
+#[test]
+fn failed_fetch_releases_project_lock_for_retry() {
+    let fixture = Fixture::new();
+    let source = git_source(&fixture);
+    git_consumer(&fixture.consumer, &source, "missing-branch");
+    assert!(!fixture.fetch(&[]).status.success());
+    assert!(!fixture.consumer.join("CCGO.lock").exists());
+    git_consumer(&fixture.consumer, &source, "main");
+    success(fixture.fetch(&[]));
+    assert_eq!(fixture.payload(), "original");
+}

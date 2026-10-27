@@ -3,10 +3,10 @@ use anyhow::{Context, Result};
 use fs2::FileExt;
 use std::{fs::File, path::Path};
 
-pub(super) struct CacheLock(File);
+pub(crate) struct CacheLock(File);
 
 impl CacheLock {
-    pub(super) fn acquire(path: &Path, exclusive: bool) -> Result<Self> {
+    pub(crate) fn acquire(path: &Path, exclusive: bool) -> Result<Self> {
         let file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -28,7 +28,7 @@ impl Drop for CacheLock {
     }
 }
 
-pub(super) fn lock_directory(home: &Path) -> Result<std::path::PathBuf> {
+pub(crate) fn lock_directory(home: &Path) -> Result<std::path::PathBuf> {
     let absolute = if home.is_absolute() {
         home.to_path_buf()
     } else {
@@ -52,8 +52,17 @@ pub(super) fn lock_directory(home: &Path) -> Result<std::path::PathBuf> {
     Ok(directory)
 }
 
-pub(super) fn home_lock(home: &Path, exclusive: bool) -> Result<CacheLock> {
+pub(crate) fn home_lock(home: &Path, exclusive: bool) -> Result<CacheLock> {
     CacheLock::acquire(&lock_directory(home)?.join("home.lock"), exclusive)
+}
+
+/// Serialize installation and lockfile updates independently of CCGO_HOME.
+pub(crate) fn project_lock(project: &Path) -> Result<CacheLock> {
+    let directory = project.canonicalize()?.join(".ccgo");
+    std::fs::create_dir_all(&directory)?;
+    // Keep the file after unlocking so waiting processes always share one inode.
+    CacheLock::acquire(&directory.join("fetch.lock"), true)
+        .context("Failed to lock project for dependency installation")
 }
 
 /// Coordinate `fetch --clean-cache` with live registry snapshots and cache writers.

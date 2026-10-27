@@ -33,6 +33,7 @@
 
 pub mod cache;
 pub mod cache_access;
+pub mod git_cache;
 mod index;
 pub mod index_writer;
 pub mod resolve;
