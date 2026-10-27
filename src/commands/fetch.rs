@@ -25,6 +25,9 @@ mod registry_locked;
 #[path = "fetch_install.rs"]
 mod installation;
 
+#[path = "fetch_pending.rs"]
+mod pending;
+
 /// Version conflict resolution strategy (CLI wrapper)
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
 pub enum ConflictStrategy {
@@ -114,6 +117,7 @@ struct FetchContext<'a> {
     ccgo_home: &'a Path,
     config: &'a CcgoConfig,
     registries: &'a mut RegistrySession,
+    completed: Vec<String>,
 }
 
 impl FetchCommand {
@@ -214,6 +218,7 @@ impl FetchCommand {
             ccgo_home: &ccgo_home,
             config: &config,
             registries: &mut registries,
+            completed: Vec::new(),
         };
         let (installed_count, failed_count) =
             self.install_batch(&deps_to_process, &mut lockfile, context);
@@ -433,6 +438,7 @@ impl FetchCommand {
                 && dep.zip.is_none()
                 && locked.source.starts_with("registry+")
             {
+                pending::begin(project_dir, &dep.name)?;
                 return self.install_locked_registry(
                     dep,
                     config,
@@ -450,6 +456,7 @@ impl FetchCommand {
             return Ok(installed);
         }
 
+        pending::begin(project_dir, &dep.name)?;
         self.install_patched_dependency(dep, context, locked, &install_path)
     }
 
@@ -467,6 +474,7 @@ impl FetchCommand {
 
             match self.install_dependency(dep, context, locked_pkg.as_ref()) {
                 Ok(locked_package) => {
+                    context.completed.push(dep.name.clone());
                     installed_count += 1;
                     lockfile.upsert_package(locked_package);
                 }
@@ -499,6 +507,7 @@ impl FetchCommand {
             )?;
         }
 
+        pending::complete(context.project_dir, &context.completed)?;
         Ok(())
     }
 
@@ -535,6 +544,7 @@ impl FetchCommand {
             println!("   📦 Found in vendor/ directory (offline mode)");
             println!("   Source: {}", vendor_path.display());
 
+            pending::begin(project_dir, &dep.name)?;
             // Create symlink or copy from vendor
             Self::link_validated_checkout(&vendor_path, install_path, self.copy)?;
             println!("   ✓ Installed from vendor to {}", install_path.display());
@@ -553,7 +563,7 @@ impl FetchCommand {
         }
 
         // Check if already installed and matches lockfile
-        if install_path.exists() && !self.force {
+        if install_path.exists() && !self.force && !pending::exists(project_dir, &dep.name)? {
             if let Some(locked_pkg) = locked {
                 println!(
                     "   {} already installed (locked: {})",
@@ -565,6 +575,10 @@ impl FetchCommand {
                 "   {} already installed (use --force to reinstall)",
                 dep.name
             );
+            // This tree has no lock record yet, so the entry below cannot carry a
+            // content checksum. Mark it pending until that entry is persisted;
+            // otherwise a failed save would leave an unvalidated tree reusable.
+            pending::begin(project_dir, &dep.name)?;
             // Return a basic locked package for already installed deps
             return Ok(Some(LockedPackage {
                 name: dep.name.clone(),
@@ -1590,6 +1604,7 @@ impl FetchCommand {
             ccgo_home,
             config: &config,
             registries,
+            completed: Vec::new(),
         };
         let (installed_count, failed_count) =
             self.install_batch(&deps_to_process, &mut lockfile, context);
