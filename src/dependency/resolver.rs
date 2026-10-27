@@ -32,6 +32,7 @@ pub struct DependencyResolver {
 
     /// Version conflict resolver
     version_resolver: VersionResolver,
+    lockfile: Option<crate::lockfile::Lockfile>,
 }
 
 impl DependencyResolver {
@@ -43,6 +44,7 @@ impl DependencyResolver {
             project_root,
             ccgo_home,
             version_resolver: VersionResolver::new(),
+            lockfile: None,
         }
     }
 
@@ -58,6 +60,7 @@ impl DependencyResolver {
             project_root,
             ccgo_home,
             version_resolver: VersionResolver::with_strategy(strategy),
+            lockfile: None,
         }
     }
 
@@ -68,6 +71,8 @@ impl DependencyResolver {
 
     /// Resolve all transitive dependencies starting from the given dependencies
     pub fn resolve(&mut self, dependencies: &[DependencyConfig]) -> Result<DependencyGraph> {
+        let _home_guard = crate::registry::cache_access::home_lock(&self.ccgo_home, false)?;
+        self.lockfile = crate::lockfile::Lockfile::load(&self.project_root)?;
         println!("\n📊 Resolving dependency graph...");
         println!("   Strategy: {}", self.version_resolver.strategy_name());
 
@@ -265,27 +270,22 @@ impl DependencyResolver {
 
             Ok(dep_path)
         } else if let Some(ref git_url) = dep.git {
-            // Git dependency cache. Try new layout first (git/checkouts/<hash>/),
-            // then the legacy flat registry/<name>-<hash>/ for back-compat.
-            let hash_input = format!("{}:{}", dep.name, git_url);
-            let full_hash = format!("{:x}", md5::compute(hash_input.as_bytes()));
-            let short_hash = &full_hash[..16];
-
-            let new_path = self
-                .ccgo_home
-                .join("git")
-                .join("checkouts")
-                .join(&full_hash);
-            if new_path.exists() {
-                return Ok(new_path);
+            let spec = crate::registry::git_cache::GitCacheSpec {
+                name: &dep.name,
+                url: git_url,
+                branch: dep.branch.as_deref(),
+                revision: None,
+            };
+            if let Some(path) = crate::registry::git_cache::installed_path(
+                &self.project_root,
+                &spec,
+                &dep.version,
+                self.lockfile.as_ref(),
+            )? {
+                return Ok(path);
             }
-
-            let legacy_path = self
-                .ccgo_home
-                .join("registry")
-                .join(format!("{}-{}", dep.name, short_hash));
-            if legacy_path.exists() {
-                return Ok(legacy_path);
+            if let Some(path) = crate::registry::git_cache::cached_path(&self.ccgo_home, &spec)? {
+                return Ok(path);
             }
 
             anyhow::bail!(
