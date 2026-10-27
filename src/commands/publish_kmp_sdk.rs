@@ -1,30 +1,23 @@
 //! Prepare prebuilt CCGO KMP SDKs without changing the input or project tree.
 use super::input::extract_zip as extract;
 use anyhow::{bail, Context, Result};
-use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-#[derive(Serialize)]
-struct Artifact {
-    target: String,
-    path: PathBuf,
-    classifier: Option<String>,
-}
-
-#[derive(Serialize)]
-struct Manifest {
-    project: String,
-    version: String,
-    artifacts: Vec<Artifact>,
+#[derive(Clone)]
+pub(super) struct Artifact {
+    pub target: String,
+    pub path: PathBuf,
+    pub classifier: Option<String>,
 }
 
 pub(super) struct PreparedSdk {
-    pub manifest: PathBuf,
-    pub guard: PathBuf,
-    // Keep extracted artifacts alive until Gradle exits.
+    pub project: String,
+    pub version: String,
+    pub artifacts: Vec<Artifact>,
+    // Keep extracted artifacts alive until publishing finishes.
     _temporary: tempfile::TempDir,
 }
 
@@ -53,34 +46,13 @@ impl PreparedSdk {
                 .map(str::to_owned)
                 .with_context(|| format!("KMP SDK metadata requires {name}"))
         };
+        let project = field("project")?;
+        let version = field("version")?;
         let artifacts = collect_artifacts(&root)?;
-        let manifest = temporary.path().join("manifest.json");
-        fs::write(
-            &manifest,
-            serde_json::to_vec(&Manifest {
-                project: field("project")?,
-                version: field("version")?,
-                artifacts,
-            })?,
-        )?;
-        let guard = temporary.path().join("guard.gradle");
-        fs::write(
-            &guard,
-            r#"
-gradle.taskGraph.whenReady {
-    if (gradle.rootProject.allprojects.any { it.projectDir.canonicalPath == System.getenv('CCGO_PUBLISH_PROJECT_DIR') } &&
-        !gradle.rootProject.allprojects.any {
-        it.extensions.extraProperties.has('ccgoKmpSdkSupported') &&
-        it.extensions.extraProperties.get('ccgoKmpSdkSupported') == true
-    }) {
-        throw new GradleException('Update the CCGO Gradle plugin: this version does not support prebuilt KMP SDK publishing.')
-    }
-}
-"#,
-        )?;
         Ok(Self {
-            manifest,
-            guard,
+            project,
+            version,
+            artifacts,
             _temporary: temporary,
         })
     }
@@ -214,12 +186,11 @@ mod tests {
             ],
         );
         let sdk = PreparedSdk::prepare(&zip).unwrap();
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(&sdk.manifest).unwrap()).unwrap();
-        assert_eq!(manifest["version"], "0.0.5");
-        assert_eq!(manifest["artifacts"].as_array().unwrap().len(), 4);
-        for artifact in manifest["artifacts"].as_array().unwrap() {
-            assert!(Path::new(artifact["path"].as_str().unwrap()).is_file());
+        assert_eq!(sdk.project, "stdcomm");
+        assert_eq!(sdk.version, "0.0.5");
+        assert_eq!(sdk.artifacts.len(), 4);
+        for artifact in &sdk.artifacts {
+            assert!(artifact.path.is_file());
         }
         let unpacked = tmp.path().join("unpacked");
         fs::create_dir(&unpacked).unwrap();

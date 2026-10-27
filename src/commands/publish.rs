@@ -14,8 +14,20 @@ use crate::registry::{PackageEntry, PackageIndex, VersionEntry};
 #[path = "publish_input.rs"]
 mod input;
 
+#[path = "publish_maven.rs"]
+mod maven;
+
 #[path = "publish_kmp_sdk.rs"]
 mod kmp_sdk;
+
+#[path = "publish_kmp_maven.rs"]
+mod kmp_maven;
+
+#[path = "publish_android_maven.rs"]
+mod android_maven;
+
+#[path = "publish_central.rs"]
+mod central;
 
 #[path = "publish_apple_artifact.rs"]
 mod apple_artifact;
@@ -37,8 +49,22 @@ mod index_recovery;
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum ArtifactProvider {
+    /// Host the artifact in a Maven repository
     Maven,
+    /// Upload a GitHub release asset
     Github,
+}
+
+/// Maven destination for `--artifact-provider maven`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum MavenRegistry {
+    /// Write to MAVEN_LOCAL_PATH, or ~/.m2/repository
+    Local,
+    /// Sign a bundle and upload it to Maven Central via the Central Portal
+    Official,
+    /// PUT to CCGO_MAVEN_URL
+    #[default]
+    Private,
 }
 
 /// Publish target
@@ -76,14 +102,14 @@ impl std::fmt::Display for PublishTarget {
 }
 
 /// Registry type
-#[derive(Debug, Clone, Default, ValueEnum)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, ValueEnum)]
 pub enum RegistryType {
-    /// Local registry
+    /// Local destination or offline validation; never a network publish
     #[default]
     Local,
-    /// Official registry
+    /// The target's official public registry (Maven Central, OHPM, CocoaPods Trunk, official CCGO index)
     Official,
-    /// Private registry
+    /// Private registry configured with --remote (a URL or a configured name, target-specific)
     Private,
 }
 
@@ -126,11 +152,16 @@ pub struct PublishCommand {
     #[arg(value_enum)]
     pub target: PublishTarget,
 
-    /// Registry type
+    /// Package destination: local (local output/validation), official (the target's
+    /// official public registry), or private (the registry named/addressed by --remote).
+    ///
+    /// For Maven artifacts hosted by apple/package/doc providers, the ZIP destination is
+    /// selected separately with --maven-registry, not with --registry.
     #[arg(long, value_enum, default_value_t = RegistryType::Local)]
     pub registry: RegistryType,
 
-    /// Private destination: Maven/OHPM URL, or configured CocoaPods/Conan/SPM/Index repository name
+    /// Private destination: URL for Android/KMP/OHOS Maven/OHPM; name of a
+    /// CocoaPods Specs, Conan, SPM or Index remote
     #[arg(long, visible_aliases = ["url", "remote-name"], value_name = "URL_OR_NAME")]
     pub remote: Option<String>,
 
@@ -140,6 +171,7 @@ pub struct PublishCommand {
 
     /// Publish from a project/SDK directory, platform file, or supported ZIP.
     /// ZIP inputs are supported for Android, OHOS, KMP, Conan, Doc, and Apple with --artifact-provider.
+    /// Prebuilt Android AARs and KMP SDKs upload directly for --registry local/private.
     /// Relative paths are resolved from the current working directory.
     #[arg(long, value_name = "PATH")]
     pub path: Option<PathBuf>,
@@ -147,6 +179,14 @@ pub struct PublishCommand {
     /// Upload an Apple binary, Index package or documentation ZIP
     #[arg(long, value_enum)]
     pub artifact_provider: Option<ArtifactProvider>,
+
+    /// Maven destination for --artifact-provider maven
+    ///
+    /// local: MAVEN_LOCAL_PATH or ~/.m2/repository; private: CCGO_MAVEN_URL;
+    /// official: Maven Central via the Central Portal (requires a user token
+    /// and a PGP signing key).
+    #[arg(long, value_enum, default_value_t = MavenRegistry::Private)]
+    pub maven_registry: MavenRegistry,
 
     /// Maven groupId for ZIP artifacts
     #[arg(long, requires = "artifact_provider")]
@@ -323,9 +363,44 @@ fn merge_version_entry(
 }
 
 impl PublishCommand {
+    fn validate_registry_usage(&self) -> Result<()> {
+        if self.maven_registry != MavenRegistry::Private
+            && !matches!(self.artifact_provider, Some(ArtifactProvider::Maven))
+        {
+            bail!("--maven-registry local|official requires --artifact-provider maven");
+        }
+        if matches!(self.target, PublishTarget::Doc) {
+            if self.artifact_provider.is_some() && self.registry != RegistryType::Local {
+                bail!(
+                    "Doc artifact publishing does not use --registry; select the storage \
+                     with --artifact-provider (and --maven-registry for Maven)"
+                );
+            }
+            if self.artifact_provider.is_none() && self.registry != RegistryType::Local {
+                bail!(
+                    "Doc publishing without --artifact-provider deploys to GitHub Pages \
+                     and does not use --registry"
+                );
+            }
+        }
+        if matches!(self.target, PublishTarget::Apple | PublishTarget::Index)
+            && matches!(self.artifact_provider, Some(ArtifactProvider::Maven))
+            && self.registry == RegistryType::Official
+            && self.maven_registry == MavenRegistry::Private
+        {
+            eprintln!(
+                "Note: --registry official selects the Apple/Index destination; the Maven \
+                 artifact still goes to CCGO_MAVEN_URL. Use --maven-registry official for \
+                 Maven Central."
+            );
+        }
+        Ok(())
+    }
+
     /// Execute the publish command
     pub fn execute(mut self, verbose: bool) -> Result<()> {
         self.validate_version_options()?;
+        self.validate_registry_usage()?;
         if matches!(self.target, PublishTarget::Apple)
             && matches!(self.manager, AppleManager::Spm | AppleManager::All)
         {
@@ -397,29 +472,6 @@ impl PublishCommand {
             PublishTarget::Conan => matches!(extension, "py" | "zip"),
             PublishTarget::Doc => matches!(extension, "yml" | "yaml" | "zip"),
         }
-    }
-
-    fn configure_android_runtime(&self, cmd: &mut Command, android_dir: &Path) {
-        // Hand the resolved runtime to Gradle, same as the android builder does.
-        // The plugin reads CCGO_ANDROID_STL first, then [android].stl from
-        // CCGO.toml; it decides the `-stdembed` artifact name. Publishing a
-        // c++_static build without this yields a package whose name says shared
-        // while its .so embeds the runtime -- worse than either choice alone.
-        let config = self.android_publish_config(android_dir);
-        let stl = crate::builder::resolve_stl(
-            self.stl.as_ref().map(|s| s.as_str()),
-            config
-                .as_ref()
-                .and_then(|c| c.android.as_ref())
-                .and_then(|a| a.stl.as_deref()),
-        );
-        cmd.env("CCGO_ANDROID_STL", &stl);
-        println!("  C++ runtime: {}", stl);
-
-        let build_type = if self.release { "release" } else { "debug" };
-        cmd.env("CCGO_BUILD_TYPE", build_type);
-        cmd.arg(format!("-PccgoBuildType={build_type}"));
-        println!("  Build type:  {}", build_type);
     }
 
     fn open_published_documentation(&self, project_dir: &Path) {
@@ -565,123 +617,54 @@ impl PublishCommand {
     fn publish_android(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing Android to Maven ===\n");
 
-        let cwd = std::env::current_dir().context("Failed to get current directory")?;
-        let artifact = self.path.as_ref().filter(|path| path.is_file());
-        let android_dir = self
-            .path
-            .as_ref()
-            .filter(|path| path.is_dir())
-            .cloned()
-            .unwrap_or_else(|| cwd.join("android"));
-
-        if !android_dir.exists() || !android_dir.is_dir() {
-            bail!(
-                "Error: android directory not found at {}",
-                android_dir.display()
-            );
+        if let Some(aar) = self.path.as_ref().filter(|path| path.is_file()) {
+            return self.publish_android_aar(aar, verbose);
         }
 
-        // Map registry to Gradle task
-        let gradle_task = match self.registry {
-            RegistryType::Local => "ccgoPublishToMavenLocal",
-            RegistryType::Official => "ccgoPublishToMavenCentral",
-            RegistryType::Private => "ccgoPublishToMavenCustom",
-        };
-
-        println!("Publishing to {} Maven repository", self.registry);
-        println!("Running: ./gradlew {}", gradle_task);
-        println!("{}", "-".repeat(60));
-
-        let mut cmd = Command::new("./gradlew");
-        cmd.current_dir(&android_dir);
-        if matches!(self.registry, RegistryType::Private) {
-            if let Some(remote) = &self.remote {
-                cmd.env("CCGO_MAVEN_URL", remote);
-            }
-        }
-        cmd.arg(gradle_task);
-        cmd.arg("--no-daemon");
-
-        // Gradle silently accepts unknown -P properties. Fail before executing
-        // tasks if an older plugin would ignore the requested artifact path.
-        let publish_guard =
-            self.configure_android_publish_input(&mut cmd, &android_dir, artifact)?;
-
-        if let Some(path) = artifact {
-            cmd.arg(format!("-PccgoPublishPath={}", path.display()));
-        }
-        if self.skip_build || artifact.is_some() {
-            cmd.arg("-PccgoSkipPublishBuild=true");
+        if let Some(path) = &self.path {
+            let root = find_project_root(path).with_context(|| {
+                format!(
+                    "Cannot find CCGO.toml for the Android project directory {}",
+                    path.display()
+                )
+            })?;
+            let _guard = CurrentDirGuard::change(&root)?;
+            return self.publish_android_built(verbose);
         }
 
-        self.configure_android_runtime(&mut cmd, &android_dir);
+        self.publish_android_built(verbose)
+    }
 
+    fn publish_android_built(&self, verbose: bool) -> Result<()> {
         if self.skip_build {
-            cmd.arg("-x").arg("buildAAR");
-        }
-
-        if verbose {
-            cmd.arg("--info");
-        }
-
-        let status = cmd.status().context("Failed to execute gradlew")?;
-        drop(publish_guard);
-
-        if !status.success() {
             bail!(
-                "Publish failed with exit code: {}",
-                status.code().unwrap_or(-1)
+                "--skip-build without an AAR cannot choose an artifact; \
+                 pass --path <aar>, or omit --skip-build to build it first"
             );
         }
 
-        println!("\n✅ Publish completed successfully!");
-        Ok(())
+        if matches!(self.registry, RegistryType::Official) {
+            let cwd = std::env::current_dir().context("Failed to get current directory")?;
+            let config = maven::load_config(&cwd)?;
+            central::ensure_ready(&config, &cwd)?;
+        }
+
+        println!("Building the release AAR with ccgo...");
+        let build = crate::commands::build::BuildCommand::for_android_publish(self.stl.clone())?;
+        let results = build.build_artifacts(verbose)?;
+        let aar = results
+            .iter()
+            .find_map(|result| result.aar_archive.as_deref())
+            .context("Android build did not produce an AAR")?;
+        self.publish_android_aar(aar, verbose)
     }
 
-    fn configure_android_publish_input(
-        &self,
-        cmd: &mut Command,
-        android_dir: &Path,
-        artifact: Option<&PathBuf>,
-    ) -> Result<Option<tempfile::NamedTempFile>> {
-        Ok(if artifact.is_some() || self.skip_build {
-            let guard = tempfile::Builder::new().suffix(".gradle").tempfile()?;
-            fs::write(
-                guard.path(),
-                r#"
-gradle.taskGraph.whenReady {
-    if (gradle.rootProject.allprojects.any { it.projectDir.canonicalPath == System.getenv('CCGO_PUBLISH_PROJECT_DIR') } &&
-        !gradle.rootProject.allprojects.any {
-        it.extensions.extraProperties.has('ccgoPublishPathSupported') &&
-        it.extensions.extraProperties.get('ccgoPublishPathSupported') == true
-    }) {
-        throw new GradleException('This CCGO Gradle plugin does not support explicit publish paths/build skipping. Update the CCGO Gradle plugin together with the CLI.')
-    }
-}
-"#,
-            )?;
-            cmd.arg("--init-script").arg(guard.path());
-            cmd.env("CCGO_PUBLISH_PROJECT_DIR", fs::canonicalize(android_dir)?);
-            Some(guard)
-        } else {
-            None
-        })
-    }
-
-    fn android_publish_config(&self, android_dir: &Path) -> Option<CcgoConfig> {
-        if self.path.as_ref().is_some_and(|path| path.is_dir()) {
-            let local = android_dir.join("CCGO.toml");
-            let config_path = if local.is_file() {
-                local
-            } else {
-                android_dir
-                    .parent()
-                    .unwrap_or(android_dir)
-                    .join("CCGO.toml")
-            };
-            CcgoConfig::load_from_path(&config_path).ok()
-        } else {
-            CcgoConfig::load().ok()
+    fn publish_android_aar(&self, aar: &Path, verbose: bool) -> Result<()> {
+        match self.registry {
+            RegistryType::Official => central::publish_android(self, aar, verbose),
+            RegistryType::Local | RegistryType::Private => {
+                android_maven::publish(self, aar, verbose)
+            }
         }
     }
 
@@ -750,87 +733,62 @@ gradle.taskGraph.whenReady {
         Ok(())
     }
 
-    fn kmp_publish_task(&self, prebuilt: bool) -> &'static str {
-        match self.registry {
-            RegistryType::Local if prebuilt => "ccgoPublishToMavenLocal",
-            RegistryType::Official if prebuilt => "ccgoPublishToMavenCentral",
-            RegistryType::Private if prebuilt => "ccgoPublishToMavenCustom",
-            RegistryType::Local => "publishToMavenLocal",
-            RegistryType::Official => "publishAllPublicationsToMavenCentralRepository",
-            RegistryType::Private => "publishAllPublicationsToMavenCustomRepository",
-        }
-    }
-
     fn publish_kmp(&self, verbose: bool) -> Result<()> {
         println!("=== Publishing KMP to Maven ===\n");
 
-        let cwd = std::env::current_dir().context("Failed to get current directory")?;
         let sdk = self
             .path
             .as_deref()
             .filter(|path| !path.join("gradlew").is_file())
             .map(kmp_sdk::PreparedSdk::prepare)
             .transpose()?;
-        let kmp_dir = if sdk.is_some() {
-            cwd.join("kmp")
-        } else {
-            self.path.clone().unwrap_or_else(|| cwd.join("kmp"))
-        };
-
-        if !kmp_dir.exists() || !kmp_dir.is_dir() {
-            bail!("Error: kmp directory not found at {}", kmp_dir.display());
+        if let Some(sdk) = sdk.as_ref() {
+            return self.publish_kmp_sdk(sdk, verbose);
         }
 
-        // Map registry to Gradle task
-        let gradle_task = self.kmp_publish_task(sdk.is_some());
-
-        println!("Publishing to {} Maven repository", self.registry);
-        println!("Running: ./gradlew {}", gradle_task);
-        println!("{}", "-".repeat(60));
-
-        let build_type = if self.release { "release" } else { "debug" };
-        if sdk.is_some() {
-            println!("Publishing prebuilt SDK artifacts (build skipped)");
-        } else {
-            println!("Build type: {}", build_type);
+        if let Some(path) = &self.path {
+            let root = find_project_root(path).with_context(|| {
+                format!(
+                    "Cannot find CCGO.toml for the KMP project directory {}",
+                    path.display()
+                )
+            })?;
+            let _guard = CurrentDirGuard::change(&root)?;
+            return self.publish_kmp_built(verbose);
         }
 
-        let mut cmd = Command::new("./gradlew");
-        cmd.current_dir(&kmp_dir);
-        if matches!(self.registry, RegistryType::Private) {
-            if let Some(remote) = &self.remote {
-                cmd.env("CCGO_MAVEN_URL", remote);
-            }
-        }
-        if let Some(sdk) = &sdk {
-            cmd.env("CCGO_PUBLISH_PROJECT_DIR", fs::canonicalize(&kmp_dir)?);
-            cmd.arg(format!("-PccgoKmpSdkManifest={}", sdk.manifest.display()));
-            cmd.arg("--no-configuration-cache");
-            cmd.arg("--init-script").arg(&sdk.guard);
-        }
-        // Two channels, because two different consumers need it: the env var
-        // reaches the plugin's nested `ccgo build`, the property reaches the
-        // project's own build.gradle.kts (which picks the cinterop libraryPath).
-        cmd.env("CCGO_BUILD_TYPE", build_type);
-        cmd.arg(format!("-PccgoBuildType={build_type}"));
-        cmd.arg(gradle_task);
-        cmd.arg("--no-daemon");
+        self.publish_kmp_built(verbose)
+    }
 
-        if verbose {
-            cmd.arg("--info");
-        }
-
-        let status = cmd.status().context("Failed to execute gradlew")?;
-
-        if !status.success() {
+    fn publish_kmp_built(&self, verbose: bool) -> Result<()> {
+        if self.skip_build {
             bail!(
-                "Publish failed with exit code: {}",
-                status.code().unwrap_or(-1)
+                "--skip-build without a KMP SDK cannot choose an artifact; \
+                 pass --path <sdk.zip>, or omit --skip-build to build it first"
             );
         }
+        if matches!(self.registry, RegistryType::Official) {
+            let cwd = std::env::current_dir().context("Failed to get current directory")?;
+            let config = maven::load_config(&cwd)?;
+            central::ensure_ready(&config, &cwd)?;
+        }
 
-        println!("\n✅ Publish completed successfully!");
-        Ok(())
+        println!("Building the release KMP SDK with ccgo...");
+        let build = crate::commands::build::BuildCommand::for_kmp_publish()?;
+        let results = build.build_artifacts(verbose)?;
+        let sdk_zip = results
+            .first()
+            .map(|result| result.sdk_archive.as_path())
+            .context("KMP build did not produce an SDK archive")?;
+        let prepared = kmp_sdk::PreparedSdk::prepare(sdk_zip)?;
+        self.publish_kmp_sdk(&prepared, verbose)
+    }
+
+    fn publish_kmp_sdk(&self, sdk: &kmp_sdk::PreparedSdk, verbose: bool) -> Result<()> {
+        match self.registry {
+            RegistryType::Official => central::publish_kmp(self, sdk, verbose),
+            RegistryType::Local | RegistryType::Private => kmp_maven::publish(self, sdk, verbose),
+        }
     }
 
     fn publish_conan(&self, verbose: bool) -> Result<()> {
@@ -1885,9 +1843,56 @@ gradle.taskGraph.whenReady {
     }
 }
 
+/// The nearest ancestor of `input` (or `input` itself) that has a CCGO.toml.
+fn find_project_root(input: &Path) -> Option<PathBuf> {
+    let start = if input.is_file() {
+        input.parent()?
+    } else {
+        input
+    };
+    start
+        .ancestors()
+        .find(|dir| dir.join("CCGO.toml").is_file())
+        .map(Path::to_path_buf)
+}
+
+/// Change the process working directory and restore it on drop.
+struct CurrentDirGuard(PathBuf);
+
+impl CurrentDirGuard {
+    fn change(root: &Path) -> Result<Self> {
+        let previous = std::env::current_dir()?;
+        std::env::set_current_dir(root)?;
+        Ok(Self(previous))
+    }
+}
+
+impl Drop for CurrentDirGuard {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_nearest_project_root_for_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("android")).unwrap();
+        fs::write(tmp.path().join("CCGO.toml"), "").unwrap();
+        assert_eq!(
+            find_project_root(&tmp.path().join("android")),
+            Some(tmp.path().to_path_buf())
+        );
+        assert_eq!(
+            find_project_root(tmp.path()),
+            Some(tmp.path().to_path_buf())
+        );
+        let outside = tempfile::tempdir().unwrap();
+        assert_eq!(find_project_root(outside.path()), None);
+    }
 
     #[test]
     fn remote_and_legacy_aliases_share_one_destination() {
@@ -2070,6 +2075,7 @@ mod tests {
             skip_build: false,
             path: None,
             artifact_provider: None,
+            maven_registry: MavenRegistry::Private,
             artifact_group: None,
             artifact_id: None,
             github_repo: None,
@@ -2115,6 +2121,7 @@ mod tests {
             skip_build: false,
             path: None,
             artifact_provider: None,
+            maven_registry: MavenRegistry::Private,
             artifact_group: None,
             artifact_id: None,
             github_repo: None,

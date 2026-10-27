@@ -406,18 +406,38 @@ ccgo publish android --registry local
 # 位置：~/.m2/repository/com/example/my-android-lib/1.0.0/
 ```
 
+### 预构建 AAR（不依赖 Gradle）
+
+如果 AAR 已经构建完成，ccgo 可以直接发布到本地和私有 Maven 仓库：
+
+```bash
+ccgo publish android --path ./artifacts/library.aar --registry private \
+    --url https://maven.example.com/releases
+```
+
+不需要 `android/` 工程、`gradlew` 或 CCGO Gradle 发布插件。坐标、POM 依赖、`channel_desc` 以及 `--stl c++_static` 对应的 `-stdembed` 后缀都与 Gradle 插件输出一致。直接上传只发布 AAR 和 POM，不补造 sources/javadoc，也不推断 Gradle 组件里的隐式依赖；运行时依赖请显式写进 `[publish.android.maven].dependencies`。
+
+不传 `--path` 时，ccgo 会先构建 release AAR，再直接上传：
+
+```bash
+ccgo publish android --registry private \
+    --url https://maven.example.com/releases
+```
+
+等价于先执行 `ccgo build android --release`，再执行 `publish android --path target/release/android/<...>.aar`。`ccgo build` 内部仍用 Gradle 的 `assembleProdRelease` 打包 AAR，但发布步骤完全不会调用 Gradle。不传 `--path` 又传 `--skip-build` 会直接报错，请改用 `--path` 指定已有 AAR。`--path` 工程目录会向上找到最近的 `CCGO.toml` 并用 ccgo 构建。`--registry official` 会构建 AAR、为每个文件签名，并把 bundle 上传到 Central Portal（见下文）。
+
 ### Maven Central（生产）
 
-**1. 配置凭据：**
+**1. 配置凭据和签名：**
 
-创建 `~/.gradle/gradle.properties`：
+```bash
+# Central Portal user token（不是登录密码）
+export MAVEN_CENTRAL_USERNAME=your-username
+export MAVEN_CENTRAL_PASSWORD=your-password
 
-```properties
-mavenCentralUsername=your-username
-mavenCentralPassword=your-password
-signing.keyId=12345678
-signing.password=your-key-password
-signing.secretKeyRingFile=/Users/you/.gnupg/secring.gpg
+# ASCII armor 私钥；也可以安装 gpg 并配置密钥，ccgo 会自动使用
+export SIGNING_IN_MEMORY_KEY="$(cat /path/to/secret-key.asc)"
+export SIGNING_IN_MEMORY_KEY_PASSWORD=your-key-password
 ```
 
 **2. 发布：**
@@ -425,6 +445,8 @@ signing.secretKeyRingFile=/Users/you/.gnupg/secring.gpg
 ```bash
 ccgo publish android --registry official
 ```
+
+ccgo 会构建 AAR、为每个文件签名、把整个 bundle 上传到 Central Portal，并跟踪发布状态直到完成。
 
 ### 私有 Maven 仓库
 
