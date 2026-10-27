@@ -56,6 +56,7 @@ requiring today's implementation to retain the assessed bugs.
 Historical fault scripts characterize the baseline and may intentionally fail
 against the fixed CLI. Use the integration tests above for current invariants.
 
-Publication serialization, push-conflict recovery, upload/index failure recovery,
-and transport/cache performance improvements remain subsequent work. This stage
-does not claim transactional publication or migrate existing indexes or clients.
+Publication serialization and interrupted-publication recovery are described in
+[registry-publication-recovery.md](registry-publication-recovery.md). Transport
+and fetch-cache performance improvements remain subsequent work. Neither stage
+claims a distributed transaction or migrates existing indexes or clients.

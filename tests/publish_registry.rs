@@ -70,6 +70,564 @@ fn project(root: &Path) -> std::path::PathBuf {
     project
 }
 
+fn configure_index(source: &Path, remote: &Path) {
+    let config = source.join("CCGO.toml");
+    let mut content = fs::read_to_string(&config).unwrap();
+    content.push_str(&format!("[registries]\ncompany='{}'\n", remote.display()));
+    fs::write(config, content).unwrap();
+}
+
+fn private_publish(source: &Path, bin: &Path, home: &Path, version: &str) -> Command {
+    let mut cmd = command(source, bin);
+    cmd.env("CCGO_HOME", home).args([
+        "publish",
+        "package",
+        "--registry",
+        "private",
+        "--remote",
+        "company",
+        "--index-version",
+        version,
+        "--push",
+    ]);
+    cmd
+}
+
+fn yank_command(source: &Path, bin: &Path, home: &Path, remote: &Path, undo: bool) -> Command {
+    let mut cmd = command(source, bin);
+    cmd.env("CCGO_HOME", home)
+        .args([
+            "yank",
+            "--package",
+            "demo",
+            "--vers",
+            "1.2.3",
+            "--index-name",
+            "company",
+            "--index-repo",
+        ])
+        .arg(remote)
+        .arg("--push");
+    if undo {
+        cmd.arg("--undo");
+    } else {
+        cmd.args(["--reason", "regression"]);
+    }
+    cmd
+}
+
+#[test]
+fn yank_and_unyank_resume_after_commit_failure() {
+    for undo in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let bin = root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let source = project(root);
+        let remote = root.join("index.git");
+        git(root, &["init", "--bare", remote.to_str().unwrap()]);
+        configure_index(&source, &remote);
+        let home = root.join("home");
+        private_publish(&source, &bin, &home, "1.2.3")
+            .assert()
+            .success();
+        if undo {
+            yank_command(&source, &bin, &home, &remote, false)
+                .assert()
+                .success();
+        }
+        let hook = home.join("registry/publish/company/.git/hooks/pre-commit");
+        tool(&hook, "exit 1");
+        let before = git(&remote, &["rev-parse", "HEAD"]);
+        yank_command(&source, &bin, &home, &remote, undo)
+            .assert()
+            .failure()
+            .stderr(contains("Failed to commit"));
+        assert_eq!(git(&remote, &["rev-parse", "HEAD"]), before);
+        let receipt = home.join("registry/publish/company/.git/ccgo-yank.json");
+        assert!(receipt.exists());
+        fs::remove_file(hook).unwrap();
+        yank_command(&source, &bin, &home, &remote, undo)
+            .assert()
+            .success();
+        assert!(!receipt.exists());
+        let entry: serde_json::Value =
+            serde_json::from_str(&git(&remote, &["show", "HEAD:de/mo/demo.json"])).unwrap();
+        assert_eq!(entry["versions"][0]["yanked"], !undo);
+        if undo {
+            assert!(entry["versions"][0].get("yanked_reason").is_none());
+        }
+        yank_command(&source, &bin, &home, &remote, undo)
+            .assert()
+            .failure();
+    }
+}
+
+#[test]
+fn yank_push_retry_preserves_a_version_published_in_the_meantime() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let source = project(root);
+    let remote = root.join("index.git");
+    git(root, &["init", "--bare", remote.to_str().unwrap()]);
+    configure_index(&source, &remote);
+    let home = root.join("home");
+    private_publish(&source, &bin, &home, "1.2.3")
+        .assert()
+        .success();
+    let hook = remote.join("hooks/pre-receive");
+    tool(&hook, "exit 1");
+    yank_command(&source, &bin, &home, &remote, false)
+        .assert()
+        .failure()
+        .stderr(contains("Failed to push"));
+    fs::remove_file(hook).unwrap();
+    git(&source, &["tag", "v1.2.4"]);
+    private_publish(&source, &bin, &root.join("other-home"), "1.2.4")
+        .assert()
+        .success();
+    private_publish(&source, &bin, &home, "1.2.4")
+        .assert()
+        .failure()
+        .stderr(contains("interrupted yank"));
+    let merge_hook = home.join("registry/publish/company/.git/hooks/pre-commit");
+    tool(&merge_hook, "exit 1");
+    yank_command(&source, &bin, &home, &remote, false)
+        .assert()
+        .failure()
+        .stderr(contains("Failed to update index clone"));
+    assert!(home
+        .join("registry/publish/company/.git/MERGE_HEAD")
+        .exists());
+    fs::remove_file(merge_hook).unwrap();
+    yank_command(&source, &bin, &home, &remote, false)
+        .assert()
+        .success();
+    let entry: serde_json::Value =
+        serde_json::from_str(&git(&remote, &["show", "HEAD:de/mo/demo.json"])).unwrap();
+    assert_eq!(entry["versions"].as_array().unwrap().len(), 2);
+    assert_eq!(entry["versions"][0]["version"], "1.2.4");
+    assert_eq!(entry["versions"][0]["yanked"], false);
+    assert_eq!(entry["versions"][1]["yanked"], true);
+}
+
+#[test]
+fn yank_recovery_rejects_changed_intent_and_unrelated_edits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let source = project(root);
+    let remote = root.join("index.git");
+    git(root, &["init", "--bare", remote.to_str().unwrap()]);
+    configure_index(&source, &remote);
+    let home = root.join("home");
+    private_publish(&source, &bin, &home, "1.2.3")
+        .assert()
+        .success();
+    let clone = home.join("registry/publish/company");
+    let hook = clone.join(".git/hooks/pre-commit");
+    tool(&hook, "exit 1");
+    yank_command(&source, &bin, &home, &remote, false)
+        .assert()
+        .failure();
+    fs::remove_file(hook).unwrap();
+    let before = git(&remote, &["rev-parse", "HEAD"]);
+    yank_command(&source, &bin, &home, &remote, true)
+        .assert()
+        .failure()
+        .stderr(contains("original repository"));
+    command(&source, &bin)
+        .env("CCGO_HOME", &home)
+        .args([
+            "yank",
+            "--package",
+            "demo",
+            "--vers",
+            "1.2.3",
+            "--index-name",
+            "company",
+            "--reason",
+            "different reason",
+            "--push",
+            "--index-repo",
+        ])
+        .arg(&remote)
+        .assert()
+        .failure()
+        .stderr(contains("original repository"));
+    command(&source, &bin)
+        .env("CCGO_HOME", &home)
+        .args([
+            "yank",
+            "--package",
+            "demo",
+            "--vers",
+            "1.2.3",
+            "--index-name",
+            "company",
+            "--reason",
+            "regression",
+            "--index-repo",
+        ])
+        .arg(&remote)
+        .assert()
+        .failure()
+        .stderr(contains("requires --push"));
+    fs::write(clone.join("keep.txt"), "manual work").unwrap();
+    yank_command(&source, &bin, &home, &remote, false)
+        .assert()
+        .failure()
+        .stderr(contains("Unrelated local changes"));
+    assert_eq!(
+        fs::read_to_string(clone.join("keep.txt")).unwrap(),
+        "manual work"
+    );
+    fs::remove_file(clone.join("keep.txt")).unwrap();
+    let package = clone.join("de/mo/demo.json");
+    let intended = fs::read(&package).unwrap();
+    let mut edited: serde_json::Value = serde_json::from_slice(&intended).unwrap();
+    edited["repository"] = "https://example.invalid/changed.git".into();
+    fs::write(&package, serde_json::to_vec_pretty(&edited).unwrap()).unwrap();
+    yank_command(&source, &bin, &home, &remote, false)
+        .assert()
+        .failure()
+        .stderr(contains("unrelated edits"));
+    assert_eq!(git(&remote, &["rev-parse", "HEAD"]), before);
+    fs::write(package, intended).unwrap();
+    yank_command(&source, &bin, &home, &remote, false)
+        .assert()
+        .success();
+}
+
+fn concurrent_publications(conflicting_version: bool, yank: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let source = project(root);
+    let remote = root.join("index.git");
+    git(root, &["init", "--bare", remote.to_str().unwrap()]);
+    configure_index(&source, &remote);
+    private_publish(&source, &bin, &root.join("seed-home"), "1.2.3")
+        .assert()
+        .success();
+    git(&source, &["tag", "v1.2.4"]);
+    git(&source, &["tag", "v1.2.5"]);
+    let real_git = which::which("git").unwrap();
+    tool(
+        &bin.join("git"),
+        &format!(
+            r#"
+if [ "$1" = push ] && [ -n "$RACE_ID" ] && [ ! -f "$RACE_ROOT/$RACE_ID.ready" ]; then
+    touch "$RACE_ROOT/$RACE_ID.ready"
+    n=0
+    while [ ! -f "$RACE_ROOT/one.ready" ] || [ ! -f "$RACE_ROOT/two.ready" ]; do
+        n=$((n+1)); [ "$n" -lt 1000 ] || exit 99
+        sleep 0.01
+    done
+fi
+exec '{}' "$@"
+"#,
+            real_git.display()
+        ),
+    );
+    let mut one = private_publish(&source, &bin, &root.join("one-home"), "1.2.4");
+    let mut two = if yank {
+        let mut cmd = command(&source, &bin);
+        cmd.env("CCGO_HOME", root.join("two-home"))
+            .args([
+                "yank",
+                "--package",
+                "demo",
+                "--vers",
+                "1.2.3",
+                "--reason",
+                "regression",
+                "--index-name",
+                "company",
+                "--index-repo",
+            ])
+            .arg(&remote)
+            .arg("--push");
+        cmd
+    } else {
+        private_publish(
+            &source,
+            &bin,
+            &root.join("two-home"),
+            if conflicting_version {
+                "1.2.4"
+            } else {
+                "1.2.5"
+            },
+        )
+    };
+    if conflicting_version {
+        one.args([
+            "--archive-url-template",
+            "https://example.invalid/one/{version}.zip",
+        ]);
+        two.args([
+            "--archive-url-template",
+            "https://example.invalid/two/{version}.zip",
+        ]);
+    }
+    one.env("RACE_ROOT", root).env("RACE_ID", "one");
+    two.env("RACE_ROOT", root).env("RACE_ID", "two");
+    let a = std::thread::spawn(move || one.output().unwrap());
+    let b = std::thread::spawn(move || two.output().unwrap());
+    let a = a.join().unwrap();
+    let b = b.join().unwrap();
+    let entry: serde_json::Value =
+        serde_json::from_str(&git(&remote, &["show", "HEAD:de/mo/demo.json"])).unwrap();
+    if conflicting_version {
+        assert_ne!(
+            a.status.success(),
+            b.status.success(),
+            "one publisher must reject conflicting history"
+        );
+        let failed = if a.status.success() { &b } else { &a };
+        assert!(
+            String::from_utf8_lossy(&failed.stderr).contains("Cannot reconcile"),
+            "{}",
+            String::from_utf8_lossy(&failed.stderr)
+        );
+        assert_eq!(entry["versions"].as_array().unwrap().len(), 2);
+    } else {
+        assert!(a.status.success(), "{}", String::from_utf8_lossy(&a.stderr));
+        assert!(b.status.success(), "{}", String::from_utf8_lossy(&b.stderr));
+        assert_eq!(
+            entry["versions"].as_array().unwrap().len(),
+            if yank { 2 } else { 3 }
+        );
+        if yank {
+            let previous = entry["versions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|version| version["version"] == "1.2.3")
+                .unwrap();
+            assert_eq!(previous["yanked"], true);
+            assert_eq!(previous["yanked_reason"], "regression");
+        }
+    }
+    let metadata: serde_json::Value =
+        serde_json::from_str(&git(&remote, &["show", "HEAD:index.json"])).unwrap();
+    assert_eq!(metadata["package_count"], 1);
+}
+
+#[test]
+fn concurrent_distinct_versions_survive_a_rejected_push() {
+    concurrent_publications(false, false);
+}
+
+#[test]
+fn concurrent_same_version_cannot_replace_the_winner() {
+    concurrent_publications(true, false);
+}
+
+#[test]
+fn concurrent_yank_and_publication_preserve_both_changes() {
+    concurrent_publications(false, true);
+}
+
+#[test]
+fn uploaded_artifact_survives_commit_failure_and_retry_skips_upload() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let source = project(root);
+    let remote = root.join("index.git");
+    git(root, &["init", "--bare", remote.to_str().unwrap()]);
+    configure_index(&source, &remote);
+    let home = root.join("home");
+    private_publish(&source, &bin, &home, "1.2.3")
+        .assert()
+        .success();
+    git(&source, &["tag", "v1.2.4"]);
+    let archive = root.join("SDK.zip");
+    package_zip(&archive);
+    let clone = home.join("registry/publish/company");
+    let hook = clone.join(".git/hooks/pre-commit");
+    tool(&hook, "exit 1");
+    tool(
+        &bin.join("gh"),
+        r#"
+case "$2" in
+download) exit 1 ;;
+upload) printf 'uploaded\n' >> "$PUBLISH_CAPTURE" ;;
+esac
+"#,
+    );
+    let make = || {
+        let mut cmd = private_publish(&source, &bin, &home, "1.2.4");
+        cmd.args([
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+            "--path",
+        ])
+        .arg(&archive)
+        .env("PUBLISH_CAPTURE", root.join("uploads"));
+        cmd
+    };
+    let before = git(&remote, &["rev-parse", "HEAD"]);
+    make()
+        .assert()
+        .failure()
+        .stderr(contains("Failed to commit index changes"));
+    assert_eq!(git(&remote, &["rev-parse", "HEAD"]), before);
+    assert_eq!(
+        fs::read_to_string(root.join("uploads")).unwrap(),
+        "uploaded\n"
+    );
+    assert!(clone.join(".git/ccgo-publication.json").exists());
+    fs::remove_file(hook).unwrap();
+    make().assert().success();
+    assert_eq!(
+        fs::read_to_string(root.join("uploads")).unwrap(),
+        "uploaded\n"
+    );
+    assert!(!clone.join(".git/ccgo-publication.json").exists());
+    make()
+        .assert()
+        .failure()
+        .stderr(contains("already in the index"));
+    let entry: serde_json::Value =
+        serde_json::from_str(&git(&remote, &["show", "HEAD:de/mo/demo.json"])).unwrap();
+    assert_eq!(entry["versions"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn rejected_push_resumes_without_duplicate_version_or_upload() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let source = project(root);
+    let remote = root.join("index.git");
+    git(root, &["init", "--bare", remote.to_str().unwrap()]);
+    configure_index(&source, &remote);
+    let home = root.join("home");
+    private_publish(&source, &bin, &home, "1.2.3")
+        .assert()
+        .success();
+    let hook = remote.join("hooks/pre-receive");
+    tool(&hook, "exit 1");
+    git(&source, &["tag", "v1.2.4"]);
+    private_publish(&source, &bin, &home, "1.2.4")
+        .assert()
+        .failure()
+        .stderr(contains("Failed to push"));
+    fs::remove_file(hook).unwrap();
+    private_publish(&source, &bin, &home, "1.2.4")
+        .assert()
+        .success();
+    let entry: serde_json::Value =
+        serde_json::from_str(&git(&remote, &["show", "HEAD:de/mo/demo.json"])).unwrap();
+    assert_eq!(entry["versions"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn publish_and_yank_cannot_mutate_a_clone_while_upload_is_in_progress() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let source = project(root);
+    let remote = root.join("index.git");
+    git(root, &["init", "--bare", remote.to_str().unwrap()]);
+    configure_index(&source, &remote);
+    let home = root.join("home");
+    private_publish(&source, &bin, &home, "1.2.3")
+        .assert()
+        .success();
+    git(&source, &["tag", "v1.2.4"]);
+    git(&source, &["tag", "v1.2.5"]);
+    let archive = root.join("SDK.zip");
+    package_zip(&archive);
+    tool(
+        &bin.join("gh"),
+        r#"
+case "$2" in
+download) exit 1 ;;
+upload)
+    touch "$BARRIER/ready"
+    n=0
+    while [ ! -f "$BARRIER/release" ]; do
+        n=$((n+1)); [ "$n" -lt 1500 ] || exit 99
+        sleep 0.01
+    done ;;
+esac
+"#,
+    );
+    let mut first = private_publish(&source, &bin, &home, "1.2.4");
+    first
+        .args([
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+            "--path",
+        ])
+        .arg(archive)
+        .env("BARRIER", root);
+    let running = std::thread::spawn(move || first.output().unwrap());
+    for _ in 0..1000 {
+        if root.join("ready").exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        root.join("ready").exists(),
+        "publisher never reached upload barrier"
+    );
+    private_publish(&source, &bin, &home, "1.2.5")
+        .assert()
+        .failure()
+        .stderr(contains("Another publish or yank"));
+    command(&source, &bin)
+        .env("CCGO_HOME", &home)
+        .args([
+            "yank",
+            "--package",
+            "demo",
+            "--vers",
+            "1.2.3",
+            "--reason",
+            "test",
+            "--index-name",
+            "company",
+            "--index-repo",
+        ])
+        .arg(&remote)
+        .arg("--push")
+        .assert()
+        .failure()
+        .stderr(contains("Another publish or yank"));
+    fs::write(root.join("release"), "continue").unwrap();
+    let output = running.join().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let entry: serde_json::Value =
+        serde_json::from_str(&git(&remote, &["show", "HEAD:de/mo/demo.json"])).unwrap();
+    assert_eq!(entry["versions"].as_array().unwrap().len(), 2);
+    assert!(entry["versions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|version| version["yanked"] == false));
+}
+
 #[test]
 fn ohpm_local_validates_and_remote_destinations_are_explicit() {
     let tmp = tempfile::tempdir().unwrap();
@@ -702,7 +1260,7 @@ fn index_github_upload_populates_private_index_and_rejects_duplicates_before_upl
     let root = tmp.path();
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
-    tool(&bin.join("gh"), "printf '%s\\n' \"$@\" >> \"$PUBLISH_CAPTURE\"\nif [ \"$2\" = upload ]; then\nfor arg in \"$@\"; do case \"$arg\" in *.zip) cp \"$arg\" \"$PUBLISH_ARCHIVE\"; printf '%s' \"$arg\" > \"$PUBLISH_TEMP\";; esac; done\nfi");
+    tool(&bin.join("gh"), "if [ \"$2\" = download ]; then exit 1; fi\nprintf '%s\\n' \"$@\" >> \"$PUBLISH_CAPTURE\"\nif [ \"$2\" = upload ]; then\nfor arg in \"$@\"; do case \"$arg\" in *.zip) cp \"$arg\" \"$PUBLISH_ARCHIVE\"; printf '%s' \"$arg\" > \"$PUBLISH_TEMP\";; esac; done\nfi");
     let source = project(root);
     let archive = source.join("target/release/package/DEMO_CCGO_PACKAGE-1.2.3.zip");
     package_zip(&archive);
@@ -814,7 +1372,7 @@ fn index_provider_upload_failure_does_not_write_a_version_entry() {
     let root = tmp.path();
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
-    tool(&bin.join("gh"), "if [ \"$2\" = upload ]; then\nfor arg in \"$@\"; do case \"$arg\" in *.zip) printf '%s' \"$arg\" > \"$PUBLISH_TEMP\";; esac; done\nexit 1\nfi");
+    tool(&bin.join("gh"), "if [ \"$2\" = download ]; then exit 1; fi\nif [ \"$2\" = upload ]; then\nfor arg in \"$@\"; do case \"$arg\" in *.zip) printf '%s' \"$arg\" > \"$PUBLISH_TEMP\";; esac; done\nexit 1\nfi");
     let source = project(root);
     let archive = root.join("SDK.zip");
     package_zip(&archive);
@@ -859,14 +1417,15 @@ fn index_maven_upload_uses_zip_coordinates_and_automatic_checksum() {
     let base = format!("http://{}/releases", listener.local_addr().unwrap());
     let server = std::thread::spawn(move || {
         let mut requests = Vec::new();
-        for _ in 0..4 {
+        let mut objects = std::collections::HashMap::new();
+        for _ in 0..17 {
             let (mut stream, _) = listener.accept().unwrap();
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(15)))
                 .unwrap();
             let mut data = Vec::new();
             let mut buffer = [0; 4096];
-            loop {
+            let (end, length) = loop {
                 let read = stream.read(&mut buffer).unwrap();
                 assert!(read > 0);
                 data.extend_from_slice(&buffer[..read]);
@@ -875,20 +1434,37 @@ fn index_maven_upload_uses_zip_coordinates_and_automatic_checksum() {
                     let length: usize = headers
                         .lines()
                         .find_map(|l| l.strip_prefix("content-length: "))
-                        .unwrap()
+                        .unwrap_or("0")
                         .parse()
                         .unwrap();
                     if data.len() >= end + 4 + length {
-                        break;
+                        break (end, length);
                     }
                 }
-            }
-            stream
-                .write_all(
-                    b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                )
-                .unwrap();
-            requests.push(data);
+            };
+            let header = String::from_utf8_lossy(&data[..end]);
+            let mut parts = header.split_whitespace();
+            let method = parts.next().unwrap();
+            let path = parts.next().unwrap().to_owned();
+            let (status, body) = if method == "PUT" {
+                assert!(header.to_lowercase().contains("if-none-match: *"));
+                assert!(!objects.contains_key(&path));
+                objects.insert(path, data[end + 4..end + 4 + length].to_vec());
+                requests.push(data);
+                ("201 Created", Vec::new())
+            } else {
+                match objects.get(&path) {
+                    Some(bytes) => ("200 OK", bytes.clone()),
+                    None => ("404 Not Found", Vec::new()),
+                }
+            };
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
         }
         requests
     });
@@ -911,7 +1487,47 @@ fn index_maven_upload_uses_zip_coordinates_and_automatic_checksum() {
         .arg("--push")
         .assert()
         .success();
+    // Another publisher can reuse identical remote objects without issuing PUT.
+    let republish = |home: &Path| {
+        let mut cmd = command(&source, &bin);
+        cmd.env("CCGO_HOME", home)
+            .env("CCGO_MAVEN_URL", &base)
+            .env("CCGO_MAVEN_USERNAME", "publisher")
+            .env("CCGO_MAVEN_PASSWORD", "secret")
+            .args([
+                "publish",
+                "package",
+                "--artifact-provider",
+                "maven",
+                "--artifact-group",
+                "com.example",
+                "--path",
+            ])
+            .arg(&archive)
+            .arg("--push");
+        cmd
+    };
+    republish(&root.join("second-home")).assert().success();
+    let changed = root.join("changed.zip");
+    {
+        let mut zip = zip::ZipWriter::new(fs::File::create(&changed).unwrap());
+        zip.start_file("different.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"different artifact bytes").unwrap();
+        zip.finish().unwrap();
+    }
+    fs::write(&archive, fs::read(changed).unwrap()).unwrap();
+    republish(&root.join("third-home"))
+        .assert()
+        .failure()
+        .stderr(contains("refusing to overwrite"));
+    fs::write(&archive, &original).unwrap();
     let requests = server.join().unwrap();
+    assert_eq!(
+        requests.len(),
+        4,
+        "retries and conflicts must not overwrite objects"
+    );
     assert!(String::from_utf8_lossy(&requests[0])
         .starts_with("PUT /releases/com/example/demo-ccgo/1.2.3/demo-ccgo-1.2.3.zip HTTP/1.1"));
     assert!(requests[0].ends_with(&original));

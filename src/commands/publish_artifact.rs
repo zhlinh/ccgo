@@ -56,6 +56,58 @@ fn put(client: &Client, url: &str, bytes: Vec<u8>, username: &str, password: &st
     Ok(())
 }
 
+fn get_existing(
+    client: &Client,
+    url: &str,
+    username: &str,
+    password: &str,
+) -> Result<Option<Vec<u8>>> {
+    let mut request = client.get(url);
+    if !username.is_empty() {
+        request = request.basic_auth(username, Some(password));
+    }
+    let response = request
+        .send()
+        .context("Failed to inspect existing Maven artifact")?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        bail!("Cannot inspect Maven artifact (HTTP {})", response.status());
+    }
+    Ok(Some(response.bytes()?.to_vec()))
+}
+
+fn put_immutable(
+    client: &Client,
+    url: &str,
+    bytes: Vec<u8>,
+    username: &str,
+    password: &str,
+) -> Result<()> {
+    if let Some(existing) = get_existing(client, url, username, password)? {
+        if existing != bytes {
+            bail!("Existing Maven artifact differs; refusing to overwrite {url}");
+        }
+        return Ok(());
+    }
+    let mut request = client
+        .put(url)
+        .header(reqwest::header::IF_NONE_MATCH, "*")
+        .body(bytes.clone());
+    if !username.is_empty() {
+        request = request.basic_auth(username, Some(password));
+    }
+    let response = request.send().context("Maven upload failed")?;
+    if !response.status().is_success() && !matches!(response.status().as_u16(), 409 | 412) {
+        bail!("Maven upload failed (HTTP {})", response.status());
+    }
+    if get_existing(client, url, username, password)?.as_deref() != Some(bytes.as_slice()) {
+        bail!("Maven artifact verification failed after upload: {url}");
+    }
+    Ok(())
+}
+
 enum Backend {
     Maven {
         root: String,
@@ -157,6 +209,14 @@ impl PreparedUpload {
     }
 
     pub fn upload(&self, archive: &Path) -> Result<()> {
+        self.upload_with_policy(archive, false)
+    }
+
+    pub fn upload_registry(&self, archive: &Path) -> Result<()> {
+        self.upload_with_policy(archive, true)
+    }
+
+    fn upload_with_policy(&self, archive: &Path, immutable: bool) -> Result<()> {
         println!("Uploading artifact to {}", self.url);
         match &self.backend {
             Backend::Maven {
@@ -175,14 +235,15 @@ impl PreparedUpload {
                 for (extension, content) in [("zip", fs::read(archive)?), ("pom", pom.into_bytes())]
                 {
                     let hash = format!("{:x}", Sha256::digest(&content));
-                    put(
+                    let upload = if immutable { put_immutable } else { put };
+                    upload(
                         &client,
                         &format!("{root}.{extension}"),
                         content,
                         username,
                         password,
                     )?;
-                    put(
+                    upload(
                         &client,
                         &format!("{root}.{extension}.sha256"),
                         hash.into_bytes(),
@@ -203,45 +264,51 @@ impl PreparedUpload {
                 let temporary = tempfile::tempdir()?;
                 let named_archive = temporary.path().join(&self.archive_name);
                 fs::copy(archive, &named_archive)?;
+                if immutable && self.github_existing_matches(repo, tag, archive)? {
+                    return Ok(());
+                }
                 if !Command::new("gh")
                     .args(["release", "upload", tag, "--repo", repo])
                     .arg(&named_archive)
                     .status()?
                     .success()
                 {
+                    if immutable && self.github_existing_matches(repo, tag, archive)? {
+                        return Ok(());
+                    }
                     bail!("GitHub release asset upload failed");
                 }
             }
         }
         Ok(())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn urls_and_coordinates() {
-        assert_eq!(
-            maven_url(
-                "https://repo.example/releases/",
-                "com.example",
-                "sdk-apple",
-                "1.2.3"
-            )
-            .unwrap(),
-            "https://repo.example/releases/com/example/sdk-apple/1.2.3/sdk-apple-1.2.3"
-        );
-        for group in ["../bad", "com..example", "a&b"] {
-            assert!(maven_url("https://repo.example", group, "sdk", "1").is_err());
+    fn github_existing_matches(&self, repo: &str, tag: &str, archive: &Path) -> Result<bool> {
+        let temporary = tempfile::tempdir()?;
+        let output = Command::new("gh")
+            .args([
+                "release",
+                "download",
+                tag,
+                "--repo",
+                repo,
+                "--pattern",
+                &self.archive_name,
+                "--dir",
+            ])
+            .arg(temporary.path())
+            .output()
+            .context("Failed to inspect GitHub release asset")?;
+        if !output.status.success() {
+            return Ok(false); // Upload without --clobber remains a create-only operation.
         }
-        assert!(maven_url(
-            "https://user:password@repo.example",
-            "com.example",
-            "sdk",
-            "1"
-        )
-        .is_err());
+        if fs::read(temporary.path().join(&self.archive_name))? != fs::read(archive)? {
+            bail!(
+                "Existing GitHub asset differs; refusing to overwrite {}",
+                self.url
+            );
+        }
+        Ok(true)
     }
 }
 
@@ -288,5 +355,33 @@ impl ArchiveSnapshot {
             checksum: format!("sha256:{:x}", hasher.finalize()),
             _directory: directory,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn urls_and_coordinates() {
+        assert_eq!(
+            maven_url(
+                "https://repo.example/releases/",
+                "com.example",
+                "sdk-apple",
+                "1.2.3"
+            )
+            .unwrap(),
+            "https://repo.example/releases/com/example/sdk-apple/1.2.3/sdk-apple-1.2.3"
+        );
+        for group in ["../bad", "com..example", "a&b"] {
+            assert!(maven_url("https://repo.example", group, "sdk", "1").is_err());
+        }
+        assert!(maven_url(
+            "https://user:password@repo.example",
+            "com.example",
+            "sdk",
+            "1"
+        )
+        .is_err());
     }
 }
