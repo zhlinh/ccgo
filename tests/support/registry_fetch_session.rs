@@ -575,3 +575,72 @@ fn failed_fetch_releases_project_lock_for_retry() {
     success(fixture.fetch(&[]));
     assert_eq!(fixture.payload(), "original");
 }
+
+#[test]
+fn lock_save_failure_forces_validated_retry_instead_of_reusing_unrecorded_tree() {
+    let fixture = Fixture::new();
+    let trace = GitTrace::new(&fixture);
+    let first = trace
+        .command(&fixture, &fixture.consumer, &["fetch"], "clone")
+        .spawn()
+        .unwrap();
+    trace.wait_until_paused();
+    // Lock loading has finished. A directory makes atomic lockfile publication fail.
+    fs::create_dir(fixture.consumer.join("CCGO.lock")).unwrap();
+    trace.release();
+    failure(
+        first.wait_with_output().unwrap(),
+        "Failed to write lockfile",
+    );
+    assert_eq!(fixture.payload(), "original");
+    let marker = fixture
+        .consumer
+        .join(".ccgo/pending-installs")
+        .join(format!("{:x}", md5::compute("leaf")));
+    assert!(marker.is_file());
+    fs::remove_dir(fixture.consumer.join("CCGO.lock")).unwrap();
+    fs::write(
+        fixture.consumer.join(".ccgo/deps/leaf/payload.txt"),
+        "unrecorded",
+    )
+    .unwrap();
+    success(fixture.fetch(&[]));
+    assert_eq!(fixture.payload(), "original");
+    let lock = String::from_utf8(fixture.lock()).unwrap();
+    assert!(lock.contains("sha256:"));
+    assert!(lock.contains(&format!("registry+{}", file_url(&fixture.remote))));
+    assert!(!marker.exists());
+    // Once saved, a clean retry can reuse the installation without downloading.
+    fs::remove_file(&fixture.archive).unwrap();
+    success(fixture.fetch(&[]));
+}
+
+#[test]
+fn unrecorded_existing_tree_is_revalidated_after_lock_save_failure() {
+    let fixture = Fixture::new();
+    // Simulate a tree left behind by an older fetch whose lock was never saved.
+    let leaf = fixture.consumer.join(".ccgo/deps/leaf");
+    fs::create_dir_all(&leaf).unwrap();
+    fs::write(
+        leaf.join("CCGO.toml"),
+        "[package]\nname='leaf'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(leaf.join("payload.txt"), "stale").unwrap();
+    // A dangling lockfile symlink is invisible to `exists()` and fails on save,
+    // without blocking the earlier lockfile load.
+    std::os::unix::fs::symlink("missing-lock-target", fixture.consumer.join("CCGO.lock")).unwrap();
+
+    failure(fixture.fetch(&[]), "Failed to write lockfile");
+    let marker = fixture
+        .consumer
+        .join(".ccgo/pending-installs")
+        .join(format!("{:x}", md5::compute("leaf")));
+    assert!(marker.is_file());
+
+    fs::remove_file(fixture.consumer.join("CCGO.lock")).unwrap();
+    success(fixture.fetch(&[]));
+    assert_eq!(fixture.payload(), "original");
+    assert!(String::from_utf8(fixture.lock()).unwrap().contains("sha256:"));
+    assert!(!marker.exists());
+}
