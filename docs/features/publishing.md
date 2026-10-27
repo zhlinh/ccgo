@@ -30,9 +30,9 @@ Publishing defaults to `--registry local`. Doc uses `--doc-*` and does not read 
 
 SPM and Index require `--push` to publish. Without it, they validate only: no tags, index writes/commits, or index clones/pulls. `local --push` writes locally; remote registries push remotely. The old `--index-push` is a compatibility alias. Apple binary hosting involving SPM also validates only without `--push`; explicit CocoaPods-only artifact-provider uploads retain their existing behavior.
 
-Private destinations use `--remote <URL_OR_NAME>` consistently: Android/KMP and OHOS accept repository URLs; CocoaPods, Conan, SPM and Index accept configured repository names. The old `--url` and `--remote-name` are compatibility aliases for the same option; supplying more than one is rejected. For Android/KMP, `--remote` overrides `CCGO_MAVEN_URL` in the Gradle publishing process only; omitting it preserves existing Maven configuration.
+Private destinations use `--remote <URL_OR_NAME>` consistently: Android/KMP and OHOS accept repository URLs; CocoaPods, Conan, SPM and Index accept configured repository names. The old `--url` and `--remote-name` are compatibility aliases for the same option; supplying more than one is rejected. For Android/KMP, `--remote` overrides `CCGO_MAVEN_URL` for Maven publishing; omitting it preserves existing Maven configuration.
 
-For Apple, `--remote` selects the package descriptor destination (Specs name or SPM Git remote). It does not override ZIP storage for `--artifact-provider maven`, which still uses `CCGO_MAVEN_URL` and its credential variables.
+For Apple, `--remote` selects the package descriptor destination (Specs name or SPM Git remote). It does not override ZIP storage for `--artifact-provider maven`; use `--maven-registry private` (`CCGO_MAVEN_URL`), `local` (`MAVEN_LOCAL_PATH`), or `official` (signed bundle to Maven Central).
 
 SPM and Index share `--version` and `--tag`: version defaults to `CCGO.toml`, and tag defaults to `v<version>`, matching `ccgo tag`. Use `--version` to override the version or `--tag` to override the tag. A tag alone derives the version by stripping v/V; custom prefixes require an explicit version. `--index-version` and `--index-tag` remain compatibility aliases. Top-level `ccgo --version` still displays the CLI version.
 
@@ -70,6 +70,28 @@ ccgo publish conan --registry private --remote myrepo
 ccgo publish doc --doc-branch gh-pages --doc-open
 ```
 
+## Registry Semantics
+
+`--registry` always selects the **package destination**, never the Maven ZIP host for Apple/Index/Doc artifact uploads. Those use `--artifact-provider maven --maven-registry local|official|private` instead.
+
+| Target | `local` | `official` | `private` | `--remote` |
+| --- | --- | --- | --- | --- |
+| Android | Local Maven (`MAVEN_LOCAL_PATH` / `~/.m2`) | Maven Central (Central Portal) | Maven URL (`CCGO_MAVEN_URL` or `--remote`) | URL |
+| KMP | Local Maven | Maven Central (Central Portal) | Maven URL | URL |
+| Apple | CocoaPods lint / SPM wrapper validation | CocoaPods Trunk; SPM has no official upload | Private Specs repo / SPM Git remote | Configured name |
+| OHOS | `ohpm prepublish` validation | Official OHPM | Custom OHPM URL | URL |
+| Conan | Local Conan create/export | Unsupported (ConanCenter PR) | Conan remote name | Configured name |
+| Package / Index | Local index directory | Official CCGO index | Configured index name | Configured name |
+| Doc | GitHub Pages (no artifact provider) | Not used | Not used | Not used |
+
+Rules:
+
+- `local` never pushes to a network. It writes a local destination (Maven/index) or validates/exports locally (Apple/OHOS/Conan).
+- `official` is the target's official public registry. Where direct CLI upload is unsupported (SPM, Conan), it fails with guidance.
+- `private` always uses `--remote`: a URL for Android/KMP/OHOS, a configured remote name for Apple/Index/Conan/SPM.
+- `--maven-registry` is independent: `official` uploads a signed bundle to Maven Central, `private` PUTs to `CCGO_MAVEN_URL`, and `local` writes to the local Maven repository. `--registry` does not redirect Maven artifacts to Central.
+- `ccgo publish doc` rejects a non-local `--registry` because Doc publishing does not use it; use `--artifact-provider maven --maven-registry ...` for Maven hosting.
+
 ### Skip Build
 
 Publish existing artifacts without rebuilding:
@@ -90,9 +112,9 @@ Use `--path` for the publish input: a directory or the platform's artifact/descr
 
 | Target | Directory input | File input | Default without `--path` |
 | --- | --- | --- | --- |
-| Android | Project containing `gradlew`, or artifacts with exactly one AAR | `.aar`, SDK `.zip` containing exactly one AAR | `android/` project and default AAR path |
+| Android | Artifacts with exactly one AAR | `.aar`, SDK `.zip` containing exactly one AAR | Build `android --release` with ccgo, then upload |
 | OHOS | Package containing `oh-package.json5`, or artifacts with exactly one HAR | `.har`, SDK `.zip` containing exactly one HAR | Run OHPM in `ohos/` |
-| KMP | Gradle project or CCGO KMP SDK directory | CCGO KMP SDK `.zip` | `kmp/` project |
+| KMP | Project directory or CCGO KMP SDK directory | CCGO KMP SDK `.zip` | Build `kmp --release` with ccgo, then upload |
 | Apple / CocoaPods | Podspec directory; binary directory with `--artifact-provider` | `.podspec`; `.zip` with a provider | Current podspec; release Apple SDK ZIP with provider |
 | Apple / SPM | Package directory; binary directory with a provider | `Package.swift`; `.zip` with a provider | Current directory; release Apple SDK ZIP with provider |
 | Conan | Recipe directory containing `conanfile.py` | Python recipe, usually `conanfile.py`, or a `.zip` containing it | Existing CCGO project discovery |
@@ -120,20 +142,23 @@ ccgo publish package --version 1.2.3 --index-repo ./package-index \
   --archive-url-template 'https://cdn.example.com/{name}-{version}.zip'
 ```
 
-Android artifact inputs still use the current project's `android/` Gradle project. A project directory containing `gradlew` uses that directory instead. The Gradle project supplies Maven coordinates, POM, signing, and repository configuration. Coordinates come from project configuration, not the AAR filename. `--release` and `--stl` do not transform an existing AAR; ensure its contents match the configuration. Update both the CLI and the CCGO Gradle plugin: the plugin must support `ccgoPublishPath` and `ccgoSkipPublishBuild`. The CLI checks plugin support before executing tasks and rejects older plugins.
+`ccgo publish android` never invokes Gradle. For prebuilt AAR/SDK ZIP inputs, `--registry local` and `--registry private` upload directly from ccgo — no `android/` project, `gradlew`, or Gradle publish plugin is required. Without `--path`, ccgo runs `ccgo build android --release` first and uploads the resulting AAR directly: the equivalent of building and then passing `--path`. `ccgo build` still invokes Gradle's `assembleProdRelease` task to package the AAR, but the publish step itself never calls Gradle. `--skip-build` without `--path` is rejected because there is no artifact to select; pass the built AAR with `--path`. A `--path` directory is resolved to the nearest ancestor containing `CCGO.toml`, then built with ccgo. `--registry official` (Maven Central) builds the AAR, signs every file, and uploads a bundle to the Central Portal; set `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` (Portal user token) and `SIGNING_IN_MEMORY_KEY` / `SIGNING_IN_MEMORY_KEY_PASSWORD` (or install gpg with a secret key). Coordinates come from project configuration (`[publish.android.maven]`, then `[project].group_id`), not the AAR filename; `channel_desc` and `--stl c++_static` produce the same `-stdembed` artifact id as the plugin. Direct uploads honor `--stl`; `--release` does not transform an existing AAR. Local/private uploads publish the AAR and POM only; the Central bundle also carries minimal sources/javadoc jars. Gradle-derived implicit dependencies are not synthesized, so list any required runtime dependencies under `[publish.android.maven].dependencies`.
 
 CocoaPods runs in the specified podspec's directory. Without an artifact provider, an explicit Index archive requires both `--checksum` and `--archive-url-template`, supports only `--archive-format zip`, and fails on errors reading an explicit archive. Host the ZIP separately at the template URL; this mode does not upload it.
 
-KMP accepts a Gradle project directory containing `gradlew` (build and publish), or a prebuilt CCGO SDK directory/ZIP containing `lib/kmp/` and `meta/kmp/build_info.json`. A ZIP may have one enclosing directory. SDK mode uses the current project's `kmp/` project and updated CCGO Gradle plugin configuration, publishing only the bundled files without rebuilding.
+KMP accepts a project directory, or a prebuilt CCGO SDK directory/ZIP containing `lib/kmp/` and `meta/kmp/build_info.json`. A ZIP may have one enclosing directory. `ccgo publish kmp` never invokes Gradle: without `--path` it runs `ccgo build kmp --release`, prepares the produced SDK ZIP, and uploads it; a `--path` project directory is resolved to the nearest `CCGO.toml` root and built with ccgo. `ccgo build` still uses Gradle to compile Kotlin, but the publish step never calls Gradle. `--skip-build` without `--path` is rejected because no SDK can be selected.
 
 ```bash
 ccgo publish kmp --path ./STDCOMM_KMP_SDK-0.0.5.zip --registry local
-ccgo publish kmp --path ./unpacked-sdk --registry private --remote https://maven.example.com
+ccgo publish kmp --path ./unpacked-sdk --registry private \
+  --remote https://maven.example.com/releases
 ```
 
-SDK versions come from `build_info.json`; its project name must match the current project. Group/base artifact IDs come from `[publish.kmp.maven]`, with the plugin's existing fallbacks. An Android-only SDK publishes `<group_id>:<artifact_id>-android:<sdk-version>`. Desktop JARs use `-desktop`; native KLIBs use the lowercase target suffix (for example `-iosarm64`), with cinterop KLIBs attached as classifiers.
+SDK versions come from `build_info.json`; its project name must match the current project. Group/base artifact IDs come from `[publish.kmp.maven]`, with the same fallbacks as the plugin (`[publish.android.maven].group_id`, then `[project].group_id`; artifact ID defaults to `<project>-kmp`). An Android-only SDK publishes `<group_id>:<artifact_id>-android:<sdk-version>`. Desktop JARs use `-desktop`; native KLIBs use the lowercase target suffix (for example `-iosarm64`), with cinterop KLIBs attached as classifiers.
 
-These SDKs lack complete POM/Gradle module metadata. SDK mode publishes directly addressable platform modules, without synthesizing a root KMP module or commonMain automatic variant selection. POM dependencies come from configured KMP dependencies; ensure they are complete. Maven Central still requires its metadata, signing, and accompanying artifacts; SDK mode does not invent sources/javadoc. ZIPs are extracted into temporary directories and cleaned up afterwards. Unsafe paths, symlinks, missing metadata, and ambiguous main artifacts are rejected.
+Direct uploads use `MAVEN_LOCAL_PATH` / `[publish.maven].local_path` for local repositories, and `--remote` (or `CCGO_MAVEN_URL`) plus `CCGO_MAVEN_USERNAME` / `CCGO_MAVEN_PASSWORD` for private repositories. Files follow the Maven layout (`group/path/artifact/version/artifact-version[-classifier].ext`) and include the POM and SHA-256 checksums. Existing files are replaced, so retrying a failed publish is safe. `--registry official` signs the files and uploads a bundle to the Central Portal, using the same `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` and `SIGNING_IN_MEMORY_KEY` / `SIGNING_IN_MEMORY_KEY_PASSWORD` (or gpg) settings as Android.
+
+These SDKs lack complete POM/Gradle module metadata. SDK mode publishes directly addressable platform modules, without synthesizing a root KMP module or commonMain automatic variant selection. POM dependencies come from configured KMP dependencies (`[publish.kmp.maven].dependencies`); ensure they are complete. The Central bundle also carries minimal sources/javadoc jars. ZIPs are extracted into temporary directories and cleaned up afterwards. Unsafe paths, symlinks, missing metadata, ambiguous main artifacts, and project-name mismatches are rejected.
 
 Doc ZIPs must contain exactly one `mkdocs.yml` or `mkdocs.yaml`; Conan ZIPs must contain exactly one `conanfile.py`. Enclosing directories are allowed: descriptors are searched recursively, with missing or ambiguous inputs rejected. Include all files referenced by relative paths; the archive layout is preserved. Temporary extraction is removed after success or failure, leaving the original ZIP untouched.
 
@@ -145,11 +170,18 @@ Index supports `--artifact-provider maven|github`. Pass a ZIP or a directory con
 
 ```bash
 ccgo publish package --registry private --remote company \
-  --artifact-provider maven --artifact-group com.example \
+  --artifact-provider maven --maven-registry private \
+  --artifact-group com.example \
+  --path ./STDCOMM_CCGO_PACKAGE-0.0.5.zip --push
+
+# Maven Central: sign and upload a bundle
+ccgo publish package --registry private --remote company \
+  --artifact-provider maven --maven-registry official \
+  --artifact-group com.example \
   --path ./STDCOMM_CCGO_PACKAGE-0.0.5.zip --push
 ```
 
-`--registry` and `--remote` select the package index. Maven ZIP storage uses `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME`, and `CCGO_MAVEN_PASSWORD`. The group comes from `--artifact-group` or `[publish.index.maven].group_id`; the default artifact ID is `<project>-ccgo`, overridable with `--artifact-id`. For GitHub, use `--artifact-provider github --github-repo company/library`; the release for the selected tag must already exist.
+`--registry` and `--remote` select the package index. `--maven-registry` selects ZIP storage: `private` (`CCGO_MAVEN_URL`, default), `local` (`MAVEN_LOCAL_PATH`), or `official` (Maven Central via the Central Portal). The group comes from `--artifact-group` or `[publish.index.maven].group_id`; the default artifact ID is `<project>-ccgo`, overridable with `--artifact-id`. For GitHub, use `--artifact-provider github --github-repo company/library`; the release for the selected tag must already exist.
 
 The source Git tag must exist before publishing; Index does not create or push it. You can reuse the same source tag across platforms. Without `--push`, the command only validates, without uploads or index changes. With `--push`, it checks for duplicate indexed versions before uploading. A subsequent failure can leave uploaded artifacts; uploads are not rolled back. Retry the same command with the same artifact to resume the pending publication; confirmed uploads are not repeated. Temporary copies are cleaned up on success or failure; the original ZIP is preserved.
 
@@ -159,12 +191,13 @@ Publish and yank serialize access to a shared index clone. Rejected pushes can m
 
 Use `--artifact-provider maven|github` to upload an Apple binary directory, a single `.xcframework` directory, or a ZIP via `--path`. Run from a project containing `CCGO.toml` and the existing podspec / `Package.swift` for the selected manager. The default manager is `all`; select `--manager cocoapods` for CocoaPods alone.
 
-`--artifact-provider` selects binary storage. Independently, `--registry local|official|private` selects CocoaPods validation, Trunk, or a private Specs Git repository (`--remote` required). For Apple, `--registry` controls CocoaPods Specs publishing, independently of Maven/GitHub binary storage. SPM local/private select wrapper validation or Git tag publishing; official has no direct upload endpoint.
+`--artifact-provider` selects binary storage. Independently, `--registry local|official|private` selects CocoaPods validation, Trunk, or a private Specs Git repository (`--remote` required). For Apple, `--registry` controls CocoaPods Specs publishing, independently of Maven/GitHub binary storage. SPM local/private select wrapper validation or Git tag publishing; official has no direct upload endpoint. With `--artifact-provider maven`, `--maven-registry local|official|private` selects the ZIP destination.
 
 ```bash
 ccgo publish apple --manager cocoapods \
   --path ./STDCOMM_APPLE_SDK-0.0.5.zip \
-  --artifact-provider maven --artifact-group com.example \
+  --artifact-provider maven --maven-registry private \
+  --artifact-group com.example \
   --registry private --remote company-specs
 
 ccgo publish apple --manager spm \
@@ -172,7 +205,7 @@ ccgo publish apple --manager spm \
   --artifact-provider github --github-repo company/library --push
 ```
 
-Maven reuses a single `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME`, and `CCGO_MAVEN_PASSWORD`. The repository must support hosted Maven PUT uploads, rather than being a read-only proxy or Central Portal. Set groupId with `--artifact-group` or `[publish.apple.maven].group_id`. ArtifactId defaults to `<project>-apple`, overridable with `--artifact-id`; version comes from `CCGO.toml` and must match the podspec. The ZIP, a POM with ZIP packaging, and their SHA-256 sidecars are uploaded. Comma-separated repository URLs are not supported in this mode.
+`private` Maven storage uses a single `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME`, and `CCGO_MAVEN_PASSWORD` and must support hosted Maven PUT uploads. `local` writes to `MAVEN_LOCAL_PATH` (or `~/.m2/repository`). `official` signs the ZIP/POM and uploads a bundle to the Central Portal. Set groupId with `--artifact-group` or `[publish.apple.maven].group_id`. ArtifactId defaults to `<project>-apple`, overridable with `--artifact-id`; version comes from `CCGO.toml` and must match the podspec. The ZIP, a POM with ZIP packaging, and their checksums are uploaded. Comma-separated repository URLs are not supported in private mode.
 
 GitHub uses authenticated `gh` and requires `--github-repo owner/repo` plus an existing `v<version>` Release. The asset is named `<artifactId>-<version>.zip`; existing assets are not overwritten.
 
@@ -236,49 +269,38 @@ ccgo publish android --registry local
 ccgo publish android --registry official
 
 # Publish to private Maven
+export CCGO_MAVEN_USERNAME=admin
+export CCGO_MAVEN_PASSWORD=secret
 ccgo publish android --registry private \
-    --remote https://maven.example.com \
-    --username admin \
-    --password secret
-
-# Specify group ID and artifact ID
-ccgo publish android --registry official \
-    --group-id com.example \
-    --artifact-id mylib
+    --remote https://maven.example.com
 ```
 
 ### Maven Central Publishing
 
 **Prerequisites:**
 
-1. **Create Sonatype account**: https://issues.sonatype.org/
-2. **Generate PGP key:**
-```bash
-gpg --gen-key
-gpg --list-secret-keys --keyid-format LONG
-gpg --keyserver hkp://pool.sks-keyservers.net --send-keys YOUR_KEY_ID
-```
+1. Create a Central Portal account at https://central.sonatype.com/ and verify your namespace.
+2. Generate and register a PGP key.
 
-3. **Export secret key:**
-```bash
-gpg --export-secret-keys YOUR_KEY_ID > ~/.gnupg/secring.gpg
-```
+**Configure credentials and signing:**
 
-4. **Configure credentials** in `~/.gradle/gradle.properties`
+```bash
+# Central Portal user token (not your login password)
+export MAVEN_CENTRAL_USERNAME=your-username
+export MAVEN_CENTRAL_PASSWORD=your-password
+
+# ASCII-armored secret key; or install gpg with a secret key
+export SIGNING_IN_MEMORY_KEY="$(cat /path/to/secret-key.asc)"
+export SIGNING_IN_MEMORY_KEY_PASSWORD=your-key-password
+```
 
 **Publishing process:**
 
 ```bash
-# Build and publish
 ccgo publish android --registry official
-
-# After upload, sign in to Sonatype to release:
-# https://s01.oss.sonatype.org/
-# 1. Find staging repository
-# 2. Click "Close" button
-# 3. Wait for validation
-# 4. Click "Release" button
 ```
+
+ccgo builds the AAR, signs every file, uploads one bundle to the Central Portal, and follows the deployment until it is `PUBLISHED` (AUTOMATIC).
 
 ## iOS/macOS Publishing (Apple Platforms)
 
@@ -999,10 +1021,14 @@ The official registry uses the internal name `ccgo-index`. Its SSH URL requires 
 Without an artifact provider, `ccgo publish doc` continues to deploy to GitHub Pages. Maven mode builds a fresh static site into a temporary directory and archives its contents with `index.html` at the ZIP root. Without `--push`, it only builds and validates; add `--push` to upload. It does not deploy a website or use `--registry` / `--remote`.
 
 ```bash
-ccgo publish doc --artifact-provider maven --artifact-group com.example
-ccgo publish doc --artifact-provider maven --artifact-group com.example --push
+ccgo publish doc --artifact-provider maven --maven-registry local \
+  --artifact-group com.example
+ccgo publish doc --artifact-provider maven --maven-registry private \
+  --artifact-group com.example --push
+ccgo publish doc --artifact-provider maven --maven-registry official \
+  --artifact-group com.example --push
 ```
 
-Configure `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME` and `CCGO_MAVEN_PASSWORD` for a hosted Maven repository. The working directory must contain `CCGO.toml`; the version comes from its project configuration unless overridden with `--version`. The default artifactId is `<project>-doc` (`--artifact-id` overrides it). Set the group with `--artifact-group` or `[publish.doc.maven].group_id`.
+`--maven-registry local` writes to `MAVEN_LOCAL_PATH`; `private` uses `CCGO_MAVEN_URL`, `CCGO_MAVEN_USERNAME` and `CCGO_MAVEN_PASSWORD`; `official` signs the ZIP/POM and uploads a bundle to the Central Portal. The working directory must contain `CCGO.toml`; the version comes from its project configuration unless overridden with `--version`. The default artifactId is `<project>-doc` (`--artifact-id` overrides it). Set the group with `--artifact-group` or `[publish.doc.maven].group_id`.
 
 `--path` accepts a MkDocs project directory, config file or project ZIP containing a unique MkDocs config. Temporary files are cleaned up. This mode rejects `--skip-build`, `--doc-open`, `--doc-force` and the GitHub artifact provider. It uploads ZIP, POM and SHA-256 files; partial uploads are not rolled back. For online browsing, extract and deploy the archive to a static web host.

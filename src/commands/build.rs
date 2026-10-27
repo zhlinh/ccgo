@@ -529,6 +529,45 @@ pub struct BuildCommand {
 }
 
 impl BuildCommand {
+    /// Build the current project's release Android AAR for publishing.
+    ///
+    /// `ccgo publish android` without `--path` uses this instead of invoking the
+    /// Gradle publish task: the build produces the AAR, then publish uploads it
+    /// directly.
+    pub fn for_android_publish(stl: Option<StlKind>) -> Result<Self> {
+        #[derive(clap::Parser)]
+        struct BuildArgs {
+            #[command(flatten)]
+            build: BuildCommand,
+        }
+
+        let mut args = vec![
+            "ccgo".to_string(),
+            "android".to_string(),
+            "--release".to_string(),
+        ];
+        if let Some(stl) = stl {
+            args.push("--stl".to_string());
+            args.push(stl.as_str().to_string());
+        }
+        <BuildArgs as clap::Parser>::try_parse_from(args)
+            .map(|parsed| parsed.build)
+            .map_err(|error| anyhow::anyhow!("Failed to prepare Android build: {error}"))
+    }
+
+    /// Build the current project's release KMP SDK for publishing.
+    pub fn for_kmp_publish() -> Result<Self> {
+        #[derive(clap::Parser)]
+        struct BuildArgs {
+            #[command(flatten)]
+            build: BuildCommand,
+        }
+
+        <BuildArgs as clap::Parser>::try_parse_from(["ccgo", "kmp", "--release"])
+            .map(|parsed| parsed.build)
+            .map_err(|error| anyhow::anyhow!("Failed to prepare KMP build: {error}"))
+    }
+
     /// Run `ccgo fetch` for a project directory if any declared deps are missing.
     ///
     /// Mirrors cargo's behaviour: dependencies are resolved and downloaded
@@ -827,7 +866,7 @@ impl BuildCommand {
         ctx: &BuildContext,
         package: &crate::config::PackageConfig,
         verbose: bool,
-    ) -> Result<()> {
+    ) -> Result<Vec<BuildResult>> {
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             if verbose {
                 eprintln!("Using CCGO cmake directory: {}", cmake_dir.display());
@@ -867,15 +906,24 @@ impl BuildCommand {
             ),
         );
 
-        Ok(())
+        Ok(results)
     }
 
     /// Execute the build command
     pub fn execute(self, verbose: bool) -> Result<()> {
+        self.build_artifacts(verbose).map(|_| ())
+    }
+
+    /// Build the current project and return the produced artifacts.
+    ///
+    /// Publishing uses this to build an AAR and upload it directly, without the
+    /// Gradle publish task.
+    pub fn build_artifacts(self, verbose: bool) -> Result<Vec<BuildResult>> {
         let current_dir = std::env::current_dir()?;
 
         if self.workspace || self.package.is_some() {
-            return self.execute_workspace_build(&current_dir, verbose);
+            self.execute_workspace_build(&current_dir, verbose)?;
+            return Ok(Vec::new());
         }
 
         if Workspace::is_workspace(&current_dir) {
@@ -914,7 +962,8 @@ impl BuildCommand {
         let ctx = BuildContext::new(project_root, config, options);
 
         if use_docker {
-            return self.handle_docker_build(ctx, &package, verbose);
+            self.handle_docker_build(ctx, &package, verbose)?;
+            return Ok(Vec::new());
         }
 
         self.execute_native_build(&ctx, &package, verbose)
@@ -1289,6 +1338,15 @@ impl BuildCommand {
 mod tests {
     use super::*;
     use crate::config::Linkage;
+
+    #[test]
+    fn android_publish_builds_a_release_aar_with_the_requested_stl() {
+        let command = BuildCommand::for_android_publish(Some(StlKind::CxxStatic)).unwrap();
+        assert_eq!(command.target, BuildTarget::Android);
+        assert!(command.release);
+        assert!(!command.native_only);
+        assert_eq!(command.stl, Some(StlKind::CxxStatic));
+    }
 
     #[test]
     fn preferred_single_collapses_both_to_shared() {

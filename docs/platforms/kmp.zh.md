@@ -461,12 +461,22 @@ class CalculatorTest {
 ### Maven Central
 
 ```bash
-# 发布所有平台
+# 构建 release KMP SDK、签名并发布所有平台
 ccgo publish kmp --registry official
-
-# 或使用 Gradle
-./gradlew publishAllPublicationsToMavenCentral
 ```
+
+使用与 Android 相同的 Central Portal token 和 PGP 签名变量（`MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` 和 `SIGNING_IN_MEMORY_KEY` / `SIGNING_IN_MEMORY_KEY_PASSWORD`，或 gpg）。`ccgo publish` 不会调用 Gradle；`ccgo build kmp` 内部仍用 Gradle 编译 Kotlin。
+
+### 预构建 SDK（不依赖 Gradle）
+
+如果已经有 CCGO KMP SDK ZIP，本地和私有 Maven 仓库可以直接发布：
+
+```bash
+ccgo publish kmp --path ./STDCOMM_KMP_SDK-0.0.5.zip --registry private \
+  --remote https://maven.example.com/releases
+```
+
+ccgo 会按目标上传包内的 `-android`、`-desktop`、native 产物及其 POM、校验文件，不需要 `kmp/` 工程或 `gradlew`。改用 `--registry official` 会把签名后的 bundle 上传到 Central Portal。
 
 ### 使用库
 

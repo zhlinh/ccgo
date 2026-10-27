@@ -29,9 +29,9 @@ CCGO 提供跨多个平台和包管理器的统一发布功能：
 
 SPM 与 Index 统一用 `--push` 执行发布。不传时只校验，不创建 tag、不更新或提交索引，也不 clone/pull 索引仓库。`local --push` 只写入本地；远端 registry 的 `--push` 才推送。旧 `--index-push` 是兼容别名。Apple 二进制托管包含 SPM 时也遵循不加 `--push` 只校验的规则；仅 CocoaPods 的显式 artifact-provider 上传流程保持原行为。
 
-私有目的地统一使用 `--remote <URL或名称>`：Android/KMP 与 OHOS 接受仓库 URL；CocoaPods、Conan、SPM 与 Index 接受已配置的仓库名称。旧 `--url`、`--remote-name` 是 `--remote` 的兼容别名，同一次命令只能使用其中一个，避免冲突。Android/KMP 指定 `--remote` 会覆盖该次 Gradle 发布进程的 `CCGO_MAVEN_URL`；不指定则沿用已有 Maven 配置。
+私有目的地统一使用 `--remote <URL或名称>`：Android/KMP 与 OHOS 接受仓库 URL；CocoaPods、Conan、SPM 与 Index 接受已配置的仓库名称。旧 `--url`、`--remote-name` 是 `--remote` 的兼容别名，同一次命令只能使用其中一个，避免冲突。Android/KMP 指定 `--remote` 会覆盖该次 Maven 发布的 `CCGO_MAVEN_URL`；不指定则沿用已有 Maven 配置。
 
-Apple 的 `--remote` 指定包描述目的地（Specs 名称或 SPM Git remote），不会覆盖 `--artifact-provider maven` 的 ZIP 托管地址；后者仍由 `CCGO_MAVEN_URL` 等变量配置。
+Apple 的 `--remote` 指定包描述目的地（Specs 名称或 SPM Git remote），不会覆盖 `--artifact-provider maven` 的 ZIP 托管地址；用 `--maven-registry private`（`CCGO_MAVEN_URL`）、`local`（`MAVEN_LOCAL_PATH`）或 `official`（签名后上传 Maven Central）。
 
 SPM 与 Index 共用 `--version`、`--tag`：默认版本来自 `CCGO.toml`，默认 tag 为 `v<版本>`，与 `ccgo tag` 一致。`--version` 覆盖配置版本；`--tag` 覆盖 tag；单独传 tag 时移除开头 v/V 推导版本，自定义前缀请同时传版本。旧 `--index-version`、`--index-tag` 保留为兼容别名。顶层 `ccgo --version` 仍显示 CLI 版本。
 
@@ -69,6 +69,28 @@ ccgo publish conan --registry private --remote myrepo
 ccgo publish doc --doc-branch gh-pages --doc-open
 ```
 
+## `--registry` 语义
+
+`--registry` 始终表示**包的目标仓库**，不表示 Apple/Index/Doc 的 Maven ZIP 托管位置；后者用 `--artifact-provider maven --maven-registry local|official|private`。
+
+| 目标 | `local` | `official` | `private` | `--remote` |
+| --- | --- | --- | --- | --- |
+| Android | 本地 Maven（`MAVEN_LOCAL_PATH` / `~/.m2`） | Maven Central（Central Portal） | Maven URL（`CCGO_MAVEN_URL` 或 `--remote`） | URL |
+| KMP | 本地 Maven | Maven Central（Central Portal） | Maven URL | URL |
+| Apple | CocoaPods lint / SPM 包装校验 | CocoaPods Trunk；SPM 无官方直传 | 私有 Specs 仓库 / SPM Git remote | 配置名称 |
+| OHOS | `ohpm prepublish` 校验 | 官方 OHPM | 自定义 OHPM URL | URL |
+| Conan | 本地 create/export | 不支持直传（ConanCenter PR） | Conan remote 名称 | 配置名称 |
+| Package / Index | 本地索引目录 | 官方 CCGO 索引 | 已配置的索引名称 | 配置名称 |
+| Doc | GitHub Pages（无 artifact provider） | 不使用 | 不使用 | 不使用 |
+
+规则：
+
+- `local` 不向网络推送：本地 Maven/索引直接写入，Apple/OHOS/Conan 只做本地校验或导出。
+- `official` 是目标平台的官方公共仓库；不支持 CLI 直传的平台（SPM、Conan）会报错并给出指引。
+- `private` 总是配合 `--remote`：Android/KMP/OHOS 是 URL，Apple/Index/Conan/SPM 是已配置的 remote 名称。
+- `--maven-registry` 独立控制 Maven 产物：`official` 签名上传 Central Portal，`private` PUT 到 `CCGO_MAVEN_URL`，`local` 写本地 Maven 仓库。`--registry` 不会把 Maven 产物改投 Central。
+- `ccgo publish doc` 会拒绝非 `local` 的 `--registry`；Maven 托管请用 `--artifact-provider maven --maven-registry ...`。
+
 ### 跳过构建
 
 发布现有制品而不重新构建：
@@ -89,9 +111,9 @@ ccgo publish ohos --registry official --skip-build
 
 | 目标 | 目录输入 | 文件输入 | 不传时的默认行为 |
 | --- | --- | --- | --- |
-| Android | 含 `gradlew` 的工程目录，或含唯一 AAR 的产物目录 | `.aar`、含唯一 AAR 的 SDK `.zip` | 使用 `android/` 工程和默认 AAR 路径 |
+| Android | 含唯一 AAR 的产物目录 | `.aar`、含唯一 AAR 的 SDK `.zip` | 先用 `ccgo build android --release` 构建，再上传 |
 | OHOS | 含 `oh-package.json5` 的包目录，或含唯一 HAR 的产物目录 | `.har`、含唯一 HAR 的 SDK `.zip` | 在 `ohos/` 执行 OHPM |
-| KMP | Gradle 工程目录或 CCGO KMP SDK 目录 | CCGO KMP SDK `.zip` | 使用 `kmp/` 工程 |
+| KMP | 工程目录或 CCGO KMP SDK 目录 | CCGO KMP SDK `.zip` | 先用 `ccgo build kmp --release` 构建，再上传 |
 | Apple / CocoaPods | 含唯一 podspec 的目录；指定 `--artifact-provider` 时为二进制目录 | `.podspec`；指定 provider 时支持 `.zip` | 查找 podspec；provider 模式查找 release Apple SDK ZIP |
 | Apple / SPM | 含 `Package.swift` 的包仓库目录；指定 provider 时为二进制目录 | `Package.swift`；指定 provider 时支持 `.zip` | 当前目录；provider 模式查找 release Apple SDK ZIP |
 | Conan | 含 `conanfile.py` 的 recipe 目录 | Python recipe 文件（通常为 `conanfile.py`）、包含该 recipe 的 `.zip` | 按原逻辑查找 CCGO 工程 |
@@ -119,23 +141,29 @@ ccgo publish package --version 1.2.3 --index-repo ./package-index \
   --archive-url-template 'https://cdn.example.com/{name}-{version}.zip'
 ```
 
-Android 指定产物时仍需要当前项目的 `android/` Gradle 工程；指定含 `gradlew` 的工程目录时使用该目录。Gradle 工程提供 Maven 坐标、POM、签名与仓库配置。指定 AAR 的坐标由工程配置决定，不从文件名推断；`--release` 和 `--stl` 不会转换已有 AAR，请确保配置与产物一致。需要使用支持 `ccgoPublishPath` / `ccgoSkipPublishBuild` 属性的新版 CCGO Gradle 插件；CLI 会在执行发布任务前检查插件是否支持；旧版插件会报错，CLI 和插件需一起更新。
+`ccgo publish android` 不再调用 Gradle。指定预构建 AAR/SDK ZIP 时，`--registry local` 和 `--registry private` 由 ccgo 直接上传，不需要 `android/` 工程、`gradlew` 或 CCGO Gradle 发布插件。不传 `--path` 时，ccgo 会先执行 `ccgo build android --release`，再把生成的 AAR 直接上传，等价于“先 build 再 publish --path”。注意 `ccgo build` 内部仍会用 Gradle 的 `assembleProdRelease` 打包 AAR，但发布步骤本身不会调用 Gradle。不传 `--path` 又传 `--skip-build` 时没有可选的产物，会直接报错，请改用 `--path` 指定已有 AAR。`--path` 目录会向上找到最近的 `CCGO.toml` 工程根目录，然后用 ccgo 构建。`--registry official`（Maven Central）会构建 AAR、为每个文件生成签名，并把 bundle 上传到 Central Portal；需要设置 `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD`（Portal user token）以及 `SIGNING_IN_MEMORY_KEY` / `SIGNING_IN_MEMORY_KEY_PASSWORD`（或安装 gpg 并配置密钥）。坐标由工程配置（`[publish.android.maven]`，再回退 `[project].group_id`）决定，不从 AAR 文件名推断；`channel_desc` 和 `--stl c++_static` 会生成与插件一致的 `-stdembed` artifactId。直接上传会遵循 `--stl`；`--release` 不会转换已有 AAR。local/private 只发布 AAR 和 POM；Central bundle 还会附带最小的 sources/javadoc jar。不会推断 Gradle 组件里的隐式依赖；运行时依赖请显式写进 `[publish.android.maven].dependencies`。
 
 CocoaPods 会在指定 podspec 所在目录执行命令。未指定 artifact provider 时，Index 的 `--path` 必须同时使用 `--checksum` 和 `--archive-url-template`，且仅支持 `--archive-format zip`；指定文件读取失败会直接报错。ZIP 必须另行上传到模板所指的地址，此模式不会上传文件。
 
 KMP 的 `--path` 支持两种目录和 SDK ZIP：
 
-- Gradle 项目目录包含 `gradlew`，沿用工程构建与发布流程。
-- SDK 目录包含 `lib/kmp/` 和 `meta/kmp/build_info.json`；ZIP 包含相同结构，也允许额外包一层目录。SDK 模式复用当前项目的 `kmp/` 工程及新版 CCGO Gradle 插件配置，只发布包内已有产物，不重新构建。
+- 工程目录：向上找到最近的 `CCGO.toml` 根目录，用 `ccgo build kmp --release` 构建后上传。
+- SDK 目录包含 `lib/kmp/` 和 `meta/kmp/build_info.json`；ZIP 包含相同结构，也允许额外包一层目录。预构建 SDK 直接上传。
+- 不传 `--path` 时同样执行 `ccgo build kmp --release`，再上传生成的 SDK ZIP。
+
+`ccgo publish kmp` 不会调用 Gradle；`ccgo build` 内部仍用 Gradle 编译 Kotlin，但发布步骤不调用 Gradle。不传 `--path` 又传 `--skip-build` 会直接报错。
 
 ```bash
 ccgo publish kmp --path ./STDCOMM_KMP_SDK-0.0.5.zip --registry local
-ccgo publish kmp --path ./unpacked-sdk --registry private --remote https://maven.example.com
+ccgo publish kmp --path ./unpacked-sdk --registry private \
+  --remote https://maven.example.com/releases
 ```
 
-SDK 版本取自包内 `build_info.json`，项目名必须与当前项目匹配。Group ID 和基础 artifact ID 来自 `[publish.kmp.maven]`（沿用插件的回退配置）。例如包内只有 `lib/kmp/android/stdcomm-kmp-release.aar` 时，会发布 `<group_id>:<artifact_id>-android:0.0.5`。Desktop JAR 发布到 `-desktop`，Native KLIB 发布到小写 target 后缀（如 `-iosarm64`），cinterop KLIB 作为同模块的附加 classifier。
+SDK 版本取自包内 `build_info.json`，项目名必须与当前项目匹配。Group ID 和基础 artifact ID 来自 `[publish.kmp.maven]`，回退规则与插件一致（`[publish.android.maven].group_id`，再回退 `[project].group_id`；artifact ID 默认 `<project>-kmp`）。例如包内只有 `lib/kmp/android/stdcomm-kmp-release.aar` 时，会发布 `<group_id>:<artifact_id>-android:0.0.5`。Desktop JAR 发布到 `-desktop`，Native KLIB 发布到小写 target 后缀（如 `-iosarm64`），cinterop KLIB 作为同模块的附加 classifier。
 
-SDK 包没有完整 POM/Gradle module 元数据，因此这里只发布可直接引用的平台模块，不生成根 KMP 模块，不宣称支持 commonMain 的自动平台选择。POM 依赖来自项目配置的 KMP dependencies；SDK 使用者需要确保这些配置完整。Maven Central 仍要求完整的发布元信息、签名及配套制品，SDK 模式不会自动补造 sources/javadoc。ZIP 解压在临时目录中，结束后清理；路径穿越、符号链接、缺失元信息和同一平台的多个主产物会报错。
+直接上传时，本地仓库路径取 `MAVEN_LOCAL_PATH` 或 `[publish.maven].local_path`；私有仓库地址取 `--remote`（或 `CCGO_MAVEN_URL`），凭据取 `CCGO_MAVEN_USERNAME` / `CCGO_MAVEN_PASSWORD`。文件按 Maven 目录布局写入（`group/path/artifact/version/artifact-version[-classifier].ext`），同时上传 POM 和 SHA-256 校验文件；已存在的文件会覆盖，失败后重试是安全的。`--registry official` 会为文件签名并把 bundle 上传到 Central Portal，使用与 Android 相同的 `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` 和 `SIGNING_IN_MEMORY_KEY` / `SIGNING_IN_MEMORY_KEY_PASSWORD`（或 gpg）。
+
+SDK 包没有完整 POM/Gradle module 元数据，因此这里只发布可直接引用的平台模块，不生成根 KMP 模块，不宣称支持 commonMain 的自动平台选择。POM 依赖来自项目配置的 KMP dependencies（`[publish.kmp.maven].dependencies`）；SDK 使用者需要确保这些配置完整。Central bundle 还会附带最小的 sources/javadoc jar。ZIP 解压在临时目录中，结束后清理；路径穿越、符号链接、缺失元信息、同一平台的多个主产物以及项目名不匹配都会报错。
 
 Doc ZIP 解压后需包含唯一的 `mkdocs.yml` 或 `mkdocs.yaml`；Conan ZIP 需包含唯一的 `conanfile.py`。允许带任意层外层目录，命令会递归查找描述文件；缺失或存在多个候选文件时会报错。请同时打包配置/recipe 引用的相对路径文件，原目录结构会保留。临时解压目录会在成功或失败后清理，原 ZIP 不受影响。
 
@@ -147,11 +175,18 @@ Index 支持 `--artifact-provider maven|github`。`--path` 可指定 ZIP 或包�
 
 ```bash
 ccgo publish package --registry private --remote company \
-  --artifact-provider maven --artifact-group com.example \
+  --artifact-provider maven --maven-registry private \
+  --artifact-group com.example \
+  --path ./STDCOMM_CCGO_PACKAGE-0.0.5.zip --push
+
+# Maven Central：签名并上传 bundle
+ccgo publish package --registry private --remote company \
+  --artifact-provider maven --maven-registry official \
+  --artifact-group com.example \
   --path ./STDCOMM_CCGO_PACKAGE-0.0.5.zip --push
 ```
 
-`--registry` 与 `--remote` 选择包索引仓库。Maven 的 ZIP 存储地址和凭据仍使用 `CCGO_MAVEN_URL`、`CCGO_MAVEN_USERNAME`、`CCGO_MAVEN_PASSWORD`。group 来自 `--artifact-group` 或 `[publish.index.maven].group_id`；artifact ID 默认为 `<项目名>-ccgo`，可用 `--artifact-id` 覆盖。GitHub 则使用 `--artifact-provider github --github-repo company/library`，选定 tag 对应的 Release 必须已经存在。
+`--registry` 与 `--remote` 选择包索引仓库。`--maven-registry` 选择 ZIP 存储位置：`private`（`CCGO_MAVEN_URL`，默认）、`local`（`MAVEN_LOCAL_PATH`）或 `official`（Maven Central / Central Portal）。group 来自 `--artifact-group` 或 `[publish.index.maven].group_id`；artifact ID 默认为 `<项目名>-ccgo`，可用 `--artifact-id` 覆盖。GitHub 则使用 `--artifact-provider github --github-repo company/library`，选定 tag 对应的 Release 必须已经存在。
 
 发布前源 Git tag 必须已存在，Index 不创建或推送源 tag；各平台可复用同一源 tag。不加 `--push` 只校验，不上传、不修改索引。加 `--push` 时先检查索引版本是否重复，再上传产物。后续步骤失败可能留下已上传的产物，不自动回滚。使用相同制品重试原命令可以继续待完成的发布，已确认成功的上传不会重复执行。成功或失败都会清理临时副本，原始 ZIP 保留。
 
@@ -163,13 +198,14 @@ publish 和 yank 对共享索引工作目录加互斥锁。推送被拒绝后，
 
 - `--artifact-provider` 选择 ZIP 托管位置，与包索引仓库独立。
 - `--registry local|official|private` 选择 CocoaPods Specs 操作：验证、Trunk 或私有 Specs Git 仓库。`private` 需要 `--remote`。Apple 的 `--registry` 控制 CocoaPods Specs 发布，不控制 Maven/GitHub 的 ZIP 托管；SPM 的 local/private 控制包装仓库校验与 Git tag 发布；official 不提供直传。
-- Maven 使用单个 `CCGO_MAVEN_URL` 和 `CCGO_MAVEN_USERNAME` / `CCGO_MAVEN_PASSWORD`。URL 必须是支持 PUT 上传的 hosted 仓库，不是只读代理或 Maven Central Portal。`--artifact-group` 或 `[publish.apple.maven].group_id` 指定 groupId；artifactId 默认 `<项目名>-apple`，可用 `--artifact-id` 覆盖。版本来自 `CCGO.toml`，podspec 版本必须一致。上传 ZIP、`packaging=zip` 的 POM 和各自的 SHA-256 文件。当前不接受逗号分隔的多个仓库 URL。
+- 使用 `--artifact-provider maven` 时，`--maven-registry local|official|private` 选择 ZIP 目的地：`private` 使用 `CCGO_MAVEN_URL` 和凭据，`local` 写 `MAVEN_LOCAL_PATH`，`official` 签名后上传 Central Portal。`--artifact-group` 或 `[publish.apple.maven].group_id` 指定 groupId；artifactId 默认 `<项目名>-apple`，可用 `--artifact-id` 覆盖。版本来自 `CCGO.toml`，podspec 版本必须一致。上传 ZIP、`packaging=zip` 的 POM 和各自的校验文件；private 模式不接受逗号分隔的多个仓库 URL。
 - GitHub 使用 `gh` 的认证，要求 `--github-repo owner/repo` 和已存在的 `v<版本>` Release。上传资产名同样为 `<artifactId>-<版本>.zip`，不会覆盖同名资产。
 
 ```bash
 ccgo publish apple --manager cocoapods \
   --path ./STDCOMM_APPLE_SDK-0.0.5.zip \
-  --artifact-provider maven --artifact-group com.example \
+  --artifact-provider maven --maven-registry private \
+  --artifact-group com.example \
   --registry private --remote company-specs
 
 ccgo publish apple --manager spm \
@@ -237,49 +273,38 @@ ccgo publish android --registry local
 ccgo publish android --registry official
 
 # 发布到私有 Maven
+export CCGO_MAVEN_USERNAME=admin
+export CCGO_MAVEN_PASSWORD=secret
 ccgo publish android --registry private \
-    --remote https://maven.example.com \
-    --username admin \
-    --password secret
-
-# 指定 group ID 和 artifact ID
-ccgo publish android --registry official \
-    --group-id com.example \
-    --artifact-id mylib
+    --remote https://maven.example.com
 ```
 
 ### Maven Central 发布
 
 **前置条件：**
 
-1. **创建 Sonatype 账号**: https://issues.sonatype.org/
-2. **生成 PGP 密钥：**
-```bash
-gpg --gen-key
-gpg --list-secret-keys --keyid-format LONG
-gpg --keyserver hkp://pool.sks-keyservers.net --send-keys YOUR_KEY_ID
-```
+1. 在 https://central.sonatype.com/ 创建 Central Portal 账号并验证命名空间。
+2. 生成并注册 PGP 密钥。
 
-3. **导出私钥：**
-```bash
-gpg --export-secret-keys YOUR_KEY_ID > ~/.gnupg/secring.gpg
-```
+**配置凭据和签名：**
 
-4. **在 `~/.gradle/gradle.properties` 中配置凭据**
+```bash
+# Central Portal user token（不是登录密码）
+export MAVEN_CENTRAL_USERNAME=your-username
+export MAVEN_CENTRAL_PASSWORD=your-password
+
+# ASCII armor 私钥；也可以安装 gpg 并配置密钥
+export SIGNING_IN_MEMORY_KEY="$(cat /path/to/secret-key.asc)"
+export SIGNING_IN_MEMORY_KEY_PASSWORD=your-key-password
+```
 
 **发布流程：**
 
 ```bash
-# 构建并发布
 ccgo publish android --registry official
-
-# 上传后，登录 Sonatype 进行发布：
-# https://s01.oss.sonatype.org/
-# 1. 找到 staging 仓库
-# 2. 点击 "Close" 按钮
-# 3. 等待验证
-# 4. 点击 "Release" 按钮
 ```
+
+ccgo 会构建 AAR、为每个文件签名、把整个 bundle 上传到 Central Portal，并跟踪发布状态直到 `PUBLISHED`（AUTOMATIC）。
 
 ## iOS/macOS 发布 (Apple 平台)
 
@@ -1004,10 +1029,14 @@ export CCGO_MAVEN_USERNAME='publisher'
 read -rs CCGO_MAVEN_PASSWORD
 export CCGO_MAVEN_PASSWORD
 
-ccgo publish doc --artifact-provider maven --artifact-group com.example
-ccgo publish doc --artifact-provider maven --artifact-group com.example --push
+ccgo publish doc --artifact-provider maven --maven-registry local \
+  --artifact-group com.example
+ccgo publish doc --artifact-provider maven --maven-registry private \
+  --artifact-group com.example --push
+ccgo publish doc --artifact-provider maven --maven-registry official \
+  --artifact-group com.example --push
 ```
 
-当前工作目录需要 `CCGO.toml`，版本默认来自项目配置；支持 `--version` 覆盖。artifactId 默认 `<项目名>-doc`，可用 `--artifact-id` 覆盖；groupId 也可配置在 `[publish.doc.maven].group_id`。上传 ZIP、POM 和各自的 SHA-256 文件，上传中途失败不会撤回已上传文件。
+`--maven-registry local` 写 `MAVEN_LOCAL_PATH`；`private` 使用 `CCGO_MAVEN_URL` 和凭据；`official` 签名后上传 Central Portal。当前工作目录需要 `CCGO.toml`，版本默认来自项目配置；支持 `--version` 覆盖。artifactId 默认 `<项目名>-doc`，可用 `--artifact-id` 覆盖；groupId 也可配置在 `[publish.doc.maven].group_id`。上传 ZIP、POM 和各自的校验文件，上传中途失败不会撤回已上传文件。
 
 `--path` 可指定 MkDocs 工程目录、配置文件或包含唯一 MkDocs 配置的工程 ZIP。每次在临时目录构建并打包，ZIP 根目录直接包含 `index.html`，临时产物自动清理。此模式不支持 `--skip-build`、`--doc-open`、`--doc-force`，也不支持 GitHub artifact provider。Maven 归档供下载；在线浏览需要另行解压部署到静态站点。

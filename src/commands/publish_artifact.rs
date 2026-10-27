@@ -1,9 +1,13 @@
 //! Shared Maven and GitHub storage for Apple binaries and CCGO packages.
-use super::{ArtifactProvider, PublishCommand};
+use super::{ArtifactProvider, MavenRegistry, PublishCommand};
 use anyhow::{bail, Context, Result};
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 pub(super) fn coordinate(value: &str) -> Result<&str> {
     if value.is_empty()
@@ -16,6 +20,19 @@ pub(super) fn coordinate(value: &str) -> Result<&str> {
         bail!("Invalid Maven coordinate: {value}");
     }
     Ok(value)
+}
+
+fn write_local(root: &Path, relative: &Path, bytes: &[u8]) -> Result<()> {
+    let path = root.join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, bytes)?;
+    Ok(())
+}
+
+fn append_suffix(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{suffix}", path.display()))
 }
 
 fn maven_url(base: &str, group: &str, artifact: &str, version: &str) -> Result<String> {
@@ -115,6 +132,16 @@ enum Backend {
         username: String,
         password: String,
     },
+    Central {
+        group: String,
+        artifact: String,
+        version: String,
+    },
+    Local {
+        root: PathBuf,
+        relative: String,
+        group: String,
+    },
     Github {
         repo: String,
         tag: String,
@@ -126,7 +153,120 @@ pub(super) struct PreparedUpload {
     archive_name: String,
     artifact: String,
     version: String,
+    config: toml::Value,
     backend: Backend,
+}
+
+fn maven_group(command: &PublishCommand, config: &toml::Value, scope: &str) -> Result<String> {
+    let group = command
+        .artifact_group
+        .as_deref()
+        .or_else(|| {
+            config
+                .get("publish")?
+                .get(scope)?
+                .get("maven")?
+                .get("group_id")?
+                .as_str()
+        })
+        .with_context(|| {
+            format!("Maven upload requires --artifact-group or [publish.{scope}.maven].group_id")
+        })?;
+    coordinate(group)?;
+    Ok(group.to_owned())
+}
+
+fn maven_destination(
+    command: &PublishCommand,
+    config: &toml::Value,
+    group: &str,
+    artifact: &str,
+    version: &str,
+) -> Result<(String, Backend)> {
+    match command.maven_registry {
+        MavenRegistry::Official => {
+            let root = maven_url("https://repo1.maven.org/maven2", group, artifact, version)?;
+            Ok((
+                format!("{root}.zip"),
+                Backend::Central {
+                    group: group.to_owned(),
+                    artifact: artifact.to_owned(),
+                    version: version.to_owned(),
+                },
+            ))
+        }
+        MavenRegistry::Local => {
+            let root = super::maven::local_repository(config)?;
+            let relative = super::maven::layout_path(group, artifact, version, None, "zip");
+            let path = root.join(&relative);
+            let url = reqwest::Url::from_file_path(&path)
+                .map(|url| url.to_string())
+                .unwrap_or_else(|_| path.display().to_string());
+            Ok((
+                url,
+                Backend::Local {
+                    root,
+                    relative,
+                    group: group.to_owned(),
+                },
+            ))
+        }
+        MavenRegistry::Private => {
+            let get = |key: &str| std::env::var(key).unwrap_or_default();
+            let base = get("CCGO_MAVEN_URL");
+            if base.trim().is_empty() {
+                bail!(
+                    "Maven artifact upload requires CCGO_MAVEN_URL \
+                     (for example https://repo.example.com/releases); set \
+                     CCGO_MAVEN_USERNAME/CCGO_MAVEN_PASSWORD if the repository needs auth"
+                );
+            }
+            if base.contains(',') {
+                bail!("Artifact upload requires a single CCGO_MAVEN_URL");
+            }
+            let root = maven_url(&base, group, artifact, version)?;
+            Ok((
+                format!("{root}.zip"),
+                Backend::Maven {
+                    root,
+                    group: group.to_owned(),
+                    username: get("CCGO_MAVEN_USERNAME"),
+                    password: get("CCGO_MAVEN_PASSWORD"),
+                },
+            ))
+        }
+    }
+}
+
+fn github_destination(
+    command: &PublishCommand,
+    tag: &str,
+    archive_name: &str,
+) -> Result<(String, Backend)> {
+    let repo = command
+        .github_repo
+        .as_deref()
+        .context("GitHub upload requires --github-repo owner/repo")?;
+    let parts: Vec<_> = repo.split('/').collect();
+    if parts.len() != 2 {
+        bail!("--github-repo must be owner/repo");
+    }
+    for part in parts {
+        coordinate(part)?;
+    }
+    let mut url = reqwest::Url::parse(&format!("https://github.com/{repo}/releases/download/"))?;
+    url.path_segments_mut()
+        .unwrap()
+        .pop_if_empty()
+        .push(tag)
+        .push(archive_name);
+    Ok((
+        url.to_string(),
+        Backend::Github {
+            repo: repo.to_owned(),
+            tag: tag.to_owned(),
+        },
+    ))
 }
 
 impl PreparedUpload {
@@ -152,58 +292,17 @@ impl PreparedUpload {
             .context("Missing artifact provider")?
         {
             ArtifactProvider::Maven => {
-                let get = |key: &str| std::env::var(key).unwrap_or_default();
-                let base = get("CCGO_MAVEN_URL");
-                if base.contains(',') {
-                    bail!("Artifact upload requires a single CCGO_MAVEN_URL");
-                }
-                let group = command.artifact_group.as_deref()
-                    .or_else(|| config.get("publish")?.get(scope)?.get("maven")?.get("group_id")?.as_str())
-                    .with_context(|| format!("Maven upload requires --artifact-group or [publish.{scope}.maven].group_id"))?;
-                let root = maven_url(&base, group, &artifact, version)?;
-                (
-                    format!("{root}.zip"),
-                    Backend::Maven {
-                        root,
-                        group: group.to_owned(),
-                        username: get("CCGO_MAVEN_USERNAME"),
-                        password: get("CCGO_MAVEN_PASSWORD"),
-                    },
-                )
+                let group = maven_group(command, config, scope)?;
+                maven_destination(command, config, &group, &artifact, version)?
             }
-            ArtifactProvider::Github => {
-                let repo = command
-                    .github_repo
-                    .as_deref()
-                    .context("GitHub upload requires --github-repo owner/repo")?;
-                let parts: Vec<_> = repo.split('/').collect();
-                if parts.len() != 2 {
-                    bail!("--github-repo must be owner/repo");
-                }
-                for part in parts {
-                    coordinate(part)?;
-                }
-                let mut url =
-                    reqwest::Url::parse(&format!("https://github.com/{repo}/releases/download/"))?;
-                url.path_segments_mut()
-                    .unwrap()
-                    .pop_if_empty()
-                    .push(tag)
-                    .push(&archive_name);
-                (
-                    url.to_string(),
-                    Backend::Github {
-                        repo: repo.to_owned(),
-                        tag: tag.to_owned(),
-                    },
-                )
-            }
+            ArtifactProvider::Github => github_destination(command, tag, &archive_name)?,
         };
         Ok(Self {
             url,
             archive_name,
             artifact,
             version: version.to_owned(),
+            config: config.clone(),
             backend,
         })
     }
@@ -224,34 +323,27 @@ impl PreparedUpload {
                 group,
                 username,
                 password,
+            } => self.upload_maven(archive, immutable, root, group, username, password)?,
+            Backend::Central {
+                group,
+                artifact,
+                version,
             } => {
-                let client = Client::builder()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(std::time::Duration::from_secs(300))
-                    .build()?;
-                let artifact = &self.artifact;
-                let version = &self.version;
-                let pom = format!("<project><modelVersion>4.0.0</modelVersion><groupId>{group}</groupId><artifactId>{artifact}</artifactId><version>{version}</version><packaging>zip</packaging></project>\n");
-                for (extension, content) in [("zip", fs::read(archive)?), ("pom", pom.into_bytes())]
-                {
-                    let hash = format!("{:x}", Sha256::digest(&content));
-                    let upload = if immutable { put_immutable } else { put };
-                    upload(
-                        &client,
-                        &format!("{root}.{extension}"),
-                        content,
-                        username,
-                        password,
-                    )?;
-                    upload(
-                        &client,
-                        &format!("{root}.{extension}.sha256"),
-                        hash.into_bytes(),
-                        username,
-                        password,
-                    )?;
-                }
+                super::central::publish_artifact(
+                    &self.config,
+                    group,
+                    artifact,
+                    version,
+                    "zip",
+                    archive,
+                    false,
+                )?;
             }
+            Backend::Local {
+                root,
+                relative,
+                group,
+            } => self.upload_local(archive, root, relative, group)?,
             Backend::Github { repo, tag } => {
                 let status = Command::new("gh")
                     .args(["release", "view", tag, "--repo", repo])
@@ -280,6 +372,66 @@ impl PreparedUpload {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn upload_maven(
+        &self,
+        archive: &Path,
+        immutable: bool,
+        root: &str,
+        group: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<()> {
+        let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(300))
+            .build()?;
+        let artifact = &self.artifact;
+        let version = &self.version;
+        let pom = format!("<project><modelVersion>4.0.0</modelVersion><groupId>{group}</groupId><artifactId>{artifact}</artifactId><version>{version}</version><packaging>zip</packaging></project>\n");
+        for (extension, content) in [("zip", fs::read(archive)?), ("pom", pom.into_bytes())] {
+            let hash = format!("{:x}", Sha256::digest(&content));
+            let upload = if immutable { put_immutable } else { put };
+            upload(
+                &client,
+                &format!("{root}.{extension}"),
+                content,
+                username,
+                password,
+            )?;
+            upload(
+                &client,
+                &format!("{root}.{extension}.sha256"),
+                hash.into_bytes(),
+                username,
+                password,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn upload_local(&self, archive: &Path, root: &Path, relative: &str, group: &str) -> Result<()> {
+        let artifact = &self.artifact;
+        let version = &self.version;
+        let pom = format!("<project><modelVersion>4.0.0</modelVersion><groupId>{group}</groupId><artifactId>{artifact}</artifactId><version>{version}</version><packaging>zip</packaging></project>\n");
+        let zip = fs::read(archive)?;
+        write_local(root, Path::new(relative), &zip)?;
+        let pom_relative = Path::new(relative).with_extension("pom");
+        write_local(root, &pom_relative, pom.as_bytes())?;
+        let zip_hash = format!("{:x}", Sha256::digest(&zip));
+        write_local(
+            root,
+            &append_suffix(Path::new(relative), ".sha256"),
+            zip_hash.as_bytes(),
+        )?;
+        let pom_hash = format!("{:x}", Sha256::digest(pom.as_bytes()));
+        write_local(
+            root,
+            &append_suffix(&pom_relative, ".sha256"),
+            pom_hash.as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -383,5 +535,79 @@ mod tests {
             "1"
         )
         .is_err());
+    }
+
+    #[test]
+    fn maven_local_provider_uses_the_local_repository() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            command: PublishCommand,
+        }
+        let command = Cli::parse_from([
+            "ccgo",
+            "doc",
+            "--artifact-provider",
+            "maven",
+            "--maven-registry",
+            "local",
+            "--artifact-group",
+            "com.example",
+        ])
+        .command;
+        let repository = tempfile::tempdir().unwrap();
+        let config: toml::Value = toml::from_str(&format!(
+            "[project]\nname='demo'\nversion='1.0.0'\n\
+             [publish.maven]\nlocal_path='{}'\n",
+            repository.path().display()
+        ))
+        .unwrap();
+        let upload =
+            PreparedUpload::prepare(&command, &config, "demo", "1.0.0", "v1.0.0", "doc").unwrap();
+        assert!(upload.url.starts_with("file://"));
+        assert!(upload
+            .url
+            .ends_with("com/example/demo-doc/1.0.0/demo-doc-1.0.0.zip"));
+
+        let archive = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(archive.path(), b"zip-bytes").unwrap();
+        upload.upload(archive.path()).unwrap();
+        let directory = repository.path().join("com/example/demo-doc/1.0.0");
+        assert_eq!(
+            std::fs::read(directory.join("demo-doc-1.0.0.zip")).unwrap(),
+            b"zip-bytes"
+        );
+        assert!(directory.join("demo-doc-1.0.0.pom").is_file());
+        assert!(directory.join("demo-doc-1.0.0.zip.sha256").is_file());
+    }
+
+    #[test]
+    fn central_provider_uses_the_public_maven_url() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            command: PublishCommand,
+        }
+        let command = Cli::parse_from([
+            "ccgo",
+            "doc",
+            "--artifact-provider",
+            "maven",
+            "--maven-registry",
+            "official",
+            "--artifact-group",
+            "com.example",
+        ])
+        .command;
+        let config: toml::Value =
+            toml::from_str("[project]\nname='demo'\nversion='1.0.0'\n").unwrap();
+        let upload =
+            PreparedUpload::prepare(&command, &config, "demo", "1.0.0", "v1.0.0", "doc").unwrap();
+        assert_eq!(
+            upload.url,
+            "https://repo1.maven.org/maven2/com/example/demo-doc/1.0.0/demo-doc-1.0.0.zip"
+        );
     }
 }

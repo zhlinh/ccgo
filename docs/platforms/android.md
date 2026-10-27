@@ -406,18 +406,38 @@ ccgo publish android --registry local
 # Location: ~/.m2/repository/com/example/my-android-lib/1.0.0/
 ```
 
+### Prebuilt AAR (no Gradle)
+
+When the AAR is already built, ccgo can publish it directly to local and private Maven repositories:
+
+```bash
+ccgo publish android --path ./artifacts/library.aar --registry private \
+    --url https://maven.example.com/releases
+```
+
+No `android/` project, `gradlew`, or CCGO Gradle publish plugin is required. Coordinates, POM dependencies, `channel_desc`, and the `-stdembed` suffix (with `--stl c++_static`) match the Gradle plugin's output. Direct uploads publish the AAR and POM only; sources/javadoc and Gradle-derived implicit dependencies are not synthesized, so list required runtime dependencies under `[publish.android.maven].dependencies`.
+
+Without `--path`, ccgo builds the release AAR first and uploads it directly:
+
+```bash
+ccgo publish android --registry private \
+    --url https://maven.example.com/releases
+```
+
+This is equivalent to `ccgo build android --release` followed by `publish android --path target/release/android/<...>.aar`. `ccgo build` still uses Gradle's `assembleProdRelease` for AAR packaging, but the publish step never invokes Gradle. `--skip-build` without `--path` is rejected; pass the existing AAR with `--path` instead. A `--path` project directory is resolved to the nearest ancestor containing `CCGO.toml` and built with ccgo. `--registry official` builds the AAR, signs every file, and uploads a bundle to the Central Portal (see below).
+
 ### Maven Central (Production)
 
-**1. Configure credentials:**
+**1. Configure credentials and signing:**
 
-Create `~/.gradle/gradle.properties`:
+```bash
+# Central Portal user token (not your login password)
+export MAVEN_CENTRAL_USERNAME=your-username
+export MAVEN_CENTRAL_PASSWORD=your-password
 
-```properties
-mavenCentralUsername=your-username
-mavenCentralPassword=your-password
-signing.keyId=12345678
-signing.password=your-key-password
-signing.secretKeyRingFile=/Users/you/.gnupg/secring.gpg
+# ASCII-armored secret key; or install gpg with a secret key and ccgo uses it
+export SIGNING_IN_MEMORY_KEY="$(cat /path/to/secret-key.asc)"
+export SIGNING_IN_MEMORY_KEY_PASSWORD=your-key-password
 ```
 
 **2. Publish:**
@@ -425,6 +445,8 @@ signing.secretKeyRingFile=/Users/you/.gnupg/secring.gpg
 ```bash
 ccgo publish android --registry official
 ```
+
+ccgo builds the AAR, signs every file, uploads one bundle to the Central Portal, and follows the deployment until it is published.
 
 ### Private Maven Repository
 

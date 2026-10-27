@@ -461,12 +461,22 @@ class CalculatorTest {
 ### Maven Central
 
 ```bash
-# Publish all platforms
+# Build the release KMP SDK, sign it, and publish every platform
 ccgo publish kmp --registry official
-
-# Or use Gradle
-./gradlew publishAllPublicationsToMavenCentral
 ```
+
+Set the same Central Portal token and PGP signing variables as Android (`MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` and `SIGNING_IN_MEMORY_KEY` / `SIGNING_IN_MEMORY_KEY_PASSWORD`, or gpg). `ccgo publish` never invokes Gradle; `ccgo build kmp` still uses Gradle to compile Kotlin.
+
+### Prebuilt SDK (no Gradle)
+
+If you already have a CCGO KMP SDK ZIP, local and private Maven repositories can be published directly:
+
+```bash
+ccgo publish kmp --path ./STDCOMM_KMP_SDK-0.0.5.zip --registry private \
+  --remote https://maven.example.com/releases
+```
+
+ccgo uploads the bundled `-android`, `-desktop`, and native artifacts with their POMs and checksums. No `kmp/` project or `gradlew` is required. Passing `--registry official` instead uploads a signed bundle to the Central Portal.
 
 ### Consuming the Library
 
