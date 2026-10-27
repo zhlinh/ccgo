@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use super::FetchCommand;
 use crate::config::{CcgoConfig, DependencyConfig};
 use crate::lockfile::LockedPackage;
-use crate::registry::{RegistryCache, ResolvedRegistryDep};
+use crate::registry::{RegistryCache, RegistrySession, ResolvedRegistryDep};
 
 impl FetchCommand {
     pub(super) fn install_locked_registry(
@@ -17,6 +17,7 @@ impl FetchCommand {
         locked: &LockedPackage,
         install_path: &Path,
         ccgo_home: &Path,
+        registries: &mut RegistrySession,
     ) -> Result<LockedPackage> {
         let cache = locked_registry(dep, config, locked)?;
         if config
@@ -30,29 +31,13 @@ impl FetchCommand {
             );
         }
 
+        validate_content_anchor(dep, locked)?;
         let revision = locked.git_revision();
-        if let Some(rev) = revision {
-            if !matches!(rev.len(), 40 | 64) || !rev.bytes().all(|b| b.is_ascii_hexdigit()) {
-                bail!(
-                    "Registry lock for '{}' has no full Git commit; run ccgo fetch --force without --locked to regenerate CCGO.lock",
-                    dep.name
-                );
-            }
-        } else {
-            let checksum = locked.checksum.as_deref().unwrap_or_default();
-            let digest = checksum.strip_prefix("sha256:").unwrap_or_default();
-            if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
-                bail!(
-                    "Registry lock for '{}' has no SHA-256 checksum; run ccgo fetch --force without --locked to regenerate CCGO.lock",
-                    dep.name
-                );
-            }
-        }
 
-        cache
-            .ensure_synced(false)
+        let snapshot = registries
+            .synced(&cache)
             .context("Failed to sync locked registry")?;
-        let package = cache.lookup(&dep.name)?.with_context(|| {
+        let package = snapshot.lookup(&dep.name)?.with_context(|| {
             format!("Locked package '{}' is missing from its registry", dep.name)
         })?;
         // Yank excludes new selection, but must not invalidate an existing content lock.
@@ -85,34 +70,77 @@ impl FetchCommand {
                 bail!("Git commit mismatch for locked package '{}'", dep.name);
             }
         } else {
-            if let Some(checksum) = version.checksum.as_deref() {
-                if Some(checksum) != locked.checksum.as_deref() {
-                    bail!(
-                        "Index checksum changed for locked package '{} {}'",
-                        dep.name,
-                        locked.version
-                    );
-                }
-            }
-            let url = version
-                .archive_url
-                .clone()
-                .with_context(|| format!("Locked archive '{}' has no download URL", dep.name))?;
-            let mut resolved = ResolvedRegistryDep {
-                registry_name: dep.registry.clone().unwrap_or_else(|| "locked".to_owned()),
-                registry_url: cache.url().to_owned(),
-                package_name: dep.name.clone(),
-                package_repository: package.repository,
-                version_entry: version,
-            };
-            // Missing or rewritten index metadata must never replace the lock's content anchor.
-            resolved.version_entry.checksum = locked.checksum.clone();
-            self.install_from_registry_archive(dep, &resolved, &url, install_path)?;
+            self.install_locked_archive(
+                dep,
+                locked,
+                &cache,
+                package.repository,
+                version,
+                install_path,
+            )?;
         }
 
         // Preserve timestamps, source spelling, dependency list and all other locked metadata.
         Ok(locked.clone())
     }
+
+    fn install_locked_archive(
+        &self,
+        dep: &DependencyConfig,
+        locked: &LockedPackage,
+        cache: &RegistryCache,
+        repository: String,
+        version: crate::registry::VersionEntry,
+        install_path: &Path,
+    ) -> Result<()> {
+        if let Some(checksum) = version.checksum.as_deref() {
+            if Some(checksum) != locked.checksum.as_deref() {
+                bail!(
+                    "Index checksum changed for locked package '{} {}'",
+                    dep.name,
+                    locked.version
+                );
+            }
+        }
+        let url = version
+            .archive_url
+            .clone()
+            .with_context(|| format!("Locked archive '{}' has no download URL", dep.name))?;
+        let mut resolved = ResolvedRegistryDep {
+            registry_name: dep.registry.clone().unwrap_or_else(|| "locked".to_owned()),
+            registry_url: cache.url().to_owned(),
+            package_name: dep.name.clone(),
+            package_repository: repository,
+            version_entry: version,
+        };
+        // Missing or rewritten index metadata must never replace the lock's content anchor.
+        resolved.version_entry.checksum = locked.checksum.clone();
+        self.install_from_registry_archive(dep, &resolved, &url, install_path)?;
+        Ok(())
+    }
+}
+
+fn validate_content_anchor(dep: &DependencyConfig, locked: &LockedPackage) -> Result<()> {
+    let revision = locked.git_revision();
+    if let Some(rev) = revision {
+        if !matches!(rev.len(), 40 | 64) || !rev.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!(
+                    "Registry lock for '{}' has no full Git commit; run ccgo fetch --force without --locked to regenerate CCGO.lock",
+                    dep.name
+                );
+        }
+    } else {
+        let checksum = locked.checksum.as_deref().unwrap_or_default();
+        let digest = checksum.strip_prefix("sha256:").unwrap_or_default();
+        if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!(
+                    "Registry lock for '{}' has no SHA-256 checksum; run ccgo fetch --force without --locked to regenerate CCGO.lock",
+                    dep.name
+                );
+        }
+    }
+
+    Ok(())
 }
 
 fn locked_registry(

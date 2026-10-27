@@ -457,3 +457,7 @@ fn workspace_locked_fetch_uses_member_config_and_propagates_failures() {
     );
     assert_eq!(fixture.lock(), before);
 }
+
+#[cfg(unix)]
+#[path = "support/registry_fetch_session.rs"]
+mod fetch_session;

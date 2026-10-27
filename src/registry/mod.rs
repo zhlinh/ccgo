@@ -32,9 +32,11 @@
 //!    ```
 
 pub mod cache;
+pub mod cache_access;
 mod index;
 pub mod index_writer;
 pub mod resolve;
+mod session;
 mod shorthand;
 mod version_discovery;
 
@@ -44,5 +46,6 @@ pub use index::{
     ResolvedPackage, UpdateResult, VersionEntry, DEFAULT_REGISTRY, DEFAULT_REGISTRY_URL,
 };
 pub use resolve::{resolve_dep, ResolvedRegistryDep};
+pub use session::RegistrySession;
 pub use shorthand::{expand_git_shorthand, GitProvider, ShorthandSpec};
 pub use version_discovery::{discover_latest_version, GitTagInfo, SemVer, VersionDiscovery};

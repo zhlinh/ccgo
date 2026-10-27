@@ -46,22 +46,31 @@ pub fn resolve_dep(
             Some(e) => e,
             None => continue,
         };
-        for v in &entry.versions {
-            if v.yanked {
-                continue;
-            }
-            if v.version == version_req {
-                return Ok(Some(ResolvedRegistryDep {
-                    registry_name: name.clone(),
-                    registry_url: cache.url().to_string(),
-                    package_name: dep_name.to_string(),
-                    package_repository: entry.repository.clone(),
-                    version_entry: v.clone(),
-                }));
-            }
+        if let Some(resolved) = resolve_entry(name, cache.url(), dep_name, version_req, &entry) {
+            return Ok(Some(resolved));
         }
     }
     Ok(None)
+}
+
+pub(crate) fn resolve_entry(
+    name: &str,
+    url: &str,
+    dep_name: &str,
+    version_req: &str,
+    entry: &super::PackageEntry,
+) -> Option<ResolvedRegistryDep> {
+    let version = entry
+        .versions
+        .iter()
+        .find(|version| !version.yanked && version.version == version_req)?;
+    Some(ResolvedRegistryDep {
+        registry_name: name.to_owned(),
+        registry_url: url.to_owned(),
+        package_name: dep_name.to_owned(),
+        package_repository: entry.repository.clone(),
+        version_entry: version.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -159,10 +168,7 @@ mod tests {
         let (_g, cache) = make_test_cache("test", &leaf_pkg_json("1.0.0", true), "leaf");
         let registries = vec![("test".to_string(), cache)];
         let r = resolve_dep("leaf", "1.0.0", &registries).unwrap();
-        assert!(
-            r.is_none(),
-            "yanked-only entry must not satisfy resolution"
-        );
+        assert!(r.is_none(), "yanked-only entry must not satisfy resolution");
     }
 
     #[test]

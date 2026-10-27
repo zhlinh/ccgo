@@ -12,9 +12,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::config::{CcgoConfig, DependencyConfig};
+use crate::dependency::graph::DependencyGraph;
 use crate::dependency::resolver::resolve_dependencies_with_strategy;
 use crate::dependency::version_resolver::ConflictStrategy as VersionConflictStrategy;
 use crate::lockfile::{LockedGitInfo, LockedPackage, Lockfile, LOCKFILE_NAME};
+use crate::registry::RegistrySession;
 use crate::workspace::{find_workspace_root, Workspace};
 
 #[path = "fetch_registry_locked.rs"]
@@ -97,6 +99,20 @@ struct GitInfo {
     dirty: Option<bool>,
 }
 
+struct EffectiveSource<'a> {
+    path: Option<&'a str>,
+    git: Option<&'a str>,
+    branch: Option<&'a str>,
+    revision: Option<String>,
+}
+
+struct FetchContext<'a> {
+    project_dir: &'a Path,
+    ccgo_home: &'a Path,
+    config: &'a CcgoConfig,
+    registries: &'a mut RegistrySession,
+}
+
 impl FetchCommand {
     /// Execute the install command
     pub fn execute(self, verbose: bool) -> Result<()> {
@@ -107,13 +123,7 @@ impl FetchCommand {
             return self.execute_workspace_install(&current_dir, verbose);
         }
 
-        // Check if we're in a workspace root but --workspace not specified
-        if Workspace::is_workspace(&current_dir) {
-            eprintln!(
-                "ℹ️  In workspace root. Use --workspace to install for all members, \
-                 or --package <name> for a specific member."
-            );
-        }
+        Self::print_workspace_notice(&current_dir);
 
         println!("{}", "=".repeat(80));
         println!("CCGO Install - Install Project Dependencies");
@@ -125,11 +135,7 @@ impl FetchCommand {
         println!("\nProject directory: {}", project_dir.display());
         println!("Global CCGO home: {}", ccgo_home.display());
 
-        // Clean global cache if requested
-        if self.clean_cache && ccgo_home.exists() {
-            println!("\n🗑  Cleaning global cache: {}", ccgo_home.display());
-            fs::remove_dir_all(&ccgo_home).context("Failed to clean cache")?;
-        }
+        self.clean_global_cache(&ccgo_home)?;
 
         // Load CCGO.toml
         println!("\n📖 Reading dependencies from CCGO.toml...");
@@ -162,21 +168,77 @@ impl FetchCommand {
             return Ok(());
         }
 
-        // Check for outdated dependencies in locked mode
-        if self.locked {
-            if let Some(ref lockfile) = existing_lockfile {
-                let outdated = lockfile.check_outdated(dependencies);
-                if !outdated.is_empty() {
-                    bail!(
-                        "Dependencies have changed since lockfile was generated.\n\
-                         Changed dependencies: {}\n\
-                         Run 'ccgo fetch' to update the lockfile, or remove --locked flag.",
-                        outdated.join(", ")
-                    );
-                }
+        self.validate_locked_dependencies(existing_lockfile.as_ref(), dependencies)?;
+
+        let deps_to_install = self.selected_dependencies(dependencies);
+
+        if deps_to_install.is_empty() {
+            if let Some(ref dep_name) = self.dependency {
+                println!("   ⚠️  Dependency '{}' not found in CCGO.toml", dep_name);
+            } else {
+                println!("   ⚠️  No dependencies to install");
             }
+            return Ok(());
         }
 
+        Self::print_dependencies(&deps_to_install, existing_lockfile.as_ref());
+
+        let dependency_graph = self.resolve_install_graph(dependencies, &project_dir, &ccgo_home);
+
+        let install_order = Self::installation_order(&dependency_graph, &deps_to_install);
+
+        // Install each dependency
+        println!("\n{}", "=".repeat(80));
+        println!("Installing Dependencies");
+        println!("{}", "=".repeat(80));
+
+        let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
+        let packages_before = lockfile.packages.clone();
+
+        let deps_to_process = Self::ordered_dependencies(
+            &dependency_graph,
+            dependencies,
+            deps_to_install,
+            &install_order,
+        );
+
+        let mut registries = RegistrySession::default();
+        let context = &mut FetchContext {
+            project_dir: &project_dir,
+            ccgo_home: &ccgo_home,
+            config: &config,
+            registries: &mut registries,
+        };
+        let (installed_count, failed_count) =
+            self.install_batch(&deps_to_process, &mut lockfile, context);
+
+        self.save_fetch_lockfile(context, &mut lockfile, &packages_before, installed_count)?;
+
+        Self::print_install_summary(installed_count, failed_count)
+    }
+
+    fn print_workspace_notice(current_dir: &Path) {
+        // Check if we're in a workspace root but --workspace not specified
+        if Workspace::is_workspace(current_dir) {
+            eprintln!(
+                "ℹ️  In workspace root. Use --workspace to install for all members, \
+                 or --package <name> for a specific member."
+            );
+        }
+    }
+
+    fn clean_global_cache(&self, ccgo_home: &Path) -> Result<()> {
+        if self.clean_cache && ccgo_home.exists() {
+            println!("\n🗑  Cleaning global cache: {}", ccgo_home.display());
+            crate::registry::cache_access::clean_home(ccgo_home)?;
+        }
+        Ok(())
+    }
+
+    fn selected_dependencies<'a>(
+        &self,
+        dependencies: &'a [DependencyConfig],
+    ) -> Vec<&'a DependencyConfig> {
         // Filter dependencies to install
         let mut deps_to_install = Vec::new();
         for dep in dependencies {
@@ -189,22 +251,20 @@ impl FetchCommand {
             deps_to_install.push(dep);
         }
 
-        if deps_to_install.is_empty() {
-            if let Some(ref dep_name) = self.dependency {
-                println!("   ⚠️  Dependency '{}' not found in CCGO.toml", dep_name);
-            } else {
-                println!("   ⚠️  No dependencies to install");
-            }
-            return Ok(());
-        }
+        deps_to_install
+    }
 
+    fn print_dependencies(
+        deps_to_install: &[&DependencyConfig],
+        existing_lockfile: Option<&Lockfile>,
+    ) {
         println!(
             "\nFound {} dependency(ies) to install:",
             deps_to_install.len()
         );
-        for dep in &deps_to_install {
+        for dep in deps_to_install {
             // Show locked version if available
-            if let Some(ref lockfile) = existing_lockfile {
+            if let Some(lockfile) = existing_lockfile {
                 if let Some(locked) = lockfile.get_package(&dep.name) {
                     println!("  - {} (locked: {})", dep.name, locked.version);
                     continue;
@@ -212,13 +272,20 @@ impl FetchCommand {
             }
             println!("  - {}", dep.name);
         }
+    }
 
+    fn resolve_install_graph(
+        &self,
+        dependencies: &[DependencyConfig],
+        project_dir: &Path,
+        ccgo_home: &Path,
+    ) -> DependencyGraph {
         // Resolve transitive dependencies with conflict strategy
         let strategy: VersionConflictStrategy = self.conflict_strategy.into();
         let dependency_graph = match resolve_dependencies_with_strategy(
             dependencies,
-            &project_dir,
-            &ccgo_home,
+            project_dir,
+            ccgo_home,
             strategy,
         ) {
             Ok(graph) => {
@@ -246,6 +313,13 @@ impl FetchCommand {
             }
         };
 
+        dependency_graph
+    }
+
+    fn installation_order(
+        dependency_graph: &DependencyGraph,
+        deps_to_install: &[&DependencyConfig],
+    ) -> Vec<String> {
         // Determine installation order using topological sort
         let install_order = if dependency_graph.nodes().is_empty() {
             // No transitive dependencies, use direct order
@@ -267,16 +341,15 @@ impl FetchCommand {
             }
         };
 
-        // Install each dependency
-        println!("\n{}", "=".repeat(80));
-        println!("Installing Dependencies");
-        println!("{}", "=".repeat(80));
+        install_order
+    }
 
-        let mut installed_count = 0;
-        let mut failed_count = 0;
-        let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
-        let packages_before = lockfile.packages.clone();
-
+    fn ordered_dependencies<'a>(
+        dependency_graph: &'a DependencyGraph,
+        dependencies: &'a [DependencyConfig],
+        deps_to_install: Vec<&'a DependencyConfig>,
+        install_order: &[String],
+    ) -> Vec<&'a DependencyConfig> {
         // Create a map for quick lookup of dependency configs
         let dep_map: std::collections::HashMap<String, &DependencyConfig> =
             dependencies.iter().map(|d| (d.name.clone(), d)).collect();
@@ -301,11 +374,98 @@ impl FetchCommand {
             deps_to_install
         };
 
+        deps_to_process
+    }
+
+    fn validate_locked_dependencies(
+        &self,
+        existing_lockfile: Option<&Lockfile>,
+        dependencies: &[DependencyConfig],
+    ) -> Result<()> {
+        // Check for outdated dependencies in locked mode
+        if self.locked {
+            if let Some(lockfile) = existing_lockfile {
+                let outdated = lockfile.check_outdated(dependencies);
+                if !outdated.is_empty() {
+                    bail!(
+                        "Dependencies have changed since lockfile was generated.\n\
+                         Changed dependencies: {}\n\
+                         Run 'ccgo fetch' to update the lockfile, or remove --locked flag.",
+                        outdated.join(", ")
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Install a single dependency
+    fn install_dependency(
+        &self,
+        dep: &DependencyConfig,
+        context: &mut FetchContext<'_>,
+        locked: Option<&LockedPackage>,
+    ) -> Result<LockedPackage> {
+        let project_dir = context.project_dir;
+        let ccgo_home = context.ccgo_home;
+        let config = context.config;
+        let registries = &mut *context.registries;
+        println!("\n📦 Installing {}...", dep.name);
+
+        let deps_dir = project_dir.join(".ccgo").join("deps");
+        fs::create_dir_all(&deps_dir).context("Failed to create .ccgo/deps directory")?;
+
+        let install_path = deps_dir.join(&dep.name);
+
+        if self.locked {
+            let locked = locked.ok_or_else(|| {
+                anyhow::anyhow!("Dependency '{}' is missing from CCGO.lock", dep.name)
+            })?;
+            if dep.git.is_none()
+                && dep.path.is_none()
+                && dep.zip.is_none()
+                && locked.source.starts_with("registry+")
+            {
+                return self.install_locked_registry(
+                    dep,
+                    config,
+                    locked,
+                    &install_path,
+                    ccgo_home,
+                    registries,
+                );
+            }
+        }
+
+        if let Some(installed) =
+            self.reuse_installed_dependency(dep, project_dir, &install_path, locked)?
+        {
+            return Ok(installed);
+        }
+
+        // Remove existing installation if force
+        if install_path.exists() {
+            println!("   Removing existing installation...");
+            Self::clean_install_path(&install_path)?;
+        }
+
+        self.install_patched_dependency(dep, context, locked, &install_path)
+    }
+
+    fn install_batch(
+        &self,
+        deps_to_process: &[&DependencyConfig],
+        lockfile: &mut Lockfile,
+        context: &mut FetchContext<'_>,
+    ) -> (usize, usize) {
+        let mut installed_count = 0;
+        let mut failed_count = 0;
         for dep in deps_to_process {
             // Get locked info if available
             let locked_pkg = lockfile.get_package(&dep.name).cloned();
 
-            match self.install_dependency(dep, &project_dir, &ccgo_home, locked_pkg.as_ref()) {
+            match self.install_dependency(dep, context, locked_pkg.as_ref()) {
                 Ok(locked_package) => {
                     installed_count += 1;
                     lockfile.upsert_package(locked_package);
@@ -317,15 +477,32 @@ impl FetchCommand {
             }
         }
 
+        (installed_count, failed_count)
+    }
+
+    fn save_fetch_lockfile(
+        &self,
+        context: &FetchContext<'_>,
+        lockfile: &mut Lockfile,
+        packages_before: &[LockedPackage],
+        installed_count: usize,
+    ) -> Result<()> {
         // Save lockfile only when the packages actually changed, to avoid
         // spurious timestamp-only diffs when all deps were already up-to-date.
         if !self.locked && installed_count > 0 && lockfile.packages != packages_before {
             lockfile.touch();
-            lockfile.save(&project_dir)?;
+            lockfile.save(context.project_dir)?;
             println!("\n📝 Updated {}", LOCKFILE_NAME);
-            crate::utils::ide::update_ide_ignores(&project_dir, config.build_dir_name())?;
+            crate::utils::ide::update_ide_ignores(
+                context.project_dir,
+                context.config.build_dir_name(),
+            )?;
         }
 
+        Ok(())
+    }
+
+    fn print_install_summary(installed_count: usize, failed_count: usize) -> Result<()> {
         // Summary
         println!("\n{}", "=".repeat(80));
         println!("Installation Summary");
@@ -344,41 +521,13 @@ impl FetchCommand {
         Ok(())
     }
 
-    /// Install a single dependency
-    fn install_dependency(
+    fn reuse_installed_dependency(
         &self,
         dep: &DependencyConfig,
         project_dir: &Path,
-        ccgo_home: &Path,
+        install_path: &Path,
         locked: Option<&LockedPackage>,
-    ) -> Result<LockedPackage> {
-        println!("\n📦 Installing {}...", dep.name);
-
-        let deps_dir = project_dir.join(".ccgo").join("deps");
-        fs::create_dir_all(&deps_dir).context("Failed to create .ccgo/deps directory")?;
-
-        let install_path = deps_dir.join(&dep.name);
-
-        if self.locked {
-            let locked = locked.ok_or_else(|| {
-                anyhow::anyhow!("Dependency '{}' is missing from CCGO.lock", dep.name)
-            })?;
-            if dep.git.is_none()
-                && dep.path.is_none()
-                && dep.zip.is_none()
-                && locked.source.starts_with("registry+")
-            {
-                let config = CcgoConfig::load_from(project_dir.join("CCGO.toml"))?;
-                return self.install_locked_registry(
-                    dep,
-                    &config,
-                    locked,
-                    &install_path,
-                    ccgo_home,
-                );
-            }
-        }
-
+    ) -> Result<Option<LockedPackage>> {
         // Check vendor/ directory first for offline builds
         let vendor_dir = project_dir.join("vendor");
         let vendor_path = vendor_dir.join(&dep.name);
@@ -388,19 +537,15 @@ impl FetchCommand {
 
             // Remove existing installation if present
             if install_path.exists() {
-                if install_path.is_symlink() {
-                    fs::remove_file(&install_path)?;
-                } else {
-                    fs::remove_dir_all(&install_path)?;
-                }
+                Self::clean_install_path(install_path)?;
             }
 
             // Create symlink or copy from vendor
-            Self::create_symlink_or_copy(&vendor_path, &install_path, self.copy)?;
+            Self::create_symlink_or_copy(&vendor_path, install_path, self.copy)?;
             println!("   ✓ Installed from vendor to {}", install_path.display());
 
             // Return a locked package entry for vendored dependency
-            return Ok(LockedPackage {
+            return Ok(Some(LockedPackage {
                 name: dep.name.clone(),
                 version: dep.version.clone(),
                 source: format!("vendor+{}", dep.name),
@@ -409,7 +554,7 @@ impl FetchCommand {
                 git: None,
                 installed_at: Some(chrono::Local::now().to_rfc3339()),
                 patch: None,
-            });
+            }));
         }
 
         // Check if already installed and matches lockfile
@@ -419,14 +564,14 @@ impl FetchCommand {
                     "   {} already installed (locked: {})",
                     dep.name, locked_pkg.version
                 );
-                return Ok(locked_pkg.clone());
+                return Ok(Some(locked_pkg.clone()));
             }
             println!(
                 "   {} already installed (use --force to reinstall)",
                 dep.name
             );
             // Return a basic locked package for already installed deps
-            return Ok(LockedPackage {
+            return Ok(Some(LockedPackage {
                 name: dep.name.clone(),
                 version: dep.version.clone(),
                 source: Self::build_source_string(dep),
@@ -435,23 +580,20 @@ impl FetchCommand {
                 git: None,
                 installed_at: Some(chrono::Local::now().to_rfc3339()),
                 patch: None,
-            });
+            }));
         }
 
-        // Remove existing installation if force
-        if install_path.exists() {
-            println!("   Removing existing installation...");
-            if install_path.is_symlink() {
-                fs::remove_file(&install_path)?;
-            } else {
-                fs::remove_dir_all(&install_path)?;
-            }
-        }
+        Ok(None)
+    }
 
-        // Load config to check for patches
-        let config = CcgoConfig::load_from(project_dir.join("CCGO.toml"))
-            .context("Failed to load CCGO.toml")?;
-
+    fn install_patched_dependency(
+        &self,
+        dep: &DependencyConfig,
+        context: &mut FetchContext<'_>,
+        locked: Option<&LockedPackage>,
+        install_path: &Path,
+    ) -> Result<LockedPackage> {
+        let config = context.config;
         // Check if there's a patch for this dependency
         let original_source = Self::build_source_string(dep);
         let patch_info =
@@ -474,65 +616,94 @@ impl FetchCommand {
                 None
             };
 
-        // Determine effective source for installation
-        let (effective_path, effective_git, effective_branch, effective_rev) =
-            if let Some((patch, _)) = &patch_info {
-                // Use patched source
-                let rev = if !self.locked {
-                    // In non-locked mode, use patch's rev if specified
-                    patch.rev.clone()
+        let source =
+            self.effective_source(dep, patch_info.as_ref().map(|(patch, _)| *patch), locked);
+        let is_path_patch = source.path.is_some();
+
+        let mut locked_pkg = self.install_effective_source(dep, context, &source, install_path)?;
+
+        // Add patch information to locked package if patched
+        if let Some((_, patched_source)) = patch_info {
+            locked_pkg.patch = Some(crate::lockfile::PatchInfo {
+                patched_source: original_source,
+                replacement_source: patched_source.clone(),
+                is_path_patch,
+            });
+        }
+
+        Ok(locked_pkg)
+    }
+
+    fn effective_source<'a>(
+        &self,
+        dep: &'a DependencyConfig,
+        patch: Option<&'a crate::config::PatchDependency>,
+        locked: Option<&LockedPackage>,
+    ) -> EffectiveSource<'a> {
+        let locked_revision = locked
+            .and_then(|package| package.git_revision())
+            .map(str::to_owned);
+        match patch {
+            Some(patch) => EffectiveSource {
+                path: patch.path.as_deref(),
+                git: patch.git.as_deref(),
+                branch: patch.branch.as_deref().or(patch.tag.as_deref()),
+                revision: if self.locked {
+                    locked_revision
                 } else {
-                    // In locked mode, prefer locked revision
-                    locked.and_then(|l| l.git_revision()).map(|s| s.to_string())
-                };
+                    patch.rev.clone()
+                },
+            },
+            None => EffectiveSource {
+                path: dep.path.as_deref(),
+                git: dep.git.as_deref(),
+                branch: dep.branch.as_deref(),
+                revision: locked_revision,
+            },
+        }
+    }
 
-                (
-                    patch.path.as_deref(),
-                    patch.git.as_deref(),
-                    patch.branch.as_deref().or(patch.tag.as_deref()),
-                    rev,
-                )
-            } else {
-                // Use original source
-                let locked_rev = locked.and_then(|l| l.git_revision()).map(|s| s.to_string());
-                (
-                    dep.path.as_deref(),
-                    dep.git.as_deref(),
-                    dep.branch.as_deref(),
-                    locked_rev,
-                )
-            };
-
+    fn install_effective_source(
+        &self,
+        dep: &DependencyConfig,
+        context: &mut FetchContext<'_>,
+        source: &EffectiveSource<'_>,
+        install_path: &Path,
+    ) -> Result<LockedPackage> {
+        let project_dir = context.project_dir;
+        let ccgo_home = context.ccgo_home;
+        let config = context.config;
+        let registries = &mut *context.registries;
         // Install based on effective source type
-        let mut locked_pkg = if let Some(path) = effective_path {
+        if let Some(path) = source.path {
             // Local path dependency
-            self.install_from_local_path(&dep.name, &dep.version, path, project_dir, &install_path)?
-        } else if let Some(git_url) = effective_git {
+            self.install_from_local_path(&dep.name, &dep.version, path, project_dir, install_path)
+        } else if let Some(git_url) = source.git {
             // Git dependency
             self.install_from_git(
                 &dep.name,
                 &dep.version,
                 git_url,
-                effective_branch,
-                effective_rev.as_deref(),
-                &install_path,
+                source.branch,
+                source.revision.as_deref(),
+                install_path,
                 ccgo_home,
-            )?
+            )
         } else if let Some(ref zip_url) = dep.zip {
             // Archive dependency (zip or tar.gz, https:// URL or local path)
-            self.install_from_archive(&dep.name, &dep.version, zip_url, project_dir, &install_path)?
-        } else if let Some(resolved) = self.try_resolve_registry(dep, &config)? {
+            self.install_from_archive(&dep.name, &dep.version, zip_url, project_dir, install_path)
+        } else if let Some(resolved) = self.try_resolve_registry(dep, config, registries)? {
             // Resolved through a [registries] index — download + extract the
             // published archive (or fall back to git+tag clone when the index
             // entry has no archive_url). Preferred over the local-cache
             // fallback below.
-            self.install_from_registry(dep, &resolved, &install_path, ccgo_home)?
+            self.install_from_registry(dep, &resolved, install_path, ccgo_home)
         } else if !dep.version.is_empty() {
             // Name + version only. Resolve from the global packages cache
             // populated by `ccgo install` in the source project. This mirrors
             // the Cargo/Maven workflow where the dependency is identified by
             // package name rather than a location.
-            self.install_from_local_packages(&dep.name, &dep.version, ccgo_home, &install_path)?
+            self.install_from_local_packages(&dep.name, &dep.version, ccgo_home, install_path)
         } else {
             bail!(
                 "Dependency '{}' has no source (git, path, zip, or version). \
@@ -541,18 +712,7 @@ impl FetchCommand {
                 dep.name,
                 ccgo_home.join("packages").join(&dep.name).display()
             );
-        };
-
-        // Add patch information to locked package if patched
-        if let Some((_, patched_source)) = patch_info {
-            locked_pkg.patch = Some(crate::lockfile::PatchInfo {
-                patched_source: original_source,
-                replacement_source: patched_source.clone(),
-                is_path_patch: effective_path.is_some(),
-            });
         }
-
-        Ok(locked_pkg)
     }
 
     /// Build source string from dependency config
@@ -743,13 +903,15 @@ impl FetchCommand {
     ///
     /// When `dep.registry` is set, lookup is restricted to that single named
     /// registry. Otherwise ambiguous matches are rejected instead of depending
-    /// on HashMap iteration order. Each cache is synced before resolution.
+    /// on HashMap iteration order. Each cache is synced once per fetch session;
+    /// all resolutions in that session read the captured commit.
     fn try_resolve_registry(
         &self,
         dep: &DependencyConfig,
         config: &CcgoConfig,
+        registries: &mut RegistrySession,
     ) -> Result<Option<crate::registry::ResolvedRegistryDep>> {
-        use crate::registry::{resolve_dep, RegistryCache};
+        use crate::registry::{resolve::resolve_entry, RegistryCache};
 
         if config.registries.is_empty() {
             return Ok(None);
@@ -776,17 +938,13 @@ impl FetchCommand {
 
         candidates.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // Pre-warm caches so resolve_dep can stay I/O-free at the
-        // network level and just read sharded JSON files.
-        for (_, cache) in &candidates {
-            cache.ensure_synced(false)?;
-        }
-
         let mut resolved = None;
-        for candidate in &candidates {
-            if let Some(found) =
-                resolve_dep(&dep.name, &dep.version, std::slice::from_ref(candidate))?
-            {
+        for (name, cache) in &candidates {
+            let snapshot = registries.synced(cache)?;
+            let Some(entry) = snapshot.lookup(&dep.name)? else {
+                continue;
+            };
+            if let Some(found) = resolve_entry(name, cache.url(), &dep.name, &dep.version, &entry) {
                 if resolved.is_some() {
                     bail!(
                         "Dependency '{} {}' matches multiple registries; set registry explicitly",
@@ -1136,63 +1294,16 @@ impl FetchCommand {
         fs::create_dir_all(&checkouts_dir)?;
         let registry_path = checkouts_dir.join(&full_hash);
 
-        // Clone or update if not exists or force
-        if !registry_path.exists() || self.force {
-            if registry_path.exists() {
-                fs::remove_dir_all(&registry_path)?;
-            }
+        self.prepare_git_checkout(&registry_path, git_url, branch)?;
 
-            println!("   Cloning repository...");
-            let mut cmd = std::process::Command::new("git");
-            cmd.args(["clone", git_url, registry_path.to_string_lossy().as_ref()]);
-
-            if let Some(branch_name) = branch {
-                cmd.args(["--branch", branch_name]);
-            }
-
-            let output = cmd.output().context("Failed to execute git clone")?;
-            if !output.status.success() {
-                bail!(
-                    "Git clone failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            println!("   ✓ Cloned to {}", registry_path.display());
-        }
-
-        if let Some(rev) = locked_rev {
-            println!(
-                "   Checking out locked revision {}...",
-                &rev[..8.min(rev.len())]
-            );
-            let checkout = std::process::Command::new("git")
-                .args(["checkout", "--detach", rev])
-                .current_dir(&registry_path)
-                .output()
-                .context("Failed to checkout revision")?;
-            if !checkout.status.success() {
-                bail!(
-                    "Git checkout failed: {}",
-                    String::from_utf8_lossy(&checkout.stderr)
-                );
-            }
-        }
+        Self::checkout_locked_revision(&registry_path, locked_rev)?;
 
         let git_info = Self::get_git_info(&registry_path);
         if locked_rev.is_some() && git_info.as_ref().and_then(|info| info.dirty) == Some(true) {
             bail!("Locked Git checkout is dirty; use --force to retrieve the locked commit again");
         }
 
-        // Link/copy from registry to project
-        // Replace only after validating the checkout, including dangling old links.
-        if let Ok(metadata) = fs::symlink_metadata(install_path) {
-            if metadata.file_type().is_symlink() || metadata.is_file() {
-                fs::remove_file(install_path)?;
-            } else {
-                fs::remove_dir_all(install_path)?;
-            }
-        }
-        Self::create_symlink_or_copy(&registry_path, install_path, self.copy)?;
+        Self::link_validated_checkout(&registry_path, install_path, self.copy)?;
 
         println!("   ✓ Installed to {}", install_path.display());
 
@@ -1224,6 +1335,80 @@ impl FetchCommand {
             installed_at: Some(chrono::Local::now().to_rfc3339()),
             patch: None,
         })
+    }
+
+    fn link_validated_checkout(
+        registry_path: &Path,
+        install_path: &Path,
+        copy: bool,
+    ) -> Result<()> {
+        // Link/copy from registry to project
+        // Replace only after validating the checkout, including dangling old links.
+        if let Ok(metadata) = fs::symlink_metadata(install_path) {
+            if metadata.file_type().is_symlink() || metadata.is_file() {
+                fs::remove_file(install_path)?;
+            } else {
+                fs::remove_dir_all(install_path)?;
+            }
+        }
+        Self::create_symlink_or_copy(registry_path, install_path, copy)?;
+
+        Ok(())
+    }
+
+    fn checkout_locked_revision(registry_path: &Path, locked_rev: Option<&str>) -> Result<()> {
+        if let Some(rev) = locked_rev {
+            println!(
+                "   Checking out locked revision {}...",
+                &rev[..8.min(rev.len())]
+            );
+            let checkout = std::process::Command::new("git")
+                .args(["checkout", "--detach", rev])
+                .current_dir(registry_path)
+                .output()
+                .context("Failed to checkout revision")?;
+            if !checkout.status.success() {
+                bail!(
+                    "Git checkout failed: {}",
+                    String::from_utf8_lossy(&checkout.stderr)
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn prepare_git_checkout(
+        &self,
+        registry_path: &Path,
+        git_url: &str,
+        branch: Option<&str>,
+    ) -> Result<()> {
+        // Clone or update if not exists or force
+        if !registry_path.exists() || self.force {
+            if registry_path.exists() {
+                fs::remove_dir_all(registry_path)?;
+            }
+
+            println!("   Cloning repository...");
+            let mut cmd = std::process::Command::new("git");
+            cmd.args(["clone", git_url, registry_path.to_string_lossy().as_ref()]);
+
+            if let Some(branch_name) = branch {
+                cmd.args(["--branch", branch_name]);
+            }
+
+            let output = cmd.output().context("Failed to execute git clone")?;
+            if !output.status.success() {
+                bail!(
+                    "Git clone failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            println!("   ✓ Cloned to {}", registry_path.display());
+        }
+
+        Ok(())
     }
 
     /// Create symlink or copy based on settings
@@ -1357,21 +1542,7 @@ impl FetchCommand {
             workspace.print_summary();
         }
 
-        // Determine which members to install for
-        let members_to_install = if let Some(ref package_name) = self.package {
-            // Install for specific package
-            let member = workspace.get_member(package_name).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Package '{}' not found in workspace. Available: {}",
-                    package_name,
-                    workspace.members.names().join(", ")
-                )
-            })?;
-            vec![member]
-        } else {
-            // Install for default members (or all if no default_members specified)
-            workspace.default_members()
-        };
+        let members_to_install = self.workspace_members(&workspace)?;
 
         if members_to_install.is_empty() {
             bail!("No workspace members to install for");
@@ -1386,15 +1557,12 @@ impl FetchCommand {
 
         let ccgo_home = Self::get_ccgo_home();
 
-        // Clean global cache if requested (once for all members)
-        if self.clean_cache && ccgo_home.exists() {
-            println!("\n🗑  Cleaning global cache: {}", ccgo_home.display());
-            fs::remove_dir_all(&ccgo_home).context("Failed to clean cache")?;
-        }
+        self.clean_global_cache(&ccgo_home)?;
 
         let mut success_count = 0;
         let mut failed_members: Vec<String> = Vec::new();
 
+        let mut registries = RegistrySession::default();
         for member in members_to_install {
             println!(
                 "\n📦 Installing dependencies for {} ({})...",
@@ -1405,7 +1573,7 @@ impl FetchCommand {
             // Execute install in member's directory
             let member_path = workspace_root.join(&member.name);
 
-            match self.install_for_member(&member_path, &ccgo_home, verbose) {
+            match self.install_for_member(&member_path, &ccgo_home, verbose, &mut registries) {
                 Ok(count) => {
                     success_count += count;
                     println!("   ✓ Installed {} dependencies for {}", count, member.name);
@@ -1438,12 +1606,36 @@ impl FetchCommand {
         Ok(())
     }
 
+    fn workspace_members<'a>(
+        &self,
+        workspace: &'a Workspace,
+    ) -> Result<Vec<&'a crate::workspace::WorkspaceMember>> {
+        // Determine which members to install for
+        let members_to_install = if let Some(ref package_name) = self.package {
+            // Install for specific package
+            let member = workspace.get_member(package_name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Package '{}' not found in workspace. Available: {}",
+                    package_name,
+                    workspace.members.names().join(", ")
+                )
+            })?;
+            vec![member]
+        } else {
+            // Install for default members (or all if no default_members specified)
+            workspace.default_members()
+        };
+
+        Ok(members_to_install)
+    }
+
     /// Install dependencies for a single workspace member
     fn install_for_member(
         &self,
         member_path: &Path,
         ccgo_home: &Path,
         _verbose: bool,
+        registries: &mut RegistrySession,
     ) -> Result<usize> {
         // Load member's CCGO.toml
         let config_path = member_path.join("CCGO.toml");
@@ -1470,97 +1662,28 @@ impl FetchCommand {
             );
         }
 
-        if self.locked {
-            let outdated = existing_lockfile
-                .as_ref()
-                .unwrap()
-                .check_outdated(dependencies);
-            if !outdated.is_empty() {
-                bail!(
-                    "Dependencies have changed since lockfile was generated: {}",
-                    outdated.join(", ")
-                );
-            }
-        }
+        self.validate_locked_dependencies(existing_lockfile.as_ref(), dependencies)?;
 
         let deps_dir = member_path.join(".ccgo").join("deps");
         fs::create_dir_all(&deps_dir).context("Failed to create .ccgo/deps directory")?;
 
         let mut lockfile = existing_lockfile.unwrap_or_else(Lockfile::new);
         let packages_before = lockfile.packages.clone();
-        let mut installed_count = 0;
-
-        let mut failed_count = 0;
-
-        // Resolve transitive dependencies
-        let strategy: VersionConflictStrategy = self.conflict_strategy.into();
-        let dependency_graph = match resolve_dependencies_with_strategy(
-            dependencies,
-            member_path,
+        let dependency_graph = self.resolve_install_graph(dependencies, member_path, ccgo_home);
+        let selected: Vec<_> = dependencies.iter().collect();
+        let install_order = Self::installation_order(&dependency_graph, &selected);
+        let deps_to_process =
+            Self::ordered_dependencies(&dependency_graph, dependencies, selected, &install_order);
+        let context = &mut FetchContext {
+            project_dir: member_path,
             ccgo_home,
-            strategy,
-        ) {
-            Ok(graph) => graph,
-            Err(e) => {
-                eprintln!(
-                    "   ⚠️  Warning: Failed to resolve transitive dependencies: {}",
-                    e
-                );
-                crate::dependency::graph::DependencyGraph::new()
-            }
+            config: &config,
+            registries,
         };
+        let (installed_count, failed_count) =
+            self.install_batch(&deps_to_process, &mut lockfile, context);
 
-        // Determine installation order
-        let install_order = if dependency_graph.nodes().is_empty() {
-            dependencies.iter().map(|d| d.name.clone()).collect()
-        } else {
-            dependency_graph
-                .topological_sort()
-                .unwrap_or_else(|_| dependencies.iter().map(|d| d.name.clone()).collect())
-        };
-
-        // Create a map for quick lookup
-        let dep_map: std::collections::HashMap<String, &DependencyConfig> =
-            dependencies.iter().map(|d| (d.name.clone(), d)).collect();
-
-        // Get dependencies to process
-        let deps_to_process: Vec<&DependencyConfig> = if !dependency_graph.nodes().is_empty() {
-            install_order
-                .iter()
-                .filter_map(|name| {
-                    if let Some(node) = dependency_graph.get_node(name) {
-                        Some(&node.config)
-                    } else {
-                        dep_map.get(name).copied()
-                    }
-                })
-                .collect()
-        } else {
-            dependencies.iter().collect()
-        };
-
-        for dep in deps_to_process {
-            let locked_pkg = lockfile.get_package(&dep.name).cloned();
-            let _install_path = deps_dir.join(&dep.name);
-
-            match self.install_dependency(dep, member_path, ccgo_home, locked_pkg.as_ref()) {
-                Ok(locked_package) => {
-                    installed_count += 1;
-                    lockfile.upsert_package(locked_package);
-                }
-                Err(e) => {
-                    eprintln!("   ⚠️  Failed to install {}: {}", dep.name, e);
-                    failed_count += 1;
-                }
-            }
-        }
-
-        // Save lockfile only when packages actually changed.
-        if !self.locked && installed_count > 0 && lockfile.packages != packages_before {
-            lockfile.touch();
-            lockfile.save(member_path)?;
-            crate::utils::ide::update_ide_ignores(member_path, config.build_dir_name())?;
-        }
+        self.save_fetch_lockfile(context, &mut lockfile, &packages_before, installed_count)?;
 
         if failed_count > 0 {
             bail!(
