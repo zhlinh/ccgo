@@ -65,23 +65,71 @@ impl PendingYank {
             Err(error) => return Err(error.into()),
         };
         let pending: Self = serde_json::from_slice(&bytes).context("Invalid pending yank")?;
+        pending.validate_request(command, package)?;
+        pending.restore_and_commit(path, package, verbose)?;
+        Ok(Some(pending))
+    }
+
+    fn validate_request(&self, command: &YankCommand, package: &str) -> Result<()> {
         let repository = command
             .index_repo
             .as_deref()
             .context("Missing index repository")?;
         let version = command.vers.as_str();
-        if pending.repository != repository
-            || pending.package != package
-            || pending.desired.version != version
-            || pending.desired.yanked == command.undo
-            || pending.desired.yanked_reason != command.reason
+        if self.repository != repository
+            || self.package != package
+            || self.desired.version != version
+            || self.desired.yanked == command.undo
+            || self.desired.yanked_reason != command.reason
         {
             bail!("An interrupted yank is pending; retry its original repository, package, version, action and reason");
         }
-        if pending.push && !command.push {
+        if self.push && !command.push {
             bail!("Pending yank requires --push; retry the original command");
         }
+        Ok(())
+    }
+
+    fn restore_and_commit(&self, path: &Path, package: &str, verbose: bool) -> Result<()> {
+        let repository = &self.repository;
+        let version = self.desired.version.as_str();
         index_writer::verify_origin(path, repository)?;
+        let file = PackageIndex::package_index_path(package);
+        let dirty = Self::has_recoverable_changes(path, &file)?;
+        let current = fs::read(path.join(&file))?;
+        let hash = digest(&current);
+        if hash == self.before_sha256 {
+            let mut entry: PackageEntry = serde_json::from_slice(&current)?;
+            let target = entry
+                .versions
+                .iter_mut()
+                .find(|entry| entry.version == version)
+                .context("Pending yank version is missing")?;
+            *target = self.desired.clone();
+            let after = serde_json::to_vec_pretty(&entry)?;
+            if digest(&after) != self.after_sha256 {
+                bail!("Pending yank snapshot mismatch");
+            }
+            write_atomic(&path.join(&file), &after)?;
+        } else if dirty
+            && hash != self.after_sha256
+            && !index_writer::matches_pending_merge(path, &file.to_string_lossy(), &current)?
+        {
+            bail!("Pending yank package contains unrelated edits; local changes are preserved");
+        }
+        self.verify_target(path)?;
+        if dirty || hash == self.before_sha256 {
+            index_writer::update_index_metadata(path, "index")?;
+            index_writer::commit_changes(
+                path,
+                &format!("Resume yank: {package} {version}"),
+                verbose,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn has_recoverable_changes(path: &Path, file: &Path) -> Result<bool> {
         let status = Command::new("git")
             .current_dir(path)
             .args(["status", "--porcelain", "-z"])
@@ -89,7 +137,6 @@ impl PendingYank {
         if !status.status.success() {
             bail!("Failed to inspect pending yank");
         }
-        let file = PackageIndex::package_index_path(package);
         for change in status
             .stdout
             .split(|b| *b == 0)
@@ -100,37 +147,7 @@ impl PendingYank {
                 bail!("Unrelated local changes prevent yank recovery: {changed}; local changes are preserved");
             }
         }
-        let current = fs::read(path.join(&file))?;
-        let hash = digest(&current);
-        if hash == pending.before_sha256 {
-            let mut entry: PackageEntry = serde_json::from_slice(&current)?;
-            let target = entry
-                .versions
-                .iter_mut()
-                .find(|entry| entry.version == version)
-                .context("Pending yank version is missing")?;
-            *target = pending.desired.clone();
-            let after = serde_json::to_vec_pretty(&entry)?;
-            if digest(&after) != pending.after_sha256 {
-                bail!("Pending yank snapshot mismatch");
-            }
-            write_atomic(&path.join(&file), &after)?;
-        } else if !status.stdout.is_empty()
-            && hash != pending.after_sha256
-            && !index_writer::matches_pending_merge(path, &file.to_string_lossy(), &current)?
-        {
-            bail!("Pending yank package contains unrelated edits; local changes are preserved");
-        }
-        pending.verify_target(path)?;
-        if !status.stdout.is_empty() || hash == pending.before_sha256 {
-            index_writer::update_index_metadata(path, "index")?;
-            index_writer::commit_changes(
-                path,
-                &format!("Resume yank: {package} {version}"),
-                verbose,
-            )?;
-        }
-        Ok(Some(pending))
+        Ok(!status.stdout.is_empty())
     }
 
     pub fn verify_target(&self, path: &Path) -> Result<()> {

@@ -21,9 +21,7 @@ use anyhow::{bail, Context, Result};
 use clap::Args;
 
 use crate::config::CcgoConfig;
-use crate::registry::{
-    index_writer, PackageEntry, PackageIndex,
-};
+use crate::registry::{index_writer, PackageEntry, PackageIndex};
 
 #[path = "yank_recovery.rs"]
 mod recovery;
@@ -92,15 +90,7 @@ impl YankCommand {
             .clone()
             .unwrap_or_else(|| "custom-index".to_string());
 
-        if self.undo && self.reason.is_some() {
-            bail!("--reason is not accepted with --undo (unyank clears the reason)");
-        }
-        if !self.undo && self.reason.is_none() {
-            bail!(
-                "--reason is required when yanking. Pass --reason \"<why>\" to leave \
-                 an audit trail; or pass --undo to unyank."
-            );
-        }
+        self.validate_action()?;
 
         let action = if self.undo { "Unyanking" } else { "Yanking" };
         println!(
@@ -114,7 +104,9 @@ impl YankCommand {
             .join(".git/ccgo-publication.json")
             .exists()
         {
-            bail!("An interrupted publication is pending; retry that publish command before yanking");
+            bail!(
+                "An interrupted publication is pending; retry that publish command before yanking"
+            );
         }
         let pending = recovery::PendingYank::resume(
             &index_writer::publish_work_dir(&index_name),
@@ -132,17 +124,69 @@ impl YankCommand {
             println!("✅ Interrupted yank operation completed");
             return Ok(());
         }
-        let package_rel_path = PackageIndex::package_index_path(&package_name);
-        let package_file = index_path.join(&package_rel_path);
+        self.commit_yank(
+            &index_path,
+            &index_repo,
+            &index_name,
+            &package_name,
+            verbose,
+        )
+    }
 
-        if !package_file.exists() {
+    fn validate_action(&self) -> Result<()> {
+        if self.undo && self.reason.is_some() {
+            bail!("--reason is not accepted with --undo (unyank clears the reason)");
+        }
+        if !self.undo && self.reason.is_none() {
             bail!(
-                "package '{}' is not in the index ({} does not exist). \
-                 Did you mean to publish it first?",
-                package_name,
-                package_file.display()
+                "--reason is required when yanking. Pass --reason \"<why>\" to leave \
+                 an audit trail; or pass --undo to unyank."
             );
         }
+
+        Ok(())
+    }
+
+    fn apply_action(&self, v: &mut crate::registry::VersionEntry) -> Result<()> {
+        if self.undo {
+            if !v.yanked {
+                bail!(
+                    "version '{}' is not currently yanked; nothing to undo",
+                    self.vers
+                );
+            }
+            v.yanked = false;
+            v.yanked_reason = None;
+            println!("   ✓ Cleared yanked flag");
+        } else {
+            if v.yanked {
+                bail!(
+                    "version '{}' is already yanked (reason: {}). Pass --undo to unyank \
+                     first if you want to re-yank with a different reason.",
+                    self.vers,
+                    v.yanked_reason.as_deref().unwrap_or("<unset>")
+                );
+            }
+            v.yanked = true;
+            v.yanked_reason = self.reason.clone();
+            println!(
+                "   ✓ Yanked (reason: {})",
+                self.reason.as_deref().unwrap_or("")
+            );
+        }
+
+        Ok(())
+    }
+
+    fn commit_yank(
+        &self,
+        index_path: &Path,
+        index_repo: &str,
+        index_name: &str,
+        package_name: &str,
+        verbose: bool,
+    ) -> Result<()> {
+        let package_file = Self::existing_package_file(index_path, package_name)?;
 
         // 4. Mutate the matching VersionEntry.
         let json = std::fs::read_to_string(&package_file)
@@ -174,32 +218,7 @@ impl YankCommand {
                 )
             })?;
 
-        if self.undo {
-            if !v.yanked {
-                bail!(
-                    "version '{}' is not currently yanked; nothing to undo",
-                    self.vers
-                );
-            }
-            v.yanked = false;
-            v.yanked_reason = None;
-            println!("   ✓ Cleared yanked flag");
-        } else {
-            if v.yanked {
-                bail!(
-                    "version '{}' is already yanked (reason: {}). Pass --undo to unyank \
-                     first if you want to re-yank with a different reason.",
-                    self.vers,
-                    v.yanked_reason.as_deref().unwrap_or("<unset>")
-                );
-            }
-            v.yanked = true;
-            v.yanked_reason = self.reason.clone();
-            println!(
-                "   ✓ Yanked (reason: {})",
-                self.reason.as_deref().unwrap_or("")
-            );
-        }
+        self.apply_action(v)?;
 
         // 5. Write back, refresh metadata, commit, optionally push.
         let desired = v.clone();
@@ -207,9 +226,9 @@ impl YankCommand {
             .context("failed to serialize updated package entry")?;
         let before = std::fs::read(&package_file)?;
         let pending = recovery::PendingYank::start(
-            &index_path,
-            &index_repo,
-            &package_name,
+            index_path,
+            index_repo,
+            package_name,
             desired,
             &before,
             json.as_bytes(),
@@ -218,31 +237,48 @@ impl YankCommand {
         recovery::write_atomic(&package_file, json.as_bytes())
             .with_context(|| format!("failed to write {}", package_file.display()))?;
 
-        index_writer::update_index_metadata(&index_path, &index_name)?;
+        index_writer::update_index_metadata(index_path, index_name)?;
 
-        let commit_message = self.message.clone().unwrap_or_else(|| {
-            if self.undo {
-                format!("unyank: {} {}", package_name, self.vers)
-            } else {
-                let reason = self.reason.as_deref().unwrap_or("");
-                format!(
-                    "yank: {} {}\n\nreason: {}",
-                    package_name, self.vers, reason
-                )
-            }
-        });
+        let commit_message = self.commit_message(package_name);
 
-        index_writer::commit_changes(&index_path, &commit_message, verbose)?;
+        index_writer::commit_changes(index_path, &commit_message, verbose)?;
 
         if self.push {
             println!("\n📤 Pushing to remote...");
-            index_writer::push_changes_retry(&index_path, &index_name, verbose)?;
+            index_writer::push_changes_retry(index_path, index_name, verbose)?;
             println!("✅ Pushed successfully!");
         } else {
             println!("\n💡 Changes committed locally. Use --push to push to remote.");
         }
 
-        pending.finish(&index_path)
+        pending.finish(index_path)
+    }
+
+    fn existing_package_file(index_path: &Path, package_name: &str) -> Result<std::path::PathBuf> {
+        let package_rel_path = PackageIndex::package_index_path(package_name);
+        let package_file = index_path.join(&package_rel_path);
+
+        if !package_file.exists() {
+            bail!(
+                "package '{}' is not in the index ({} does not exist). \
+                 Did you mean to publish it first?",
+                package_name,
+                package_file.display()
+            );
+        }
+
+        Ok(package_file)
+    }
+
+    fn commit_message(&self, package_name: &str) -> String {
+        self.message.clone().unwrap_or_else(|| {
+            if self.undo {
+                format!("unyank: {} {}", package_name, self.vers)
+            } else {
+                let reason = self.reason.as_deref().unwrap_or("");
+                format!("yank: {} {}\n\nreason: {}", package_name, self.vers, reason)
+            }
+        })
     }
 
     fn read_package_name_from_cwd() -> Result<String> {

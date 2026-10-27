@@ -110,16 +110,7 @@ fn merge_package(base: Option<&Value>, local: &Value, remote: Option<&Value>) ->
             continue;
         }
         if let Some(original) = before.get(version) {
-            let mut original = original.clone();
-            let mut intended = value.clone();
-            for record in [&mut original, &mut intended] {
-                let fields = record.as_object_mut().context("Invalid version record")?;
-                fields.remove("yanked");
-                fields.remove("yanked_reason");
-            }
-            if original != intended {
-                bail!("Immutable version metadata changed for {version}");
-            }
+            verify_immutable_version(original, value, version)?;
         }
         let existing = merged.get(version);
         if existing != before.get(version) && existing != Some(value) {
@@ -141,6 +132,20 @@ fn merge_package(base: Option<&Value>, local: &Value, remote: Option<&Value>) ->
     }
     result["versions"] = Value::Array(merged.into_iter().rev().map(|(_, value)| value).collect());
     Ok(result)
+}
+
+fn verify_immutable_version(original: &Value, value: &Value, version: &str) -> Result<()> {
+    let mut original = original.clone();
+    let mut intended = value.clone();
+    for record in [&mut original, &mut intended] {
+        let fields = record.as_object_mut().context("Invalid version record")?;
+        fields.remove("yanked");
+        fields.remove("yanked_reason");
+    }
+    if original != intended {
+        bail!("Immutable version metadata changed for {version}");
+    }
+    Ok(())
 }
 
 /// Validate a dirty package against both parents of an interrupted merge.
@@ -182,26 +187,45 @@ pub fn reconcile_remote(path: &Path, name: &str, verbose: bool) -> Result<bool> 
         return Ok(true);
     }
 
-    let changed = git(path, &["diff", "--name-only", &base, &local])?;
+    let (metadata, replacements) = plan_merge(path, &base, &local, &remote)?;
+    apply_merge(path, name, &remote, metadata, replacements, verbose)?;
+    Ok(true)
+}
+
+type MergePlan = (Option<Value>, Vec<(String, Value)>);
+
+fn plan_merge(path: &Path, base: &str, local: &str, remote: &str) -> Result<MergePlan> {
+    let changed = git(path, &["diff", "--name-only", base, local])?;
     let metadata =
-        package_at(path, &remote, "index.json")?.or(package_at(path, &local, "index.json")?);
+        package_at(path, remote, "index.json")?.or(package_at(path, local, "index.json")?);
     let mut replacements = Vec::new();
     for file in changed.lines().filter(|file| *file != "index.json") {
         if !file.ends_with(".json") || file.starts_with('.') {
             bail!("Cannot automatically reconcile local index file {file}; local commits are preserved");
         }
-        let original = package_at(path, &base, file)?;
+        let original = package_at(path, base, file)?;
         let intended =
-            package_at(path, &local, file)?.context("Cannot remove a package from the index")?;
-        let latest = package_at(path, &remote, file)?;
+            package_at(path, local, file)?.context("Cannot remove a package from the index")?;
+        let latest = package_at(path, remote, file)?;
         let merged = merge_package(original.as_ref(), &intended, latest.as_ref())
             .with_context(|| format!("Cannot reconcile {file}; local commits are preserved"))?;
         replacements.push((file.to_owned(), merged));
     }
 
+    Ok((metadata, replacements))
+}
+
+fn apply_merge(
+    path: &Path,
+    name: &str,
+    remote: &str,
+    metadata: Option<Value>,
+    replacements: Vec<(String, Value)>,
+    verbose: bool,
+) -> Result<()> {
     let output = Command::new("git")
         .current_dir(path)
-        .args(["merge", "--no-commit", "--no-ff", &remote])
+        .args(["merge", "--no-commit", "--no-ff", remote])
         .output()?;
     if !output.status.success() {
         let conflicts = git(path, &["diff", "--name-only", "--diff-filter=U"])?;
@@ -229,7 +253,7 @@ pub fn reconcile_remote(path: &Path, name: &str, verbose: bool) -> Result<bool> 
     update_index_metadata(path, name)?;
     // Both original histories remain parents of the reconciliation commit.
     commit_changes(path, "Merge concurrent registry updates", verbose)?;
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(test)]
