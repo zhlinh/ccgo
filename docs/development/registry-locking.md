@@ -58,5 +58,7 @@ against the fixed CLI. Use the integration tests above for current invariants.
 
 Publication serialization and interrupted-publication recovery are described in
 [registry-publication-recovery.md](registry-publication-recovery.md). Transport
-and fetch-cache performance improvements remain subsequent work. Neither stage
-claims a distributed transaction or migrates existing indexes or clients.
+improvements remain subsequent work. Registry synchronization and concurrent
+cache access are described in [registry-fetch-cache.md](registry-fetch-cache.md).
+These changes do not claim a distributed transaction or migrate existing indexes
+or clients.

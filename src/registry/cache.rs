@@ -5,7 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+
+use super::cache_access::{home_lock, lock_directory, CacheLock};
 
 use super::index::{PackageEntry, PackageIndex};
 
@@ -17,6 +19,7 @@ use super::index::{PackageEntry, PackageIndex};
 pub struct RegistryCache {
     name: String,
     url: String,
+    home: PathBuf,
 }
 
 impl RegistryCache {
@@ -26,6 +29,7 @@ impl RegistryCache {
         Self {
             name: name.into(),
             url: url.into(),
+            home: ccgo_home(),
         }
     }
 
@@ -36,29 +40,73 @@ impl RegistryCache {
 
     /// Local clone path: `<CCGO_HOME>/registries/<name>/`.
     pub fn local_path(&self) -> PathBuf {
-        ccgo_home().join("registries").join(&self.name)
+        self.home.join("registries").join(&self.name)
     }
 
-    /// Clone if absent, fetch + hard-reset if present. Idempotent.
+    /// Clone or update under an interprocess lock.
     pub fn ensure_synced(&self, verbose: bool) -> Result<()> {
-        let path = self.local_path();
-        std::fs::create_dir_all(path.parent().expect("registries path always has a parent"))
-            .with_context(|| format!("failed to create registries dir for '{}'", self.name))?;
+        let _home = home_lock(&self.home, false)?;
+        let _cache = self.lock()?;
+        self.sync_locked(verbose)
+    }
 
+    pub(super) fn snapshot(&self, verbose: bool) -> Result<RegistrySnapshot> {
+        let home = home_lock(&self.home, false)?;
+        let _cache = self.lock()?;
+        self.sync_locked(verbose)?;
+        let path = self.local_path();
+        let revision = git_text(&path, &["rev-parse", "--verify", "HEAD"])?;
+        let token = tempfile::NamedTempFile::new_in(lock_directory(&self.home)?)?;
+        let reference = format!(
+            "refs/ccgo/snapshots/{}",
+            token
+                .path()
+                .file_name()
+                .context("Missing snapshot name")?
+                .to_string_lossy()
+                .trim_start_matches('.')
+        );
+        git_text(&path, &["update-ref", &reference, &revision])?;
+        Ok(RegistrySnapshot {
+            path,
+            revision,
+            reference,
+            cache_lock: self.lock_path()?,
+            _home: home,
+            _token: token,
+        })
+    }
+
+    fn lock_path(&self) -> Result<PathBuf> {
+        if self.name.is_empty()
+            || matches!(self.name.as_str(), "." | "..")
+            || !self
+                .name
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+        {
+            bail!("Invalid registry cache name: {}", self.name);
+        }
+        Ok(lock_directory(&self.home)?.join(format!("registry-{}.lock", self.name)))
+    }
+
+    fn lock(&self) -> Result<CacheLock> {
+        CacheLock::acquire(&self.lock_path()?, true)
+    }
+
+    fn verify_origin(&self, path: &Path) -> Result<()> {
+        if git_text(path, &["remote", "get-url", "origin"])? != self.url {
+            bail!("Registry cache {} has a different origin; use a different registry name or clear that cache", path.display());
+        }
+        Ok(())
+    }
+
+    fn sync_locked(&self, verbose: bool) -> Result<()> {
+        let path = self.local_path();
+        let parent = path.parent().context("Missing registry cache parent")?;
+        std::fs::create_dir_all(parent)?;
         if path.join(".git").is_dir() {
-            let origin = std::process::Command::new("git")
-                .args(["remote", "get-url", "origin"])
-                .current_dir(&path)
-                .output()
-                .context("failed to inspect registry cache origin")?;
-            if !origin.status.success()
-                || String::from_utf8_lossy(&origin.stdout).trim() != self.url
-            {
-                anyhow::bail!(
-                    "Registry cache {} has a different origin; use a different registry name or clear that cache",
-                    path.display()
-                );
-            }
+            self.verify_origin(&path)?;
             self.run_git(&["fetch", "--quiet", "origin"], &path, verbose)?;
             self.run_git(
                 &["reset", "--hard", "--quiet", "FETCH_HEAD"],
@@ -67,23 +115,32 @@ impl RegistryCache {
             )
             .with_context(|| format!("failed to reset registry '{}' to FETCH_HEAD", self.name))
         } else {
+            // Publish only a complete clone; a failed clone leaves no partial cache.
+            let staging = tempfile::tempdir_in(parent)?;
+            let clone = staging.path().join("index");
             self.run_git(
                 &[
                     "clone",
                     "--quiet",
                     &self.url,
-                    path.to_str().expect("local registry path is UTF-8"),
+                    clone.to_str().context("Non UTF-8 registry path")?,
                 ],
                 Path::new("."),
                 verbose,
             )
-            .with_context(|| format!("failed to clone registry '{}' from {}", self.name, self.url))
+            .with_context(|| {
+                format!("failed to clone registry '{}' from {}", self.name, self.url)
+            })?;
+            std::fs::rename(&clone, &path).context("Failed to install registry clone")?;
+            Ok(())
         }
     }
 
     /// Read the package's JSON entry. Returns `Ok(None)` when the file is
     /// absent. Returns `Err` on read or JSON-parse failures.
     pub fn lookup(&self, package: &str) -> Result<Option<PackageEntry>> {
+        let _home = home_lock(&self.home, false)?;
+        let _cache = self.lock()?;
         let rel = PackageIndex::package_index_path(package);
         let abs = self.local_path().join(&rel);
         match std::fs::read_to_string(&abs) {
@@ -115,6 +172,78 @@ impl RegistryCache {
         }
         Ok(())
     }
+}
+
+/// An immutable Git commit, retained by a temporary ref until the session ends.
+/// Cache writers can advance HEAD without changing this reader's package view.
+pub struct RegistrySnapshot {
+    path: PathBuf,
+    revision: String,
+    reference: String,
+    cache_lock: PathBuf,
+    _home: CacheLock,
+    _token: tempfile::NamedTempFile,
+}
+
+impl RegistrySnapshot {
+    pub fn lookup(&self, package: &str) -> Result<Option<PackageEntry>> {
+        let file = PackageIndex::package_index_path(package)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let object = format!("{}:{file}", self.revision);
+        let output = std::process::Command::new("git")
+            .current_dir(&self.path)
+            .args(["show", &object])
+            .output()?;
+        if output.status.success() {
+            return Ok(Some(
+                serde_json::from_slice(&output.stdout)
+                    .with_context(|| format!("failed to parse {object}"))?,
+            ));
+        }
+        // A missing package is distinct from an unreadable or corrupt Git object.
+        let files = git_text(
+            &self.path,
+            &[
+                "ls-tree",
+                "--name-only",
+                &self.revision,
+                "--",
+                &file,
+            ],
+        )?;
+        if files.is_empty() {
+            return Ok(None);
+        }
+        bail!(
+            "Failed to read registry object {object}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    }
+}
+
+impl Drop for RegistrySnapshot {
+    fn drop(&mut self) {
+        if let Ok(_guard) = CacheLock::acquire(&self.cache_lock, true) {
+            let _ = git_text(&self.path, &["update-ref", "-d", &self.reference]);
+        }
+    }
+}
+
+fn git_text(path: &Path, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(path)
+        .args(args)
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "git {} failed in {}: {}",
+            args.join(" "),
+            path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
 }
 
 /// Resolve `~/.ccgo/`, honoring `CCGO_HOME` for tests / overrides.
@@ -237,5 +366,103 @@ mod tests {
         std::env::set_var("CCGO_HOME", tmp.path());
         let cache = RegistryCache::new("test", "file:///never-cloned");
         assert!(cache.lookup("leaf").unwrap().is_none());
+    }
+    #[test]
+    #[serial_test::serial]
+    fn session_keeps_a_pinned_commit_and_new_session_sees_updates() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CCGO_HOME", tmp.path().join("home"));
+        let upstream = make_synthetic_index(tmp.path(), None);
+        let cache = RegistryCache::new("test", format!("file://{}", upstream.display()));
+        let mut session = super::super::RegistrySession::default();
+        let before = session.synced(&cache).unwrap().revision.clone();
+        let file = upstream.join(PackageIndex::package_index_path("leaf"));
+        let changed = std::fs::read_to_string(&file)
+            .unwrap()
+            .replace("1.0.0", "2.0.0");
+        std::fs::write(file, changed).unwrap();
+        run_git(&["add", "-A"], &upstream);
+        run_git(
+            &["commit", "--amend", "-qm", "rewrite", "--no-verify"],
+            &upstream,
+        );
+        let mut next = super::super::RegistrySession::default();
+        assert_eq!(
+            next.synced(&cache)
+                .unwrap()
+                .lookup("leaf")
+                .unwrap()
+                .unwrap()
+                .versions[0]
+                .version,
+            "2.0.0"
+        );
+        // Even forced history replacement and pruning cannot remove a live snapshot.
+        run_git(
+            &["reflog", "expire", "--expire=now", "--all"],
+            &cache.local_path(),
+        );
+        run_git(&["gc", "--prune=now"], &cache.local_path());
+        let snapshot = session.synced(&cache).unwrap();
+        assert_eq!(snapshot.revision, before);
+        assert_eq!(
+            snapshot.lookup("leaf").unwrap().unwrap().versions[0].version,
+            "1.0.0"
+        );
+        assert!(snapshot.lookup("missing").unwrap().is_none());
+        drop(session);
+        drop(next);
+        assert!(git_text(
+            &cache.local_path(),
+            &["for-each-ref", "refs/ccgo/snapshots/"]
+        )
+        .unwrap()
+        .is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn failed_sync_is_retryable_and_registry_identity_is_checked() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CCGO_HOME", tmp.path().join("home"));
+        let upstream = tmp.path().join("upstream-index");
+        let cache = RegistryCache::new("test", format!("file://{}", upstream.display()));
+        let mut session = super::super::RegistrySession::default();
+        assert!(session.synced(&cache).is_err());
+        assert!(!cache.local_path().exists());
+        make_synthetic_index(tmp.path(), None);
+        assert!(session
+            .synced(&cache)
+            .unwrap()
+            .lookup("leaf")
+            .unwrap()
+            .is_some());
+        let changed_origin = RegistryCache::new("test", "file:///another-index");
+        assert!(session
+            .synced(&changed_origin)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("different origin"));
+    }
+    #[test]
+    #[serial_test::serial]
+    fn failed_fetch_can_retry_without_memoizing_the_old_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("CCGO_HOME", tmp.path().join("home"));
+        let upstream = make_synthetic_index(tmp.path(), None);
+        let cache = RegistryCache::new("home", format!("file://{}", upstream.display()));
+        cache.ensure_synced(false).unwrap();
+        let moved = tmp.path().join("unavailable-index");
+        std::fs::rename(&upstream, &moved).unwrap();
+        let mut session = super::super::RegistrySession::default();
+        assert!(session.synced(&cache).is_err());
+        std::fs::rename(moved, upstream).unwrap();
+        assert!(session
+            .synced(&cache)
+            .unwrap()
+            .lookup("leaf")
+            .unwrap()
+            .is_some());
     }
 }
