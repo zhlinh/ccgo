@@ -28,6 +28,9 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+#[path = "lockfile_write.rs"]
+mod write;
+
 /// Lockfile filename
 pub const LOCKFILE_NAME: &str = "CCGO.lock";
 
@@ -260,7 +263,7 @@ impl Lockfile {
             content.push('\n');
         }
 
-        fs::write(path, content)
+        write::atomic_write(path, content.as_bytes())
             .with_context(|| format!("Failed to write lockfile: {}", path.display()))?;
 
         Ok(())

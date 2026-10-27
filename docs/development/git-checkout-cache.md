@@ -136,6 +136,33 @@ can survive termination before its new lockfile is saved. Recovery does not roll
 back a successfully published dependency based on lockfile state, and cannot make
 the full batch, patch application and lockfile save atomic.
 
+### Atomic lockfile publication
+
+`Lockfile::save_to` writes complete content to a `.ccgo-lock-*` temporary file in
+the destination directory, syncs the file, and atomically replaces the target.
+Readers see either the previous complete lockfile or the complete replacement.
+An interrupted first write leaves the target absent until publication. Failed
+publication leaves the original target intact; a subsequent save can retry.
+All callers of the lockfile save API use this protocol.
+
+Existing file permissions are retained. On Unix a new file uses normal 0666
+creation permissions restricted by the process umask. A live symlink is resolved
+and its target replaced, preserving the link; a dangling symlink fails without
+mutation. Replacement changes the target inode: hard-link identity, ownership,
+ACLs and extended attributes are not guaranteed to survive. Filesystem directory
+write permission is required for atomic replacement.
+
+This guarantees publication atomicity on filesystems supporting atomic rename;
+it does not serialize callers outside fetch or merge concurrent lockfile changes.
+It also does not commit installations and the lockfile in one transaction.
+Power-loss durability is not claimed because the parent directory is not fsynced.
+Process termination before publication can leave an unused temporary file; later
+saves ignore it. Unit subprocess tests in `src/lockfile_write.rs` exit before and
+after publication, verify exact destination bytes, and retry. They also cover
+relative filenames, failed publication, Unix file modes and live symlinks. The
+existing lockfile roundtrip and locked-fetch regressions verify content format
+and byte-for-byte preservation of unchanged locks.
+
 ## Executable evidence
 
 ```sh
