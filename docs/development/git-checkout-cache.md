@@ -84,6 +84,58 @@ lockfile saving a crash-atomic transaction, protect against manual deletion or
 coordinate older clients, vendor, or external project writers. The guarantee
 requires a filesystem supporting the fs2 OS lock primitives.
 
+## Prepared installation replacement
+
+Archive extraction and directory linking/copying prepare a candidate under a
+temporary `.ccgo-install-*` directory beside the destination. Registry downloads
+are checksum-verified before extraction. Download, validation, extraction and
+copy errors leave the old installation untouched. This applies to registry and
+direct archives, Git, local paths, the packages cache, and vendor retrieval.
+
+Once preparation succeeds, the old directory, file or symlink moves to a backup
+inside the staging directory, then the candidate moves into place. If the second
+rename fails, the old installation is restored. If restoration also fails, the
+staging directory is retained and the error names the recovery location; cleanup
+must not destroy the backup. Successful replacement removes the old backup and
+stale files. A dangling old symlink is moved as a symlink without following it.
+
+These are same-filesystem renames under the project lock, with a brief interval
+between them when the destination is absent. External readers do not share the
+lock. Replacement is per dependency, not a transaction for the dependency batch and
+CCGO.lock; subsequent patching and lockfile-save failures are outside this
+preparation guarantee. The old copy and candidate can temporarily require roughly
+twice the installation disk space.
+
+### Recovery after process interruption
+
+Each new staging directory contains a schema-1 `transaction.json` identifying a
+single destination basename. The receipt is synced and atomically published
+before preparation; no old installation moves until preparation succeeds. Once
+replacement starts, automatic temporary-directory destruction is disabled.
+
+After acquiring the project lock, standalone and workspace member fetch recover
+recognized transactions before configuration, lockfile or installed-tree reads:
+
+- If the destination is absent and `previous` exists, restore `previous`.
+- If the destination exists, retain it: it is either the untouched old tree or
+  the complete published replacement.
+- Remove the recognized staging directory after recovery succeeds. A failed
+  recovery retains its state and stops fetch, naming the recovery location.
+
+Recovery is repeatable after interruption, including an interruption immediately
+after the backup has been restored. Receipt schema and destination components
+are validated before recovery mutates anything. Invalid recognized records stop
+fetch for inspection. Directories without receipts, including earlier temporary
+directories and interruption before receipt publication, are left untouched;
+they cannot contain a backup created by this protocol.
+
+This handles process termination on a functioning filesystem, not sudden power
+loss: directory entries and extracted file contents are not recursively fsynced.
+It assumes cooperating writers use the project lock. A newly published dependency
+can survive termination before its new lockfile is saved. Recovery does not roll
+back a successfully published dependency based on lockfile state, and cannot make
+the full batch, patch application and lockfile save atomic.
+
 ## Executable evidence
 
 ```sh
@@ -108,6 +160,16 @@ The Unix subprocess tests in `tests/support/registry_fetch_session.rs` cover:
 - A second fetch of the same project waits before reading its lockfile, including
   across independent cache homes, a symlink alias, and workspace/member commands.
 - A failed fetch releases the project lock so a corrected retry can finish.
+- Missing downloads and partially extracted invalid archives preserve the old
+  package and lockfile; a corrected registry or direct archive can then retry.
+
+Unit tests in `src/commands/fetch_install.rs` also check partial preparation,
+publication rollback, dangling symlinks and removal of stale installed files.
+Child test processes exit without destructors after preparation, backup rename,
+and publication; the parent checks recovery and a second recovery pass. Crash
+checkpoints exist only in the unit-test binary. CLI integration tests simulate an
+interrupted backup and verify recovery before installed-tree reuse in standalone
+and workspace commands, even after the source archive has been removed.
 
 The existing registry Git regression also checks moved/deleted tags, dirty locked
 checkouts and byte-for-byte preservation of CCGO.lock. Tests use local Git and ZIP

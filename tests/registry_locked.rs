@@ -461,3 +461,108 @@ fn workspace_locked_fetch_uses_member_config_and_propagates_failures() {
 #[cfg(unix)]
 #[path = "support/registry_fetch_session.rs"]
 mod fetch_session;
+
+#[test]
+fn failed_registry_refresh_preserves_installation_and_lockfile() {
+    let mut fixture = Fixture::new();
+    success(fixture.fetch(&[]));
+    let lock = fixture.lock();
+    fs::remove_file(&fixture.archive).unwrap();
+    failure(fixture.fetch(&["--force"]), "failed to read");
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), lock);
+
+    // The first entry extracts before the second is rejected.
+    let mut zip = zip::ZipWriter::new(fs::File::create(&fixture.archive).unwrap());
+    for (name, content) in [("payload.txt", "partial"), ("../escape", "unsafe")] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(content.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    fixture.entry["versions"][0]["checksum"] = format!(
+        "sha256:{:x}",
+        Sha256::digest(fs::read(&fixture.archive).unwrap())
+    )
+    .into();
+    fixture.publish_index();
+    failure(fixture.fetch(&["--force"]), "unsafe path");
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), lock);
+    assert!(!fixture.consumer.join(".ccgo/deps/escape").exists());
+    assert_eq!(
+        fs::read_dir(fixture.consumer.join(".ccgo/deps"))
+            .unwrap()
+            .count(),
+        1
+    );
+
+    fixture.entry["versions"][0]["checksum"] = fixture.zip("complete").into();
+    fixture.publish_index();
+    success(fixture.fetch(&["--force"]));
+    assert_eq!(fixture.payload(), "complete");
+}
+
+#[test]
+fn failed_direct_archive_refresh_preserves_installation_and_lockfile() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.consumer.join("CCGO.toml"),
+        format!("[package]\nname='consumer'\nversion='1.0.0'\n[[dependencies]]\nname='leaf'\nversion='1.0.0'\nzip='{}'\n", file_url(&fixture.archive)),
+    ).unwrap();
+    success(fixture.fetch(&[]));
+    let lock = fixture.lock();
+    fs::write(&fixture.archive, "corrupt zip").unwrap();
+    failure(fixture.fetch(&["--force"]), "Failed to open ZIP archive");
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), lock);
+    fixture.zip("complete");
+    success(fixture.fetch(&["--force"]));
+    assert_eq!(fixture.payload(), "complete");
+}
+
+fn interrupted_installation(fixture: &Fixture) -> PathBuf {
+    let deps = fixture.consumer.join(".ccgo/deps");
+    let staging = deps.join(".ccgo-install-interrupted");
+    fs::create_dir(&staging).unwrap();
+    fs::write(
+        staging.join("transaction.json"),
+        br#"{"schema":1,"destination":"leaf"}"#,
+    )
+    .unwrap();
+    fs::rename(deps.join("leaf"), staging.join("previous")).unwrap();
+    fs::create_dir(staging.join("new")).unwrap();
+    fs::write(staging.join("new/payload.txt"), "incomplete").unwrap();
+    staging
+}
+
+#[test]
+fn fetch_recovers_interrupted_installation_before_reusing_lock() {
+    let fixture = Fixture::new();
+    success(fixture.fetch(&[]));
+    let lock = fixture.lock();
+    let staging = interrupted_installation(&fixture);
+    fs::remove_file(&fixture.archive).unwrap();
+    success(fixture.fetch(&[]));
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), lock);
+    assert!(!staging.exists());
+}
+
+#[test]
+fn workspace_recovers_member_installation_before_reusing_lock() {
+    let fixture = Fixture::new();
+    success(fixture.fetch(&[]));
+    let lock = fixture.lock();
+    let staging = interrupted_installation(&fixture);
+    fs::remove_file(&fixture.archive).unwrap();
+    fs::write(
+        fixture.tmp.path().join("CCGO.toml"),
+        "[workspace]\nmembers=['consumer']\n",
+    )
+    .unwrap();
+    success(fixture.ccgo_at(fixture.tmp.path(), &["fetch", "--workspace"]));
+    assert_eq!(fixture.payload(), "original");
+    assert_eq!(fixture.lock(), lock);
+    assert!(!staging.exists());
+}

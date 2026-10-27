@@ -22,6 +22,9 @@ use crate::workspace::{find_workspace_root, Workspace};
 #[path = "fetch_registry_locked.rs"]
 mod registry_locked;
 
+#[path = "fetch_install.rs"]
+mod installation;
+
 /// Version conflict resolution strategy (CLI wrapper)
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
 pub enum ConflictStrategy {
@@ -138,7 +141,7 @@ impl FetchCommand {
         self.clean_global_cache(&ccgo_home)?;
         let _home_guard = crate::registry::cache_access::home_lock(&ccgo_home, false)?;
 
-        let _project_guard = crate::registry::cache_access::project_lock(&project_dir)?;
+        let _project_guard = installation::lock_project(&project_dir)?;
 
         // Load CCGO.toml
         println!("\n📖 Reading dependencies from CCGO.toml...");
@@ -532,13 +535,8 @@ impl FetchCommand {
             println!("   📦 Found in vendor/ directory (offline mode)");
             println!("   Source: {}", vendor_path.display());
 
-            // Remove existing installation if present
-            if install_path.exists() {
-                Self::clean_install_path(install_path)?;
-            }
-
             // Create symlink or copy from vendor
-            Self::create_symlink_or_copy(&vendor_path, install_path, self.copy)?;
+            Self::link_validated_checkout(&vendor_path, install_path, self.copy)?;
             println!("   ✓ Installed from vendor to {}", install_path.display());
 
             // Return a locked package entry for vendored dependency
@@ -672,9 +670,6 @@ impl FetchCommand {
         let config = context.config;
         let registries = &mut *context.registries;
         // Install based on effective source type
-        if source.path.is_some() || source.git.is_none() {
-            Self::clean_install_path(install_path)?;
-        }
         if let Some(path) = source.path {
             // Local path dependency
             self.install_from_local_path(&dep.name, &dep.version, path, project_dir, install_path)
@@ -751,7 +746,7 @@ impl FetchCommand {
         println!("   Installing from local directory...");
 
         // Create symlink or copy
-        Self::create_symlink_or_copy(&source_path, install_path, self.copy)?;
+        Self::link_validated_checkout(&source_path, install_path, self.copy)?;
 
         println!("   ✓ Installed to {}", install_path.display());
 
@@ -817,7 +812,7 @@ impl FetchCommand {
         );
         println!("   Linking from packages cache…");
 
-        Self::create_symlink_or_copy(&source_path, install_path, self.copy)?;
+        Self::link_validated_checkout(&source_path, install_path, self.copy)?;
 
         println!("   ✓ Installed to {}", install_path.display());
 
@@ -875,12 +870,14 @@ impl FetchCommand {
         };
 
         println!("   Extracting to {}...", install_path.display());
-        fs::create_dir_all(install_path).context("Failed to create install directory")?;
-        if Self::is_tar_gz(zip_source) {
-            Self::extract_tar_gz(&bytes, install_path)?;
-        } else {
-            Self::extract_zip(&bytes, install_path)?;
-        }
+        installation::replace(install_path, |candidate| {
+            fs::create_dir_all(candidate)?;
+            if Self::is_tar_gz(zip_source) {
+                Self::extract_tar_gz(&bytes, candidate)
+            } else {
+                Self::extract_zip(&bytes, candidate)
+            }
+        })?;
 
         println!("   ✓ Installed to {}", install_path.display());
 
@@ -1036,9 +1033,10 @@ impl FetchCommand {
 
         let bytes = Self::fetch_archive_bytes(archive_url)?;
         Self::verify_archive_checksum(resolved, &bytes)?;
-        Self::clean_install_path(install_path)?;
-        std::fs::create_dir_all(install_path)?;
-        Self::extract_zip(&bytes, install_path)?;
+        installation::replace(install_path, |candidate| {
+            fs::create_dir_all(candidate)?;
+            Self::extract_zip(&bytes, candidate)
+        })?;
 
         println!("   ✓ Installed to {}", install_path.display());
 
@@ -1141,27 +1139,6 @@ impl FetchCommand {
                 expected,
                 actual
             );
-        }
-        Ok(())
-    }
-
-    /// Remove any prior installation at `install_path`. Tolerates regular
-    /// dirs, live symlinks, AND dangling symlinks. Idempotent — re-running
-    /// `ccgo fetch` must safely re-extract over a previous extraction.
-    ///
-    /// Uses `symlink_metadata()` rather than `exists()` because the latter
-    /// follows symlinks: a dangling symlink left over from a wiped target
-    /// returns `false` from `exists()` and would otherwise be silently
-    /// preserved, causing the subsequent extract to fail with a confusing
-    /// "file exists" error.
-    fn clean_install_path(install_path: &Path) -> Result<()> {
-        if install_path.symlink_metadata().is_err() {
-            return Ok(());
-        }
-        if install_path.is_symlink() {
-            std::fs::remove_file(install_path)?;
-        } else {
-            std::fs::remove_dir_all(install_path)?;
         }
         Ok(())
     }
@@ -1337,18 +1314,10 @@ impl FetchCommand {
         install_path: &Path,
         copy: bool,
     ) -> Result<()> {
-        // Link/copy from registry to project
-        // Replace only after validating the checkout, including dangling old links.
-        if let Ok(metadata) = fs::symlink_metadata(install_path) {
-            if metadata.file_type().is_symlink() || metadata.is_file() {
-                fs::remove_file(install_path)?;
-            } else {
-                fs::remove_dir_all(install_path)?;
-            }
-        }
-        Self::create_symlink_or_copy(registry_path, install_path, copy)?;
-
-        Ok(())
+        let source = registry_path.canonicalize()?;
+        installation::replace(install_path, |candidate| {
+            Self::create_symlink_or_copy(&source, candidate, copy)
+        })
     }
 
     /// Create symlink or copy based on settings
@@ -1578,7 +1547,7 @@ impl FetchCommand {
         _verbose: bool,
         registries: &mut RegistrySession,
     ) -> Result<usize> {
-        let _project_guard = crate::registry::cache_access::project_lock(member_path)?;
+        let _project_guard = installation::lock_project(member_path)?;
         // Load member's CCGO.toml
         let config_path = member_path.join("CCGO.toml");
         if !config_path.exists() {
