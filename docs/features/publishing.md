@@ -4,6 +4,10 @@ Complete guide to publishing C++ libraries to various package registries with CC
 
 ## Overview
 
+Use `ccgo publish package` to publish a CCGO package to a registry. The previous
+`ccgo publish index` spelling remains a compatibility alias; existing `--index-*`
+options and index configuration are unchanged.
+
 CCGO provides unified publishing capabilities across multiple platforms and package managers:
 
 - **Android**: Maven Local, Maven Central, Private Maven repositories
@@ -22,7 +26,7 @@ Publishing defaults to `--registry local`. Doc uses `--doc-*` and does not read 
 | CocoaPods | Validate podspec | CocoaPods Trunk | Specs repository selected by `--remote` |
 | SPM | Validate manifest; `--push` creates a local version tag | No official central publishing endpoint; errors | Git remote selected by `--remote`; `--push` publishes a version tag |
 | Conan | Export to local cache | Fixed ConanCenter contribution workflow; errors with PR guidance, no direct upload | Conan remote selected by `--remote` |
-| Index | Validate input; `--push` updates/commits the local index | Default CCGO index | Configured CCGO registry selected by `--remote` |
+| Package | Validate input; `--push` updates/commits the local index | Default CCGO index | Configured CCGO registry selected by `--remote` |
 
 SPM and Index require `--push` to publish. Without it, they validate only: no tags, index writes/commits, or index clones/pulls. `local --push` writes locally; remote registries push remotely. The old `--index-push` is a compatibility alias. Apple binary hosting involving SPM also validates only without `--push`; explicit CocoaPods-only artifact-provider uploads retain their existing behavior.
 
@@ -93,7 +97,7 @@ Use `--path` for the publish input: a directory or the platform's artifact/descr
 | Apple / SPM | Package directory; binary directory with a provider | `Package.swift`; `.zip` with a provider | Current directory; release Apple SDK ZIP with provider |
 | Conan | Recipe directory containing `conanfile.py` | Python recipe, usually `conanfile.py`, or a `.zip` containing it | Existing CCGO project discovery |
 | Doc | Project containing `mkdocs.yml` or `mkdocs.yaml` | MkDocs `.yml` / `.yaml` config, or a MkDocs project `.zip` | Current project's MkDocs config |
-| Index | Directory containing exactly one SDK ZIP | SDK `.zip` to checksum | Default `target/release/package/` path |
+| Package | Directory containing exactly one SDK ZIP | SDK `.zip` to checksum | Default `target/release/package/` path |
 
 Android/OHOS artifact directories and SDK ZIPs are searched recursively; Index directories are searched recursively for ZIPs. Multiple candidates fail and require an exact file path. Project directories take precedence, identified by `gradlew` for Android and `oh-package.json5` for OHOS. CocoaPods searches only the specified directory's immediate files. Apple file inputs require the corresponding `--manager`; directories used with `--manager all` must contain both a podspec and `Package.swift`.
 
@@ -111,7 +115,7 @@ ccgo publish conan --path ./recipes/conanfile.py --registry local
 ccgo publish doc --path ./docs-project/mkdocs.yml
 ccgo publish doc --path ./docs-project.zip
 ccgo publish conan --path ./conan-project.zip --registry local
-ccgo publish index --version 1.2.3 --index-repo ./package-index \
+ccgo publish package --version 1.2.3 --index-repo ./package-index \
   --path ./artifacts/SDK.zip --checksum \
   --archive-url-template 'https://cdn.example.com/{name}-{version}.zip'
 ```
@@ -140,7 +144,7 @@ For Doc ZIPs, run the command from the Git repository whose documentation you wa
 Index supports `--artifact-provider maven|github`. Pass a ZIP or a directory containing a unique ZIP with `--path`; the default is `target/release/package/<NAME_UPPER>_CCGO_PACKAGE-<version>.zip`. The command uploads the existing archive and records its download URL and SHA-256 automatically. Do not combine a provider with `--archive-url-template`.
 
 ```bash
-ccgo publish index --registry private --remote company \
+ccgo publish package --registry private --remote company \
   --artifact-provider maven --artifact-group com.example \
   --path ./STDCOMM_CCGO_PACKAGE-0.0.5.zip --push
 ```
@@ -966,20 +970,20 @@ The version defaults to `[project].version` or `[package].version` in `CCGO.toml
 
 ```bash
 # Validate the configured version and existing source tag, without updating the index
-ccgo publish index --registry local
+ccgo publish package --registry local
 
 # Publish to the offline local index, default $CCGO_HOME/registry/publish/local
-ccgo publish index --registry local --push
+ccgo publish package --registry local --push
 
 # Dedicated local index directory, separate from the package source repository
-ccgo publish index --registry local --index-repo ./package-index --push
+ccgo publish package --registry local --index-repo ./package-index --push
 
 # Fixed official CCGO index; pushing requires write access
-ccgo publish index --registry official --push
+ccgo publish package --registry official --push
 
 # Configure a private index (or use [registries] in CCGO.toml)
 ccgo registry add company git@github.com:company/ccgo-index.git
-ccgo publish index --registry private --remote company --push
+ccgo publish package --registry private --remote company --push
 ```
 
 Official mode uses `git@github.com:zhlinh/ccgo-index.git`. Private mode resolves `--remote` from project `[registries]` first, then global `ccgo registry add` configuration. Unknown names fail without falling back. This name identifies a CCGO registry, not a Git remote of the source project. Remote working copies live under `$CCGO_HOME/registry/publish/<name>/` (`$CCGO_HOME` defaults to `~/.ccgo`). Without `--push`, validation does not create/update an index checkout, write commits, or clone/pull. Remote duplicate versions cannot be verified at that stage; actual publication pulls the index and checks duplicates.

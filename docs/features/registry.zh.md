@@ -20,7 +20,7 @@ CCGO 把"有哪些包可用"和"包的字节存放在哪里"拆成两层：
 **第一层 —— 发现（索引仓库）。** 一个 Git 仓库，里面的 JSON 文件列出每个
 已发布的包及其版本。可在网页上浏览、用 `git log` 审计、用
 `ccgo registry search` 查询。发布方每发一次新版就跑一次
-`ccgo publish index` 往索引里追加新的 `VersionEntry`。索引就是 Git 里的
+`ccgo publish package` 往索引里追加新的 `VersionEntry`。索引就是 Git 里的
 文本，所以代码评审、分支保护、签名提交都自然适用。
 
 **第二层 —— 解析（产物归档）。** 每个 `VersionEntry` 可以记录一个
@@ -51,17 +51,17 @@ registry = "mna"           # 显式选择器
 [[dependencies]]
 name = "fmt"
 version = "10.2.1"
-# 不写 registry = ... —— ccgo 会按声明顺序遍历所有注册表，命中即取
+# 不写 registry = ... —— 这个包和版本必须只命中一个注册表
 ```
 
 `[[dependencies]].registry` 字段是可选的。设置后，查找会被锁定到那一个
-注册表（且如果名字不在 `[registries]` 里会报错）。不设置时，ccgo 按
-TOML 中的声明顺序遍历注册表，取第一个命中的版本 —— 与 Cargo 的优先级
-规则一致。
+注册表（且如果名字不在 `[registries]` 里会报错）。不设置时，ccgo 检查
+所有配置的注册表；多个来源同时命中会报错，需要显式指定 registry。
+指定注册表后若版本未命中，会直接失败，不再回退到本地包缓存。
 
 ## 发布方 CI 工作流
 
-`ccgo publish index` 是 **append-only、单版本一次** 的(对标 CocoaPods
+`ccgo publish package` 是 **append-only、单版本一次** 的(对标 CocoaPods
 `pod repo push`)。每次调用只往 index 里追加一条 `VersionEntry`,重
 复发布同一版本会被拒绝。用 `--index-version` 和/或 `--index-tag` 指定
 要发布的版本:
@@ -70,7 +70,7 @@ TOML 中的声明顺序遍历注册表，取第一个命中的版本 —— 与 
 ccgo build all --release
 ccgo package --release        # 产出 NAME_CCGO_PACKAGE-VERSION.zip
 # 上传 zip 到你的 CDN/artifactory(你的脚本)
-ccgo publish index \
+ccgo publish package \
   --index-repo git@example.com:org/index.git \
   --index-name org-index \
   --index-version 25.2.9519653 \
@@ -85,7 +85,7 @@ ccgo publish index \
 前缀 `stdcomm-v1.0.0`),两个 flag 都显式传:
 
 ```bash
-ccgo publish index ... --index-version 1.0.0 --index-tag stdcomm-v1.0.0
+ccgo publish package ... --index-version 1.0.0 --index-tag stdcomm-v1.0.0
 ```
 
 发布前 ccgo 会跑 `git rev-parse --verify <tag>` 验证 tag 真实存在。
@@ -393,43 +393,55 @@ ccgo search json --details          # 显示详细信息
 
 `ccgo fetch` 通过 `[registries]` 解析仅写了 `version` 的依赖时：
 
-1. 按 TOML 中的声明顺序遍历所有注册表（或 `[[dependencies]].registry`
+1. 检查所有注册表（或 `[[dependencies]].registry`
    指定的那一个）。
 2. 对每个注册表，确认其索引已克隆到 `~/.ccgo/registries/<name>/`
    （已存在则 pull）。
 3. 在该索引中查找包对应的 sharded JSON 条目。
 4. 在条目的 `versions[]` 中筛出未 yanked、版本号精确匹配的项。
-5. **取首个命中的注册表。** 命中后立即返回该 `VersionEntry`，
-   不再查询后续注册表。
+5. 要求命中来源唯一。多个注册表同时命中时必须显式指定 `registry`，
+   不使用隐式注册表优先级。
 6. 若条目带有 `archive_url`，下载该归档；存在 `checksum` 时校验 SHA-256，
    然后解压至 `.ccgo/deps/<name>/`。
-7. lockfile 记录 `source = "registry+<index-url>"` 与 `checksum`，
-   后续 `ccgo fetch --locked` 直接据此重现同一份字节，不再走解析流程。
+7. lockfile 记录 `source = "registry+<index-url>"` 和下载内容的 SHA-256，
+   即使索引未提供可选的 checksum 也会计算。Git 源码回退则记录完整 commit。
+
+`ccgo fetch --locked` 校验配置中的注册表身份，使用锁中的精确版本（允许
+已 yank 的版本），并按锁中的 checksum 或 Git commit 获取内容。它不会改写
+`CCGO.lock`，包括时间戳。即使已有安装也会重新检查注册表和内容，因此当前
+锁定获取仍需能够访问注册表及制品或源码仓库。索引 checksum 改变会报错；
+移除这个可选字段也不能绕过锁中的校验。下载地址可以改变，但内容必须一致。
+注册表归档当前只支持 ZIP。
+
+旧式 `registry+<name>@<version>` 锁文件在显式选择来源、或只配置一个注册表时
+兼容读取。缺少 checksum 或完整 commit 的旧锁需要去掉 `--locked`，执行
+`ccgo fetch --force` 重新生成。缓存统一遵循 `CCGO_HOME`；已有缓存的 Git origin
+与配置地址不符时会报错，避免复用同名注册表的旧来源。
 
 注意：当前迭代不解析 `^1.0`、`~2.1` 这类 semver 区间。`version = "x.y.z"`
 是按字符串与 `VersionEntry.version` 精确匹配的。区间支持是后续计划。
 
 ## 发布到索引
 
-使用 `ccgo publish index` 将你的包加入索引仓库：
+使用 `ccgo publish package` 将你的包加入索引仓库：
 
 ```bash
 # 发布到自定义索引
-ccgo publish index --index-repo https://github.com/user/my-packages.git
+ccgo publish package --index-repo https://github.com/user/my-packages.git
 
 # 自定义名称并推送
-ccgo publish index \
+ccgo publish package \
   --index-repo https://github.com/company/packages.git \
   --index-name company \
   --index-push
 
 # 自定义提交消息
-ccgo publish index \
+ccgo publish package \
   --index-repo git@github.com:user/packages.git \
   --index-message "Add mylib v2.0.0"
 
 # 为每个版本生成 SHA-256 校验和
-ccgo publish index \
+ccgo publish package \
   --index-repo https://github.com/user/packages.git \
   --checksum \
   --index-push

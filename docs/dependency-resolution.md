@@ -19,14 +19,14 @@ matches the dep's declared fields wins:
 3. **`zip = "..."`** — archive dependency. Downloaded (`https://`) or
    read (`file://`, local path) and extracted into `.ccgo/deps/<name>/`.
 4. **Registry resolution** — when `[registries]` is non-empty AND the
-   dep has no `path`/`git`/`zip` source. ccgo walks declared registries
-   (or just the one named by `[[dependencies]].registry`) in TOML
-   declaration order, takes the first non-yanked exact-version match,
+   dep has no `path`/`git`/`zip` source. ccgo checks declared registries
+   (or just the one named by `[[dependencies]].registry`), requires a unique
+   non-yanked exact-version match,
    then chooses one of two sub-paths:
    * **Archive** — when the matched `VersionEntry.archive_url` is set:
      download those bytes, SHA-256-verify, extract.
    * **Git+tag fallback** — when `archive_url` is absent but
-     `PackageEntry.repository` is set (which `ccgo publish index`
+     `PackageEntry.repository` is set (which `ccgo publish package`
      always populates from the project's `git remote`): `git clone
      --branch <tag>` the source repo. The lockfile records
      `source = "registry+<index-url>"` and `locked.git.revision` for
@@ -42,11 +42,17 @@ matches the dep's declared fields wins:
    the dep is identified by name+version and the location lives entirely
    in a developer-machine cache.
 
-When step 4 returns "no match" it falls through cleanly to step 5 —
+When step 4 returns "no match" without an explicit registry selector, it falls through to step 5 —
 existing `version`-only deps that don't appear in any configured registry
 keep working unchanged. When `[registries]` is empty, step 4 is skipped
 entirely. This is what makes the registry tier opt-in and incremental:
 older `git`/`zip` declarations stay valid forever.
+
+Locked registry retrieval fixes the source to the registry URL in `CCGO.lock`,
+accepts an already locked yanked version, verifies the locked SHA-256 or full
+Git commit, and never rewrites the lock. Multiple fresh registry matches require
+an explicit selector; a selected or locked registry never falls back to another
+registry or local package cache. See the registry guide for legacy-lock handling.
 
 ## Features
 

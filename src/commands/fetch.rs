@@ -14,8 +14,11 @@ use sha2::{Digest, Sha256};
 use crate::config::{CcgoConfig, DependencyConfig};
 use crate::dependency::resolver::resolve_dependencies_with_strategy;
 use crate::dependency::version_resolver::ConflictStrategy as VersionConflictStrategy;
-use crate::lockfile::{Lockfile, LockedPackage, LockedGitInfo, LOCKFILE_NAME};
+use crate::lockfile::{LockedGitInfo, LockedPackage, Lockfile, LOCKFILE_NAME};
 use crate::workspace::{find_workspace_root, Workspace};
+
+#[path = "fetch_registry_locked.rs"]
+mod registry_locked;
 
 /// Version conflict resolution strategy (CLI wrapper)
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
@@ -195,7 +198,10 @@ impl FetchCommand {
             return Ok(());
         }
 
-        println!("\nFound {} dependency(ies) to install:", deps_to_install.len());
+        println!(
+            "\nFound {} dependency(ies) to install:",
+            deps_to_install.len()
+        );
         for dep in &deps_to_install {
             // Show locked version if available
             if let Some(ref lockfile) = existing_lockfile {
@@ -209,7 +215,12 @@ impl FetchCommand {
 
         // Resolve transitive dependencies with conflict strategy
         let strategy: VersionConflictStrategy = self.conflict_strategy.into();
-        let dependency_graph = match resolve_dependencies_with_strategy(dependencies, &project_dir, &ccgo_home, strategy) {
+        let dependency_graph = match resolve_dependencies_with_strategy(
+            dependencies,
+            &project_dir,
+            &ccgo_home,
+            strategy,
+        ) {
             Ok(graph) => {
                 // Show dependency tree
                 println!("\nDependency tree:");
@@ -219,15 +230,16 @@ impl FetchCommand {
                 let stats = graph.stats();
                 println!(
                     "{} unique dependencies found, {} total ({} shared)",
-                    stats.unique_count,
-                    stats.total_count,
-                    stats.shared_count
+                    stats.unique_count, stats.total_count, stats.shared_count
                 );
 
                 graph
             }
             Err(e) => {
-                eprintln!("\n⚠️  Warning: Failed to resolve transitive dependencies: {}", e);
+                eprintln!(
+                    "\n⚠️  Warning: Failed to resolve transitive dependencies: {}",
+                    e
+                );
                 eprintln!("   Continuing with direct dependencies only...");
                 // Continue with just the direct dependencies
                 crate::dependency::graph::DependencyGraph::new()
@@ -307,7 +319,7 @@ impl FetchCommand {
 
         // Save lockfile only when the packages actually changed, to avoid
         // spurious timestamp-only diffs when all deps were already up-to-date.
-        if installed_count > 0 && lockfile.packages != packages_before {
+        if !self.locked && installed_count > 0 && lockfile.packages != packages_before {
             lockfile.touch();
             lockfile.save(&project_dir)?;
             println!("\n📝 Updated {}", LOCKFILE_NAME);
@@ -347,6 +359,26 @@ impl FetchCommand {
 
         let install_path = deps_dir.join(&dep.name);
 
+        if self.locked {
+            let locked = locked.ok_or_else(|| {
+                anyhow::anyhow!("Dependency '{}' is missing from CCGO.lock", dep.name)
+            })?;
+            if dep.git.is_none()
+                && dep.path.is_none()
+                && dep.zip.is_none()
+                && locked.source.starts_with("registry+")
+            {
+                let config = CcgoConfig::load_from(project_dir.join("CCGO.toml"))?;
+                return self.install_locked_registry(
+                    dep,
+                    &config,
+                    locked,
+                    &install_path,
+                    ccgo_home,
+                );
+            }
+        }
+
         // Check vendor/ directory first for offline builds
         let vendor_dir = project_dir.join("vendor");
         let vendor_path = vendor_dir.join(&dep.name);
@@ -383,10 +415,16 @@ impl FetchCommand {
         // Check if already installed and matches lockfile
         if install_path.exists() && !self.force {
             if let Some(locked_pkg) = locked {
-                println!("   {} already installed (locked: {})", dep.name, locked_pkg.version);
+                println!(
+                    "   {} already installed (locked: {})",
+                    dep.name, locked_pkg.version
+                );
                 return Ok(locked_pkg.clone());
             }
-            println!("   {} already installed (use --force to reinstall)", dep.name);
+            println!(
+                "   {} already installed (use --force to reinstall)",
+                dep.name
+            );
             // Return a basic locked package for already installed deps
             return Ok(LockedPackage {
                 name: dep.name.clone(),
@@ -411,56 +449,59 @@ impl FetchCommand {
         }
 
         // Load config to check for patches
-        let config = CcgoConfig::load().context("Failed to load CCGO.toml")?;
+        let config = CcgoConfig::load_from(project_dir.join("CCGO.toml"))
+            .context("Failed to load CCGO.toml")?;
 
         // Check if there's a patch for this dependency
         let original_source = Self::build_source_string(dep);
-        let patch_info = if let Some(patch) = config.patch.find_patch(&dep.name, Some(&original_source)) {
-            println!("   🔧 Applying patch for {}...", dep.name);
+        let patch_info =
+            if let Some(patch) = config.patch.find_patch(&dep.name, Some(&original_source)) {
+                println!("   🔧 Applying patch for {}...", dep.name);
 
-            let patched_source = if let Some(ref git) = patch.git {
-                format!("git+{}", git)
-            } else if let Some(ref path) = patch.path {
-                format!("path+{}", path)
+                let patched_source = if let Some(ref git) = patch.git {
+                    format!("git+{}", git)
+                } else if let Some(ref path) = patch.path {
+                    format!("path+{}", path)
+                } else {
+                    original_source.clone()
+                };
+
+                println!("   Original: {}", original_source);
+                println!("   Patched:  {}", patched_source);
+
+                Some((patch, patched_source))
             } else {
-                original_source.clone()
+                None
             };
-
-            println!("   Original: {}", original_source);
-            println!("   Patched:  {}", patched_source);
-
-            Some((patch, patched_source))
-        } else {
-            None
-        };
 
         // Determine effective source for installation
-        let (effective_path, effective_git, effective_branch, effective_rev) = if let Some((patch, _)) = &patch_info {
-            // Use patched source
-            let rev = if !self.locked {
-                // In non-locked mode, use patch's rev if specified
-                patch.rev.clone()
-            } else {
-                // In locked mode, prefer locked revision
-                locked.and_then(|l| l.git_revision()).map(|s| s.to_string())
-            };
+        let (effective_path, effective_git, effective_branch, effective_rev) =
+            if let Some((patch, _)) = &patch_info {
+                // Use patched source
+                let rev = if !self.locked {
+                    // In non-locked mode, use patch's rev if specified
+                    patch.rev.clone()
+                } else {
+                    // In locked mode, prefer locked revision
+                    locked.and_then(|l| l.git_revision()).map(|s| s.to_string())
+                };
 
-            (
-                patch.path.as_deref(),
-                patch.git.as_deref(),
-                patch.branch.as_deref().or(patch.tag.as_deref()),
-                rev,
-            )
-        } else {
-            // Use original source
-            let locked_rev = locked.and_then(|l| l.git_revision()).map(|s| s.to_string());
-            (
-                dep.path.as_deref(),
-                dep.git.as_deref(),
-                dep.branch.as_deref(),
-                locked_rev,
-            )
-        };
+                (
+                    patch.path.as_deref(),
+                    patch.git.as_deref(),
+                    patch.branch.as_deref().or(patch.tag.as_deref()),
+                    rev,
+                )
+            } else {
+                // Use original source
+                let locked_rev = locked.and_then(|l| l.git_revision()).map(|s| s.to_string());
+                (
+                    dep.path.as_deref(),
+                    dep.git.as_deref(),
+                    dep.branch.as_deref(),
+                    locked_rev,
+                )
+            };
 
         // Install based on effective source type
         let mut locked_pkg = if let Some(path) = effective_path {
@@ -468,7 +509,15 @@ impl FetchCommand {
             self.install_from_local_path(&dep.name, &dep.version, path, project_dir, &install_path)?
         } else if let Some(git_url) = effective_git {
             // Git dependency
-            self.install_from_git(&dep.name, &dep.version, git_url, effective_branch, effective_rev.as_deref(), &install_path, ccgo_home)?
+            self.install_from_git(
+                &dep.name,
+                &dep.version,
+                git_url,
+                effective_branch,
+                effective_rev.as_deref(),
+                &install_path,
+                ccgo_home,
+            )?
         } else if let Some(ref zip_url) = dep.zip {
             // Archive dependency (zip or tar.gz, https:// URL or local path)
             self.install_from_archive(&dep.name, &dep.version, zip_url, project_dir, &install_path)?
@@ -483,12 +532,7 @@ impl FetchCommand {
             // populated by `ccgo install` in the source project. This mirrors
             // the Cargo/Maven workflow where the dependency is identified by
             // package name rather than a location.
-            self.install_from_local_packages(
-                &dep.name,
-                &dep.version,
-                ccgo_home,
-                &install_path,
-            )?
+            self.install_from_local_packages(&dep.name, &dep.version, ccgo_home, &install_path)?
         } else {
             bail!(
                 "Dependency '{}' has no source (git, path, zip, or version). \
@@ -607,7 +651,10 @@ impl FetchCommand {
             );
         }
 
-        println!("   Source: {} (local packages cache)", source_path.display());
+        println!(
+            "   Source: {} (local packages cache)",
+            source_path.display()
+        );
         println!("   Linking from packages cache…");
 
         Self::create_symlink_or_copy(&source_path, install_path, self.copy)?;
@@ -643,7 +690,11 @@ impl FetchCommand {
         println!("   Source: {}", zip_source);
 
         let is_remote = zip_source.starts_with("https://") || zip_source.starts_with("http://");
-        let fmt = if Self::is_tar_gz(zip_source) { "tar.gz" } else { "zip" };
+        let fmt = if Self::is_tar_gz(zip_source) {
+            "tar.gz"
+        } else {
+            "zip"
+        };
 
         let bytes = if is_remote {
             println!("   Downloading {} archive...", fmt);
@@ -691,8 +742,8 @@ impl FetchCommand {
     /// or when no declared registry has a non-yanked exact-version match.
     ///
     /// When `dep.registry` is set, lookup is restricted to that single named
-    /// registry. Otherwise all declared registries are walked in iteration
-    /// order. Each cache is `ensure_synced` once before resolution.
+    /// registry. Otherwise ambiguous matches are rejected instead of depending
+    /// on HashMap iteration order. Each cache is synced before resolution.
     fn try_resolve_registry(
         &self,
         dep: &DependencyConfig,
@@ -705,8 +756,8 @@ impl FetchCommand {
         }
 
         // Build (name, cache) candidates. If dep.registry is set, restrict to
-        // that one; otherwise walk every declared registry in iter order.
-        let candidates: Vec<(String, RegistryCache)> = if let Some(name) = &dep.registry {
+        // that one; otherwise inspect every declared registry.
+        let mut candidates: Vec<(String, RegistryCache)> = if let Some(name) = &dep.registry {
             let url = config.registries.get(name).ok_or_else(|| {
                 anyhow::anyhow!(
                     "dependency '{}' references unknown registry '{}' (not in [registries])",
@@ -723,13 +774,37 @@ impl FetchCommand {
                 .collect()
         };
 
-        // Pre-warm caches once so resolve_dep can stay I/O-free at the
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Pre-warm caches so resolve_dep can stay I/O-free at the
         // network level and just read sharded JSON files.
         for (_, cache) in &candidates {
             cache.ensure_synced(false)?;
         }
 
-        resolve_dep(&dep.name, &dep.version, &candidates)
+        let mut resolved = None;
+        for candidate in &candidates {
+            if let Some(found) =
+                resolve_dep(&dep.name, &dep.version, std::slice::from_ref(candidate))?
+            {
+                if resolved.is_some() {
+                    bail!(
+                        "Dependency '{} {}' matches multiple registries; set registry explicitly",
+                        dep.name,
+                        dep.version
+                    );
+                }
+                resolved = Some(found);
+            }
+        }
+        if resolved.is_none() && dep.registry.is_some() {
+            bail!(
+                "Dependency '{} {}' has no non-yanked match in its selected registry",
+                dep.name,
+                dep.version
+            );
+        }
+        Ok(resolved)
     }
 
     /// Install a dependency that has been resolved through a `[registries]`
@@ -763,12 +838,7 @@ impl FetchCommand {
         ccgo_home: &Path,
     ) -> Result<LockedPackage> {
         if let Some(archive_url) = resolved.version_entry.archive_url.as_deref() {
-            return self.install_from_registry_archive(
-                dep,
-                resolved,
-                archive_url,
-                install_path,
-            );
+            return self.install_from_registry_archive(dep, resolved, archive_url, install_path);
         }
 
         if !resolved.package_repository.is_empty() {
@@ -778,7 +848,7 @@ impl FetchCommand {
         anyhow::bail!(
             "registry '{}' has neither archive_url nor repository for {} {}; \
              publisher must either upload an artifact and re-run \
-             `ccgo publish index --archive-url-template ...`, or ensure the \
+             `ccgo publish package --archive-url-template ...`, or ensure the \
              package's git URL is recorded in the index entry",
             resolved.registry_name,
             resolved.package_name,
@@ -799,6 +869,13 @@ impl FetchCommand {
         );
         println!("   Archive: {}", archive_url);
 
+        if resolved.version_entry.archive_format() != "zip" {
+            bail!(
+                "Registry archive format '{}' is not supported; expected zip",
+                resolved.version_entry.archive_format()
+            );
+        }
+
         let bytes = Self::fetch_archive_bytes(archive_url)?;
         Self::verify_archive_checksum(resolved, &bytes)?;
         Self::clean_install_path(install_path)?;
@@ -811,7 +888,7 @@ impl FetchCommand {
             name: dep.name.clone(),
             version: resolved.version_entry.version.clone(),
             source: format!("registry+{}", resolved.registry_url),
-            checksum: resolved.version_entry.checksum.clone(),
+            checksum: Some(format!("sha256:{:x}", Sha256::digest(&bytes))),
             dependencies: vec![],
             git: None,
             installed_at: Some(chrono::Local::now().to_rfc3339()),
@@ -882,8 +959,7 @@ impl FetchCommand {
                     archive_url
                 );
             }
-            std::fs::read(path)
-                .with_context(|| format!("failed to read {}", path.display()))
+            std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))
         } else {
             anyhow::bail!("unsupported archive_url scheme: {}", archive_url);
         }
@@ -939,7 +1015,9 @@ impl FetchCommand {
         if !response.status().is_success() {
             anyhow::bail!("HTTP {} downloading ZIP from {}", response.status(), url);
         }
-        let bytes = response.bytes().context("Failed to read download response")?;
+        let bytes = response
+            .bytes()
+            .context("Failed to read download response")?;
         Ok(bytes.to_vec())
     }
 
@@ -1049,7 +1127,10 @@ impl FetchCommand {
         //   $CCGO_HOME/git/checkouts/<hash>/  — working tree
         // Legacy layout (pre-v3.5), still read by the resolver for back-compat:
         //   $CCGO_HOME/registry/<name>-<hash16>/
-        let hash_input = format!("{}:{}", dep_name, git_url);
+        let hash_input = match locked_rev {
+            Some(rev) => format!("{dep_name}:{git_url}:{rev}"),
+            None => format!("{dep_name}:{git_url}"),
+        };
         let full_hash = format!("{:x}", md5::compute(hash_input.as_bytes()));
         let checkouts_dir = ccgo_home.join("git").join("checkouts");
         fs::create_dir_all(&checkouts_dir)?;
@@ -1071,32 +1152,53 @@ impl FetchCommand {
 
             let output = cmd.output().context("Failed to execute git clone")?;
             if !output.status.success() {
-                bail!("Git clone failed: {}", String::from_utf8_lossy(&output.stderr));
+                bail!(
+                    "Git clone failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
             println!("   ✓ Cloned to {}", registry_path.display());
+        }
 
-            // Checkout specific revision if locked
-            if let Some(rev) = locked_rev {
-                println!("   Checking out locked revision {}...", &rev[..8.min(rev.len())]);
-                let checkout = std::process::Command::new("git")
-                    .args(["checkout", rev])
-                    .current_dir(&registry_path)
-                    .output()
-                    .context("Failed to checkout revision")?;
-                if !checkout.status.success() {
-                    bail!("Git checkout failed: {}", String::from_utf8_lossy(&checkout.stderr));
-                }
+        if let Some(rev) = locked_rev {
+            println!(
+                "   Checking out locked revision {}...",
+                &rev[..8.min(rev.len())]
+            );
+            let checkout = std::process::Command::new("git")
+                .args(["checkout", "--detach", rev])
+                .current_dir(&registry_path)
+                .output()
+                .context("Failed to checkout revision")?;
+            if !checkout.status.success() {
+                bail!(
+                    "Git checkout failed: {}",
+                    String::from_utf8_lossy(&checkout.stderr)
+                );
             }
         }
 
+        let git_info = Self::get_git_info(&registry_path);
+        if locked_rev.is_some() && git_info.as_ref().and_then(|info| info.dirty) == Some(true) {
+            bail!("Locked Git checkout is dirty; use --force to retrieve the locked commit again");
+        }
+
         // Link/copy from registry to project
+        // Replace only after validating the checkout, including dangling old links.
+        if let Ok(metadata) = fs::symlink_metadata(install_path) {
+            if metadata.file_type().is_symlink() || metadata.is_file() {
+                fs::remove_file(install_path)?;
+            } else {
+                fs::remove_dir_all(install_path)?;
+            }
+        }
         Self::create_symlink_or_copy(&registry_path, install_path, self.copy)?;
 
         println!("   ✓ Installed to {}", install_path.display());
 
         // Get git info
-        let git_info = Self::get_git_info(&registry_path);
-        let revision = git_info.as_ref()
+        let revision = git_info
+            .as_ref()
             .and_then(|g| g.revision.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
@@ -1197,7 +1299,8 @@ impl FetchCommand {
             .output()
         {
             if output.status.success() {
-                git_info.revision = Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                git_info.revision =
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
         }
 
@@ -1219,7 +1322,8 @@ impl FetchCommand {
             .output()
         {
             if output.status.success() {
-                git_info.remote_url = Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
+                git_info.remote_url =
+                    Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
             }
         }
 
@@ -1240,10 +1344,11 @@ impl FetchCommand {
     /// Execute install for workspace members
     fn execute_workspace_install(&self, current_dir: &Path, verbose: bool) -> Result<()> {
         // Find workspace root
-        let workspace_root = find_workspace_root(current_dir)?
-            .ok_or_else(|| anyhow::anyhow!(
+        let workspace_root = find_workspace_root(current_dir)?.ok_or_else(|| {
+            anyhow::anyhow!(
                 "Not in a workspace. Use --workspace or --package only within a workspace."
-            ))?;
+            )
+        })?;
 
         // Load workspace
         let workspace = Workspace::load(&workspace_root)?;
@@ -1255,12 +1360,13 @@ impl FetchCommand {
         // Determine which members to install for
         let members_to_install = if let Some(ref package_name) = self.package {
             // Install for specific package
-            let member = workspace.get_member(package_name)
-                .ok_or_else(|| anyhow::anyhow!(
+            let member = workspace.get_member(package_name).ok_or_else(|| {
+                anyhow::anyhow!(
                     "Package '{}' not found in workspace. Available: {}",
                     package_name,
                     workspace.members.names().join(", ")
-                ))?;
+                )
+            })?;
             vec![member]
         } else {
             // Install for default members (or all if no default_members specified)
@@ -1272,7 +1378,10 @@ impl FetchCommand {
         }
 
         println!("{}", "=".repeat(80));
-        println!("CCGO Workspace Install - Installing dependencies for {} member(s)", members_to_install.len());
+        println!(
+            "CCGO Workspace Install - Installing dependencies for {} member(s)",
+            members_to_install.len()
+        );
         println!("{}", "=".repeat(80));
 
         let ccgo_home = Self::get_ccgo_home();
@@ -1287,7 +1396,10 @@ impl FetchCommand {
         let mut failed_members: Vec<String> = Vec::new();
 
         for member in members_to_install {
-            println!("\n📦 Installing dependencies for {} ({})...", member.name, member.version);
+            println!(
+                "\n📦 Installing dependencies for {} ({})...",
+                member.name, member.version
+            );
             println!("{}", "-".repeat(60));
 
             // Execute install in member's directory
@@ -1317,7 +1429,10 @@ impl FetchCommand {
             for name in &failed_members {
                 println!("  - {}", name);
             }
-            bail!("{} workspace member(s) failed to install", failed_members.len());
+            bail!(
+                "{} workspace member(s) failed to install",
+                failed_members.len()
+            );
         }
 
         Ok(())
@@ -1355,6 +1470,19 @@ impl FetchCommand {
             );
         }
 
+        if self.locked {
+            let outdated = existing_lockfile
+                .as_ref()
+                .unwrap()
+                .check_outdated(dependencies);
+            if !outdated.is_empty() {
+                bail!(
+                    "Dependencies have changed since lockfile was generated: {}",
+                    outdated.join(", ")
+                );
+            }
+        }
+
         let deps_dir = member_path.join(".ccgo").join("deps");
         fs::create_dir_all(&deps_dir).context("Failed to create .ccgo/deps directory")?;
 
@@ -1362,12 +1490,22 @@ impl FetchCommand {
         let packages_before = lockfile.packages.clone();
         let mut installed_count = 0;
 
+        let mut failed_count = 0;
+
         // Resolve transitive dependencies
         let strategy: VersionConflictStrategy = self.conflict_strategy.into();
-        let dependency_graph = match resolve_dependencies_with_strategy(dependencies, member_path, ccgo_home, strategy) {
+        let dependency_graph = match resolve_dependencies_with_strategy(
+            dependencies,
+            member_path,
+            ccgo_home,
+            strategy,
+        ) {
             Ok(graph) => graph,
             Err(e) => {
-                eprintln!("   ⚠️  Warning: Failed to resolve transitive dependencies: {}", e);
+                eprintln!(
+                    "   ⚠️  Warning: Failed to resolve transitive dependencies: {}",
+                    e
+                );
                 crate::dependency::graph::DependencyGraph::new()
             }
         };
@@ -1376,9 +1514,9 @@ impl FetchCommand {
         let install_order = if dependency_graph.nodes().is_empty() {
             dependencies.iter().map(|d| d.name.clone()).collect()
         } else {
-            dependency_graph.topological_sort().unwrap_or_else(|_| {
-                dependencies.iter().map(|d| d.name.clone()).collect()
-            })
+            dependency_graph
+                .topological_sort()
+                .unwrap_or_else(|_| dependencies.iter().map(|d| d.name.clone()).collect())
         };
 
         // Create a map for quick lookup
@@ -1412,15 +1550,23 @@ impl FetchCommand {
                 }
                 Err(e) => {
                     eprintln!("   ⚠️  Failed to install {}: {}", dep.name, e);
+                    failed_count += 1;
                 }
             }
         }
 
         // Save lockfile only when packages actually changed.
-        if installed_count > 0 && lockfile.packages != packages_before {
+        if !self.locked && installed_count > 0 && lockfile.packages != packages_before {
             lockfile.touch();
             lockfile.save(member_path)?;
             crate::utils::ide::update_ide_ignores(member_path, config.build_dir_name())?;
+        }
+
+        if failed_count > 0 {
+            bail!(
+                "Some dependencies failed to install for {}",
+                member_path.display()
+            );
         }
 
         Ok(installed_count)
@@ -1428,6 +1574,9 @@ impl FetchCommand {
 
     /// Get CCGO home directory
     fn get_ccgo_home() -> PathBuf {
+        if let Some(home) = std::env::var_os("CCGO_HOME") {
+            return PathBuf::from(home);
+        }
         directories::BaseDirs::new()
             .map(|dirs| dirs.home_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."))
@@ -1455,7 +1604,8 @@ mod tests {
             w.start_file("include/mylib/mylib.h", opts).unwrap();
             w.write_all(b"// header").unwrap();
             w.start_file("CCGO.toml", opts).unwrap();
-            w.write_all(b"[package]\nname = \"mylib\"\nversion = \"1.0.0\"\n").unwrap();
+            w.write_all(b"[package]\nname = \"mylib\"\nversion = \"1.0.0\"\n")
+                .unwrap();
             w.finish().unwrap();
         }
 
@@ -1477,7 +1627,9 @@ mod tests {
     fn test_is_tar_gz() {
         assert!(FetchCommand::is_tar_gz("foo.tar.gz"));
         assert!(FetchCommand::is_tar_gz("foo.tgz"));
-        assert!(FetchCommand::is_tar_gz("https://cdn.example.com/sdk-1.0.0.tar.gz"));
+        assert!(FetchCommand::is_tar_gz(
+            "https://cdn.example.com/sdk-1.0.0.tar.gz"
+        ));
         assert!(!FetchCommand::is_tar_gz("foo.zip"));
         assert!(!FetchCommand::is_tar_gz("foo.tar"));
     }
@@ -1501,8 +1653,12 @@ mod tests {
             header.set_size(header_content.len() as u64);
             header.set_mode(0o644);
             header.set_cksum();
-            tar.append_data(&mut header, "include/mylib/mylib.h", header_content.as_ref())
-                .unwrap();
+            tar.append_data(
+                &mut header,
+                "include/mylib/mylib.h",
+                header_content.as_ref(),
+            )
+            .unwrap();
 
             let toml_content = b"[package]\nname = \"mylib\"\nversion = \"1.0.0\"\n";
             let mut header2 = tar::Header::new_gnu();

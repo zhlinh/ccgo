@@ -289,7 +289,7 @@ fn index_local_is_offline_and_private_resolves_named_registry() {
     let ccgo_home = root.join("ccgo-home");
     command(&source, &bin)
         .env("CCGO_HOME", &ccgo_home)
-        .args(["publish", "index"])
+        .args(["publish", "package"])
         .assert()
         .success()
         .stdout(contains("No index files, commits, or remotes changed"));
@@ -297,7 +297,7 @@ fn index_local_is_offline_and_private_resolves_named_registry() {
     assert!(!local.exists());
     command(&source, &bin)
         .env("CCGO_HOME", &ccgo_home)
-        .args(["publish", "index", "--push"])
+        .args(["publish", "package", "--push"])
         .assert()
         .success()
         .stdout(contains("no remote was contacted"));
@@ -310,7 +310,7 @@ fn index_local_is_offline_and_private_resolves_named_registry() {
     command(&source, &bin)
         .args([
             "publish",
-            "index",
+            "package",
             "--index-version",
             "1.2.3",
             "--registry",
@@ -330,7 +330,7 @@ fn index_local_is_offline_and_private_resolves_named_registry() {
         .env("CCGO_HOME", &ccgo_home)
         .args([
             "publish",
-            "index",
+            "package",
             "--index-version",
             "1.2.3",
             "--registry",
@@ -348,7 +348,7 @@ fn index_local_is_offline_and_private_resolves_named_registry() {
         .env("CCGO_HOME", &ccgo_home)
         .args([
             "publish",
-            "index",
+            "package",
             "--index-version",
             "1.2.4",
             "--registry",
@@ -374,7 +374,7 @@ fn index_official_rejects_overrides_before_remote_access() {
     command(&source, &bin)
         .args([
             "publish",
-            "index",
+            "package",
             "--registry",
             "official",
             "--remote",
@@ -388,7 +388,7 @@ fn index_official_rejects_overrides_before_remote_access() {
     command(&source, &bin)
         .args([
             "publish",
-            "index",
+            "package",
             "--registry",
             "private",
             "--remote",
@@ -423,7 +423,7 @@ fn index_private_reads_global_registration_and_retains_failed_pull_clone() {
         .env("CCGO_HOME", &ccgo_home)
         .args([
             "publish",
-            "index",
+            "package",
             "--index-version",
             "1.2.3",
             "--registry",
@@ -446,7 +446,7 @@ fn index_private_reads_global_registration_and_retains_failed_pull_clone() {
         .env("CCGO_HOME", &ccgo_home)
         .args([
             "publish",
-            "index",
+            "package",
             "--index-version",
             "1.2.4",
             "--registry",
@@ -482,7 +482,7 @@ fn index_commit_failure_stops_before_remote_push() {
         .env("CCGO_HOME", &ccgo_home)
         .args([
             "publish",
-            "index",
+            "package",
             "--index-version",
             "1.2.3",
             "--registry",
@@ -501,7 +501,7 @@ fn index_commit_failure_stops_before_remote_push() {
         .env("CCGO_HOME", &ccgo_home)
         .args([
             "publish",
-            "index",
+            "package",
             "--index-version",
             "1.2.4",
             "--registry",
@@ -607,7 +607,7 @@ fn spm_generic_version_tag_validate_without_changes_and_publish_locally() {
     Command::new(env!("CARGO_BIN_EXE_ccgo"))
         .args([
             "publish",
-            "index",
+            "package",
             "--version",
             "1.0.0",
             "--index-version",
@@ -634,7 +634,7 @@ fn index_private_validation_does_not_clone_commit_or_create_output() {
         .env("CCGO_HOME", &ccgo_home)
         .args([
             "publish",
-            "index",
+            "package",
             "--registry",
             "private",
             "--remote",
@@ -717,7 +717,7 @@ fn index_github_upload_populates_private_index_and_rejects_duplicates_before_upl
     let temp_path = root.join("temporary-path");
     let args = [
         "publish",
-        "index",
+        "package",
         "--registry",
         "private",
         "--remote",
@@ -778,7 +778,7 @@ fn index_provider_validation_and_missing_tags_never_upload() {
     let home = root.join("ccgo-home");
     let args = [
         "publish",
-        "index",
+        "package",
         "--artifact-provider",
         "github",
         "--github-repo",
@@ -825,7 +825,7 @@ fn index_provider_upload_failure_does_not_write_a_version_entry() {
         .env("PUBLISH_TEMP", &temporary)
         .args([
             "publish",
-            "index",
+            "package",
             "--artifact-provider",
             "github",
             "--github-repo",
@@ -900,7 +900,7 @@ fn index_maven_upload_uses_zip_coordinates_and_automatic_checksum() {
         .env("CCGO_MAVEN_PASSWORD", "secret")
         .args([
             "publish",
-            "index",
+            "package",
             "--artifact-provider",
             "maven",
             "--artifact-group",
