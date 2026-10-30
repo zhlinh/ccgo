@@ -9,6 +9,8 @@
 //! ccgo release patch              # bump + sync + changelog + commit + tag
 //! ccgo release 1.2.3              # pin to an explicit version
 //! ccgo release patch --push       # also push commit and tag to origin
+//! ccgo release patch --no-tag     # commit the bump, but do not tag
+//! ccgo release patch --no-commit  # update files only; no commit or tag
 //! ccgo release --changelog-only   # just regenerate CHANGELOG.md
 //! ```
 //!
@@ -45,6 +47,10 @@ pub struct ReleaseCommand {
     #[arg(long)]
     pub no_commit: bool,
 
+    /// Create the release commit but do not create or push a git tag.
+    #[arg(long, conflicts_with = "no_commit")]
+    pub no_tag: bool,
+
     /// Skip updating CHANGELOG.md.
     #[arg(long)]
     pub no_changelog: bool,
@@ -75,7 +81,7 @@ pub struct ReleaseCommand {
     /// Regenerate the entire CHANGELOG.md from git history and exit.
     ///
     /// Mutually exclusive with a version argument — there's nothing to bump.
-    #[arg(long, conflicts_with_all = ["version", "push", "no_commit", "no_sync"])]
+    #[arg(long, conflicts_with_all = ["version", "push", "no_commit", "no_tag", "no_sync"])]
     pub changelog_only: bool,
 }
 
@@ -123,7 +129,11 @@ impl ReleaseCommand {
 
         self.commit_tag_and_push(&project_root, &new_version, &staged)?;
         println!();
-        println!("{} {}", style("Released").green().bold(), new_version);
+        if self.no_tag {
+            println!("{} {}", style("Committed").green().bold(), new_version);
+        } else {
+            println!("{} {}", style("Released").green().bold(), new_version);
+        }
         Ok(())
     }
 
@@ -154,6 +164,9 @@ impl ReleaseCommand {
         println!("  New version:     {}", style(new_version).green());
         if self.dry_run {
             println!("  {}", style("(dry run — no files will be modified)").dim());
+        }
+        if self.no_tag {
+            println!("  {}", style("Commit without tag (--no-tag)").dim());
         }
         println!();
     }
@@ -295,25 +308,37 @@ impl ReleaseCommand {
         println!("  {} {}", style("Committed").green(), commit_message);
 
         let tag = format!("{}{}", self.tag_prefix, new_version);
-        git::create_annotated_tag(project_root, &tag, &commit_message)?;
-        println!("  {} tag {}", style("Created").green(), tag);
+        if self.no_tag {
+            println!("  {} tag (--no-tag)", style("Skipped").yellow());
+        } else {
+            git::create_annotated_tag(project_root, &tag, &commit_message)?;
+            println!("  {} tag {}", style("Created").green(), tag);
+        }
 
         if self.push {
             let branch = git::current_branch(project_root)?;
             git::push(project_root, "origin", &branch)?;
-            git::push(project_root, "origin", &tag)?;
-            println!(
-                "  {} origin {} and {}",
-                style("Pushed").green(),
-                branch,
-                tag
-            );
+            if self.no_tag {
+                println!("  {} origin {} (no tag)", style("Pushed").green(), branch);
+            } else {
+                git::push(project_root, "origin", &tag)?;
+                println!(
+                    "  {} origin {} and {}",
+                    style("Pushed").green(),
+                    branch,
+                    tag
+                );
+            }
         } else {
             println!();
             println!("To publish:");
-            println!(
-                "  git push origin $(git rev-parse --abbrev-ref HEAD) && git push origin {tag}"
-            );
+            if self.no_tag {
+                println!("  git push origin $(git rev-parse --abbrev-ref HEAD)");
+            } else {
+                println!(
+                    "  git push origin $(git rev-parse --abbrev-ref HEAD) && git push origin {tag}"
+                );
+            }
         }
         Ok(())
     }
@@ -406,6 +431,17 @@ fn update_ccgo_toml_version(path: &Path, current: &str, new_version: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_tag_conflicts_with_no_commit_and_changelog_only() {
+        use clap::Parser;
+        for args in [
+            vec!["ccgo", "release", "patch", "--no-commit", "--no-tag"],
+            vec!["ccgo", "release", "--changelog-only", "--no-tag"],
+        ] {
+            assert!(crate::cli::Cli::try_parse_from(args).is_err());
+        }
+    }
 
     #[test]
     fn bump_patch_minor_major() {
