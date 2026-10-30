@@ -177,7 +177,7 @@ impl TestCommand {
             ide_project: self.ide_project,
             release,
             native_only: false,
-            toolchain: WindowsToolchain::Auto,
+            toolchain: WindowsToolchain::All,
             verbose,
             dev: false,
             features: vec![],

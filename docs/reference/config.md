@@ -518,11 +518,11 @@ min_version = "10.15"  # Minimum macOS deployment target
 
 ```toml
 [platforms.windows]
-toolchain = "auto"  # auto, msvc, or mingw
+toolchain = "all"   # all, msvc, or mingw
 ```
 
 Toolchain options:
-- `"auto"`: Build with both MSVC and MinGW (default)
+- `"all"`: Build with both MSVC and MinGW (default)
 - `"msvc"`: MSVC only
 - `"mingw"`: MinGW only
 
@@ -558,7 +558,7 @@ min_version = "13.0"
 min_version = "10.15"
 
 [platforms.windows]
-toolchain = "auto"
+toolchain = "all"
 
 [platforms.linux]
 architectures = ["x86_64"]

@@ -458,9 +458,9 @@ ccgo build windows --toolchain mingw
 - 更好的交叉编译支持
 - 兼容 Docker 构建
 
-**Auto（两者）：**
+**All（两者）：**
 ```bash
-ccgo build windows --toolchain auto  # 默认
+ccgo build windows --toolchain all  # 默认
 ```
 
 ### 平台工具链
@@ -470,7 +470,7 @@ ccgo build windows --toolchain auto  # 默认
 | Android | NDK（Clang）| - |
 | iOS | Xcode（Clang）| - |
 | macOS | Xcode（Clang）| - |
-| Windows | MSVC | MinGW |
+| Windows | MSVC + MinGW | MSVC 或 MinGW（单个）|
 | Linux | GCC | Clang |
 | OpenHarmony | OHOS SDK | - |
 
@@ -500,7 +500,9 @@ ccgo build linux --docker
 |------|---------|------|------|
 | Android | `ccgo-builder-android` | ~3.5GB | SDK、NDK、CMake |
 | iOS/macOS/watchOS/tvOS | `ccgo-builder-apple` | ~2.5GB | OSXCross、SDK |
-| Windows | `ccgo-builder-windows` | ~1.2GB | MinGW-w64、CMake |
+| Windows (all) | `ccgo-builder-windows-all` | ~4.5GB | MinGW-w64、MSVC（xwin）、CMake |
+| Windows (MinGW) | `ccgo-builder-windows-mingw` | ~1.2GB | MinGW-w64、CMake |
+| Windows (MSVC) | `ccgo-builder-windows-msvc` | ~2.5GB | Clang、xwin、CMake |
 | Linux | `ccgo-builder-linux` | ~800MB | GCC、Clang、CMake |
 
 ### Docker 构建流程

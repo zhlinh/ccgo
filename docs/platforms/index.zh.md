@@ -118,7 +118,7 @@ ccgo build windows --toolchain msvc
 ccgo build windows --toolchain mingw
 
 # 两者
-ccgo build windows --toolchain auto
+ccgo build windows --toolchain all
 ```
 
 ## 平台要求

@@ -41,7 +41,9 @@ CCGO's Docker builds enable **universal cross-platform compilation** - build lib
 | Platform | Docker Image | Size | Toolchain | Host OS |
 |----------|-------------|------|-----------|---------|
 | Linux | `ccgo-builder-linux` | ~800MB | GCC, Clang, CMake | Any |
-| Windows | `ccgo-builder-windows` | ~1.2GB | MinGW-w64, CMake | Any |
+| Windows (all) | `ccgo-builder-windows-all` | ~4.5GB | MinGW-w64, MSVC (xwin), CMake | Any |
+| Windows (MinGW) | `ccgo-builder-windows-mingw` | ~1.2GB | MinGW-w64, CMake | Any |
+| Windows (MSVC) | `ccgo-builder-windows-msvc` | ~2.5GB | Clang, xwin, CMake | Any |
 | macOS | `ccgo-builder-apple` | ~2.5GB | OSXCross, CMake | Any |
 | iOS | `ccgo-builder-apple` | ~2.5GB | OSXCross, CMake | Any |
 | watchOS | `ccgo-builder-apple` | ~2.5GB | OSXCross, CMake | Any |
@@ -133,7 +135,7 @@ Build complete!
 
 **Download times (first build only):**
 - Linux: ~2-3 minutes (~800MB)
-- Windows: ~3-4 minutes (~1.2GB)
+- Windows (all): ~6-8 minutes (~4.5GB)
 - Apple: ~5-8 minutes (~2.5GB)
 - Android: ~8-10 minutes (~3.5GB)
 
@@ -219,7 +221,7 @@ docker images | grep ccgo-builder
 
 # Output:
 # ccgo-builder-linux    latest    abc123    2 weeks ago    800MB
-# ccgo-builder-windows  latest    def456    2 weeks ago    1.2GB
+# ccgo-builder-windows-all  latest    def456    2 weeks ago    4.5GB
 # ccgo-builder-apple    latest    ghi789    2 weeks ago    2.5GB
 ```
 
@@ -228,7 +230,7 @@ docker images | grep ccgo-builder
 ```bash
 # Update all images to latest version
 docker pull ccgo-builder-linux:latest
-docker pull ccgo-builder-windows:latest
+docker pull ccgo-builder-windows-all:latest
 docker pull ccgo-builder-apple:latest
 docker pull ccgo-builder-android:latest
 ```
@@ -339,10 +341,10 @@ ccgo build linux --docker --compiler clang
 **Advantages:**
 - Build on macOS or Linux
 - No Visual Studio required
+- `all` image builds both MinGW and MSVC-ABI artifacts
+- `--toolchain mingw` / `--toolchain msvc` use smaller dedicated images
 
 **Limitations:**
-- MinGW only (no MSVC)
-- Output may not be compatible with MSVC-built code
 - Cannot run Windows applications
 
 **Usage:**
@@ -358,9 +360,9 @@ ccgo build windows --docker --arch x86,x64
 ```
 
 **MSVC compatibility note:**
-- Docker builds use MinGW-w64 (GCC for Windows)
-- For MSVC builds, use native Windows build
-- MinGW and MSVC have different ABI (not binary compatible)
+- The `all` image builds MSVC-ABI artifacts with clang + xwin (no Visual Studio install)
+- `--toolchain msvc` uses the dedicated MSVC image
+- MinGW and MSVC have different ABI (not binary compatible); pick one per consumer
 
 ### Apple Docker Builds
 
@@ -580,7 +582,7 @@ ccgo build windows --docker   # Docker (cross-compile)
 ```bash
 # Monthly: Update images
 docker pull ccgo-builder-linux:latest
-docker pull ccgo-builder-windows:latest
+docker pull ccgo-builder-windows-all:latest
 docker pull ccgo-builder-apple:latest
 docker pull ccgo-builder-android:latest
 ```

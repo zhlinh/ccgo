@@ -118,7 +118,7 @@ ccgo build windows --toolchain msvc
 ccgo build windows --toolchain mingw
 
 # Both
-ccgo build windows --toolchain auto
+ccgo build windows --toolchain all
 ```
 
 ## Platform Requirements

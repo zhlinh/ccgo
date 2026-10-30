@@ -13,8 +13,8 @@ use crate::builder::cmake::{BuildType, CMakeConfig};
 use crate::builder::toolchains::mingw::{is_mingw_available, MingwArch, MingwToolchain};
 use crate::builder::toolchains::msvc::{is_msvc_available, MsvcToolchain};
 use crate::builder::toolchains::Toolchain;
-use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
-use crate::commands::build::LinkType;
+use crate::builder::{BuildContext, BuildOptions, BuildResult, PlatformBuilder};
+use crate::commands::build::{LinkType, WindowsToolchain as ToolchainSelection};
 
 #[path = "windows_symbols.rs"]
 mod symbols;
@@ -225,23 +225,53 @@ impl WindowsBuilder {
         Ok(libs)
     }
 
-    /// Detect available Windows toolchain
-    fn detect_toolchain() -> Result<WindowsToolchain> {
-        // Prefer MinGW for cross-platform builds
-        if is_mingw_available() {
-            return Ok(WindowsToolchain::MinGW);
-        }
+    /// Resolve the CLI toolchain selection into concrete toolchains that are
+    /// actually installed on this host.
+    ///
+    /// `all` builds every available toolchain and skips the missing ones;
+    /// `msvc` / `mingw` are strict and fail when the requested toolchain is
+    /// unavailable.
+    fn selected_toolchains(options: &BuildOptions) -> Result<Vec<WindowsToolchain>> {
+        let mingw = is_mingw_available();
+        let msvc = is_msvc_available();
 
-        // Fall back to MSVC on Windows
-        if is_msvc_available() {
-            return Ok(WindowsToolchain::MSVC);
+        match options.toolchain {
+            ToolchainSelection::Mingw => {
+                if !mingw {
+                    bail!(
+                        "MinGW-w64 not found.\n\
+                         Install MinGW-w64 (x86_64-w64-mingw32-gcc) to build with --toolchain mingw."
+                    );
+                }
+                Ok(vec![WindowsToolchain::MinGW])
+            }
+            ToolchainSelection::Msvc => {
+                if !msvc {
+                    bail!(
+                        "MSVC not found.\n\
+                         Install Visual Studio with C++ tools to build with --toolchain msvc."
+                    );
+                }
+                Ok(vec![WindowsToolchain::MSVC])
+            }
+            ToolchainSelection::All => {
+                let mut selected = Vec::new();
+                if mingw {
+                    selected.push(WindowsToolchain::MinGW);
+                }
+                if msvc {
+                    selected.push(WindowsToolchain::MSVC);
+                }
+                if selected.is_empty() {
+                    bail!(
+                        "No Windows toolchain found.\n\
+                         - For cross-compilation: Install MinGW-w64 (x86_64-w64-mingw32-gcc)\n\
+                         - For native builds: Install Visual Studio with C++ tools"
+                    );
+                }
+                Ok(selected)
+            }
         }
-
-        bail!(
-            "No Windows toolchain found.\n\
-             - For cross-compilation: Install MinGW-w64 (x86_64-w64-mingw32-gcc)\n\
-             - For native builds: Install Visual Studio with C++ tools"
-        )
     }
 
     /// Apply shared cmake options common to both MinGW and MSVC builds
@@ -616,17 +646,13 @@ impl WindowsBuilder {
         std::fs::create_dir_all(&build_dir)
             .with_context(|| format!("Failed to create {}", build_dir.display()))?;
 
-        // Determine generator based on available toolchain
-        let (generator, toolchain_name) = if is_msvc_available() {
+        // Determine generator from the selected toolchain. When several are
+        // available (`all`), prefer Visual Studio as before.
+        let toolchains = Self::selected_toolchains(&ctx.options)?;
+        let (generator, toolchain_name) = if toolchains.contains(&WindowsToolchain::MSVC) {
             ("Visual Studio 17 2022", "MSVC")
-        } else if is_mingw_available() {
-            ("CodeLite - MinGW Makefiles", "MinGW")
         } else {
-            bail!(
-                "No Windows toolchain found for IDE project generation.\n\
-                 - For Visual Studio: Install Visual Studio with C++ tools\n\
-                 - For MinGW: Install MinGW-w64"
-            );
+            ("CodeLite - MinGW Makefiles", "MinGW")
         };
 
         eprintln!(
@@ -830,12 +856,15 @@ impl PlatformBuilder for WindowsBuilder {
             bail!("CMake is required for Windows builds. Please install CMake.");
         }
 
-        let toolchain = Self::detect_toolchain()?;
+        let toolchains = Self::selected_toolchains(&ctx.options)?;
 
-        match toolchain {
-            WindowsToolchain::MinGW => Self::validate_mingw_toolchain(ctx.options.verbose),
-            WindowsToolchain::MSVC => Self::validate_msvc_toolchain(ctx.options.verbose),
+        for toolchain in &toolchains {
+            match toolchain {
+                WindowsToolchain::MinGW => Self::validate_mingw_toolchain(ctx.options.verbose)?,
+                WindowsToolchain::MSVC => Self::validate_msvc_toolchain(ctx.options.verbose)?,
+            }
         }
+        Ok(())
     }
 
     fn build(&self, ctx: &BuildContext) -> Result<BuildResult> {
@@ -846,7 +875,7 @@ impl PlatformBuilder for WindowsBuilder {
         let start = Instant::now();
         self.validate_prerequisites(ctx)?;
 
-        let toolchain = Self::detect_toolchain()?;
+        let toolchains = Self::selected_toolchains(&ctx.options)?;
 
         if ctx.options.verbose {
             eprintln!("Building {} for Windows...", ctx.lib_name());
@@ -868,8 +897,10 @@ impl PlatformBuilder for WindowsBuilder {
         let arches = resolve_arches(ctx);
         let link_type_str = ctx.options.link_type.to_string();
 
-        for arch in &arches {
-            self.build_arch(ctx, &archive, arch, toolchain, &mut symbols)?;
+        for toolchain in toolchains {
+            for arch in &arches {
+                self.build_arch(ctx, &archive, arch, toolchain, &mut symbols)?;
+            }
         }
 
         Self::add_include_files(ctx, &archive)?;

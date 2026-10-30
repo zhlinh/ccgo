@@ -60,22 +60,21 @@ g++ --version
 
 ### 方式二：Docker 构建（任何操作系统）
 
-在 Linux 或 macOS 上使用 Docker 和 MinGW 构建 Windows 库。
+在 Linux 或 macOS 上使用 Docker 和 MinGW、MSVC（clang + xwin）构建 Windows 库。
 
 **必需：**
 - 已安装并运行 Docker Desktop
-- 5GB+ 磁盘空间用于 Docker 镜像
+- 6GB+ 磁盘空间用于 all 工具链镜像
 
 **优势：**
 - 在任何操作系统上构建
 - 无需 Windows 许可证
 - 一致的构建环境
-- MinGW-w64 交叉编译
+- MinGW-w64 与 MSVC ABI 交叉编译
 
 **限制：**
-- 仅 MinGW（无 MSVC）
 - 无法运行/测试 Windows 应用
-- 初始下载较大（约 1.2GB 镜像）
+- 初始下载较大（all 约 4.5GB，mingw 约 1.2GB，msvc 约 2.5GB）
 
 详见 [Docker 构建](#docker-构建)部分。
 
@@ -87,13 +86,13 @@ g++ --version
 # 使用默认工具链为 x64 构建
 ccgo build windows
 
-# 使用 Docker 构建（MinGW 交叉编译）
+# 使用 Docker 构建（两个工具链）
 ccgo build windows --docker
 
 # 指定工具链
 ccgo build windows --toolchain msvc      # MSVC（仅 Windows）
 ccgo build windows --toolchain mingw     # MinGW
-ccgo build windows --toolchain auto      # 两个工具链（默认）
+ccgo build windows --toolchain all       # 两个工具链（默认）
 
 # 指定架构
 ccgo build windows --arch x86            # 32位
@@ -309,41 +308,45 @@ int main() {
 
 ## Docker 构建
 
-在任何操作系统上使用 Docker 和 MinGW 构建 Windows 库：
+在任意操作系统上使用 Docker 构建 Windows 库。默认的 `all` 镜像同时包含
+MinGW-w64 和 MSVC（clang + xwin）工具链。
 
 ### 前置条件
 
 ```bash
 # 安装 Docker Desktop
-# 下载地址：https://www.docker.com/products/docker-desktop/
+# 下载：https://www.docker.com/products/docker-desktop/
 
-# 验证 Docker 正在运行
+# 确认 Docker 正在运行
 docker ps
 ```
 
 ### 使用 Docker 构建
 
 ```bash
-# 首次构建下载预构建镜像（约 1.2GB）
+# 首次构建会下载 all 工具链镜像（约 4.5GB）
 ccgo build windows --docker
+
+# 更小的单工具链镜像
+ccgo build windows --docker --toolchain mingw   # 约 1.2GB
+ccgo build windows --docker --toolchain msvc    # 约 2.5GB
 
 # 后续构建很快
 ccgo build windows --docker --arch x64
 
-# 所有标准选项都可用（仅 MinGW）
+# 所有标准选项都可用
 ccgo build windows --docker --build-as static
 ```
 
 ### 工作原理
 
-1. CCGO 使用 Docker Hub 的预构建 `ccgo-builder-windows` 镜像
+1. CCGO 根据 `--toolchain` 拉取对应镜像（`-all`、`-mingw` 或 `-msvc`）
 2. 项目目录挂载到容器中
-3. 使用 MinGW-w64 交叉编译器构建
+3. 使用 MinGW-w64 和/或 clang + xwin（MSVC ABI）构建
 4. 输出写入主机文件系统
 
 ### 限制
 
-- **仅 MinGW**：无法在 Docker 中使用 MSVC 构建
 - **无法运行**：Docker 中没有 Windows 运行时
 - **无法测试**：无法执行 Windows 二进制文件
 
@@ -427,7 +430,7 @@ public:
 
 ```bash
 # 构建两者（默认）
-ccgo build windows --toolchain auto
+ccgo build windows --toolchain all
 ```
 
 ### 2. 使用正确的 DLL 导出

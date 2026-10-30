@@ -1,0 +1,155 @@
+# Dockerfile for building Windows libraries with BOTH toolchains on any platform
+#
+# Contains:
+#   * MinGW-w64 (x86_64) + llvm-mingw (aarch64)
+#   * MSVC ABI via clang + xwin Windows SDK (x86_64 + aarch64)
+#
+# Used by `ccgo build windows --docker` with the default `--toolchain all`.
+FROM ubuntu:22.04
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies for both toolchains.
+# Restore world-readable bits on the apt keyrings before updating. Older Docker
+# (seen with 19.03.8) can drop them depending on the storage driver, after which
+# user '_apt' cannot read /etc/apt/trusted.gpg.d/*.gpg and every repository is
+# rejected as unsigned: "NO_PUBKEY 871920D1991BC93C" plus
+# "The key(s) ... are ignored as the file is not readable by user '_apt'".
+# No-op on modern Docker.
+RUN chmod 644 /etc/apt/trusted.gpg.d/*.gpg 2>/dev/null || true; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    mingw-w64 \
+    libz-mingw-w64-dev \
+    cmake \
+    make \
+    ninja-build \
+    git \
+    wget \
+    curl \
+    zip \
+    unzip \
+    pkg-config \
+    libssl-dev \
+    zlib1g-dev \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    software-properties-common \
+    python3 \
+    python3-pip \
+    build-essential \
+    gcc \
+    libzstd-dev \
+    libbz2-dev \
+    liblzma-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- MinGW (x86_64) ------------------------------------------------------
+
+# Create Windows.h compatibility symlinks for case-sensitive Linux filesystem.
+# MinGW-w64 on Ubuntu stores shared headers in /usr/share/mingw-w64/include/
+# and uses symlinks from /usr/x86_64-w64-mingw32/include/. We add mixed-case
+# aliases so Windows source code using #include <Windows.h> works on Linux.
+RUN MINGW_SHARED=/usr/share/mingw-w64/include && \
+    MINGW_X64=/usr/x86_64-w64-mingw32/include && \
+    ln -sf "$MINGW_SHARED/windows.h"  "$MINGW_SHARED/Windows.h"  && \
+    ln -sf "$MINGW_SHARED/winsock2.h" "$MINGW_SHARED/Winsock2.h" && \
+    ln -sf "$MINGW_SHARED/ws2tcpip.h" "$MINGW_SHARED/Ws2tcpip.h" && \
+    ln -sf "$MINGW_SHARED/winerror.h" "$MINGW_SHARED/Winerror.h" && \
+    ln -sf "$MINGW_SHARED/winbase.h"  "$MINGW_SHARED/Winbase.h"  && \
+    ln -sf "$MINGW_SHARED/winnt.h"    "$MINGW_SHARED/Winnt.h"    && \
+    ln -sf "$MINGW_X64/windows.h"     "$MINGW_X64/Windows.h"     2>/dev/null || true
+
+# Switch MinGW to posix threading model so std::mutex/std::thread are available
+RUN update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix && \
+    update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+
+# Install llvm-mingw for aarch64-w64-mingw32 cross-compilation (Windows ARM64 MinGW).
+# Detects host arch at build time: x86_64 hosts use the x86_64 tarball,
+# aarch64 hosts (e.g. Apple Silicon via OrbStack) use the aarch64 tarball.
+ARG LLVM_MINGW_VERSION=20241119
+RUN ARCH=$(uname -m) && \
+    TARBALL="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-20.04-${ARCH}.tar.xz" && \
+    wget -q "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${TARBALL}" \
+    && tar -xf "${TARBALL}" -C /opt \
+    && mv "/opt/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-20.04-${ARCH}" /opt/llvm-mingw \
+    && rm "${TARBALL}"
+
+# ---- MSVC ABI via clang + xwin ------------------------------------------
+
+# Install LLVM/Clang 19 from the official LLVM repository.
+# The Windows SDK (from xwin) requires Clang 19.0.0 or newer.
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 19 all && \
+    rm llvm.sh && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create symlinks for LLVM 19 tools to default names
+RUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100 && \
+    update-alternatives --install /usr/bin/clang-cl clang-cl /usr/bin/clang-cl-19 100 && \
+    update-alternatives --install /usr/bin/lld lld /usr/bin/lld-19 100 && \
+    update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-19 100 && \
+    update-alternatives --install /usr/bin/lld-link lld-link /usr/bin/lld-link-19 100 && \
+    update-alternatives --install /usr/bin/llvm-lib llvm-lib /usr/bin/llvm-lib-19 100 && \
+    update-alternatives --install /usr/bin/llvm-mt llvm-mt /usr/bin/llvm-mt-19 100 && \
+    update-alternatives --install /usr/bin/llvm-rc llvm-rc /usr/bin/llvm-rc-19 100 && \
+    update-alternatives --install /usr/bin/llvm-ranlib llvm-ranlib /usr/bin/llvm-ranlib-19 100
+
+# Install Rust (for xwin) and download the Windows SDK for x86_64 + aarch64.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
+    . ~/.cargo/env && \
+    cargo install xwin && \
+    mkdir -p /opt/xwin && \
+    xwin --accept-license --arch x86_64 --arch aarch64 splat --output /opt/xwin/sdk
+
+# Create a clang-cl wrapper that adds the xwin SDK paths when targeting Windows.
+# CMake uses plain `clang` via the windows-msvc toolchain file; the wrapper is
+# used by ccgo's MSVC toolchain detection and by build systems that invoke
+# clang-cl directly.
+RUN printf '#!/bin/bash\n# Check if targeting Windows\nif [[ "$*" == *"--target="*"windows"* ]] || [[ "$*" != *"--target="* ]]; then\n  # Windows target: use real clang-cl with Windows SDK paths\n  export INCLUDE="/opt/xwin/sdk/crt/include;/opt/xwin/sdk/sdk/include/ucrt;/opt/xwin/sdk/sdk/include/um;/opt/xwin/sdk/sdk/include/shared"\n  export LIB="/opt/xwin/sdk/crt/lib/x86_64;/opt/xwin/sdk/sdk/lib/um/x86_64;/opt/xwin/sdk/sdk/lib/ucrt/x86_64"\n  exec /usr/bin/clang-cl-19 "$@"\nelse\n  # Non-Windows target: passthrough to clang without modifications\n  exec clang "$@"\nfi\n' > /usr/local/bin/clang-cl && \
+    chmod +x /usr/local/bin/clang-cl
+
+# ---- Toolchain selection -------------------------------------------------
+
+# Keep the MinGW compiler as the default CC/CXX. The MSVC path sets its compiler
+# explicitly through the embedded CMake toolchain file, so it does not depend on
+# these variables.
+#
+# Do NOT set INCLUDE/LIB globally: the MSVC toolchain file derives arch-specific
+# xwin paths from CCGO_XWIN_ARCH. A global x86_64 value would break aarch64.
+#
+# Append llvm-mingw instead of prepending it so `/usr/bin/clang` (LLVM 19) wins
+# for MSVC, while the aarch64-w64-mingw32-* wrappers are still on PATH.
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    CC=x86_64-w64-mingw32-gcc \
+    CXX=x86_64-w64-mingw32-g++ \
+    AR=x86_64-w64-mingw32-ar \
+    RANLIB=x86_64-w64-mingw32-ranlib \
+    PATH="/root/.cargo/bin:${PATH}:/opt/llvm-mingw/bin"
+
+# Install ccgo from PyPI (pre-compiled Rust binary wheel, fast installation)
+RUN pip3 install --no-cache-dir ccgo
+
+# Verify both toolchains and ccgo
+RUN echo "=== MinGW Toolchain Verification ===" && \
+    x86_64-w64-mingw32-gcc --version && \
+    aarch64-w64-mingw32-clang --version && \
+    echo "=== MSVC Toolchain Verification ===" && \
+    clang --version && \
+    lld-link --version && \
+    ls /opt/xwin/sdk/crt/lib/ && \
+    ls /opt/xwin/sdk/sdk/lib/um/ && \
+    echo "=== Build Tools ===" && \
+    cmake --version && \
+    ninja --version && \
+    ccgo --version
+
+# Set working directory
+WORKDIR /workspace
+
+# Entry point - execute build script
+ENTRYPOINT ["/bin/bash", "-c"]
