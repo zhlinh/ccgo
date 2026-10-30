@@ -41,7 +41,9 @@ CCGO 的 Docker 构建实现了**通用跨平台编译** - 从任何主机操作
 | 平台 | Docker 镜像 | 大小 | 工具链 | 主机操作系统 |
 |----------|-------------|------|-----------|---------|
 | Linux | `ccgo-builder-linux` | ~800MB | GCC, Clang, CMake | 任意 |
-| Windows | `ccgo-builder-windows` | ~1.2GB | MinGW-w64, CMake | 任意 |
+| Windows (all) | `ccgo-builder-windows-all` | ~4.5GB | MinGW-w64, MSVC (xwin), CMake | 任意 |
+| Windows (MinGW) | `ccgo-builder-windows-mingw` | ~1.2GB | MinGW-w64, CMake | 任意 |
+| Windows (MSVC) | `ccgo-builder-windows-msvc` | ~2.5GB | Clang, xwin, CMake | 任意 |
 | macOS | `ccgo-builder-apple` | ~2.5GB | OSXCross, CMake | 任意 |
 | iOS | `ccgo-builder-apple` | ~2.5GB | OSXCross, CMake | 任意 |
 | watchOS | `ccgo-builder-apple` | ~2.5GB | OSXCross, CMake | 任意 |
@@ -133,7 +135,7 @@ Status: Downloaded newer image for ccgo-builder-linux:latest
 
 **下载时间（仅首次构建）：**
 - Linux: ~2-3 分钟（~800MB）
-- Windows: ~3-4 分钟（~1.2GB）
+- Windows (all): ~6-8 分钟（~4.5GB）
 - Apple: ~5-8 分钟（~2.5GB）
 - Android: ~8-10 分钟（~3.5GB）
 
@@ -219,7 +221,7 @@ docker images | grep ccgo-builder
 
 # 输出：
 # ccgo-builder-linux    latest    abc123    2 weeks ago    800MB
-# ccgo-builder-windows  latest    def456    2 weeks ago    1.2GB
+# ccgo-builder-windows-all  latest    def456    2 weeks ago    4.5GB
 # ccgo-builder-apple    latest    ghi789    2 weeks ago    2.5GB
 ```
 
@@ -228,7 +230,7 @@ docker images | grep ccgo-builder
 ```bash
 # 将所有镜像更新到最新版本
 docker pull ccgo-builder-linux:latest
-docker pull ccgo-builder-windows:latest
+docker pull ccgo-builder-windows-all:latest
 docker pull ccgo-builder-apple:latest
 docker pull ccgo-builder-android:latest
 ```
@@ -339,10 +341,10 @@ ccgo build linux --docker --compiler clang
 **优势：**
 - 在 macOS 或 Linux 上构建
 - 无需 Visual Studio
+- `all` 镜像同时构建 MinGW 与 MSVC ABI 产物
+- `--toolchain mingw` / `--toolchain msvc` 使用更小的专用镜像
 
 **限制：**
-- 仅 MinGW（无 MSVC）
-- 输出可能与 MSVC 构建的代码不兼容
 - 无法运行 Windows 应用程序
 
 **使用：**
@@ -358,9 +360,9 @@ ccgo build windows --docker --arch x86,x64
 ```
 
 **MSVC 兼容性注意事项：**
-- Docker 构建使用 MinGW-w64（Windows 的 GCC）
-- 对于 MSVC 构建，使用原生 Windows 构建
-- MinGW 和 MSVC 有不同的 ABI（二进制不兼容）
+- `all` 镜像使用 clang + xwin 构建 MSVC ABI 产物（无需安装 Visual Studio）
+- `--toolchain msvc` 使用专用 MSVC 镜像
+- MinGW 和 MSVC 的 ABI 不同（二进制不兼容），消费方需二选一
 
 ### Apple Docker 构建
 
@@ -580,7 +582,7 @@ ccgo build windows --docker   # Docker（交叉编译）
 ```bash
 # 每月：更新镜像
 docker pull ccgo-builder-linux:latest
-docker pull ccgo-builder-windows:latest
+docker pull ccgo-builder-windows-all:latest
 docker pull ccgo-builder-apple:latest
 docker pull ccgo-builder-android:latest
 ```

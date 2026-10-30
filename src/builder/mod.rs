@@ -84,12 +84,14 @@ pub struct BuildOptions {
     pub stl: Option<String>,
     /// Build only native libraries without packaging (AAR/HAR)
     pub native_only: bool,
-    /// Windows toolchain (msvc, mingw, auto)
+    /// Windows toolchain (msvc, mingw, all)
     pub toolchain: WindowsToolchain,
     /// Verbose output
     pub verbose: bool,
     /// Development mode: use pre-built ccgo binary from GitHub releases in Docker
     pub dev: bool,
+    /// Do not auto-fetch missing dependencies
+    pub no_fetch: bool,
     /// Features to enable (resolved from command line)
     pub features: Vec<String>,
     /// Whether to use default features
@@ -136,9 +138,10 @@ impl Default for BuildOptions {
             ide_project: false,
             release: true,
             native_only: false,
-            toolchain: WindowsToolchain::Auto,
+            toolchain: WindowsToolchain::All,
             verbose: false,
             dev: false,
+            no_fetch: false,
             features: Vec::new(),
             variants: Vec::new(),
             use_default_features: true,

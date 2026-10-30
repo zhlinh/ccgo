@@ -1365,7 +1365,7 @@ pub struct MacosConfig {
 /// Windows platform configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct WindowsConfig {
-    /// Toolchain (msvc, mingw, auto)
+    /// Toolchain (all, msvc, mingw)
     pub toolchain: Option<String>,
 
     pub default_dep_linkage: Option<Linkage>,

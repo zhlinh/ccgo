@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       platforms:
-        description: 'Platforms to build (comma-separated: linux,windows-mingw,windows-msvc,apple,android,ohos or "all")'
+        description: 'Platforms to build (comma-separated: linux,windows-mingw,windows-msvc,windows-all,apple,android,ohos or "all")'
         required: true
         default: 'all'
       registry:
@@ -64,6 +64,9 @@ jobs:
           - platform: windows-msvc
             dockerfile: Dockerfile.windows-msvc
             image: ccgo-builder-windows-msvc
+          - platform: windows-all
+            dockerfile: Dockerfile.windows-all
+            image: ccgo-builder-windows-all
           - platform: apple
             dockerfile: Dockerfile.apple
             image: ccgo-builder-apple
@@ -190,6 +193,7 @@ jobs:
             echo "| Linux | \`${GHCR_PREFIX}/ccgo-builder-linux:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-linux:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MinGW) | \`${GHCR_PREFIX}/ccgo-builder-windows-mingw:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-mingw:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MSVC) | \`${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Windows (All) | \`${GHCR_PREFIX}/ccgo-builder-windows-all:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-all:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${GHCR_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${GHCR_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| OHOS | \`${GHCR_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY
@@ -201,6 +205,7 @@ jobs:
             echo "| Linux | \`${DOCKERHUB_PREFIX}/ccgo-builder-linux:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-linux:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MinGW) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-mingw:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-mingw:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MSVC) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Windows (All) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-all:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-all:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| OHOS | \`${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY
@@ -212,6 +217,7 @@ jobs:
             echo "| Linux | \`${GHCR_PREFIX}/ccgo-builder-linux:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-linux:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MinGW) | \`${GHCR_PREFIX}/ccgo-builder-windows-mingw:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-mingw:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MSVC) | \`${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Windows (All) | \`${GHCR_PREFIX}/ccgo-builder-windows-all:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-windows-all:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${GHCR_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${GHCR_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| OHOS | \`${GHCR_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${GHCR_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY
@@ -223,6 +229,7 @@ jobs:
             echo "| Linux | \`${DOCKERHUB_PREFIX}/ccgo-builder-linux:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-linux:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MinGW) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-mingw:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-mingw:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Windows (MSVC) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-msvc:latest\` |" >> $GITHUB_STEP_SUMMARY
+            echo "| Windows (All) | \`${DOCKERHUB_PREFIX}/ccgo-builder-windows-all:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-windows-all:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Apple | \`${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-apple:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| Android | \`${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-android:latest\` |" >> $GITHUB_STEP_SUMMARY
             echo "| OHOS | \`${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` | \`docker pull ${DOCKERHUB_PREFIX}/ccgo-builder-ohos:latest\` |" >> $GITHUB_STEP_SUMMARY

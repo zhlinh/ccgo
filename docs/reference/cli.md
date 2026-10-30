@@ -155,7 +155,7 @@ ccgo build [OPTIONS] <TARGET>
 | `--ide-project` | Generate IDE project files (Xcode, Visual Studio, etc.) |
 | `--release` | Build in release mode (default: debug) |
 | `--native-only` | Build native libraries only, skip AAR/HAR packaging |
-| `--toolchain <TOOL>` | Windows toolchain: `msvc`, `mingw`, `auto` (default: `auto`) |
+| `--toolchain <TOOL>` | Windows toolchain: `msvc`, `mingw`, `all` (default: `all`) |
 | `--dev` | Development mode (use pre-built ccgo from GitHub in Docker) |
 | `-F, --features <FEATURES>` | Enable features (comma-separated) |
 | `--no-default-features` | Disable default features |

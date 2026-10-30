@@ -7,14 +7,14 @@
 //! ~/.ccgo/dockers/ at runtime when needed.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 
-use super::{BuildContext, BuildResult};
-use crate::commands::build::BuildTarget;
+use super::{BuildContext, BuildOptions, BuildResult};
+use crate::commands::build::{BuildTarget, WindowsToolchain};
 
 // Embed Dockerfiles at compile time
 const DOCKERFILE_LINUX: &str = include_str!("../../dockers/Dockerfile.linux");
@@ -23,6 +23,7 @@ const DOCKERFILE_OHOS: &str = include_str!("../../dockers/Dockerfile.ohos");
 const DOCKERFILE_APPLE: &str = include_str!("../../dockers/Dockerfile.apple");
 const DOCKERFILE_WINDOWS_MINGW: &str = include_str!("../../dockers/Dockerfile.windows-mingw");
 const DOCKERFILE_WINDOWS_MSVC: &str = include_str!("../../dockers/Dockerfile.windows-msvc");
+const DOCKERFILE_WINDOWS_ALL: &str = include_str!("../../dockers/Dockerfile.windows-all");
 const DOCKERFILE_OPENWRT: &str = include_str!("../../dockers/Dockerfile.openwrt");
 
 // Embed CMake toolchain files at compile time
@@ -48,8 +49,6 @@ pub struct PlatformDockerConfig {
 impl PlatformDockerConfig {
     /// Get Docker configuration for a platform
     pub fn for_platform(options: &super::BuildOptions) -> Option<Self> {
-        use crate::commands::build::WindowsToolchain;
-
         match options.target {
             BuildTarget::Linux => Some(Self {
                 dockerfile: "Dockerfile.linux",
@@ -75,19 +74,13 @@ impl PlatformDockerConfig {
                         remote_image: format!("{}/ccgo-builder-windows-mingw:latest", GHCR_REPO),
                         size_estimate: "~1.2GB",
                     }),
-                    WindowsToolchain::Auto => {
-                        // Default to MinGW for cross-platform compatibility
-                        Some(Self {
-                            dockerfile: "Dockerfile.windows-mingw",
-                            dockerfile_content: DOCKERFILE_WINDOWS_MINGW,
-                            image_name: "ccgo-builder-windows-mingw",
-                            remote_image: format!(
-                                "{}/ccgo-builder-windows-mingw:latest",
-                                GHCR_REPO
-                            ),
-                            size_estimate: "~1.2GB",
-                        })
-                    }
+                    WindowsToolchain::All => Some(Self {
+                        dockerfile: "Dockerfile.windows-all",
+                        dockerfile_content: DOCKERFILE_WINDOWS_ALL,
+                        image_name: "ccgo-builder-windows-all",
+                        remote_image: format!("{}/ccgo-builder-windows-all:latest", GHCR_REPO),
+                        size_estimate: "~4.5GB",
+                    }),
                 }
             }
             BuildTarget::Macos => Some(Self {
@@ -194,8 +187,11 @@ impl DockerBuilder {
             format!("Failed to write Dockerfile: {}", dockerfile_path.display())
         })?;
 
-        // Extract embedded CMake toolchain files for MSVC Docker builds
-        if config.image_name == "ccgo-builder-windows-msvc" {
+        // Extract embedded CMake toolchain files for MSVC-capable Docker builds
+        if matches!(
+            config.image_name,
+            "ccgo-builder-windows-msvc" | "ccgo-builder-windows-all"
+        ) {
             let cmake_dir = docker_dir.join("cmake");
             fs::create_dir_all(&cmake_dir).with_context(|| {
                 format!("Failed to create cmake directory: {}", cmake_dir.display())
@@ -380,6 +376,13 @@ impl DockerBuilder {
         None
     }
 
+    /// Flags the in-container `ccgo build` must receive to match the host
+    /// build mode. Without these the container defaults to debug and writes
+    /// under `target/debug/` even when the caller asked for `--release`.
+    fn build_option_args(&self) -> String {
+        option_args(&self.ctx.options)
+    }
+
     /// Run build inside Docker container
     pub fn run_build(&self) -> Result<()> {
         eprintln!(
@@ -388,212 +391,24 @@ impl DockerBuilder {
         );
         eprintln!("Project directory: {}", self.ctx.project_root.display());
 
-        // Clean target/{platform} directory before Docker build
-        let target_platform_dir = self.ctx.output_dir.parent().unwrap();
-        if target_platform_dir.exists() {
-            std::fs::remove_dir_all(target_platform_dir)
-                .context("Failed to clean target directory")?;
-            eprintln!("Cleaned up: {}", target_platform_dir.display());
-        }
+        self.clean_output_dir()?;
 
         // Build Docker run command
         let mut cmd = Command::new("docker");
         cmd.arg("run").arg("--rm").arg("--entrypoint="); // Clear the image's default entrypoint
 
-        // Mount project directory
-        cmd.arg("-v")
-            .arg(format!("{}:/workspace", self.ctx.project_root.display()));
-
-        // Mount .git directory if found
-        if let Some(git_dir) = self.find_git_root() {
-            cmd.arg("-v")
-                .arg(format!("{}:/workspace/.git:ro", git_dir.display()));
-            eprintln!(
-                "Git repository: {} (mounted .git to container)",
-                git_dir.parent().unwrap().display()
-            );
-        } else {
-            eprintln!("⚠ No git repository found (git info will be 'unknown')");
-        }
+        self.mount_project(&mut cmd);
 
         // Set working directory
         cmd.arg("-w").arg("/workspace");
 
-        // Determine ccgo installation method:
-        // Default mode: Install ccgo from crates.io (for normal users)
-        // --dev mode: Build from local source or download pre-built binary (for developers)
-        // MSVC mode: Auto-enable dev mode (xwin support not in PyPI yet)
-        let mut use_local_source = false;
-        // Temporarily disable auto_dev for MSVC testing
-        // TODO: Re-enable when Rust cross-compilation issues are resolved
-        let auto_dev = false;
-        // let auto_dev = !self.ctx.options.dev
-        //     && self.ctx.options.target == BuildTarget::Windows
-        //     && matches!(self.ctx.options.toolchain, crate::commands::build::WindowsToolchain::Msvc);
-
-        if auto_dev {
-            eprintln!("⚠ MSVC toolchain requires local ccgo build (xwin support not in PyPI yet)");
-            eprintln!("  Auto-enabling dev mode...");
-        }
-
-        if self.ctx.options.dev || auto_dev {
-            // Dev mode: Try to find and mount local ccgo source
-            let ccgo_src_path = std::env::var("CCGO_SRC_PATH")
-                .map(PathBuf::from)
-                .or_else(|_| {
-                    // Try to find ccgo source relative to current executable
-                    if let Ok(exe) = std::env::current_exe() {
-                        // Go up from target/debug/ccgo or target/release/ccgo to project root
-                        if let Some(root) = exe
-                            .parent()
-                            .and_then(|p| p.parent())
-                            .and_then(|p| p.parent())
-                        {
-                            if root.join("Cargo.toml").exists() {
-                                return Ok(root.to_path_buf());
-                            }
-                        }
-                    }
-                    Err(())
-                });
-
-            if let Ok(path) = ccgo_src_path {
-                if path.join("Cargo.toml").exists() {
-                    cmd.arg("-v").arg(format!(
-                        "{}:/ccgo-src:ro",
-                        path.canonicalize().unwrap_or(path.clone()).display()
-                    ));
-                    eprintln!(
-                        "Using --dev mode: mounting local ccgo source from {}",
-                        path.display()
-                    );
-
-                    // Mount cargo cache to speed up repeated builds
-                    let cargo_cache_dir = Self::get_docker_cache_dir()
-                        .map(|d| d.parent().unwrap().join("cargo-cache"))
-                        .unwrap_or_else(|_| PathBuf::from("/tmp/ccgo-cargo-cache"));
-                    if let Err(e) = fs::create_dir_all(&cargo_cache_dir) {
-                        eprintln!("⚠ Could not create cargo cache directory: {}", e);
-                    } else {
-                        cmd.arg("-v").arg(format!(
-                            "{}:/usr/local/cargo/registry",
-                            cargo_cache_dir.display()
-                        ));
-                        eprintln!("Using cargo cache: {}", cargo_cache_dir.display());
-                    }
-                    use_local_source = true;
-                }
-            }
-
-            if !use_local_source {
-                if auto_dev {
-                    bail!(
-                        "MSVC toolchain requires local ccgo build (xwin support not in PyPI yet).\n\
-                         Could not find ccgo source directory.\n\n\
-                         Please set CCGO_SRC_PATH environment variable:\n  \
-                         export CCGO_SRC_PATH=/path/to/ccgo/source\n  \
-                         ccgo build windows --docker --toolchain msvc\n\n\
-                         Or build and install ccgo from source first:\n  \
-                         cd /path/to/ccgo\n  \
-                         cargo install --path ."
-                    );
-                }
-                eprintln!("Using --dev mode: will download pre-built ccgo from GitHub releases");
-            }
-        } else {
-            eprintln!("Using pre-installed ccgo from Docker image (PyPI 3.x+ Rust version)...");
-        }
+        let use_local_source = self.mount_ccgo_source(&mut cmd);
 
         // Image name
         cmd.arg(self.config.image_name);
 
-        // Build command to run in container
-        let platform = self.ctx.options.target.to_string().to_lowercase();
-        let link_type = self.ctx.options.link_type.to_string();
-
-        // Determine how to get ccgo binary
-        // NOTE: PyPI ccgo 3.x+ versions are Rust-based with pre-built binaries
-        // Default: Use pre-installed ccgo from Docker image (PyPI 3.x+ Rust version)
-        // --dev with local source: Build from source
-        // --dev without local source: Download pre-built from GitHub releases
-        let (setup_cmd, ccgo_bin) = if use_local_source {
-            // Build ccgo from local source using cargo
-            // Unset CC/CXX to avoid cross-compilers (e.g. MinGW) being used for the host ccgo binary
-            // Use 'env -u CC -u CXX' to fully unset cross-compiler env vars (e.g. MinGW)
-            // so ring/openssl build scripts use the native host compiler for the Linux ccgo binary
-            let cargo_build_cmd = "env -u CC -u CXX -u AR -u RANLIB CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release --manifest-path /ccgo-src/Cargo.toml".to_string();
-            (cargo_build_cmd, "/tmp/ccgo-build/release/ccgo".to_string())
-        } else if self.ctx.options.dev {
-            // Download pre-built ccgo from GitHub releases.
-            // Detect host arch at runtime so Apple Silicon (arm64) containers
-            // download the aarch64 binary instead of the x86_64 one.
-            let download_cmd = r#"ARCH=$(uname -m) && \
-                 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-                   TRIPLE="aarch64-unknown-linux-gnu"; \
-                 else \
-                   TRIPLE="x86_64-unknown-linux-gnu"; \
-                 fi && \
-                 echo "Downloading pre-built ccgo from GitHub releases (${TRIPLE})..." && \
-                 curl -fsSL "https://github.com/zhlinh/ccgo/releases/latest/download/ccgo-${TRIPLE}.tar.gz" -o /tmp/ccgo.tar.gz && \
-                 tar xzf /tmp/ccgo.tar.gz -C /tmp && \
-                 chmod +x "/tmp/ccgo-${TRIPLE}/ccgo" && \
-                 ln -sf "/tmp/ccgo-${TRIPLE}/ccgo" /tmp/ccgo-bin || \
-                 (echo 'ERROR: Failed to download ccgo from GitHub releases.' && \
-                  echo 'No release found. Try without --dev flag to use pre-installed ccgo' && \
-                  exit 1)"#.to_string();
-            (download_cmd, "/tmp/ccgo-bin".to_string())
-        } else {
-            // Default: Use pre-installed ccgo from Docker image
-            let setup_cmd = "command -v ccgo >/dev/null 2>&1 || \
-                 (pip3 install -q ccgo) || \
-                 (echo 'ERROR: ccgo not found.' && exit 1)"
-                .to_string();
-            (setup_cmd, "ccgo".to_string())
-        };
-
-        // Build toolchain argument for Windows builds
-        let toolchain_arg = if self.ctx.options.target == BuildTarget::Windows {
-            format!(" --toolchain {}", self.ctx.options.toolchain)
-        } else {
-            String::new()
-        };
-
-        let build_cmd = if self.ctx.options.target == BuildTarget::Android {
-            format!(
-                "{} && \
-                 {} build android --native-only \
-                 --arch armeabi-v7a,arm64-v8a,x86_64 --build-as {}",
-                setup_cmd, ccgo_bin, link_type
-            )
-        } else if self.ctx.options.target == BuildTarget::Ohos {
-            format!(
-                "{} && \
-                 {} build ohos --native-only \
-                 --arch armeabi-v7a,arm64-v8a,x86_64 --build-as {}",
-                setup_cmd, ccgo_bin, link_type
-            )
-        } else if self.ctx.options.target == BuildTarget::Openwrt {
-            let arch_arg = if !self.ctx.options.architectures.is_empty() {
-                format!(" --arch {}", self.ctx.options.architectures.join(","))
-            } else {
-                " --arch mipsel_24kc,aarch64".to_string()
-            };
-            format!(
-                "{} && {} build openwrt --build-as {}{}",
-                setup_cmd, ccgo_bin, link_type, arch_arg
-            )
-        } else {
-            let arch_arg = if !self.ctx.options.architectures.is_empty() {
-                format!(" --arch {}", self.ctx.options.architectures.join(","))
-            } else {
-                String::new()
-            };
-            format!(
-                "{} && \
-                 {} build {} --build-as {}{}{}",
-                setup_cmd, ccgo_bin, platform, link_type, toolchain_arg, arch_arg
-            )
-        };
+        let (setup_cmd, ccgo_bin) = self.ccgo_setup(use_local_source);
+        let build_cmd = self.container_build_command(&setup_cmd, &ccgo_bin);
 
         cmd.arg("sh").arg("-c").arg(&build_cmd);
 
@@ -610,6 +425,181 @@ impl DockerBuilder {
 
         eprintln!("\n✓ Docker build completed successfully!");
         Ok(())
+    }
+
+    /// Remove the host output directory so stale artifacts are not collected.
+    fn clean_output_dir(&self) -> Result<()> {
+        let target_platform_dir = self.ctx.output_dir.parent().unwrap();
+        if target_platform_dir.exists() {
+            std::fs::remove_dir_all(target_platform_dir)
+                .context("Failed to clean target directory")?;
+            eprintln!("Cleaned up: {}", target_platform_dir.display());
+        }
+        Ok(())
+    }
+
+    /// Mount the project (and its `.git` when available) into the container.
+    fn mount_project(&self, cmd: &mut Command) {
+        cmd.arg("-v")
+            .arg(format!("{}:/workspace", self.ctx.project_root.display()));
+
+        if let Some(git_dir) = self.find_git_root() {
+            cmd.arg("-v")
+                .arg(format!("{}:/workspace/.git:ro", git_dir.display()));
+            if let Some(root) = git_dir.parent() {
+                eprintln!(
+                    "Git repository: {} (mounted .git to container)",
+                    root.display()
+                );
+            }
+        } else {
+            eprintln!("⚠ No git repository found (git info will be 'unknown')");
+        }
+    }
+
+    /// Mount a local ccgo checkout when `--dev` can find one.
+    ///
+    /// Returns whether the container should build ccgo from that source.
+    fn mount_ccgo_source(&self, cmd: &mut Command) -> bool {
+        if !self.ctx.options.dev {
+            eprintln!("Using pre-installed ccgo from Docker image (PyPI 3.x+ Rust version)...");
+            return false;
+        }
+
+        let Some(path) = Self::find_ccgo_source() else {
+            eprintln!("Using --dev mode: will download pre-built ccgo from GitHub releases");
+            return false;
+        };
+
+        cmd.arg("-v").arg(format!(
+            "{}:/ccgo-src:ro",
+            path.canonicalize()
+                .unwrap_or_else(|_| path.clone())
+                .display()
+        ));
+        eprintln!(
+            "Using --dev mode: mounting local ccgo source from {}",
+            path.display()
+        );
+        self.mount_cargo_cache(cmd);
+        true
+    }
+
+    /// Locate a ccgo source checkout from `CCGO_SRC_PATH` or the executable path.
+    fn find_ccgo_source() -> Option<PathBuf> {
+        let env_path = std::env::var("CCGO_SRC_PATH").ok().map(PathBuf::from);
+        let exe_path = std::env::current_exe().ok().and_then(|exe| {
+            exe.parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .map(PathBuf::from)
+        });
+
+        env_path
+            .into_iter()
+            .chain(exe_path)
+            .find(|path| path.join("Cargo.toml").exists())
+    }
+
+    /// Mount the cargo registry cache to speed up repeated `--dev` builds.
+    fn mount_cargo_cache(&self, cmd: &mut Command) {
+        let cargo_cache_dir = Self::get_docker_cache_dir()
+            .map(|dir| dir.parent().unwrap().join("cargo-cache"))
+            .unwrap_or_else(|_| PathBuf::from("/tmp/ccgo-cargo-cache"));
+
+        if let Err(error) = fs::create_dir_all(&cargo_cache_dir) {
+            eprintln!("⚠ Could not create cargo cache directory: {}", error);
+            return;
+        }
+
+        cmd.arg("-v").arg(format!(
+            "{}:/usr/local/cargo/registry",
+            cargo_cache_dir.display()
+        ));
+        eprintln!("Using cargo cache: {}", cargo_cache_dir.display());
+    }
+
+    /// Shell fragment that provides the ccgo binary plus the path to run.
+    fn ccgo_setup(&self, use_local_source: bool) -> (String, String) {
+        if use_local_source {
+            // Unset cross-compilers so the Linux ccgo binary is built with the
+            // native host compiler.
+            let build = "env -u CC -u CXX -u AR -u RANLIB \
+                 CARGO_TARGET_DIR=/tmp/ccgo-build cargo build --release \
+                 --manifest-path /ccgo-src/Cargo.toml"
+                .to_string();
+            return (build, "/tmp/ccgo-build/release/ccgo".to_string());
+        }
+
+        if self.ctx.options.dev {
+            return (Self::ccgo_download_command(), "/tmp/ccgo-bin".to_string());
+        }
+
+        (
+            "command -v ccgo >/dev/null 2>&1 || \
+             (pip3 install -q ccgo) || \
+             (echo 'ERROR: ccgo not found.' && exit 1)"
+                .to_string(),
+            "ccgo".to_string(),
+        )
+    }
+
+    /// Download a prebuilt ccgo for the container's architecture.
+    fn ccgo_download_command() -> String {
+        r#"ARCH=$(uname -m) && \
+                 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+                   TRIPLE="aarch64-unknown-linux-gnu"; \
+                 else \
+                   TRIPLE="x86_64-unknown-linux-gnu"; \
+                 fi && \
+                 echo "Downloading pre-built ccgo from GitHub releases (${TRIPLE})..." && \
+                 curl -fsSL "https://github.com/zhlinh/ccgo/releases/latest/download/ccgo-${TRIPLE}.tar.gz" -o /tmp/ccgo.tar.gz && \
+                 tar xzf /tmp/ccgo.tar.gz -C /tmp && \
+                 chmod +x "/tmp/ccgo-${TRIPLE}/ccgo" && \
+                 ln -sf "/tmp/ccgo-${TRIPLE}/ccgo" /tmp/ccgo-bin || \
+                 (echo 'ERROR: Failed to download ccgo from GitHub releases.' && \
+                  echo 'No release found. Try without --dev flag to use pre-installed ccgo' && \
+                  exit 1)"#
+            .to_string()
+    }
+
+    /// Build the shell command executed inside the container.
+    fn container_build_command(&self, setup_cmd: &str, ccgo_bin: &str) -> String {
+        let link_type = self.ctx.options.link_type.to_string();
+        let option_args = self.build_option_args();
+
+        match self.ctx.options.target {
+            BuildTarget::Android => {
+                let arch = arch_arg(&self.ctx.options, Some("armeabi-v7a,arm64-v8a,x86_64"));
+                format!(
+                    "{} && {} build android --native-only{} --build-as {}{}",
+                    setup_cmd, ccgo_bin, arch, link_type, option_args
+                )
+            }
+            BuildTarget::Ohos => {
+                let arch = arch_arg(&self.ctx.options, Some("armeabi-v7a,arm64-v8a,x86_64"));
+                format!(
+                    "{} && {} build ohos --native-only{} --build-as {}{}",
+                    setup_cmd, ccgo_bin, arch, link_type, option_args
+                )
+            }
+            BuildTarget::Openwrt => {
+                let arch = arch_arg(&self.ctx.options, Some("mipsel_24kc,aarch64"));
+                format!(
+                    "{} && {} build openwrt --build-as {}{}{}",
+                    setup_cmd, ccgo_bin, link_type, arch, option_args
+                )
+            }
+            _ => {
+                let platform = self.ctx.options.target.to_string().to_lowercase();
+                let toolchain = toolchain_arg(&self.ctx.options);
+                let arch = arch_arg(&self.ctx.options, None);
+                format!(
+                    "{} && {} build {} --build-as {}{}{}{}",
+                    setup_cmd, ccgo_bin, platform, link_type, toolchain, arch, option_args
+                )
+            }
+        }
     }
 
     /// Execute full Docker build workflow
@@ -636,101 +626,19 @@ impl DockerBuilder {
     fn collect_build_results(&self, duration_secs: f64) -> Result<BuildResult> {
         let platform = self.ctx.options.target.to_string().to_lowercase();
 
-        // Python ccgo inside Docker may output to:
-        // - New structure: target/{release|debug}/{platform}/
-        // - Old structure: target/{platform}/
-        // We scan both to ensure compatibility
-        let release_subdir = if self.ctx.options.release {
-            "release"
-        } else {
-            "debug"
-        };
-        let new_scan_dir = self
-            .ctx
-            .project_root
-            .join("target")
-            .join(release_subdir)
-            .join(&platform);
+        // The container receives the same mode/profile/sanitizer flags, so the
+        // host-computed output directory is authoritative. Fall back to the old
+        // `target/<platform>/` layout for older pre-installed ccgo versions.
         let old_scan_dir = self.ctx.project_root.join("target").join(&platform);
-
-        // Scan output directory for generated archives
-        let mut sdk_archive: Option<PathBuf> = None;
-        let mut symbols_archive: Option<PathBuf> = None;
-        let mut aar_archive: Option<PathBuf> = None;
-        let mut architectures: Vec<String> = Vec::new();
-
-        // Try new structure first, fall back to old structure
-        let scan_dir = if new_scan_dir.exists() {
-            new_scan_dir
+        let scan_dir = if self.ctx.output_dir.exists() {
+            self.ctx.output_dir.clone()
         } else {
             old_scan_dir
         };
 
-        if scan_dir.exists() {
-            for entry in std::fs::read_dir(&scan_dir)? {
-                let entry = entry?;
-                let path = entry.path();
+        let artifacts = scan_docker_artifacts(&scan_dir, &platform, &self.ctx.options)?;
 
-                if !path.is_file() {
-                    continue;
-                }
-
-                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-                // Look for SDK archive: {lib}_{platform}_SDK-{version}.zip (exclude -SYMBOLS.zip)
-                if file_name.contains("_SDK-")
-                    && file_name.ends_with(".zip")
-                    && !file_name.contains("-SYMBOLS.zip")
-                {
-                    sdk_archive = Some(path.clone());
-
-                    // Extract architectures from archive name if present
-                    // Format: {lib}_{platform}_SDK-{version}.zip
-                    // For multi-arch: might contain arch info in path
-                    if platform == "android" {
-                        architectures = vec![
-                            "armeabi-v7a".to_string(),
-                            "arm64-v8a".to_string(),
-                            "x86_64".to_string(),
-                        ];
-                    } else if platform == "openwrt" {
-                        architectures = if self.ctx.options.architectures.is_empty() {
-                            vec!["mipsel_24kc".to_string(), "aarch64".to_string()]
-                        } else {
-                            self.ctx.options.architectures.clone()
-                        };
-                    } else if platform == "linux" {
-                        architectures = if self.ctx.options.architectures.is_empty() {
-                            vec!["x86_64".to_string()]
-                        } else {
-                            self.ctx.options.architectures.clone()
-                        };
-                    } else if platform == "windows" {
-                        architectures = vec!["x86_64".to_string()];
-                    } else if platform == "macos" {
-                        architectures = vec!["x86_64".to_string(), "arm64".to_string()];
-                    } else if platform == "ios" {
-                        architectures = vec![
-                            "arm64".to_string(),
-                            "armv7".to_string(),
-                            "x86_64".to_string(), // simulator
-                        ];
-                    }
-                }
-
-                // Look for symbols archive: {lib}_{platform}_SDK-{version}-SYMBOLS.zip
-                if file_name.contains("-SYMBOLS.zip") {
-                    symbols_archive = Some(path.clone());
-                }
-
-                // Look for AAR archive (Android): {lib}-{version}.aar
-                if file_name.ends_with(".aar") && platform == "android" {
-                    aar_archive = Some(path.clone());
-                }
-            }
-        }
-
-        let sdk_archive = sdk_archive.ok_or_else(|| {
+        let sdk_archive = artifacts.sdk.ok_or_else(|| {
             anyhow::anyhow!(
                 "Docker build completed but SDK archive not found in {}",
                 scan_dir.display()
@@ -739,10 +647,312 @@ impl DockerBuilder {
 
         Ok(BuildResult {
             sdk_archive,
-            symbols_archive,
-            aar_archive,
+            symbols_archive: artifacts.symbols,
+            aar_archive: artifacts.aar,
             duration_secs,
-            architectures,
+            architectures: artifacts.architectures,
         })
+    }
+}
+
+/// Artifacts produced by a Docker build and copied back to the host.
+#[derive(Default)]
+struct DockerArtifacts {
+    sdk: Option<PathBuf>,
+    symbols: Option<PathBuf>,
+    aar: Option<PathBuf>,
+    architectures: Vec<String>,
+}
+
+/// Scan the host output directory for the archives produced in the container.
+fn scan_docker_artifacts(
+    scan_dir: &Path,
+    platform: &str,
+    options: &BuildOptions,
+) -> Result<DockerArtifacts> {
+    let mut artifacts = DockerArtifacts::default();
+    if !scan_dir.exists() {
+        return Ok(artifacts);
+    }
+
+    for entry in std::fs::read_dir(scan_dir)? {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+
+        if file_name.contains("_SDK-")
+            && file_name.ends_with(".zip")
+            && !file_name.contains("-SYMBOLS.zip")
+        {
+            artifacts.sdk = Some(path);
+            artifacts.architectures = default_architectures(platform, options);
+        } else if file_name.contains("-SYMBOLS.zip") {
+            artifacts.symbols = Some(path);
+        } else if file_name.ends_with(".aar") && platform == "android" {
+            artifacts.aar = Some(path);
+        }
+    }
+
+    Ok(artifacts)
+}
+
+/// Architectures reported by a Docker build when the output carries no metadata.
+fn default_architectures(platform: &str, options: &BuildOptions) -> Vec<String> {
+    if !options.architectures.is_empty() {
+        return options.architectures.clone();
+    }
+
+    let arches: &[&str] = match platform {
+        "android" => &["armeabi-v7a", "arm64-v8a", "x86_64"],
+        "openwrt" => &["mipsel_24kc", "aarch64"],
+        "windows" => &["x86_64", "aarch64"],
+        "linux" => &["x86_64"],
+        "macos" => &["x86_64", "arm64"],
+        "ios" => &["arm64", "armv7", "x86_64"],
+        _ => &[],
+    };
+
+    arches.iter().map(|arch| (*arch).to_string()).collect()
+}
+
+/// The toolchain passed to the in-container ccgo. The `all` image installs both
+/// MinGW and the xwin-based MSVC toolchain, so the host selection is forwarded
+/// unchanged.
+fn toolchain_arg(options: &BuildOptions) -> String {
+    if options.target != BuildTarget::Windows {
+        return String::new();
+    }
+    format!(" --toolchain {}", options.toolchain)
+}
+
+/// Explicit architectures, or the platform's default set.
+fn arch_arg(options: &BuildOptions, default: Option<&str>) -> String {
+    if !options.architectures.is_empty() {
+        format!(" --arch {}", options.architectures.join(","))
+    } else {
+        default
+            .map(|arch| format!(" --arch {arch}"))
+            .unwrap_or_default()
+    }
+}
+
+/// Flags shared by every in-container `ccgo build` invocation.
+fn option_args(options: &BuildOptions) -> String {
+    let mut args: Vec<String> = Vec::new();
+    if options.release {
+        args.push("--release".to_string());
+    }
+    if let Some(profile) = &options.profile_name {
+        args.push(format!("--profile {profile}"));
+    }
+    if let Some(sanitizer) = &options.sanitizer {
+        args.push(
+            match sanitizer {
+                crate::builder::sanitizer::SanitizerKind::Address => "--asan",
+                crate::builder::sanitizer::SanitizerKind::Thread => "--tsan",
+            }
+            .to_string(),
+        );
+    }
+    append_feature_args(&mut args, options);
+    if matches!(options.target, BuildTarget::Android | BuildTarget::Ohos) {
+        if let Some(stl) = &options.stl {
+            args.push(format!("--stl {stl}"));
+        }
+    }
+    if let Some(jobs) = options.jobs {
+        args.push(format!("--jobs {jobs}"));
+    }
+    if options.native_only && !matches!(options.target, BuildTarget::Android | BuildTarget::Ohos) {
+        args.push("--native-only".to_string());
+    }
+    if options.no_fetch {
+        args.push("--no-fetch".to_string());
+    }
+    if options.verbose {
+        args.push("--verbose".to_string());
+    }
+    if options.ide_project {
+        args.push("--ide-project".to_string());
+    }
+    if let Some(cache) = &options.cache {
+        if cache != "auto" {
+            args.push(format!("--cache {cache}"));
+        }
+    }
+    append_linkage_args(&mut args, options);
+    if args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", args.join(" "))
+    }
+}
+
+fn append_feature_args(args: &mut Vec<String>, options: &BuildOptions) {
+    if !options.features.is_empty() {
+        args.push(format!("--features {}", options.features.join(",")));
+    }
+    if !options.use_default_features {
+        args.push("--no-default-features".to_string());
+    }
+    if options.all_features {
+        args.push("--all-features".to_string());
+    }
+    if !options.variants.is_empty() {
+        args.push(format!("--variant {}", options.variants.join(",")));
+    }
+}
+
+fn append_linkage_args(args: &mut Vec<String>, options: &BuildOptions) {
+    if let Some(value) = &options.linkage_default {
+        args.push(format!("--linkage {value}"));
+    }
+    let mut overrides: Vec<_> = options.linkage_overrides.iter().collect();
+    overrides.sort_by_key(|(name, _)| *name);
+    for (name, value) in overrides {
+        args.push(format!("--linkage {name}={value}"));
+    }
+    if let Some(value) = &options.linkage_on_shared_default {
+        args.push(format!("--linkage-on-shared {value}"));
+    }
+    let mut shared: Vec<_> = options.linkage_on_shared_overrides.iter().collect();
+    shared.sort_by_key(|(name, _)| *name);
+    for (name, value) in shared {
+        args.push(format!("--linkage-on-shared {name}={value}"));
+    }
+    if let Some(value) = &options.linkage_on_static_default {
+        args.push(format!("--linkage-on-static {value}"));
+    }
+    let mut r#static: Vec<_> = options.linkage_on_static_overrides.iter().collect();
+    r#static.sort_by_key(|(name, _)| *name);
+    for (name, value) in r#static {
+        args.push(format!("--linkage-on-static {name}={value}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docker_options_forward_release_and_build_mode() {
+        let mut options = BuildOptions {
+            target: BuildTarget::Windows,
+            release: true,
+            ..Default::default()
+        };
+        assert!(option_args(&options).contains("--release"));
+
+        options.release = false;
+        assert!(!option_args(&options).contains("--release"));
+
+        options.profile_name = Some("ci".into());
+        options.sanitizer = Some(crate::builder::sanitizer::SanitizerKind::Address);
+        options.features = vec!["networking".into()];
+        options.variants = vec!["oversea".into()];
+        options.jobs = Some(4);
+        let args = option_args(&options);
+        assert!(args.contains("--profile ci"));
+        assert!(args.contains("--asan"));
+        assert!(args.contains("--features networking"));
+        assert!(args.contains("--variant oversea"));
+        assert!(args.contains("--jobs 4"));
+    }
+
+    #[test]
+    fn docker_forwards_toolchain_selection_unchanged() {
+        let mut options = BuildOptions {
+            target: BuildTarget::Windows,
+            ..Default::default()
+        };
+        assert_eq!(toolchain_arg(&options), " --toolchain all");
+
+        options.toolchain = WindowsToolchain::Mingw;
+        assert_eq!(toolchain_arg(&options), " --toolchain mingw");
+
+        options.toolchain = WindowsToolchain::Msvc;
+        assert_eq!(toolchain_arg(&options), " --toolchain msvc");
+
+        options.target = BuildTarget::Linux;
+        assert_eq!(toolchain_arg(&options), "");
+    }
+
+    #[test]
+    fn windows_toolchain_selects_matching_docker_image() {
+        let mut options = BuildOptions {
+            target: BuildTarget::Windows,
+            ..Default::default()
+        };
+        let all = PlatformDockerConfig::for_platform(&options).unwrap();
+        assert_eq!(all.image_name, "ccgo-builder-windows-all");
+        assert_eq!(all.dockerfile, "Dockerfile.windows-all");
+
+        options.toolchain = WindowsToolchain::Mingw;
+        let mingw = PlatformDockerConfig::for_platform(&options).unwrap();
+        assert_eq!(mingw.image_name, "ccgo-builder-windows-mingw");
+
+        options.toolchain = WindowsToolchain::Msvc;
+        let msvc = PlatformDockerConfig::for_platform(&options).unwrap();
+        assert_eq!(msvc.image_name, "ccgo-builder-windows-msvc");
+    }
+
+    #[test]
+    fn docker_arch_uses_explicit_values_or_platform_defaults() {
+        let mut options = BuildOptions {
+            target: BuildTarget::Android,
+            architectures: vec!["arm64-v8a".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            arch_arg(&options, Some("arm64-v8a,x86_64")),
+            " --arch arm64-v8a"
+        );
+
+        options.architectures.clear();
+        assert_eq!(
+            arch_arg(&options, Some("arm64-v8a,x86_64")),
+            " --arch arm64-v8a,x86_64"
+        );
+        assert_eq!(arch_arg(&options, None), "");
+    }
+
+    #[test]
+    fn docker_options_forward_linkage_and_ide_flags() {
+        use crate::config::Linkage;
+        let mut options = BuildOptions {
+            target: BuildTarget::Linux,
+            ide_project: true,
+            ..Default::default()
+        };
+        options.linkage_default = Some(Linkage::SharedExternal);
+        options
+            .linkage_overrides
+            .insert("leaf".into(), Linkage::StaticEmbedded);
+        options.no_fetch = true;
+        options.verbose = true;
+        let args = option_args(&options);
+        assert!(args.contains("--ide-project"));
+        assert!(args.contains("--no-fetch"));
+        assert!(args.contains("--verbose"));
+        assert!(args.contains("--linkage shared-external"));
+        assert!(args.contains("--linkage leaf=static-embedded"));
+    }
+
+    #[test]
+    fn docker_options_forward_android_stl_only_for_android_ohos() {
+        let mut options = BuildOptions {
+            target: BuildTarget::Android,
+            stl: Some("c++_static".into()),
+            ..Default::default()
+        };
+        assert!(option_args(&options).contains("--stl c++_static"));
+
+        options.target = BuildTarget::Windows;
+        assert!(!option_args(&options).contains("--stl"));
     }
 }

@@ -775,7 +775,7 @@ min_deployment_target = "12.0"
 enable_bitcode = false
 
 [windows]
-toolchain = "auto"
+toolchain = "all"
 msvc_runtime = "dynamic"
 
 [[examples]]

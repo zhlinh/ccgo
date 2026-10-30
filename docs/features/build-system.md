@@ -458,9 +458,9 @@ ccgo build windows --toolchain mingw
 - Better cross-compilation support
 - Compatible with Docker builds
 
-**Auto (Both):**
+**All (Both):**
 ```bash
-ccgo build windows --toolchain auto  # default
+ccgo build windows --toolchain all  # default
 ```
 
 ### Platform Toolchains
@@ -470,7 +470,7 @@ ccgo build windows --toolchain auto  # default
 | Android | NDK (Clang) | - |
 | iOS | Xcode (Clang) | - |
 | macOS | Xcode (Clang) | - |
-| Windows | MSVC | MinGW |
+| Windows | MSVC + MinGW | MSVC or MinGW (single) |
 | Linux | GCC | Clang |
 | OpenHarmony | OHOS SDK | - |
 
@@ -500,7 +500,9 @@ ccgo build linux --docker
 |----------|-----------|------|----------|
 | Android | `ccgo-builder-android` | ~3.5GB | SDK, NDK, CMake |
 | iOS/macOS/watchOS/tvOS | `ccgo-builder-apple` | ~2.5GB | OSXCross, SDKs |
-| Windows | `ccgo-builder-windows` | ~1.2GB | MinGW-w64, CMake |
+| Windows (all) | `ccgo-builder-windows-all` | ~4.5GB | MinGW-w64, MSVC (xwin), CMake |
+| Windows (MinGW) | `ccgo-builder-windows-mingw` | ~1.2GB | MinGW-w64, CMake |
+| Windows (MSVC) | `ccgo-builder-windows-msvc` | ~2.5GB | Clang, xwin, CMake |
 | Linux | `ccgo-builder-linux` | ~800MB | GCC, Clang, CMake |
 
 ### Docker Build Flow

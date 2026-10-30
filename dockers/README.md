@@ -7,7 +7,8 @@ This directory contains Dockerfiles for cross-platform builds using Docker conta
 - **Linux** (`Dockerfile.linux`) - Ubuntu + GCC/Clang (glibc)
 - **OpenWrt** (`Dockerfile.openwrt`) - Ubuntu + musl-libc cross-compilers (mipsel_24kc, mips_24kc, arm_cortex_a7, aarch64)
 - **Windows MinGW** (`Dockerfile.windows-mingw`) - Ubuntu + MinGW-w64 cross-compiler
-- **Windows MSVC** (`Dockerfile.windows-msvc`) - Windows Server Core + Visual Studio Build Tools
+- **Windows MSVC** (`Dockerfile.windows-msvc`) - Ubuntu + LLVM + xwin (MSVC ABI)
+- **Windows All** (`Dockerfile.windows-all`) - Both MinGW-w64 and MSVC (xwin) toolchains (default)
 - **Apple Platforms** (`Dockerfile.apple`) - Ubuntu + OSXCross for macOS/iOS/tvOS/watchOS
 - **Android** (`Dockerfile.android`) - Ubuntu + Android SDK/NDK
 
@@ -66,6 +67,7 @@ The `pip3 install ccgo` command installs a **pre-built Rust binary** packaged as
 Prebuilt Docker images are available from GitHub Container Registry (GHCR):
 - `ghcr.io/zhlinh/ccgo-builder-linux:latest`
 - `ghcr.io/zhlinh/ccgo-builder-openwrt:latest`
+- `ghcr.io/zhlinh/ccgo-builder-windows-all:latest`
 - `ghcr.io/zhlinh/ccgo-builder-windows-mingw:latest`
 - `ghcr.io/zhlinh/ccgo-builder-windows-msvc:latest`
 - `ghcr.io/zhlinh/ccgo-builder-apple:latest`
@@ -78,6 +80,8 @@ The first Docker build will pull these prebuilt images (3-20x faster than buildi
 - Linux: ~800MB
 - OpenWrt: ~1.5GB
 - Windows MinGW: ~1.2GB
+- Windows MSVC: ~2.5GB
+- Windows All: ~4.5GB
 - Apple (macOS/iOS/tvOS/watchOS): ~2.5GB
 - Android: ~3.5GB
 

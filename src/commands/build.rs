@@ -252,15 +252,15 @@ impl LinkType {
 }
 
 /// Windows toolchain selection
-#[derive(Debug, Clone, Default, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum WindowsToolchain {
     /// MSVC toolchain
     Msvc,
     /// MinGW toolchain
     Mingw,
-    /// Auto-detect (both)
+    /// Build every available toolchain (default)
     #[default]
-    Auto,
+    All,
 }
 
 impl std::fmt::Display for WindowsToolchain {
@@ -268,7 +268,7 @@ impl std::fmt::Display for WindowsToolchain {
         match self {
             WindowsToolchain::Msvc => write!(f, "msvc"),
             WindowsToolchain::Mingw => write!(f, "mingw"),
-            WindowsToolchain::Auto => write!(f, "auto"),
+            WindowsToolchain::All => write!(f, "all"),
         }
     }
 }
@@ -430,8 +430,13 @@ pub struct BuildCommand {
     #[arg(long)]
     pub native_only: bool,
 
-    /// Windows toolchain selection
-    #[arg(long, value_enum, default_value_t = WindowsToolchain::Auto)]
+    /// Windows toolchain selection.
+    ///
+    /// `all` (default) builds every toolchain installed on the host. `msvc`
+    /// and `mingw` select a single toolchain and fail if it is unavailable.
+    /// Docker builds use MinGW only, since the MSVC image needs a ccgo build
+    /// with xwin support.
+    #[arg(long, value_enum, default_value_t = WindowsToolchain::All)]
     pub toolchain: WindowsToolchain,
 
     /// Development mode: use pre-built ccgo binary from GitHub releases in Docker builds
@@ -776,9 +781,10 @@ impl BuildCommand {
             release: self.release,
             stl: self.stl.as_ref().map(|s| s.as_str().to_string()),
             native_only: self.native_only,
-            toolchain: self.toolchain.clone(),
+            toolchain: self.toolchain,
             verbose,
             dev: self.dev,
+            no_fetch: self.no_fetch,
             features: self.features.clone(),
             variants: self.variant.clone(),
             use_default_features: !self.no_default_features,
@@ -1346,6 +1352,49 @@ mod tests {
         assert!(command.release);
         assert!(!command.native_only);
         assert_eq!(command.stl, Some(StlKind::CxxStatic));
+    }
+
+    #[test]
+    fn toolchain_defaults_to_all_and_parses_explicit_values() {
+        #[derive(clap::Parser)]
+        struct BuildArgs {
+            #[command(flatten)]
+            build: BuildCommand,
+        }
+
+        let default = <BuildArgs as clap::Parser>::try_parse_from(["ccgo", "windows"])
+            .unwrap()
+            .build
+            .toolchain;
+        assert_eq!(default, WindowsToolchain::All);
+
+        for (value, expected) in [
+            ("all", WindowsToolchain::All),
+            ("msvc", WindowsToolchain::Msvc),
+            ("mingw", WindowsToolchain::Mingw),
+        ] {
+            let parsed = <BuildArgs as clap::Parser>::try_parse_from([
+                "ccgo",
+                "windows",
+                "--toolchain",
+                value,
+            ])
+            .unwrap()
+            .build
+            .toolchain;
+            assert_eq!(parsed, expected, "--toolchain {value}");
+        }
+
+        assert!(
+            <BuildArgs as clap::Parser>::try_parse_from([
+                "ccgo",
+                "windows",
+                "--toolchain",
+                "auto"
+            ])
+            .is_err(),
+            "`auto` must no longer be accepted"
+        );
     }
 
     #[test]

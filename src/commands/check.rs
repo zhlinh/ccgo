@@ -57,7 +57,7 @@ impl CheckCommand {
             ide_project: false,
             release: self.release,
             native_only: true,
-            toolchain: crate::commands::build::WindowsToolchain::Auto,
+            toolchain: crate::commands::build::WindowsToolchain::All,
             verbose,
             dev: false,
             features: self.features.clone(),

@@ -60,22 +60,21 @@ g++ --version
 
 ### Option 2: Docker Build (Any OS)
 
-Build Windows libraries on Linux or macOS using Docker with MinGW.
+Build Windows libraries on Linux or macOS using Docker with MinGW and/or MSVC (clang + xwin).
 
 **Required:**
 - Docker Desktop installed and running
-- 5GB+ disk space for Docker image
+- 6GB+ disk space for the all-toolchain image
 
 **Advantages:**
 - Build on any operating system
 - No Windows license required
 - Consistent build environment
-- MinGW-w64 cross-compilation
+- MinGW-w64 and MSVC-ABI cross-compilation
 
 **Limitations:**
-- MinGW only (no MSVC)
 - Cannot run/test Windows apps
-- Larger initial download (~1.2GB image)
+- Larger initial download (~4.5GB for `all`, ~1.2GB for `mingw`, ~2.5GB for `msvc`)
 
 See [Docker Builds](#docker-builds) section for details.
 
@@ -87,13 +86,13 @@ See [Docker Builds](#docker-builds) section for details.
 # Build for x64 with default toolchain
 ccgo build windows
 
-# Build with Docker (MinGW cross-compile)
+# Build with Docker (both toolchains)
 ccgo build windows --docker
 
 # Specify toolchain
 ccgo build windows --toolchain msvc      # MSVC (Windows only)
 ccgo build windows --toolchain mingw     # MinGW
-ccgo build windows --toolchain auto      # Both toolchains (default)
+ccgo build windows --toolchain all       # Both toolchains (default)
 
 # Specify architecture
 ccgo build windows --arch x86            # 32-bit
@@ -309,7 +308,8 @@ int main() {
 
 ## Docker Builds
 
-Build Windows libraries on any OS using Docker with MinGW:
+Build Windows libraries on any OS using Docker. The default `all` image
+contains both the MinGW-w64 and MSVC (clang + xwin) toolchains.
 
 ### Prerequisites
 
@@ -324,26 +324,29 @@ docker ps
 ### Build with Docker
 
 ```bash
-# First build downloads prebuilt image (~1.2GB)
+# First build downloads the prebuilt all-toolchain image (~4.5GB)
 ccgo build windows --docker
+
+# Smaller single-toolchain images
+ccgo build windows --docker --toolchain mingw   # ~1.2GB
+ccgo build windows --docker --toolchain msvc    # ~2.5GB
 
 # Subsequent builds are fast
 ccgo build windows --docker --arch x64
 
-# All standard options work (MinGW only)
+# All standard options work
 ccgo build windows --docker --build-as static
 ```
 
 ### How It Works
 
-1. CCGO uses prebuilt `ccgo-builder-windows` image from Docker Hub
+1. CCGO pulls the prebuilt image matching `--toolchain` (`-all`, `-mingw`, or `-msvc`)
 2. Project directory mounted into container
-3. Build runs with MinGW-w64 cross-compiler
+3. Build runs with MinGW-w64 and/or clang + xwin for the MSVC ABI
 4. Output written to host filesystem
 
 ### Limitations
 
-- **MinGW only**: Cannot build with MSVC in Docker
 - **Cannot run**: No Windows runtime in Docker
 - **Cannot test**: Cannot execute Windows binaries
 
@@ -427,7 +430,7 @@ Build with both MSVC and MinGW:
 
 ```bash
 # Build both (default)
-ccgo build windows --toolchain auto
+ccgo build windows --toolchain all
 ```
 
 ### 2. Use Proper DLL Export

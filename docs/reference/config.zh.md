@@ -518,11 +518,11 @@ min_version = "10.15"  # 最小 macOS 部署目标
 
 ```toml
 [platforms.windows]
-toolchain = "auto"  # auto、msvc 或 mingw
+toolchain = "all"   # all、msvc 或 mingw
 ```
 
 工具链选项：
-- `"auto"`：使用 MSVC 和 MinGW 构建（默认）
+- `"all"`：使用 MSVC 和 MinGW 构建（默认）
 - `"msvc"`：仅 MSVC
 - `"mingw"`：仅 MinGW
 
@@ -558,7 +558,7 @@ min_version = "13.0"
 min_version = "10.15"
 
 [platforms.windows]
-toolchain = "auto"
+toolchain = "all"
 
 [platforms.linux]
 architectures = ["x86_64"]

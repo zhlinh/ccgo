@@ -155,7 +155,7 @@ ccgo build [OPTIONS] <TARGET>
 | `--ide-project` | 生成 IDE 项目文件（Xcode、Visual Studio 等）|
 | `--release` | 以发布模式构建（默认：调试）|
 | `--native-only` | 仅构建本地库，跳过 AAR/HAR 打包 |
-| `--toolchain <TOOL>` | Windows 工具链：`msvc`、`mingw`、`auto`（默认：`auto`）|
+| `--toolchain <TOOL>` | Windows 工具链：`msvc`、`mingw`、`all`（默认：`all`）|
 | `--dev` | 开发模式（在 Docker 中使用 GitHub 上的预构建 ccgo）|
 | `-F, --features <FEATURES>` | 启用特性（逗号分隔）|
 | `--no-default-features` | 禁用默认特性 |
