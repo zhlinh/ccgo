@@ -700,7 +700,7 @@ CMake 标志通过四个层次累积：
 ```toml
 [profile.sanitize]
 inherits  = "debug"
-link_type = "both"
+link_type = "all"
 
 [profile.sanitize.cmake]
 merge     = "extend"

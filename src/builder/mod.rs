@@ -130,7 +130,7 @@ impl Default for BuildOptions {
         Self {
             target: BuildTarget::Linux,
             architectures: Vec::new(),
-            link_type: LinkType::Both,
+            link_type: LinkType::All,
             stl: None,
             use_docker: false,
             auto_docker: false,
@@ -678,8 +678,15 @@ impl BuildContext {
     pub fn resolved_dep_linkages(
         &self,
         platform: &str,
+        consumer: LinkType,
     ) -> anyhow::Result<Vec<(String, crate::builder::linkage::ResolvedLinkage)>> {
         use crate::builder::linkage::{detect_dep_artifacts, resolve_linkage};
+
+        if consumer == LinkType::All {
+            anyhow::bail!(
+                "resolved_dep_linkages requires a concrete consumer (static or shared), got all"
+            );
+        }
 
         // Normalize platform to lowercase: artifact paths (.ccgo/deps/<name>/lib/<platform>/)
         // are always lowercase, but PlatformBuilder::platform_name() returns
@@ -718,7 +725,6 @@ impl BuildContext {
             }
         }
 
-        let consumer = self.options.link_type.preferred_single();
         let mut out = Vec::new();
         for dep in &self.config.dependencies {
             let dep_root = self.project_root.join(".ccgo/deps").join(&dep.name);
@@ -1298,6 +1304,33 @@ mod tests {
             resolved_profile: None,
             profile_name_override: None,
         }
+    }
+
+    #[test]
+    fn dependency_linkage_is_resolved_per_build_axis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dep_lib = tmp.path().join(".ccgo/deps/dep/lib/macos");
+        std::fs::create_dir_all(dep_lib.join("static")).unwrap();
+        std::fs::create_dir_all(dep_lib.join("shared")).unwrap();
+        std::fs::write(dep_lib.join("static/libdep.a"), b"x").unwrap();
+        std::fs::write(dep_lib.join("shared/libdep.dylib"), b"x").unwrap();
+
+        let config: CcgoConfig = toml::from_str(
+            "[package]\nname = \"demo\"\nversion = \"1.0.0\"\n\n[[dependencies]]\nname = \"dep\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+        let mut ctx = make_ctx(BuildOptions::default(), config);
+        ctx.project_root = tmp.path().to_path_buf();
+
+        let static_links = ctx
+            .resolved_dep_linkages("macos", LinkType::Static)
+            .unwrap();
+        assert_eq!(static_links[0].1.to_string(), "static-external");
+
+        let shared_links = ctx
+            .resolved_dep_linkages("macos", LinkType::Shared)
+            .unwrap();
+        assert_eq!(shared_links[0].1.to_string(), "shared-external");
     }
 
     fn bare_dep(name: &str) -> DependencyConfig {

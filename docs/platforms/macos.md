@@ -83,7 +83,7 @@ ccgo build macos --build-type release         # Release build (default)
 # Link types
 ccgo build macos --build-as static           # Static library/framework only
 ccgo build macos --build-as shared           # Dynamic library/framework only
-ccgo build macos --build-as both             # Both types (default)
+ccgo build macos --build-as all             # Both types (default)
 ```
 
 ### Build with Framework

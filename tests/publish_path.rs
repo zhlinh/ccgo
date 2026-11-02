@@ -90,7 +90,11 @@ fn doc_and_conan_accept_zipped_projects_and_preserve_original_archives() {
                     .env("PUBLISH_EXIT", exit_code)
                     .args(["publish", target, "--path"])
                     .arg(&archive)
-                    .args(if target == "conan" { vec!["--skip-build"] } else { vec![] })
+                    .args(if target == "conan" {
+                        vec!["--skip-build"]
+                    } else {
+                        vec![]
+                    })
                     .assert();
                 if exit_code == "0" {
                     result.success();
@@ -1024,6 +1028,289 @@ fn apple_maven_upload_and_private_specs_are_independent() {
     assert_eq!(fs::read(archive).unwrap(), original);
 }
 
+fn apple_publish_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::{Read, Write};
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("SDK.zip");
+    let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+    for (name, contents) in entries {
+        zip.start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(contents).unwrap();
+    }
+    zip.finish().unwrap();
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    bytes
+}
+
+fn uploaded_entry(path: &Path, name: &str) -> Vec<u8> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    let mut entry = zip.by_name(name).unwrap();
+    let mut bytes = Vec::new();
+    entry.read_to_end(&mut bytes).unwrap();
+    bytes
+}
+
+fn apple_upload_dir(root: &Path) -> std::path::PathBuf {
+    let dir = root.join("uploads");
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn apple_spm_defaults_to_both_linkages() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(
+        bin.join("gh"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$PUBLISH_CAPTURE\"\nif [ \"$2\" = upload ]; then\nfor arg in \"$@\"; do\ncase \"$arg\" in\n*.zip) cp \"$arg\" \"$PUBLISH_DIR/$(basename \"$arg\")\" ;;\nesac\ndone\nfi\n",
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        tmp.path().join("CCGO.toml"),
+        "[project]\nname='demo'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("Package.swift"),
+        "let package = Package(name: \"Demo\", targets: [.binaryTarget(name: \"Demo\", url: \"https://old/static.zip\", checksum: \"old\"), .binaryTarget(name: \"DemoShared\", url: \"https://old/shared.zip\", checksum: \"old\")])",
+    )
+    .unwrap();
+    let sdk = tmp.path().join("SDK.zip");
+    fs::write(
+        &sdk,
+        apple_publish_zip(&[
+            (
+                "lib/ios/static/Demo.xcframework/Info.plist",
+                b"static-fixture",
+            ),
+            (
+                "lib/ios/static/Demo.xcframework/ios-arm64/libdemo.a",
+                b"static-lib",
+            ),
+            (
+                "lib/ios/shared/Demo.xcframework/Info.plist",
+                b"shared-fixture",
+            ),
+            (
+                "lib/ios/shared/Demo.xcframework/ios-arm64/libdemo.dylib",
+                b"shared-lib",
+            ),
+        ]),
+    )
+    .unwrap();
+
+    let uploads = apple_upload_dir(tmp.path());
+    command_with_tools(tmp.path(), &bin, &tmp.path().join("args"))
+        .env("PUBLISH_DIR", &uploads)
+        .args([
+            "publish",
+            "apple",
+            "--manager",
+            "spm",
+            "--push",
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+            "--path",
+            "SDK.zip",
+            "--platform",
+            "ios",
+        ])
+        .assert()
+        .success();
+
+    let static_zip = uploads.join("demo-apple-1.0.0.zip");
+    let shared_zip = uploads.join("demo-apple-shared-1.0.0.zip");
+    assert_eq!(
+        uploaded_entry(&static_zip, "Demo.xcframework/Info.plist"),
+        b"static-fixture"
+    );
+    assert_eq!(
+        uploaded_entry(&shared_zip, "Demo.xcframework/Info.plist"),
+        b"shared-fixture"
+    );
+    let manifest = fs::read_to_string(
+        tmp.path()
+            .join("target/ccgo-publish/apple/1.0.0/Package.swift"),
+    )
+    .unwrap();
+    assert!(manifest.contains("demo-apple-1.0.0.zip"));
+    assert!(manifest.contains("demo-apple-shared-1.0.0.zip"));
+}
+
+#[test]
+fn apple_spm_single_target_manifest_uses_static_but_uploads_both() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(
+        bin.join("gh"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$PUBLISH_CAPTURE\"\nif [ \"$2\" = upload ]; then\nfor arg in \"$@\"; do\ncase \"$arg\" in\n*.zip) cp \"$arg\" \"$PUBLISH_DIR/$(basename \"$arg\")\" ;;\nesac\ndone\nfi\n",
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        tmp.path().join("CCGO.toml"),
+        "[project]\nname='demo'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("Package.swift"),
+        ".binaryTarget(name: \"Demo\", url: \"https://old/sdk.zip\", checksum: \"old\")",
+    )
+    .unwrap();
+    let sdk = tmp.path().join("SDK.zip");
+    fs::write(
+        &sdk,
+        apple_publish_zip(&[
+            (
+                "lib/ios/static/Demo.xcframework/Info.plist",
+                b"static-fixture",
+            ),
+            (
+                "lib/ios/shared/Demo.xcframework/Info.plist",
+                b"shared-fixture",
+            ),
+        ]),
+    )
+    .unwrap();
+
+    let uploads = apple_upload_dir(tmp.path());
+    command_with_tools(tmp.path(), &bin, &tmp.path().join("args"))
+        .env("PUBLISH_DIR", &uploads)
+        .args([
+            "publish",
+            "apple",
+            "--manager",
+            "spm",
+            "--push",
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+            "--path",
+            "SDK.zip",
+            "--platform",
+            "ios",
+        ])
+        .assert()
+        .success();
+
+    assert!(uploads.join("demo-apple-1.0.0.zip").exists());
+    assert!(uploads.join("demo-apple-shared-1.0.0.zip").exists());
+    let manifest = fs::read_to_string(
+        tmp.path()
+            .join("target/ccgo-publish/apple/1.0.0/Package.swift"),
+    )
+    .unwrap();
+    assert!(manifest.contains("demo-apple-1.0.0.zip"));
+    assert!(!manifest.contains("demo-apple-shared-1.0.0.zip"));
+}
+
+#[test]
+fn apple_cocoapods_publishes_static_and_shared_pods() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(
+        bin.join("gh"),
+        "#!/bin/sh\nif [ \"$2\" = upload ]; then for arg in \"$@\"; do case \"$arg\" in *.zip) cp \"$arg\" \"$PUBLISH_DIR/$(basename \"$arg\")\" ;; esac; done; fi\n",
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        bin.join("pod"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$PUBLISH_CAPTURE\"\nif [ \"$1\" = ipc ]; then\n  echo '{\"name\":\"Demo\",\"version\":\"1.0.0\",\"summary\":\"fixture\",\"dependencies\":{\"Dep\":\"~> 1.0\",\"Dep/Sub\":\"~> 2.0\",\"Alamofire\":\"~> 5.0\"}}'\nfi\n",
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("pod"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        tmp.path().join("CCGO.toml"),
+        "[project]\nname='demo'\nversion='1.0.0'\n\n[[dependencies]]\nname='Dep'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("Demo.podspec"), "fixture").unwrap();
+    let sdk = tmp.path().join("SDK.zip");
+    write_zip(
+        &sdk,
+        &[
+            (
+                "lib/ios/static/Demo.xcframework/Info.plist",
+                b"static-fixture",
+            ),
+            (
+                "lib/ios/shared/Demo.xcframework/Info.plist",
+                b"shared-fixture",
+            ),
+        ],
+    );
+    let uploads = tmp.path().join("uploads");
+    fs::create_dir(&uploads).unwrap();
+    let capture = tmp.path().join("pod-args");
+    command_with_tools(tmp.path(), &bin, &capture)
+        .env("PUBLISH_DIR", &uploads)
+        .args([
+            "publish",
+            "apple",
+            "--manager",
+            "cocoapods",
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+            "--path",
+            "SDK.zip",
+            "--platform",
+            "ios",
+            "--registry",
+            "private",
+            "--remote",
+            "company-specs",
+        ])
+        .assert()
+        .success();
+
+    let dir = tmp.path().join("target/ccgo-publish/apple/1.0.0");
+    let static_spec: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("demo-apple.podspec.json")).unwrap()).unwrap();
+    let shared_spec: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("demo-apple-shared.podspec.json")).unwrap())
+            .unwrap();
+
+    assert_eq!(static_spec["name"], "Demo");
+    assert_eq!(static_spec["static_framework"], true);
+    assert_eq!(static_spec["vendored_frameworks"], "Demo.xcframework");
+    assert_eq!(static_spec["dependencies"]["Dep"], "~> 1.0");
+    assert!(static_spec["source"]["http"]
+        .as_str()
+        .unwrap()
+        .ends_with("demo-apple-1.0.0.zip"));
+
+    assert_eq!(shared_spec["name"], "Demo-shared");
+    assert_eq!(shared_spec["module_name"], "Demo");
+    assert_eq!(shared_spec["static_framework"], false);
+    assert!(shared_spec["dependencies"].get("Dep").is_none());
+    assert_eq!(shared_spec["dependencies"]["Dep-shared"], "~> 1.0");
+    assert_eq!(shared_spec["dependencies"]["Dep-shared/Sub"], "~> 2.0");
+    assert_eq!(shared_spec["dependencies"]["Alamofire"], "~> 5.0");
+    assert!(shared_spec["source"]["http"]
+        .as_str()
+        .unwrap()
+        .ends_with("demo-apple-shared-1.0.0.zip"));
+
+    let args = fs::read_to_string(capture).unwrap();
+    assert_eq!(args.matches("repo\npush\ncompany-specs\n").count(), 2);
+}
+
 #[test]
 fn apple_github_generates_spm_wrapper_and_uploads_named_zip() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1128,7 +1415,7 @@ fn apple_invalid_spm_archive_fails_before_upload() {
 }
 
 #[test]
-fn spm_binary_without_push_does_not_upload_or_generate_manifests() {
+fn spm_binary_without_push_still_uploads_and_generates_manifests() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = tmp.path().join("bin");
     fs::create_dir(&bin).unwrap();
@@ -1163,11 +1450,14 @@ fn spm_binary_without_push_does_not_upload_or_generate_manifests() {
         ])
         .assert()
         .success()
-        .stdout(predicates::str::contains(
-            "No files generated or artifacts uploaded",
-        ));
-    assert!(!capture.exists());
-    assert!(!tmp.path().join("target/ccgo-publish").exists());
+        .stdout(predicates::str::contains("Generated manifests"));
+    let args = fs::read_to_string(capture).unwrap();
+    assert!(args.contains("upload"));
+    assert!(args.contains("v2.0.0"));
+    assert!(tmp
+        .path()
+        .join("target/ccgo-publish/apple/2.0.0/Package.swift")
+        .exists());
     assert_eq!(fs::read(archive).unwrap(), original);
     assert_eq!(
         fs::read_to_string(tmp.path().join("Package.swift")).unwrap(),

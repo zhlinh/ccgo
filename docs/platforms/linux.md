@@ -119,7 +119,7 @@ ccgo build linux --build-type release  # Release build (default)
 # Link types
 ccgo build linux --build-as static    # Static library only
 ccgo build linux --build-as shared    # Shared library only
-ccgo build linux --build-as both      # Both types (default)
+ccgo build linux --build-as all      # Both types (default)
 ```
 
 ### Generate CodeLite Project

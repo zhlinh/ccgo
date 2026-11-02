@@ -711,7 +711,7 @@ CMake flags accumulate through four layers:
 ```toml
 [profile.sanitize]
 inherits  = "debug"
-link_type = "both"
+link_type = "all"
 
 [profile.sanitize.cmake]
 merge     = "extend"

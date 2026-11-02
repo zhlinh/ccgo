@@ -97,7 +97,7 @@ ccgo build android --docker
 # Link type control
 ccgo build android --build-as static   # Static library only
 ccgo build android --build-as shared   # Shared library only
-ccgo build android --build-as both     # Both (default)
+ccgo build android --build-as all     # Both (default)
 ```
 
 ## Output Structure

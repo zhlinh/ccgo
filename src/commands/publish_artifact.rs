@@ -283,7 +283,19 @@ impl PreparedUpload {
             .artifact_id
             .clone()
             .unwrap_or_else(|| format!("{name}-{suffix}"));
-        coordinate(&artifact)?;
+        Self::prepare_with_artifact(command, config, &artifact, version, tag, scope)
+    }
+
+    /// Prepare an upload with an explicit artifact ID (used for `-shared` variants).
+    pub fn prepare_with_artifact(
+        command: &PublishCommand,
+        config: &toml::Value,
+        artifact: &str,
+        version: &str,
+        tag: &str,
+        scope: &str,
+    ) -> Result<Self> {
+        coordinate(artifact)?;
         coordinate(version)?;
         let archive_name = format!("{artifact}-{version}.zip");
         let (url, backend) = match command
@@ -293,14 +305,14 @@ impl PreparedUpload {
         {
             ArtifactProvider::Maven => {
                 let group = maven_group(command, config, scope)?;
-                maven_destination(command, config, &group, &artifact, version)?
+                maven_destination(command, config, &group, artifact, version)?
             }
             ArtifactProvider::Github => github_destination(command, tag, &archive_name)?,
         };
         Ok(Self {
             url,
             archive_name,
-            artifact,
+            artifact: artifact.to_owned(),
             version: version.to_owned(),
             config: config.clone(),
             backend,

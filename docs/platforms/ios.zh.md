@@ -82,7 +82,7 @@ ccgo build ios --build-type release           # Release 构建（默认）
 # 链接类型
 ccgo build ios --build-as static             # 仅静态框架
 ccgo build ios --build-as shared             # 仅动态框架
-ccgo build ios --build-as both               # 两种类型（默认）
+ccgo build ios --build-as all               # 两种类型（默认）
 ```
 
 ### 使用 XCFramework 构建

@@ -96,7 +96,7 @@ ccgo build ohos --build-type release    # Release build (default)
 # Link types
 ccgo build ohos --build-as static      # Static library only
 ccgo build ohos --build-as shared      # Shared library only
-ccgo build ohos --build-as both        # Both types (default)
+ccgo build ohos --build-as all        # Both types (default)
 
 # Generate HAR package
 ccgo build ohos --har                   # Creates .har package

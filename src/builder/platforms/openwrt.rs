@@ -177,7 +177,7 @@ impl OpenwrtBuilder {
         let toolchain = OpenwrtToolchain::detect_for_arch(openwrt_arch)?;
         let mut found_symbols = false;
 
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             let build_dir = self.build_link_type_for_arch(ctx, "static", arch, &toolchain)?;
             if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
                 let dest =
@@ -186,7 +186,7 @@ impl OpenwrtBuilder {
             }
         }
 
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             let build_dir = self.build_link_type_for_arch(ctx, "shared", arch, &toolchain)?;
             if let Some(lib_dir) = self.find_lib_dir(&build_dir) {
                 let dest =

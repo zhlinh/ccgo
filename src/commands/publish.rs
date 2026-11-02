@@ -145,6 +145,31 @@ impl std::fmt::Display for AppleManager {
     }
 }
 
+/// Apple binary linkage to publish.
+///
+/// Defaults to `all`, matching `ccgo build --build-as all`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, ValueEnum)]
+pub enum AppleLinkage {
+    /// Static XCFramework only
+    Static,
+    /// Shared XCFramework only; artifact names get a `-shared` suffix
+    Shared,
+    /// Static and shared (default)
+    #[default]
+    #[value(alias = "both")]
+    All,
+}
+
+impl std::fmt::Display for AppleLinkage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppleLinkage::Static => write!(f, "static"),
+            AppleLinkage::Shared => write!(f, "shared"),
+            AppleLinkage::All => write!(f, "all"),
+        }
+    }
+}
+
 /// Publish library to repository
 #[derive(Args, Debug)]
 pub struct PublishCommand {
@@ -233,6 +258,13 @@ pub struct PublishCommand {
     /// Apple platforms (for apple)
     #[arg(long)]
     pub platform: Option<String>,
+
+    /// Apple binary linkage to upload (default: all, matching the build default).
+    ///
+    /// Shared uploads use the `<artifact>-shared` artifact name so static and
+    /// dynamic binaries do not overwrite each other.
+    #[arg(long, value_enum, default_value_t = AppleLinkage::All)]
+    pub linkage: AppleLinkage,
 
     /// Allow warnings (for CocoaPods)
     #[arg(long, default_value_t = true)]
@@ -401,6 +433,9 @@ impl PublishCommand {
     pub fn execute(mut self, verbose: bool) -> Result<()> {
         self.validate_version_options()?;
         self.validate_registry_usage()?;
+        if self.linkage != AppleLinkage::All && !matches!(self.target, PublishTarget::Apple) {
+            bail!("--linkage is supported only for apple publishing");
+        }
         if matches!(self.target, PublishTarget::Apple)
             && matches!(self.manager, AppleManager::Spm | AppleManager::All)
         {
@@ -2085,6 +2120,7 @@ mod tests {
             manager: AppleManager::All,
             push: false,
             platform: None,
+            linkage: AppleLinkage::Static,
             allow_warnings: true,
             conan: Default::default(),
             profile: "default".into(),
@@ -2131,6 +2167,7 @@ mod tests {
             manager: AppleManager::All,
             push: false,
             platform: None,
+            linkage: AppleLinkage::Static,
             allow_warnings: true,
             conan: Default::default(),
             profile: "default".into(),

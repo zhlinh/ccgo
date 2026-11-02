@@ -384,7 +384,7 @@ impl PlatformBuilder for TvosBuilder {
         let mut built_link_types = Vec::new();
 
         // Build static libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             let (device_dir, sim_dir) = builder.build_link_type(ctx, "static", &architectures)?;
 
             // Create XCFramework
@@ -414,7 +414,7 @@ impl PlatformBuilder for TvosBuilder {
         }
 
         // Build shared libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             let (device_dir, sim_dir) = builder.build_link_type(ctx, "shared", &architectures)?;
 
             // Create XCFramework

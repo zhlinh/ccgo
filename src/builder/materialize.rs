@@ -24,7 +24,7 @@ use crate::config::Linkage;
 ///
 /// * `hint = Some(SharedExternal)` → `--build-as shared` (we need the dep's .so)
 /// * `hint = Some(StaticEmbedded)` or `Some(StaticExternal)` → `--build-as static`
-/// * `hint = None` → `--build-as both` (consumer hasn't decided; cover both axes)
+/// * `hint = None` → `--build-as all` (consumer hasn't decided; cover both axes)
 ///
 /// `consumer` is currently unused but kept in the signature for symmetry
 /// with `resolve_linkage`; future linkage modes (e.g. a pure-shared dep that
@@ -33,7 +33,7 @@ pub fn build_as_for_hint(_consumer: LinkType, hint: Option<Linkage>) -> LinkType
     match hint {
         Some(Linkage::SharedExternal) => LinkType::Shared,
         Some(Linkage::StaticEmbedded) | Some(Linkage::StaticExternal) => LinkType::Static,
-        None => LinkType::Both,
+        None => LinkType::All,
     }
 }
 
@@ -42,7 +42,7 @@ pub fn build_as_for_hint(_consumer: LinkType, hint: Option<Linkage>) -> LinkType
 /// is much cheaper than re-hashing every file's content while still
 /// catching the cases ccgo cares about (file added, edited, removed,
 /// renamed). For the build-as field we use the stable hand-written
-/// `Display` impl ("static" / "shared" / "both") rather than `Debug`,
+/// `Display` impl ("static" / "shared" / "all") rather than `Debug`,
 /// so future renames of the enum variants don't silently invalidate
 /// every cached fingerprint.
 ///
@@ -194,7 +194,7 @@ pub fn write_fingerprint(path: &Path, value: &str) -> Result<()> {
 /// because `CARGO_BIN_EXE_ccgo` is only injected for integration tests
 /// in `tests/`. Production passes `std::env::current_exe()?`.
 ///
-/// `consumer_link_type` is fixed at `LinkType::Both` deliberately: we
+/// `consumer_link_type` is fixed at `LinkType::All` deliberately: we
 /// build the worst-case artifact set so that regardless of whether the
 /// ultimate consumer links statically or dynamically, the artifacts the
 /// resolver needs are present. Threading the consumer's own link_type
@@ -211,7 +211,7 @@ pub fn materialize_source_deps_inner(
     cache_base: &Path,
 ) -> Result<()> {
     let platform_lc = platform.to_lowercase();
-    let consumer_link_type = LinkType::Both;
+    let consumer_link_type = LinkType::All;
 
     for (dep_name, hint) in dep_hints {
         let dep_root = project_root.join(".ccgo/deps").join(dep_name);
@@ -507,14 +507,14 @@ mod tests {
     /// Every test sweeps all three consumer variants so that the day
     /// `_consumer` becomes load-bearing, any per-consumer divergence
     /// fires a test failure here instead of silently shipping.
-    const ALL_CONSUMERS: [LinkType; 3] = [LinkType::Shared, LinkType::Static, LinkType::Both];
+    const ALL_CONSUMERS: [LinkType; 3] = [LinkType::Shared, LinkType::Static, LinkType::All];
 
     #[test]
     fn no_hint_means_build_both_for_every_consumer() {
         for consumer in ALL_CONSUMERS {
             assert_eq!(
                 build_as_for_hint(consumer.clone(), None),
-                LinkType::Both,
+                LinkType::All,
                 "consumer={consumer:?}"
             );
         }
@@ -562,7 +562,7 @@ mod tests {
         fs::write(dep.join("CCGO.toml"), "[project]\nname=\"leaf\"\n").unwrap();
         fs::write(dep.join("src/leaf.cc"), "int x() { return 1; }\n").unwrap();
 
-        let fp1 = compute_source_fingerprint(&dep, LinkType::Both).unwrap();
+        let fp1 = compute_source_fingerprint(&dep, LinkType::All).unwrap();
 
         // Modify the source. Use a different byte length so the size axis
         // alone discriminates the fingerprint — that keeps the test robust
@@ -570,7 +570,7 @@ mod tests {
         // mounts) where a quick rewrite could otherwise share an mtime.
         fs::write(dep.join("src/leaf.cc"), "int x() { return 42; }\n").unwrap();
 
-        let fp2 = compute_source_fingerprint(&dep, LinkType::Both).unwrap();
+        let fp2 = compute_source_fingerprint(&dep, LinkType::All).unwrap();
         assert_ne!(fp1, fp2, "fingerprint should change when src content changes");
     }
 
@@ -595,7 +595,7 @@ mod tests {
     fn fingerprint_errors_when_dep_root_does_not_exist() {
         let tmp = tempfile::TempDir::new().unwrap();
         let nonexistent = tmp.path().join("never-fetched");
-        let err = compute_source_fingerprint(&nonexistent, LinkType::Both).unwrap_err();
+        let err = compute_source_fingerprint(&nonexistent, LinkType::All).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("does not exist"),
@@ -681,7 +681,7 @@ mod tests {
         );
         // hint=None → driver picks build_as=Both → sidecar lives at the Both variant.
         let fp_expected =
-            fingerprint_path(cache_dir.path(), &consumer, "leaf", "macos", LinkType::Both);
+            fingerprint_path(cache_dir.path(), &consumer, "leaf", "macos", LinkType::All);
         assert!(
             fp_expected.exists(),
             "fingerprint sidecar should be persisted in cache dir after a successful spawn"
@@ -718,7 +718,7 @@ mod tests {
         let dep_root = make_synthetic_dep(&project, "leaf");
         let cache = tmp.path().join("cache");
 
-        let build_as = build_as_for_hint(LinkType::Both, None);
+        let build_as = build_as_for_hint(LinkType::All, None);
         let fp = compute_source_fingerprint(&dep_root, build_as.clone()).unwrap();
         write_fingerprint(
             &fingerprint_path(&cache, &project, "leaf", "macos", build_as.clone()),
@@ -757,7 +757,7 @@ mod tests {
         // Hint=None → driver picks build_as=Both, so write the sidecar
         // for that variant.
         write_fingerprint(
-            &fingerprint_path(&cache, &project, "leaf", "macos", LinkType::Both),
+            &fingerprint_path(&cache, &project, "leaf", "macos", LinkType::All),
             "stale-fingerprint-0000",
         )
         .unwrap();
@@ -798,7 +798,7 @@ mod tests {
 
         // The driver picks build_as=Both for hint=None, so the sidecar
         // it will write/read lives at the Both variant path.
-        let fp_path = fingerprint_path(&cache, &project, "leaf", "macos", LinkType::Both);
+        let fp_path = fingerprint_path(&cache, &project, "leaf", "macos", LinkType::All);
         assert!(
             !fp_path.exists(),
             "test setup invariant: no fingerprint sidecar yet"
@@ -834,7 +834,7 @@ mod tests {
         let dep_root = make_synthetic_dep(&project, "leaf");
         let cache = tmp.path().join("cache");
 
-        let build_as = build_as_for_hint(LinkType::Both, None);
+        let build_as = build_as_for_hint(LinkType::All, None);
         let fp = compute_source_fingerprint(&dep_root, build_as.clone()).unwrap();
         write_fingerprint(
             &fingerprint_path(&cache, &project, "leaf", "macos", build_as.clone()),

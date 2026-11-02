@@ -148,7 +148,7 @@ ccgo build [OPTIONS] <TARGET>
 | Option | Description |
 |--------|-------------|
 | `--arch <ARCH>` | Target architectures (comma-separated) |
-| `--build-as <TYPE>` | `static`, `shared`, or `both` (default: `both`) |
+| `--build-as <TYPE>` | `static`, `shared`, or `all` (default: `all`) |
 | `--docker` | Build using Docker container |
 | `--auto-docker` | Auto-detect and use Docker when native build not possible |
 | `-j, --jobs <N>` | Number of parallel build jobs |
@@ -803,6 +803,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 | `--url <URL>` | Custom registry URL (private only) |
 | `--skip-build` | Use existing build artifacts |
 | `--manager <MGR>` | Package manager (apple): cocoapods, spm, all |
+| `--linkage <TYPE>` | Apple artifact linkage: all (default), static, or shared (shared artifact gets a `-shared` suffix) |
 | `--push` | Push git tags (SPM only) |
 | `--remote-name <NAME>` | Git remote name (default: origin) |
 
@@ -820,6 +821,9 @@ ccgo publish apple --manager cocoapods
 
 # Publish to SPM with git push
 ccgo publish apple --manager spm --push
+
+# Publish the shared Apple XCFramework (artifact name gets -shared)
+ccgo publish apple --manager spm --linkage shared --push
 
 # Publish to private Maven
 ccgo publish android --registry private --url https://maven.example.com
