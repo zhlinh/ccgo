@@ -245,6 +245,12 @@ ccgo build kmp
 #     └── mylib.dll
 ```
 
+`ccgo build kmp` only builds targets that Kotlin/Native can produce on the
+current host. In a project with `kmp/gradlew`, `ccgo build all` builds KMP
+after every native platform and reuses the libraries those builds produced
+instead of rebuilding them. To produce KMP artifacts for another host family,
+run `ccgo build kmp` on that platform.
+
 ### Build Specific Platform
 
 ```bash

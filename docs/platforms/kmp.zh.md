@@ -245,6 +245,11 @@ ccgo build kmp
 #     └── mylib.dll
 ```
 
+`ccgo build kmp` 只构建当前宿主机上 Kotlin/Native 能产出的目标。项目存在
+`kmp/gradlew` 时，`ccgo build all` 会在所有原生平台构建完成后才构建 KMP，
+并直接复用这些平台产出的原生库，不再重复编译。需要其他宿主机家族的 KMP
+产物时，请到对应平台上执行 `ccgo build kmp`。
+
 ### 构建特定平台
 
 ```bash

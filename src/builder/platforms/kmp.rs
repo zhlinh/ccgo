@@ -11,6 +11,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
+use walkdir::WalkDir;
 
 use crate::builder::archive::ArchiveBuilder;
 use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
@@ -52,12 +53,20 @@ impl KmpBuilder {
         };
 
         // 1. Legacy pyccgo path: cmake_build/{Platform}/static/
-        let legacy_pyccgo = ctx.project_root.join("cmake_build").join(pyccgo_platform).join("static");
+        let legacy_pyccgo = ctx
+            .project_root
+            .join("cmake_build")
+            .join(pyccgo_platform)
+            .join("static");
         if Self::has_native_libs(&legacy_pyccgo) {
             return true;
         }
 
-        let mode = if ctx.options.release { "release" } else { "debug" };
+        let mode = if ctx.options.release {
+            "release"
+        } else {
+            "debug"
+        };
 
         // 2. New ccgo path: ccgo_build/{mode[-profile]}/{platform}/static/
         if ctx.ccgo_build_root.is_dir() {
@@ -78,26 +87,44 @@ impl KmpBuilder {
         }
 
         // 3. Legacy Rust ccgo path: cmake_build/{mode}/{platform}/static/
-        let legacy_rust = ctx.project_root.join("cmake_build").join(mode).join(platform).join("static");
+        let legacy_rust = ctx
+            .project_root
+            .join("cmake_build")
+            .join(mode)
+            .join(platform)
+            .join("static");
         Self::has_native_libs(&legacy_rust)
     }
 
-    /// Return true if `dir` contains at least one `.a` file or an `xcframework` bundle.
+    /// Return true if `dir` contains native libraries or an `xcframework` bundle.
+    ///
+    /// Layouts vary by platform and toolchain:
+    ///   `static/<arch>/out/libX.a`
+    ///   `static/<arch>/<toolchain>/out/libX.lib`
+    ///   `static/<device>/<arch>/out/libX.a`
+    ///   `static/xcframework`
     fn has_native_libs(dir: &std::path::Path) -> bool {
         if !dir.exists() {
             return false;
         }
-        let out_dir = dir.join("out");
-        if out_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&out_dir) {
-                for entry in entries.flatten() {
-                    if entry.path().extension().is_some_and(|e| e == "a") {
-                        return true;
-                    }
-                }
+
+        let extensions = ["a", "lib", "so", "dylib", "dll"];
+        for entry in WalkDir::new(dir).max_depth(6).into_iter().flatten() {
+            let path = entry.path();
+            if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extensions.contains(&extension))
+            {
+                return true;
+            }
+            if path.is_dir()
+                && path.file_name().and_then(|name| name.to_str()) == Some("xcframework")
+            {
+                return true;
             }
         }
-        dir.join("xcframework").exists()
+        false
     }
 
     /// Build native C/C++ libraries required for KMP cinterop
@@ -109,7 +136,7 @@ impl KmpBuilder {
     /// - Windows (on Windows)
     ///
     /// Skips platforms that already have native libraries built.
-/// Every KMP target group, in build order.
+    /// Every KMP target group, in build order.
     const ALL_TARGETS: &'static [&'static str] =
         &["android", "desktop", "ios", "macos", "linux", "windows"];
 
@@ -126,6 +153,20 @@ impl KmpBuilder {
             t.push("windows");
         }
         t
+    }
+
+    /// Map a KMP target group to the native platform that supplies its libraries.
+    fn native_platform_for(target: &str) -> &str {
+        if target != "desktop" {
+            return target;
+        }
+        if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(target_os = "linux") {
+            "linux"
+        } else {
+            "windows"
+        }
     }
 
     /// Target groups to build: `[kmp].targets` narrowed to what the host can
@@ -182,7 +223,7 @@ impl KmpBuilder {
         }
     }
 
-/// Gradle tasks for the selected targets.
+    /// Gradle tasks for the selected targets.
     fn gradle_task_list(ctx: &BuildContext) -> Result<Vec<&'static str>> {
         let selected = Self::selected_targets(ctx)?;
         let mut tasks = vec!["clean"];
@@ -212,7 +253,9 @@ impl KmpBuilder {
         // Get the current executable path to call ccgo
         let ccgo_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("ccgo"));
 
-        for platform in platforms {
+        for target in platforms {
+            let platform = Self::native_platform_for(target);
+
             // Check if native libraries already exist
             if self.native_libs_exist(ctx, platform) {
                 eprintln!(
@@ -783,5 +826,41 @@ mod target_tests {
     #[test]
     fn ohos_is_not_a_kmp_target() {
         assert!(KmpBuilder::selected_targets(&ctx("[kmp]\ntargets = [\"ohos\"]\n")).is_err());
+    }
+
+    #[test]
+    fn desktop_maps_to_the_host_native_platform() {
+        let expected = if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(target_os = "linux") {
+            "linux"
+        } else {
+            "windows"
+        };
+        assert_eq!(KmpBuilder::native_platform_for("desktop"), expected);
+        assert_eq!(KmpBuilder::native_platform_for("android"), "android");
+    }
+
+    #[test]
+    fn native_lib_detection_matches_current_layouts() {
+        let root = tempfile::tempdir().unwrap();
+        let static_dir = root.path().join("static");
+        std::fs::create_dir_all(static_dir.join("x86_64/out")).unwrap();
+        std::fs::write(static_dir.join("x86_64/out/libdemo.a"), b"x").unwrap();
+        assert!(KmpBuilder::has_native_libs(&static_dir));
+
+        let windows = tempfile::tempdir().unwrap();
+        let static_dir = windows.path().join("static");
+        std::fs::create_dir_all(static_dir.join("x86_64/mingw/out")).unwrap();
+        std::fs::write(static_dir.join("x86_64/mingw/out/demo.lib"), b"x").unwrap();
+        assert!(KmpBuilder::has_native_libs(&static_dir));
+
+        let apple = tempfile::tempdir().unwrap();
+        let static_dir = apple.path().join("static");
+        std::fs::create_dir_all(static_dir.join("xcframework")).unwrap();
+        assert!(KmpBuilder::has_native_libs(&static_dir));
+
+        let empty = tempfile::tempdir().unwrap();
+        assert!(!KmpBuilder::has_native_libs(empty.path()));
     }
 }
