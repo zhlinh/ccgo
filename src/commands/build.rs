@@ -587,12 +587,7 @@ impl BuildCommand {
         let missing: Vec<&str> = config
             .dependencies
             .iter()
-            .filter(|dep| {
-                !project_root
-                    .join(".ccgo/deps")
-                    .join(&dep.name)
-                    .exists()
-            })
+            .filter(|dep| !project_root.join(".ccgo/deps").join(&dep.name).exists())
             .map(|dep| dep.name.as_str())
             .collect();
 
@@ -1355,6 +1350,28 @@ mod tests {
     }
 
     #[test]
+    fn build_all_accepts_release_and_auto_docker() {
+        #[derive(clap::Parser)]
+        struct BuildArgs {
+            #[command(flatten)]
+            build: BuildCommand,
+        }
+
+        let command = <BuildArgs as clap::Parser>::try_parse_from([
+            "ccgo",
+            "all",
+            "--release",
+            "--auto-docker",
+        ])
+        .unwrap()
+        .build;
+
+        assert_eq!(command.target, BuildTarget::All);
+        assert!(command.release);
+        assert!(command.auto_docker);
+    }
+
+    #[test]
     fn toolchain_defaults_to_all_and_parses_explicit_values() {
         #[derive(clap::Parser)]
         struct BuildArgs {
@@ -1386,13 +1403,8 @@ mod tests {
         }
 
         assert!(
-            <BuildArgs as clap::Parser>::try_parse_from([
-                "ccgo",
-                "windows",
-                "--toolchain",
-                "auto"
-            ])
-            .is_err(),
+            <BuildArgs as clap::Parser>::try_parse_from(["ccgo", "windows", "--toolchain", "auto"])
+                .is_err(),
             "`auto` must no longer be accepted"
         );
     }
