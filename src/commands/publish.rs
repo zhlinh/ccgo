@@ -41,6 +41,9 @@ mod doc_artifact;
 #[path = "publish_conan.rs"]
 mod conan;
 
+#[path = "publish_windows_nuget.rs"]
+mod windows_nuget;
+
 #[path = "publish_index_destination.rs"]
 mod index_destination;
 
@@ -80,6 +83,8 @@ pub enum PublishTarget {
     Conan,
     /// Kotlin Multiplatform
     Kmp,
+    /// Windows (NuGet)
+    Windows,
     /// Documentation
     Doc,
     /// CCGO package (registry; index is a compatibility alias)
@@ -95,6 +100,7 @@ impl std::fmt::Display for PublishTarget {
             PublishTarget::Apple => write!(f, "apple"),
             PublishTarget::Conan => write!(f, "conan"),
             PublishTarget::Kmp => write!(f, "kmp"),
+            PublishTarget::Windows => write!(f, "windows"),
             PublishTarget::Doc => write!(f, "doc"),
             PublishTarget::Index => write!(f, "package"),
         }
@@ -133,6 +139,8 @@ pub enum AppleManager {
     /// Both
     #[default]
     All,
+    /// NuGet (Windows)
+    Nuget,
 }
 
 impl std::fmt::Display for AppleManager {
@@ -141,6 +149,7 @@ impl std::fmt::Display for AppleManager {
             AppleManager::Cocoapods => write!(f, "cocoapods"),
             AppleManager::Spm => write!(f, "spm"),
             AppleManager::All => write!(f, "all"),
+            AppleManager::Nuget => write!(f, "nuget"),
         }
     }
 }
@@ -185,8 +194,8 @@ pub struct PublishCommand {
     #[arg(long, value_enum, default_value_t = RegistryType::Local)]
     pub registry: RegistryType,
 
-    /// Private destination: URL for Android/KMP/OHOS Maven/OHPM; name of a
-    /// CocoaPods Specs, Conan, SPM or Index remote
+    /// Private destination: URL for Android/KMP/OHOS Maven/OHPM or a Windows
+    /// NuGet feed; name of a CocoaPods Specs, Conan, SPM or Index remote
     #[arg(long, visible_aliases = ["url", "remote-name"], value_name = "URL_OR_NAME")]
     pub remote: Option<String>,
 
@@ -247,7 +256,7 @@ pub struct PublishCommand {
     #[arg(short = 'y', long)]
     pub yes: bool,
 
-    /// Package manager (for apple)
+    /// Package manager (apple: cocoapods, spm, all; windows: nuget)
     #[arg(long, value_enum, default_value_t = AppleManager::All)]
     pub manager: AppleManager,
 
@@ -449,6 +458,16 @@ impl PublishCommand {
         {
             bail!("--pod-name/--shared-pod-name are supported only for apple publishing");
         }
+        if matches!(self.target, PublishTarget::Apple)
+            && matches!(self.manager, AppleManager::Nuget)
+        {
+            bail!("--manager nuget is supported only for windows publishing");
+        }
+        if matches!(self.target, PublishTarget::Windows)
+            && matches!(self.manager, AppleManager::Cocoapods | AppleManager::Spm)
+        {
+            bail!("Windows publishing supports --manager nuget only");
+        }
         if (self.pod_name.is_some() || self.shared_pod_name.is_some())
             && self.artifact_provider.is_none()
         {
@@ -492,6 +511,7 @@ impl PublishCommand {
             PublishTarget::Ohos => self.publish_ohos(verbose),
             PublishTarget::Kmp => self.publish_kmp(verbose),
             PublishTarget::Conan => self.publish_conan(verbose),
+            PublishTarget::Windows => windows_nuget::publish(self, verbose),
             PublishTarget::Apple => self.publish_apple(verbose),
             PublishTarget::Doc => self.publish_doc(verbose, temporary_input),
             PublishTarget::Index => self.publish_index(verbose),
@@ -501,7 +521,7 @@ impl PublishCommand {
     fn validate_version_options(&self) -> Result<()> {
         if (self.version.is_some() || self.tag.is_some())
             && !(matches!(self.target, PublishTarget::Doc) && self.artifact_provider.is_some())
-            && !matches!(self.target, PublishTarget::Index)
+            && !matches!(self.target, PublishTarget::Index | PublishTarget::Windows)
             && !(matches!(self.target, PublishTarget::Apple)
                 && (matches!(self.manager, AppleManager::Spm) || self.artifact_provider.is_some()))
         {
@@ -520,9 +540,10 @@ impl PublishCommand {
                 AppleManager::Spm => {
                     path.file_name().and_then(|s| s.to_str()) == Some("Package.swift")
                 }
-                AppleManager::All => false,
+                AppleManager::All | AppleManager::Nuget => false,
             },
             PublishTarget::Conan => matches!(extension, "py" | "zip"),
+            PublishTarget::Windows => matches!(extension, "zip" | "nupkg"),
             PublishTarget::Doc => matches!(extension, "yml" | "yaml" | "zip"),
         }
     }
@@ -631,6 +652,7 @@ impl PublishCommand {
             PublishTarget::Kmp => path,
             PublishTarget::Apple => self.validate_apple_directory(path)?,
             PublishTarget::Conan => Self::resolve_conan_directory(path, extracted)?,
+            PublishTarget::Windows => path,
             PublishTarget::Doc => Self::resolve_doc_directory(path, extracted)?,
             PublishTarget::Index => input::unique_file(&path, "zip", true)?,
         })

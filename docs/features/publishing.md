@@ -66,6 +66,11 @@ ccgo publish conan --registry local         # Conan local cache
 ccgo publish conan --registry official      # ConanCenter: PR guidance, no direct upload
 ccgo publish conan --registry private --remote myrepo
 
+# Publish Windows libraries to NuGet
+ccgo publish windows --manager nuget --registry local
+ccgo publish windows --manager nuget --registry official       # NUGET_API_KEY
+ccgo publish windows --manager nuget --registry private --remote https://feed.example/v3/index.json
+
 # Publish documentation
 ccgo publish doc --doc-branch gh-pages --doc-open
 ```
@@ -81,6 +86,7 @@ ccgo publish doc --doc-branch gh-pages --doc-open
 | Apple | CocoaPods lint / SPM wrapper validation | CocoaPods Trunk; SPM has no official upload | Private Specs repo / SPM Git remote | Configured name |
 | OHOS | `ohpm prepublish` validation | Official OHPM | Custom OHPM URL | URL |
 | Conan | Local Conan create/export | Unsupported (ConanCenter PR) | Conan remote name | Configured name |
+| Windows | Local `.nupkg` under `target/release/nuget/` | nuget.org (`NUGET_API_KEY`) | NuGet feed URL | URL |
 | Package / Index | Local index directory | Official CCGO index | Configured index name | Configured name |
 | Doc | GitHub Pages (no artifact provider) | Not used | Not used | Not used |
 
@@ -478,6 +484,51 @@ license = "MIT"
 homepage = "https://github.com/user/mylib"
 repository = "https://github.com/user/mylib"
 ```
+
+## Windows Publishing (NuGet)
+
+Build a release Windows SDK containing static and shared libraries, then pack
+it as a native NuGet package:
+
+```bash
+# Build (release, --build-as all) and create target/release/nuget/<id>.<version>.nupkg
+ccgo publish windows --manager nuget --registry local
+
+# Push to nuget.org (requires NUGET_API_KEY)
+ccgo publish windows --manager nuget --registry official
+
+# Push to a private feed
+ccgo publish windows --manager nuget --registry private \
+  --remote https://feed.example/v3/index.json
+```
+
+`--path` accepts a Windows SDK ZIP or an existing `.nupkg`. Without `--path`
+the command builds `windows --release --build-as all`; `--skip-build` with no
+path is rejected.
+
+The package contains:
+
+```text
+build/native/include/...                         # SDK headers
+build/native/lib/<Platform>/<toolchain>/static/  # .lib / .a
+build/native/lib/<Platform>/<toolchain>/shared/  # import libs
+build/native/<id>.props                          # include path
+build/native/<id>.targets                        # static/shared link selection
+runtimes/win-x64/native/*.dll
+runtimes/win-arm64/native/*.dll
+```
+
+MSBuild consumers select the linkage with `<id>Linkage`:
+
+```xml
+<PropertyGroup>
+  <logcommLinkage>shared</logcommLinkage> <!-- or static -->
+</PropertyGroup>
+```
+
+`--version` overrides the package version. The package ID comes from the
+project name; `--tag` is not used. Pushing requires the .NET SDK and
+`dotnet nuget push`.
 
 ## Conan Publishing
 

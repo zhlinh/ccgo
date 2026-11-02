@@ -549,6 +549,25 @@ impl BuildCommand {
             .map_err(|error| anyhow::anyhow!("Failed to prepare Android build: {error}"))
     }
 
+    /// Build the current project's release Windows SDK for publishing.
+    pub fn for_windows_publish() -> Result<Self> {
+        #[derive(clap::Parser)]
+        struct BuildArgs {
+            #[command(flatten)]
+            build: BuildCommand,
+        }
+
+        <BuildArgs as clap::Parser>::try_parse_from([
+            "ccgo",
+            "windows",
+            "--release",
+            "--build-as",
+            "all",
+        ])
+        .map(|parsed| parsed.build)
+        .map_err(|error| anyhow::anyhow!("Failed to prepare Windows build: {error}"))
+    }
+
     /// Build the current project's release KMP SDK for publishing.
     pub fn for_kmp_publish() -> Result<Self> {
         #[derive(clap::Parser)]

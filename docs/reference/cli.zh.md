@@ -793,7 +793,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 
 ### 参数
 
-- `<PLATFORM>` - 要发布的平台：android、apple、ohos、conan、kmp、package、doc
+- `<PLATFORM>` - 要发布的平台：android、apple、ohos、conan、kmp、windows、package、doc
 
 ### 选项
 
@@ -802,7 +802,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 | `--registry <TYPE>` | 注册表：local、official、private |
 | `--url <URL>` | 自定义注册表 URL（仅 private）|
 | `--skip-build` | 使用现有构建产物 |
-| `--manager <MGR>` | 包管理器（apple）：cocoapods、spm、all |
+| `--manager <MGR>` | 包管理器：apple（cocoapods、spm、all）或 windows（nuget）|
 | `--linkage <TYPE>` | Apple 产物链接方式：all（默认）、static 或 shared（shared 产物名自动加 `-shared` 后缀）|
 | `--pod-name <NAME>` | 静态 CocoaPods pod 名称（默认：podspec 名）|
 | `--shared-pod-name <NAME>` | 动态 CocoaPods pod 名称（默认：`<pod-name>Shared`）|
