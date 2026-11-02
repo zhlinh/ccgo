@@ -804,6 +804,8 @@ ccgo publish [OPTIONS] <PLATFORM>
 | `--skip-build` | Use existing build artifacts |
 | `--manager <MGR>` | Package manager (apple): cocoapods, spm, all |
 | `--linkage <TYPE>` | Apple artifact linkage: all (default), static, or shared (shared artifact gets a `-shared` suffix) |
+| `--pod-name <NAME>` | Static CocoaPods pod name (default: podspec name) |
+| `--shared-pod-name <NAME>` | Dynamic CocoaPods pod name (default: `<pod-name>Shared`) |
 | `--push` | Push git tags (SPM only) |
 | `--remote-name <NAME>` | Git remote name (default: origin) |
 

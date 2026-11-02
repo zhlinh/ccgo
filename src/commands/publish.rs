@@ -266,6 +266,14 @@ pub struct PublishCommand {
     #[arg(long, value_enum, default_value_t = AppleLinkage::All)]
     pub linkage: AppleLinkage,
 
+    /// Override the static CocoaPods pod name (default: the podspec name).
+    #[arg(long, value_name = "NAME")]
+    pub pod_name: Option<String>,
+
+    /// Override the dynamic CocoaPods pod name (default: `<pod name>Shared`).
+    #[arg(long, value_name = "NAME")]
+    pub shared_pod_name: Option<String>,
+
     /// Allow warnings (for CocoaPods)
     #[arg(long, default_value_t = true)]
     pub allow_warnings: bool,
@@ -435,6 +443,16 @@ impl PublishCommand {
         self.validate_registry_usage()?;
         if self.linkage != AppleLinkage::All && !matches!(self.target, PublishTarget::Apple) {
             bail!("--linkage is supported only for apple publishing");
+        }
+        if (self.pod_name.is_some() || self.shared_pod_name.is_some())
+            && !matches!(self.target, PublishTarget::Apple)
+        {
+            bail!("--pod-name/--shared-pod-name are supported only for apple publishing");
+        }
+        if (self.pod_name.is_some() || self.shared_pod_name.is_some())
+            && self.artifact_provider.is_none()
+        {
+            bail!("--pod-name/--shared-pod-name require --artifact-provider");
         }
         if matches!(self.target, PublishTarget::Apple)
             && matches!(self.manager, AppleManager::Spm | AppleManager::All)
@@ -2121,6 +2139,8 @@ mod tests {
             push: false,
             platform: None,
             linkage: AppleLinkage::Static,
+            pod_name: None,
+            shared_pod_name: None,
             allow_warnings: true,
             conan: Default::default(),
             profile: "default".into(),
@@ -2168,6 +2188,8 @@ mod tests {
             push: false,
             platform: None,
             linkage: AppleLinkage::Static,
+            pod_name: None,
+            shared_pod_name: None,
             allow_warnings: true,
             conan: Default::default(),
             profile: "default".into(),
