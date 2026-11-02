@@ -427,13 +427,16 @@ impl DockerBuilder {
         Ok(())
     }
 
-    /// Remove the host output directory so stale artifacts are not collected.
+    /// Remove this platform's output directory so stale artifacts are not collected.
+    ///
+    /// Only the platform subdirectory is removed: `build all` runs Docker builds
+    /// concurrently with native builds, and deleting `target/release/` would wipe
+    /// other platforms' results.
     fn clean_output_dir(&self) -> Result<()> {
-        let target_platform_dir = self.ctx.output_dir.parent().unwrap();
-        if target_platform_dir.exists() {
-            std::fs::remove_dir_all(target_platform_dir)
+        if self.ctx.output_dir.exists() {
+            std::fs::remove_dir_all(&self.ctx.output_dir)
                 .context("Failed to clean target directory")?;
-            eprintln!("Cleaned up: {}", target_platform_dir.display());
+            eprintln!("Cleaned up: {}", self.ctx.output_dir.display());
         }
         Ok(())
     }
@@ -609,9 +612,8 @@ impl DockerBuilder {
         // 1. Check Docker
         self.check_docker()?;
 
-        // 2. Build/pull image
-        // FIXME: Temporarily disable prebuilt images to test new code
-        self.build_image(false)?;
+        // 2. Pull the prebuilt image, falling back to the embedded Dockerfile
+        self.build_image(true)?;
 
         // 3. Run build
         self.run_build()?;
