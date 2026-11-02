@@ -44,6 +44,9 @@ mod conan;
 #[path = "publish_windows_nuget.rs"]
 mod windows_nuget;
 
+#[path = "publish_vcpkg.rs"]
+mod vcpkg;
+
 #[path = "publish_index_destination.rs"]
 mod index_destination;
 
@@ -85,6 +88,8 @@ pub enum PublishTarget {
     Kmp,
     /// Windows (NuGet)
     Windows,
+    /// vcpkg (cross-platform C++ port)
+    Vcpkg,
     /// Documentation
     Doc,
     /// CCGO package (registry; index is a compatibility alias)
@@ -101,6 +106,7 @@ impl std::fmt::Display for PublishTarget {
             PublishTarget::Conan => write!(f, "conan"),
             PublishTarget::Kmp => write!(f, "kmp"),
             PublishTarget::Windows => write!(f, "windows"),
+            PublishTarget::Vcpkg => write!(f, "vcpkg"),
             PublishTarget::Doc => write!(f, "doc"),
             PublishTarget::Index => write!(f, "package"),
         }
@@ -512,6 +518,7 @@ impl PublishCommand {
             PublishTarget::Kmp => self.publish_kmp(verbose),
             PublishTarget::Conan => self.publish_conan(verbose),
             PublishTarget::Windows => windows_nuget::publish(self, verbose),
+            PublishTarget::Vcpkg => vcpkg::publish(self, verbose),
             PublishTarget::Apple => self.publish_apple(verbose),
             PublishTarget::Doc => self.publish_doc(verbose, temporary_input),
             PublishTarget::Index => self.publish_index(verbose),
@@ -521,7 +528,10 @@ impl PublishCommand {
     fn validate_version_options(&self) -> Result<()> {
         if (self.version.is_some() || self.tag.is_some())
             && !(matches!(self.target, PublishTarget::Doc) && self.artifact_provider.is_some())
-            && !matches!(self.target, PublishTarget::Index | PublishTarget::Windows)
+            && !matches!(
+            self.target,
+            PublishTarget::Index | PublishTarget::Windows | PublishTarget::Vcpkg
+        )
             && !(matches!(self.target, PublishTarget::Apple)
                 && (matches!(self.manager, AppleManager::Spm) || self.artifact_provider.is_some()))
         {
@@ -544,6 +554,7 @@ impl PublishCommand {
             },
             PublishTarget::Conan => matches!(extension, "py" | "zip"),
             PublishTarget::Windows => matches!(extension, "zip" | "nupkg"),
+            PublishTarget::Vcpkg => extension == "zip",
             PublishTarget::Doc => matches!(extension, "yml" | "yaml" | "zip"),
         }
     }
@@ -653,6 +664,7 @@ impl PublishCommand {
             PublishTarget::Apple => self.validate_apple_directory(path)?,
             PublishTarget::Conan => Self::resolve_conan_directory(path, extracted)?,
             PublishTarget::Windows => path,
+            PublishTarget::Vcpkg => path,
             PublishTarget::Doc => Self::resolve_doc_directory(path, extracted)?,
             PublishTarget::Index => input::unique_file(&path, "zip", true)?,
         })
