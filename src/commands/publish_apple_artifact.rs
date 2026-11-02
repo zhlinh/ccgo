@@ -260,6 +260,22 @@ fn write_podspec(
     Ok(path)
 }
 
+fn strip_shared_suffix(name: &str) -> &str {
+    name.strip_suffix("-shared")
+        .or_else(|| name.strip_suffix("_shared"))
+        .or_else(|| name.strip_suffix("Shared"))
+        .unwrap_or(name)
+}
+
+/// `Demo` -> `DemoShared`; `Dep/Sub` -> `DepShared/Sub`.
+fn shared_name(name: &str) -> String {
+    let (root, suffix) = match name.split_once('/') {
+        Some((root, subspec)) => (root, format!("/{subspec}")),
+        None => (name, String::new()),
+    };
+    format!("{}Shared{suffix}", strip_shared_suffix(root))
+}
+
 /// Which dependencies get a `-shared` suffix in the dynamic manifests.
 ///
 /// Defaults to every `[[dependencies]]` name (pod names are matched
@@ -324,13 +340,7 @@ fn rewrite_shared_dependencies(spec: &mut Value, policy: &SharedSuffixPolicy) {
         let renames: Vec<(String, String, Value)> = dependencies
             .iter()
             .filter(|(name, _)| !name.ends_with("-shared") && policy.should_suffix(name))
-            .map(|(name, requirement)| {
-                let shared = match name.split_once('/') {
-                    Some((root, subspec)) => format!("{root}-shared/{subspec}"),
-                    None => format!("{name}-shared"),
-                };
-                (name.clone(), shared, requirement.clone())
-            })
+            .map(|(name, requirement)| (name.clone(), shared_name(name), requirement.clone()))
             .collect();
         for (name, shared, requirement) in renames {
             dependencies.remove(&name);
@@ -344,10 +354,38 @@ fn rewrite_shared_dependencies(spec: &mut Value, policy: &SharedSuffixPolicy) {
     }
 }
 
+#[derive(Default)]
+struct ApplePodNames {
+    static_name: Option<String>,
+    shared_name: Option<String>,
+}
+
+impl ApplePodNames {
+    fn from_cli_and_config(command: &PublishCommand, config: &toml::Value) -> Self {
+        let apple = config
+            .get("publish")
+            .and_then(|publish| publish.get("apple"));
+        let configured = |key: &str| {
+            apple
+                .and_then(|apple| apple.get(key))
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+        };
+        Self {
+            static_name: command.pod_name.clone().or_else(|| configured("pod_name")),
+            shared_name: command
+                .shared_pod_name
+                .clone()
+                .or_else(|| configured("shared_pod_name")),
+        }
+    }
+}
+
 fn podspec_for(
     base: &Value,
     artifact: &AppleArtifact,
     policy: &SharedSuffixPolicy,
+    names: &ApplePodNames,
 ) -> Result<Value> {
     let mut spec = base.clone();
     let original_name = spec
@@ -355,22 +393,32 @@ fn podspec_for(
         .and_then(Value::as_str)
         .context("podspec must have a name")?
         .to_string();
-    let base_name = original_name
-        .strip_suffix("-shared")
-        .unwrap_or(&original_name);
+    let module_name = spec
+        .get("module_name")
+        .and_then(Value::as_str)
+        .unwrap_or(&original_name)
+        .to_string();
+    let default_static = strip_shared_suffix(&original_name).to_string();
+    let static_name = names
+        .static_name
+        .clone()
+        .unwrap_or_else(|| default_static.clone());
+    let shared_name = names
+        .shared_name
+        .clone()
+        .unwrap_or_else(|| format!("{static_name}Shared"));
 
     match artifact.linkage {
         AppleLinkage::Static => {
-            spec["name"] = serde_json::json!(base_name);
+            spec["name"] = serde_json::json!(static_name);
+            if static_name != module_name {
+                spec["module_name"] = serde_json::json!(module_name);
+            }
         }
         AppleLinkage::Shared => {
-            spec["name"] = serde_json::json!(format!("{base_name}-shared"));
+            spec["name"] = serde_json::json!(shared_name);
             // The XCFramework module keeps the original name; without this,
-            // CocoaPods would derive `Demo_shared` from the pod name.
-            let module_name = spec
-                .get("module_name")
-                .and_then(Value::as_str)
-                .unwrap_or(base_name);
+            // CocoaPods would derive the module from the shared pod name.
             spec["module_name"] = serde_json::json!(module_name);
         }
         AppleLinkage::All => unreachable!("podspecs are generated per artifact"),
@@ -803,10 +851,10 @@ fn rewrite_shared_spm_dependencies(text: &str, policy: &SharedSuffixPolicy) -> R
         }
         let rewritten = product_re.replace_all(block, |captures: &regex::Captures| {
             let dependency = &captures[2];
-            let shared = if dependency.ends_with("-shared") || !policy.should_suffix(dependency) {
+            let shared = if !policy.should_suffix(dependency) {
                 dependency.to_string()
             } else {
-                format!("{dependency}-shared")
+                shared_name(dependency)
             };
             format!("{}{}{}", &captures[1], shared, &captures[3])
         });
@@ -911,6 +959,7 @@ pub(super) fn publish(command: &PublishCommand, verbose: bool) -> Result<()> {
     let configuration: toml::Value =
         toml::from_str(&fs::read_to_string(project.join("CCGO.toml"))?)?;
     let suffix_policy = SharedSuffixPolicy::from_config(&configuration);
+    let pod_names = ApplePodNames::from_cli_and_config(command, &configuration);
     let release = apple_release(command, &configuration)?;
     let version = release.version.as_str();
     let temporary = tempfile::tempdir()?;
@@ -955,7 +1004,7 @@ pub(super) fn publish(command: &PublishCommand, verbose: bool) -> Result<()> {
     let mut podspecs = Vec::new();
     if let Some(base_spec) = &base_spec {
         for artifact in &artifacts {
-            let spec = podspec_for(base_spec, artifact, &suffix_policy)?;
+            let spec = podspec_for(base_spec, artifact, &suffix_policy, &pod_names)?;
             let path = write_podspec(&project, version, &artifact.artifact_id, &spec)?;
             podspecs.push((path, artifact.upload.url.clone()));
         }
@@ -983,6 +1032,56 @@ pub(super) fn publish(command: &PublishCommand, verbose: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn publish_command(args: &[&str]) -> PublishCommand {
+        let cli = <crate::cli::Cli as clap::Parser>::try_parse_from(args).unwrap();
+        match cli.command {
+            crate::cli::Commands::Publish(command) => *command,
+            _ => unreachable!("expected publish command"),
+        }
+    }
+
+    #[test]
+    fn pod_names_come_from_cli_then_config() {
+        let config: toml::Value = toml::from_str(
+            "[publish.apple]\npod_name = \"ConfigName\"\nshared_pod_name = \"ConfigShared\"\n",
+        )
+        .unwrap();
+
+        let from_config = ApplePodNames::from_cli_and_config(
+            &publish_command(&[
+                "ccgo",
+                "publish",
+                "apple",
+                "--artifact-provider",
+                "github",
+                "--github-repo",
+                "company/sdk",
+            ]),
+            &config,
+        );
+        assert_eq!(from_config.static_name.as_deref(), Some("ConfigName"));
+        assert_eq!(from_config.shared_name.as_deref(), Some("ConfigShared"));
+
+        let from_cli = ApplePodNames::from_cli_and_config(
+            &publish_command(&[
+                "ccgo",
+                "publish",
+                "apple",
+                "--artifact-provider",
+                "github",
+                "--github-repo",
+                "company/sdk",
+                "--pod-name",
+                "CliName",
+                "--shared-pod-name",
+                "CliShared",
+            ]),
+            &config,
+        );
+        assert_eq!(from_cli.static_name.as_deref(), Some("CliName"));
+        assert_eq!(from_cli.shared_name.as_deref(), Some("CliShared"));
+    }
+
     #[test]
     fn shared_suffix_policy_defaults_to_declared_dependencies() {
         let config: toml::Value = toml::from_str(
@@ -1016,7 +1115,7 @@ mod tests {
             exclude: BTreeSet::new(),
         };
         let updated = rewrite_shared_spm_dependencies(text, &policy).unwrap();
-        assert!(updated.contains(".product(name: \"Dep-shared\", package: \"dep\")"));
+        assert!(updated.contains(".product(name: \"DepShared\", package: \"dep\")"));
         assert_eq!(updated.matches(".product(name: \"Dep\",").count(), 1);
     }
 

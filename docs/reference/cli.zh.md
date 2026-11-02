@@ -804,6 +804,8 @@ ccgo publish [OPTIONS] <PLATFORM>
 | `--skip-build` | 使用现有构建产物 |
 | `--manager <MGR>` | 包管理器（apple）：cocoapods、spm、all |
 | `--linkage <TYPE>` | Apple 产物链接方式：all（默认）、static 或 shared（shared 产物名自动加 `-shared` 后缀）|
+| `--pod-name <NAME>` | 静态 CocoaPods pod 名称（默认：podspec 名）|
+| `--shared-pod-name <NAME>` | 动态 CocoaPods pod 名称（默认：`<pod-name>Shared`）|
 | `--push` | 推送 git 标签（仅 SPM）|
 | `--remote-name <NAME>` | Git 远程名称（默认：origin）|
 

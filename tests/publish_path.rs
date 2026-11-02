@@ -1295,17 +1295,57 @@ fn apple_cocoapods_publishes_static_and_shared_pods() {
         .unwrap()
         .ends_with("demo-apple-1.0.0.zip"));
 
-    assert_eq!(shared_spec["name"], "Demo-shared");
+    assert_eq!(shared_spec["name"], "DemoShared");
     assert_eq!(shared_spec["module_name"], "Demo");
     assert_eq!(shared_spec["static_framework"], false);
     assert!(shared_spec["dependencies"].get("Dep").is_none());
-    assert_eq!(shared_spec["dependencies"]["Dep-shared"], "~> 1.0");
-    assert_eq!(shared_spec["dependencies"]["Dep-shared/Sub"], "~> 2.0");
+    assert_eq!(shared_spec["dependencies"]["DepShared"], "~> 1.0");
+    assert_eq!(shared_spec["dependencies"]["DepShared/Sub"], "~> 2.0");
     assert_eq!(shared_spec["dependencies"]["Alamofire"], "~> 5.0");
     assert!(shared_spec["source"]["http"]
         .as_str()
         .unwrap()
         .ends_with("demo-apple-shared-1.0.0.zip"));
+
+    // CLI overrides for both pod names.
+    let uploads2 = tmp.path().join("uploads2");
+    fs::create_dir(&uploads2).unwrap();
+    let capture2 = tmp.path().join("pod-args2");
+    command_with_tools(tmp.path(), &bin, &capture2)
+        .env("PUBLISH_DIR", &uploads2)
+        .args([
+            "publish",
+            "apple",
+            "--manager",
+            "cocoapods",
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+            "--path",
+            "SDK.zip",
+            "--platform",
+            "ios",
+            "--registry",
+            "private",
+            "--remote",
+            "company-specs",
+            "--pod-name",
+            "LogComm",
+            "--shared-pod-name",
+            "LogCommDynamic",
+        ])
+        .assert()
+        .success();
+    let static_spec: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("demo-apple.podspec.json")).unwrap()).unwrap();
+    let shared_spec: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("demo-apple-shared.podspec.json")).unwrap())
+            .unwrap();
+    assert_eq!(static_spec["name"], "LogComm");
+    assert_eq!(static_spec["module_name"], "Demo");
+    assert_eq!(shared_spec["name"], "LogCommDynamic");
+    assert_eq!(shared_spec["module_name"], "Demo");
 
     let args = fs::read_to_string(capture).unwrap();
     assert_eq!(args.matches("repo\npush\ncompany-specs\n").count(), 2);
