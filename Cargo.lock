@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "ccgo"
-version = "3.9.1"
+version = "3.9.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
