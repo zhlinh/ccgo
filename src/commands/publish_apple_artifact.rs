@@ -577,50 +577,69 @@ fn repackage_linkage(
 ) -> Result<String> {
     let mut source_zip = zip::ZipArchive::new(fs::File::open(source)?)?;
     let prefix = format!("lib/{platform}/{linkage}/");
-
-    let mut root: Option<String> = None;
-    for index in 0..source_zip.len() {
-        let name = source_zip.by_index(index)?.name().to_string();
-        let Some(rest) = name.strip_prefix(&prefix) else {
-            continue;
-        };
-        if let Some(first) = rest.split('/').next() {
-            if first.ends_with(".xcframework") {
-                root = Some(first.to_string());
-                break;
-            }
-        }
-    }
-    let root = root.with_context(|| {
+    let root = find_xcframework_root(&mut source_zip, &prefix)?.with_context(|| {
         format!("Apple SDK ZIP has no {prefix}<name>.xcframework; cannot package {linkage}")
     })?;
 
     let mut output_zip = zip::ZipWriter::new(fs::File::create(output)?);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    let root_prefix = format!("{prefix}{root}/");
+    copy_xcframework_entries(&mut source_zip, &mut output_zip, &prefix, &root, options)?;
+    output_zip.finish()?;
+    Ok(root)
+}
 
+fn find_xcframework_root(
+    source_zip: &mut zip::ZipArchive<fs::File>,
+    prefix: &str,
+) -> Result<Option<String>> {
+    for index in 0..source_zip.len() {
+        let name = source_zip.by_index(index)?.name().to_string();
+        let Some(rest) = name.strip_prefix(prefix) else {
+            continue;
+        };
+        if let Some(first) = rest.split('/').next() {
+            if first.ends_with(".xcframework") {
+                return Ok(Some(first.to_string()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn copy_xcframework_entries(
+    source_zip: &mut zip::ZipArchive<fs::File>,
+    output_zip: &mut zip::ZipWriter<fs::File>,
+    prefix: &str,
+    root: &str,
+    options: zip::write::SimpleFileOptions,
+) -> Result<()> {
+    let root_prefix = format!("{prefix}{root}/");
     for index in 0..source_zip.len() {
         let mut entry = source_zip.by_index(index)?;
         let name = entry.name().to_string();
         if !name.starts_with(&root_prefix) || entry.is_dir() {
             continue;
         }
-        let relative = name.strip_prefix(&prefix).unwrap();
-        if entry
-            .unix_mode()
-            .is_some_and(|mode| mode & 0o170000 == 0o120000)
-        {
+        let relative = name
+            .strip_prefix(prefix)
+            .expect("matched entries start with the prefix");
+        if is_symlink(&entry) {
             let mut target = String::new();
             std::io::Read::read_to_string(&mut entry, &mut target)?;
             output_zip.add_symlink(relative, target, options)?;
         } else {
             output_zip.start_file(relative, options)?;
-            std::io::copy(&mut entry, &mut output_zip)?;
+            std::io::copy(&mut entry, output_zip)?;
         }
     }
-    output_zip.finish()?;
-    Ok(root)
+    Ok(())
+}
+
+fn is_symlink(entry: &zip::read::ZipFile<'_>) -> bool {
+    entry
+        .unix_mode()
+        .is_some_and(|mode| mode & 0o170000 == 0o120000)
 }
 
 fn xcframework_path(archive: &Path) -> Result<String> {
@@ -677,49 +696,72 @@ fn prepare_artifacts(
 
     let mut artifacts = Vec::new();
     for linkage in linkages {
-        let artifact_id = artifact_id_for(&release.artifact, linkage);
-        let archive = temporary.join(format!("{artifact_id}-{}.zip", release.version));
-        let xcframework = match &nested {
-            Some((platform, _)) => Some(repackage_linkage(
-                source,
-                platform,
-                linkage_dir(linkage),
-                &archive,
-            )?),
-            None if source.is_dir() => {
-                zip_directory(source, &archive)?;
-                None
-            }
-            None => {
-                fs::copy(source, &archive).context("Failed to read Apple ZIP")?;
-                None
-            }
-        };
-        validate_apple_archive(&archive, spm)?;
-        let xcframework = match xcframework {
-            Some(path) => path,
-            None => xcframework_path(&archive)?,
-        };
-        let bytes = fs::read(&archive)?;
-        let checksum = format!("{:x}", Sha256::digest(&bytes));
-        let upload = PreparedUpload::prepare_with_artifact(
+        artifacts.push(prepare_artifact(
             command,
             configuration,
-            &artifact_id,
-            &release.version,
-            &release.release_tag,
-            "apple",
-        )?;
-        artifacts.push(AppleArtifact {
+            source,
+            temporary,
+            release,
+            spm,
+            nested.as_ref(),
             linkage,
-            artifact_id,
-            xcframework,
-            archive,
-            checksum,
-            upload,
-        });
+        )?);
     }
     Ok(artifacts)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_artifact(
+    command: &PublishCommand,
+    configuration: &toml::Value,
+    source: &Path,
+    temporary: &Path,
+    release: &AppleRelease,
+    spm: bool,
+    nested: Option<&(String, BTreeSet<AppleLinkage>)>,
+    linkage: AppleLinkage,
+) -> Result<AppleArtifact> {
+    let artifact_id = artifact_id_for(&release.artifact, linkage);
+    let archive = temporary.join(format!("{artifact_id}-{}.zip", release.version));
+    let xcframework = match nested {
+        Some((platform, _)) => Some(repackage_linkage(
+            source,
+            platform,
+            linkage_dir(linkage),
+            &archive,
+        )?),
+        None if source.is_dir() => {
+            zip_directory(source, &archive)?;
+            None
+        }
+        None => {
+            fs::copy(source, &archive).context("Failed to read Apple ZIP")?;
+            None
+        }
+    };
+    validate_apple_archive(&archive, spm)?;
+    let xcframework = match xcframework {
+        Some(path) => path,
+        None => xcframework_path(&archive)?,
+    };
+    let bytes = fs::read(&archive)?;
+    let checksum = format!("{:x}", Sha256::digest(&bytes));
+    let upload = PreparedUpload::prepare_with_artifact(
+        command,
+        configuration,
+        &artifact_id,
+        &release.version,
+        &release.release_tag,
+        "apple",
+    )?;
+    Ok(AppleArtifact {
+        linkage,
+        artifact_id,
+        xcframework,
+        archive,
+        checksum,
+        upload,
+    })
 }
 
 struct AppleRelease<'a> {
@@ -973,58 +1015,98 @@ pub(super) fn publish(command: &PublishCommand, verbose: bool) -> Result<()> {
         spm,
     )?;
     let (base_spec, swift) = load_apple_manifests(&project, version, pods, spm)?;
-    let target_count = swift
-        .as_ref()
-        .map(|text| binary_target_count(text))
-        .transpose()?;
-    let has_shared = artifacts
-        .iter()
-        .any(|artifact| artifact.linkage == AppleLinkage::Shared);
-    let swift = swift
-        .map(|text| {
-            let updated = if target_count.unwrap_or(0) <= 1 {
-                let chosen = artifacts
-                    .iter()
-                    .find(|artifact| artifact.linkage == AppleLinkage::Static)
-                    .unwrap_or(&artifacts[0]);
-                swift_manifest(&text, &chosen.upload.url, &chosen.checksum)?
-            } else if artifacts.len() == 1 {
-                swift_manifest_matching(&text, &artifacts[0])?
-            } else {
-                swift_manifest_pair(&text, &artifacts)?
-            };
-            if has_shared {
-                rewrite_shared_spm_dependencies(&updated, &suffix_policy)
-            } else {
-                Ok(updated)
-            }
-        })
-        .transpose()?;
+    let swift = prepare_swift_manifest(swift, &artifacts, &suffix_policy)?;
     let output = manifest_dir(&project, version)?;
-    let mut podspecs = Vec::new();
-    if let Some(base_spec) = &base_spec {
-        for artifact in &artifacts {
-            let spec = podspec_for(base_spec, artifact, &suffix_policy, &pod_names)?;
-            let path = write_podspec(&project, version, &artifact.artifact_id, &spec)?;
-            podspecs.push((path, artifact.upload.url.clone()));
-        }
-    }
+    let podspecs = write_podspecs(
+        &project,
+        version,
+        base_spec.as_ref(),
+        &artifacts,
+        &suffix_policy,
+        &pod_names,
+    )?;
     if let Some(swift) = swift.as_deref() {
         fs::write(output.join("Package.swift"), swift)?;
     }
-    for artifact in &artifacts {
+    upload_artifacts(&artifacts)?;
+    println!("Generated manifests: {}", output.display());
+    publish_podspecs(command, &project, &podspecs, verbose)?;
+    if spm {
+        println!("Commit the generated Package.swift to your SPM wrapper repository, then push its version tag.");
+    }
+    Ok(())
+}
+
+fn prepare_swift_manifest(
+    swift: Option<String>,
+    artifacts: &[AppleArtifact],
+    policy: &SharedSuffixPolicy,
+) -> Result<Option<String>> {
+    let Some(text) = swift else {
+        return Ok(None);
+    };
+    let target_count = binary_target_count(&text)?;
+    let has_shared = artifacts
+        .iter()
+        .any(|artifact| artifact.linkage == AppleLinkage::Shared);
+    let updated = if target_count <= 1 {
+        let chosen = artifacts
+            .iter()
+            .find(|artifact| artifact.linkage == AppleLinkage::Static)
+            .unwrap_or(&artifacts[0]);
+        swift_manifest(&text, &chosen.upload.url, &chosen.checksum)?
+    } else if artifacts.len() == 1 {
+        swift_manifest_matching(&text, &artifacts[0])?
+    } else {
+        swift_manifest_pair(&text, artifacts)?
+    };
+    let updated = if has_shared {
+        rewrite_shared_spm_dependencies(&updated, policy)?
+    } else {
+        updated
+    };
+    Ok(Some(updated))
+}
+
+fn write_podspecs(
+    project: &Path,
+    version: &str,
+    base_spec: Option<&Value>,
+    artifacts: &[AppleArtifact],
+    policy: &SharedSuffixPolicy,
+    names: &ApplePodNames,
+) -> Result<Vec<(PathBuf, String)>> {
+    let Some(base_spec) = base_spec else {
+        return Ok(Vec::new());
+    };
+    let mut podspecs = Vec::new();
+    for artifact in artifacts {
+        let spec = podspec_for(base_spec, artifact, policy, names)?;
+        let path = write_podspec(project, version, &artifact.artifact_id, &spec)?;
+        podspecs.push((path, artifact.upload.url.clone()));
+    }
+    Ok(podspecs)
+}
+
+fn upload_artifacts(artifacts: &[AppleArtifact]) -> Result<()> {
+    for artifact in artifacts {
         artifact.upload.upload(&artifact.archive)?;
         println!(
             "Apple binary URL: {}\nSHA-256: {}",
             artifact.upload.url, artifact.checksum
         );
     }
-    println!("Generated manifests: {}", output.display());
-    for (path, url) in &podspecs {
-        publish_podspec(command, &project, path, url, verbose)?;
-    }
-    if spm {
-        println!("Commit the generated Package.swift to your SPM wrapper repository, then push its version tag.");
+    Ok(())
+}
+
+fn publish_podspecs(
+    command: &PublishCommand,
+    project: &Path,
+    podspecs: &[(PathBuf, String)],
+    verbose: bool,
+) -> Result<()> {
+    for (path, url) in podspecs {
+        publish_podspec(command, project, path, url, verbose)?;
     }
     Ok(())
 }

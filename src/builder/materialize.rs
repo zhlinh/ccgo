@@ -211,107 +211,126 @@ pub fn materialize_source_deps_inner(
     cache_base: &Path,
 ) -> Result<()> {
     let platform_lc = platform.to_lowercase();
-    let consumer_link_type = LinkType::All;
-
+    let request = MaterializeRequest {
+        project_root,
+        platform_lc: &platform_lc,
+        archs,
+        release,
+        ccgo_bin,
+        cache_base,
+    };
     for (dep_name, hint) in dep_hints {
-        let dep_root = project_root.join(".ccgo/deps").join(dep_name);
-        if !dep_root.exists() {
-            // ccgo fetch hasn't been run, or the dep is provided by some
-            // other mechanism. Skip — resolve_linkage will surface the
-            // missing-artifacts error downstream if it actually matters.
-            continue;
-        }
+        request.materialize(dep_name, *hint)?;
+    }
+    Ok(())
+}
 
-        // Only consider deps that ship source we can rebuild from. Binary
-        // deps (no src/) or deps without a manifest are out of scope —
-        // the consumer either trusts the prebuilt artifacts or fails at
-        // resolve_linkage time.
-        if !dep_root.join("src").is_dir() || !dep_root.join("CCGO.toml").is_file() {
-            continue;
-        }
+struct MaterializeRequest<'a> {
+    project_root: &'a Path,
+    platform_lc: &'a str,
+    archs: &'a [String],
+    release: bool,
+    ccgo_bin: &'a str,
+    cache_base: &'a Path,
+}
 
-        let build_as = build_as_for_hint(consumer_link_type.clone(), *hint);
-        let fp_path =
-            fingerprint_path(cache_base, project_root, dep_name, &platform_lc, build_as.clone());
-        let fp_now = compute_source_fingerprint(&dep_root, build_as.clone())?;
-        let fp_prev = read_fingerprint(&fp_path)?;
+impl MaterializeRequest<'_> {
+    fn materialize(&self, dep_name: &str, hint: Option<Linkage>) -> Result<()> {
+        let Some(dep_root) = self.source_dep_root(dep_name) else {
+            return Ok(());
+        };
 
-        // Up-to-date iff the source fingerprint matches the persisted
-        // one AND the dep currently has compiled artifacts on disk. The
-        // artifact check defends against `rm -rf lib/` between runs:
-        // even if the source hasn't changed, a missing lib/ must
-        // re-trigger the build.
-        let arts = detect_dep_artifacts(&dep_root, &platform_lc);
-        let artifacts_present = matches!(
-            arts,
-            DepArtifacts::Both | DepArtifacts::OnlyStatic | DepArtifacts::OnlyShared
+        let build_as = build_as_for_hint(LinkType::All, hint);
+        let fp_path = fingerprint_path(
+            self.cache_base,
+            self.project_root,
+            dep_name,
+            self.platform_lc,
+            build_as.clone(),
         );
-        let fp_matches = Some(&fp_now) == fp_prev.as_ref();
-        if artifacts_present && fp_matches {
-            continue;
-        }
-        // First-run trust: if the dep already has compiled artifacts
-        // (e.g. hand-committed xcframework symlinks like the linkage
-        // fixtures, or a prior `ccgo install`) but no prior fingerprint
-        // exists, assume the on-disk artifacts are correct for the
-        // current source. Record the fingerprint so that future source
-        // changes invalidate normally, and skip the spawn — rebuilding
-        // from scratch would clobber the curated layout.
-        if artifacts_present && fp_prev.is_none() {
-            write_fingerprint(&fp_path, &fp_now)?;
-            continue;
+        let fp_now = compute_source_fingerprint(&dep_root, build_as.clone())?;
+        if self.artifacts_are_current(&dep_root, &fp_path, &fp_now)? {
+            return Ok(());
         }
 
         eprintln!(
             "📦 Materializing source-only dep '{}' for {} (--build-as {})",
-            dep_name, platform_lc, build_as
+            dep_name, self.platform_lc, build_as
         );
+        self.run_dep_build(&dep_root, dep_name, &build_as)?;
+        bridge_cmake_build_to_lib(&dep_root, self.platform_lc, self.release)?;
+        write_fingerprint(&fp_path, &fp_now)?;
+        Ok(())
+    }
 
-        let mut cmd = std::process::Command::new(ccgo_bin);
-        cmd.arg("build").arg(&platform_lc).current_dir(&dep_root);
-        if release {
-            cmd.arg("--release");
+    fn source_dep_root(&self, dep_name: &str) -> Option<PathBuf> {
+        let dep_root = self.project_root.join(".ccgo/deps").join(dep_name);
+        if !dep_root.exists() {
+            return None;
         }
-        if !archs.is_empty() {
-            cmd.arg("--arch").arg(archs.join(","));
+        if !dep_root.join("src").is_dir() || !dep_root.join("CCGO.toml").is_file() {
+            return None;
         }
-        cmd.arg("--build-as").arg(build_as.to_string());
+        Some(dep_root)
+    }
 
-        let status = cmd.status().with_context(|| {
+    fn artifacts_are_current(
+        &self,
+        dep_root: &Path,
+        fp_path: &Path,
+        fp_now: &str,
+    ) -> Result<bool> {
+        let fp_prev = read_fingerprint(fp_path)?;
+        let artifacts_present = matches!(
+            detect_dep_artifacts(dep_root, self.platform_lc),
+            DepArtifacts::Both | DepArtifacts::OnlyStatic | DepArtifacts::OnlyShared
+        );
+        if artifacts_present && Some(fp_now) == fp_prev.as_deref() {
+            return Ok(true);
+        }
+        if artifacts_present && fp_prev.is_none() {
+            write_fingerprint(fp_path, fp_now)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn run_dep_build(&self, dep_root: &Path, dep_name: &str, build_as: &LinkType) -> Result<()> {
+        let mut command = std::process::Command::new(self.ccgo_bin);
+        command
+            .arg("build")
+            .arg(self.platform_lc)
+            .current_dir(dep_root);
+        if self.release {
+            command.arg("--release");
+        }
+        if !self.archs.is_empty() {
+            command.arg("--arch").arg(self.archs.join(","));
+        }
+        command.arg("--build-as").arg(build_as.to_string());
+
+        let status = command.status().with_context(|| {
             format!(
                 "failed to spawn `ccgo build` for source-only dep '{}'",
                 dep_name
             )
         })?;
-        if !status.success() {
-            anyhow::bail!(
-                "recursive `ccgo build` for source-only dep '{}' (--build-as {}) \
-                 failed with exit code {:?}. The dep at {} could not be \
-                 compiled — check its CCGO.toml and try `ccgo build {} \
-                 --build-as {}` inside that directory to reproduce.",
-                dep_name,
-                build_as,
-                status.code(),
-                dep_root.display(),
-                platform_lc,
-                build_as,
-            );
+        if status.success() {
+            return Ok(());
         }
-
-        // Bridge ccgo's build-output layout into the lib/<platform>/ layout
-        // that downstream FindCCGODependencies.cmake expects. ccgo build
-        // writes into `cmake_build/<profile>/<platform>/{shared,static}/`,
-        // but `detect_dep_artifacts` and the consumer-side CMake-Find both
-        // read from `lib/<platform>/{shared,static}/`. A single symlink
-        // covers every platform/arch/link-type permutation in one shot —
-        // we don't need per-platform bridge logic.
-        bridge_cmake_build_to_lib(&dep_root, &platform_lc, release)?;
-
-        // Persist the new fingerprint so subsequent runs skip when nothing changed.
-        write_fingerprint(&fp_path, &fp_now)?;
+        anyhow::bail!(
+            "recursive `ccgo build` for source-only dep '{}' (--build-as {}) \
+             failed with exit code {:?}. The dep at {} could not be \
+             compiled — check its CCGO.toml and try `ccgo build {} \
+             --build-as {}` inside that directory to reproduce.",
+            dep_name,
+            build_as,
+            status.code(),
+            dep_root.display(),
+            self.platform_lc,
+            build_as,
+        );
     }
-
-    Ok(())
 }
 
 /// After `ccgo build` finishes inside a path-source dep, expose its

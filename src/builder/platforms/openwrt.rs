@@ -22,6 +22,26 @@ use crate::commands::build::LinkType;
 /// OpenWrt platform builder
 pub struct OpenwrtBuilder;
 
+fn main_library_is_ready(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| metadata.len() > 0)
+        .unwrap_or(false)
+}
+
+fn collect_static_libs(dir: &Path, exclude: Option<&Path>) -> Result<Vec<PathBuf>> {
+    let mut libs = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if !path.is_file() || exclude == Some(path.as_path()) {
+            continue;
+        }
+        if path.extension().is_some_and(|extension| extension == "a") {
+            libs.push(path);
+        }
+    }
+    Ok(libs)
+}
+
 impl OpenwrtBuilder {
     pub fn new() -> Self {
         Self
@@ -39,57 +59,30 @@ impl OpenwrtBuilder {
             return Ok(());
         }
 
-        let main_lib_name = format!("lib{}.a", lib_name);
+        let main_lib_name = format!("lib{lib_name}.a");
         let main_lib_path = out_dir.join(&main_lib_name);
-
-        if main_lib_path.exists() {
-            if let Ok(metadata) = std::fs::metadata(&main_lib_path) {
-                if metadata.len() > 0 {
-                    for entry in std::fs::read_dir(&out_dir)? {
-                        let entry = entry?;
-                        let path = entry.path();
-                        if path.is_file() && path != main_lib_path {
-                            if let Some(ext) = path.extension() {
-                                if ext == "a" {
-                                    let _ = std::fs::remove_file(&path);
-                                }
-                            }
-                        }
-                    }
-                    return Ok(());
-                }
+        if main_library_is_ready(&main_lib_path) {
+            for lib in collect_static_libs(&out_dir, Some(&main_lib_path))? {
+                let _ = std::fs::remove_file(lib);
             }
-        }
-
-        let mut module_libs: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(&out_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension() {
-                    if ext == "a" {
-                        module_libs.push(path);
-                    }
-                }
-            }
-        }
-
-        module_libs.retain(|p| p != &main_lib_path);
-
-        if module_libs.is_empty() {
             return Ok(());
         }
 
-        if verbose {
-            eprintln!("    Merging {} module libraries into {}", module_libs.len(), main_lib_name);
+        let module_libs = collect_static_libs(&out_dir, Some(&main_lib_path))?;
+        if module_libs.is_empty() {
+            return Ok(());
         }
-
+        if verbose {
+            eprintln!(
+                "    Merging {} module libraries into {}",
+                module_libs.len(),
+                main_lib_name
+            );
+        }
         toolchain.merge_static_libs(&module_libs, &main_lib_path)?;
-
         for lib in &module_libs {
             let _ = std::fs::remove_file(lib);
         }
-
         Ok(())
     }
 

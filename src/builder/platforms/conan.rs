@@ -59,115 +59,104 @@ impl ConanBuilder {
     fn build_link_type(&self, ctx: &BuildContext, link_type: &str) -> Result<PathBuf> {
         let build_dir = ctx.cmake_build_dir.join(link_type);
         let install_dir = build_dir.join("install");
-
         std::fs::create_dir_all(&build_dir)?;
         std::fs::create_dir_all(&install_dir)?;
 
-        let build_shared = link_type == "shared";
+        let Some(conanfile) = self.conanfile(ctx) else {
+            return self.build_with_cmake(ctx, link_type);
+        };
+        if ctx.options.verbose {
+            eprintln!("Using conanfile: {}", conanfile.display());
+        }
+        let conanfile_dir = conanfile.parent().unwrap();
+        let shared = link_type == "shared";
         let build_type = if ctx.options.release {
             "Release"
         } else {
             "Debug"
         };
 
-        // Check if conanfile.py exists in project root or conan/ subdirectory
-        let conanfile = if ctx.project_root.join("conanfile.py").exists() {
-            ctx.project_root.join("conanfile.py")
-        } else if ctx.project_root.join("conan").join("conanfile.py").exists() {
-            ctx.project_root.join("conan").join("conanfile.py")
-        } else {
-            // No conanfile.py, use CMake directly like Linux builder
-            return self.build_with_cmake(ctx, link_type);
-        };
+        self.run_conan_install(ctx, conanfile_dir, &build_dir, shared, build_type)?;
+        self.run_conan_build(ctx, conanfile_dir, &build_dir, shared)?;
+        Ok(build_dir)
+    }
 
-        let conanfile_dir = conanfile.parent().unwrap();
-
-        if ctx.options.verbose {
-            eprintln!("Using conanfile: {}", conanfile.display());
+    fn conanfile(&self, ctx: &BuildContext) -> Option<PathBuf> {
+        let root = ctx.project_root.join("conanfile.py");
+        if root.is_file() {
+            return Some(root);
         }
+        let nested = ctx.project_root.join("conan").join("conanfile.py");
+        nested.is_file().then_some(nested)
+    }
 
-        // Get CCGO_CMAKE_DIR to pass to conan
-        let ccgo_cmake_dir = ctx.ccgo_cmake_dir();
-        if ctx.options.verbose {
-            if let Some(ref dir) = ccgo_cmake_dir {
-                eprintln!("CCGO_CMAKE_DIR: {}", dir.display());
-            }
-        }
-
-        // Step 1: conan install - install dependencies and generate build files
-        let mut install_cmd = Command::new("conan");
-        install_cmd
+    fn run_conan_install(
+        &self,
+        ctx: &BuildContext,
+        conanfile_dir: &Path,
+        build_dir: &Path,
+        shared: bool,
+        build_type: &str,
+    ) -> Result<()> {
+        let mut command = Command::new("conan");
+        command
             .current_dir(conanfile_dir)
             .arg("install")
             .arg(".")
             .arg("--output-folder")
             .arg(build_dir.display().to_string())
             .arg("--build=missing")
-            .arg(format!("-s:h=build_type={}", build_type));
-
-        // Pass CCGO_CMAKE_DIR environment variable
-        if let Some(ref cmake_dir) = ccgo_cmake_dir {
-            install_cmd.env("CCGO_CMAKE_DIR", cmake_dir);
+            .arg(format!("-s:h=build_type={build_type}"))
+            .arg(if shared {
+                "-o:h=*:shared=True"
+            } else {
+                "-o:h=*:shared=False"
+            })
+            .env("CCGO_BUILD_SHARED", if shared { "ON" } else { "OFF" });
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            command.env("CCGO_CMAKE_DIR", cmake_dir);
         }
+        self.run_conan_command(command, "conan install", ctx.options.verbose)?;
+        Ok(())
+    }
 
-        // Add shared library setting
-        if build_shared {
-            install_cmd.arg("-o:h=*:shared=True");
-        } else {
-            install_cmd.arg("-o:h=*:shared=False");
-        }
-
-        // Pass CCGO_BUILD_SHARED environment variable for conanfile.py to read
-        install_cmd.env("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" });
-
-        if ctx.options.verbose {
-            eprintln!(
-                "Running: conan install {:?}",
-                install_cmd.get_args().collect::<Vec<_>>()
-            );
-        }
-
-        let status = install_cmd
-            .status()
-            .context("Failed to run conan install")?;
-
-        if !status.success() {
-            bail!("conan install failed");
-        }
-
-        // Step 2: conan build - build the library
-        // Note: conan build may regenerate toolchain files, so we need to pass settings again
-        let mut build_cmd = Command::new("conan");
-        build_cmd
+    fn run_conan_build(
+        &self,
+        ctx: &BuildContext,
+        conanfile_dir: &Path,
+        build_dir: &Path,
+        shared: bool,
+    ) -> Result<()> {
+        let mut command = Command::new("conan");
+        command
             .current_dir(conanfile_dir)
             .arg("build")
             .arg(".")
             .arg("--output-folder")
-            .arg(build_dir.display().to_string());
-
-        // Pass CCGO_CMAKE_DIR environment variable
-        if let Some(ref cmake_dir) = ccgo_cmake_dir {
-            build_cmd.env("CCGO_CMAKE_DIR", cmake_dir);
+            .arg(build_dir.display().to_string())
+            .env("CCGO_BUILD_SHARED", if shared { "ON" } else { "OFF" });
+        if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
+            command.env("CCGO_CMAKE_DIR", cmake_dir);
         }
+        self.run_conan_command(command, "conan build", ctx.options.verbose)?;
+        Ok(())
+    }
 
-        // Pass CCGO_BUILD_SHARED environment variable for conanfile.py to read
-        // This ensures the shared setting is preserved when conan build regenerates toolchain
-        build_cmd.env("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" });
-
-        if ctx.options.verbose {
+    fn run_conan_command(&self, mut command: Command, label: &str, verbose: bool) -> Result<()> {
+        if verbose {
             eprintln!(
-                "Running: conan build {:?}",
-                build_cmd.get_args().collect::<Vec<_>>()
+                "Running: {} {:?}",
+                label,
+                command.get_args().collect::<Vec<_>>()
             );
         }
-
-        let status = build_cmd.status().context("Failed to run conan build")?;
-
+        let status = command
+            .status()
+            .with_context(|| format!("Failed to run {label}"))?;
         if !status.success() {
-            bail!("conan build failed");
+            bail!("{label} failed");
         }
-
-        Ok(build_dir)
+        Ok(())
     }
 
     /// Build using CMake directly (fallback when no conanfile.py)
@@ -279,6 +268,46 @@ impl ConanBuilder {
     }
 }
 
+impl ConanBuilder {
+    fn archive_link_type(
+        &self,
+        ctx: &BuildContext,
+        archive: &ArchiveBuilder,
+        link_type: &str,
+    ) -> Result<()> {
+        if ctx.options.verbose {
+            eprintln!("Building {link_type} library...");
+        }
+        let build_dir = self.build_link_type(ctx, link_type)?;
+        let Some(lib_dir) = self.find_lib_dir(&build_dir, ctx.options.release) else {
+            return Ok(());
+        };
+        let archive_path = format!(
+            "lib/{}/{}",
+            self.platform_name(),
+            if link_type == "static" {
+                ARCHIVE_DIR_STATIC
+            } else {
+                ARCHIVE_DIR_SHARED
+            }
+        );
+        if link_type == "static" {
+            archive.add_files_flat(&lib_dir, &archive_path, &["a", "lib"])?;
+        } else {
+            #[cfg(target_os = "windows")]
+            let extensions = &["dll", "lib"];
+            #[cfg(target_os = "macos")]
+            let extensions = &["dylib", "so", "a"];
+            #[cfg(target_os = "linux")]
+            let extensions = &["so", "a"];
+            #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+            let extensions = &["so", "dylib", "dll", "a"];
+            archive.add_files_flat(&lib_dir, &archive_path, extensions)?;
+        }
+        Ok(())
+    }
+}
+
 impl PlatformBuilder for ConanBuilder {
     fn platform_name(&self) -> &str {
         "conan"
@@ -336,45 +365,13 @@ impl PlatformBuilder for ConanBuilder {
         let host_arch = Self::detect_host_arch();
         let mut built_link_types = Vec::new();
 
-        // Build static libraries
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
-            if ctx.options.verbose {
-                eprintln!("Building static library...");
-            }
-            let build_dir = self.build_link_type(ctx, "static")?;
-
-            // Add static library to archive: lib/conan/static/
-            // Use add_files_flat to only copy files at root level (merged library only)
-            if let Some(lib_dir) = self.find_lib_dir(&build_dir, ctx.options.release) {
-                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_STATIC);
-                archive.add_files_flat(&lib_dir, &archive_path, &["a", "lib"])?;
-            }
+            self.archive_link_type(ctx, &archive, "static")?;
             built_link_types.push("static");
         }
 
-        // Build shared libraries
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
-            if ctx.options.verbose {
-                eprintln!("Building shared library...");
-            }
-            let build_dir = self.build_link_type(ctx, "shared")?;
-
-            // Add shared library to archive: lib/conan/shared/
-            // Use add_files_flat to only copy files at root level (merged library only)
-            if let Some(lib_dir) = self.find_lib_dir(&build_dir, ctx.options.release) {
-                let archive_path = format!("lib/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED);
-                // Include platform-appropriate shared library extensions
-                #[cfg(target_os = "windows")]
-                let extensions = &["dll", "lib"];
-                #[cfg(target_os = "macos")]
-                let extensions = &["dylib", "so", "a"]; // Include .a for static archives used with shared
-                #[cfg(target_os = "linux")]
-                let extensions = &["so", "a"];
-                #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-                let extensions = &["so", "dylib", "dll", "a"];
-
-                archive.add_files_flat(&lib_dir, &archive_path, extensions)?;
-            }
+            self.archive_link_type(ctx, &archive, "shared")?;
             built_link_types.push("shared");
         }
 

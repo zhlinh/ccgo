@@ -113,22 +113,19 @@ impl WatchosBuilder {
     }
 
     /// Build for a single architecture
-    fn build_arch(
+    fn configure_arch_cmake(
         &self,
         ctx: &BuildContext,
         xcode: &XcodeToolchain,
         arch: &str,
         link_type: &str,
         sdk: &str,
-    ) -> Result<PathBuf> {
+    ) -> Result<(PathBuf, CMakeConfig, bool)> {
         let build_dir = ctx
             .cmake_build_dir
             .join(format!("{}/{}/{}", link_type, sdk, arch));
         let install_dir = build_dir.join("install");
-
         let build_shared = link_type == "shared";
-
-        // Get watchOS SDK path and CMake variables (use correct platform based on SDK type)
         let platform = if sdk == "simulator" {
             ApplePlatform::WatchOSSimulator
         } else {
@@ -136,14 +133,13 @@ impl WatchosBuilder {
         };
         let cmake_vars = xcode.cmake_variables_for_platform(platform)?;
 
-        // Configure and build with CMake
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .build_type(if ctx.options.release {
                 BuildType::Release
             } else {
                 BuildType::Debug
             })
-            .install_prefix(install_dir.clone())
+            .install_prefix(install_dir)
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
             .variable(
@@ -155,30 +151,21 @@ impl WatchosBuilder {
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
-        // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
         }
-
-        // Add SDK-related variables
         for (name, value) in cmake_vars {
             if name != "CMAKE_OSX_ARCHITECTURES" {
                 cmake = cmake.variable(&name, &value);
             }
         }
-
-        // Add CCGO configuration variables
         cmake = cmake.variable(
             "CCGO_CONFIG_PRESET_VISIBILITY",
             ctx.symbol_visibility().to_string(),
         );
-
-        // Add submodule dependencies for shared library linking
         if let Some(deps_map) = ctx.deps_map() {
             cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
         }
-
-        // Add feature definitions for conditional compilation
         if let Ok(feature_defines) = ctx.cmake_feature_defines() {
             if !feature_defines.is_empty() {
                 cmake = cmake.feature_definitions(&feature_defines);
@@ -190,11 +177,22 @@ impl WatchosBuilder {
                 }
             }
         }
-
-        // Add compiler cache if available
         if let Some(cache) = ctx.compiler_cache() {
             cmake = cmake.compiler_cache(cache);
         }
+        Ok((build_dir, cmake, build_shared))
+    }
+
+    fn build_arch(
+        &self,
+        ctx: &BuildContext,
+        xcode: &XcodeToolchain,
+        arch: &str,
+        link_type: &str,
+        sdk: &str,
+    ) -> Result<PathBuf> {
+        let (build_dir, cmake, build_shared) =
+            self.configure_arch_cmake(ctx, xcode, arch, link_type, sdk)?;
 
         cmake.configure_build_install()?;
 
@@ -315,6 +313,48 @@ impl WatchosBuilder {
     }
 }
 
+impl WatchosBuilder {
+    fn build_xcframework(
+        &self,
+        ctx: &BuildContext,
+        builder: &mut WatchosBuilder,
+        link_type: &str,
+        shared: bool,
+        architectures: &[String],
+        archive: &ArchiveBuilder,
+    ) -> Result<()> {
+        let (device_dir, sim_dir) = builder.build_link_type(ctx, link_type, architectures)?;
+        let xcframework_path = ctx
+            .cmake_build_dir
+            .join(format!("{link_type}/xcframework"));
+        let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
+        builder.create_xcframework(
+            &XcodeToolchain::detect()?,
+            &device_dir,
+            &sim_dir,
+            &xcframework,
+            shared,
+            ctx.lib_name(),
+        )?;
+        if xcframework.exists() {
+            let archive_path = format!(
+                "{}/{}/{}/{}.xcframework",
+                ARCHIVE_DIR_FRAMEWORKS,
+                self.platform_name(),
+                if shared {
+                    ARCHIVE_DIR_SHARED
+                } else {
+                    ARCHIVE_DIR_STATIC
+                },
+                ctx.lib_name()
+            );
+            archive.add_directory(&xcframework, &archive_path)?;
+        }
+        Ok(())
+    }
+
+}
+
 impl PlatformBuilder for WatchosBuilder {
     fn platform_name(&self) -> &str {
         "watchos"
@@ -388,63 +428,12 @@ impl PlatformBuilder for WatchosBuilder {
 
         let mut built_link_types = Vec::new();
 
-        // Build static libraries and create XCFramework
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
-            let (device_dir, sim_dir) = builder.build_link_type(ctx, "static", &architectures)?;
-
-            // Create XCFramework
-            let xcframework_path = ctx.cmake_build_dir.join("static/xcframework");
-            let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(
-                &XcodeToolchain::detect()?,
-                &device_dir,
-                &sim_dir,
-                &xcframework,
-                false,
-                ctx.lib_name(),
-            )?;
-
-            // Add to archive: frameworks/watchos/static/{lib_name}.xcframework
-            if xcframework.exists() {
-                let archive_path = format!(
-                    "{}/{}/{}/{}.xcframework",
-                    ARCHIVE_DIR_FRAMEWORKS,
-                    self.platform_name(),
-                    ARCHIVE_DIR_STATIC,
-                    ctx.lib_name()
-                );
-                archive.add_directory(&xcframework, &archive_path)?;
-            }
+            self.build_xcframework(ctx, &mut builder, "static", false, &architectures, &archive)?;
             built_link_types.push("static");
         }
-
-        // Build shared libraries and create XCFramework
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
-            let (device_dir, sim_dir) = builder.build_link_type(ctx, "shared", &architectures)?;
-
-            // Create XCFramework
-            let xcframework_path = ctx.cmake_build_dir.join("shared/xcframework");
-            let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(
-                &XcodeToolchain::detect()?,
-                &device_dir,
-                &sim_dir,
-                &xcframework,
-                true,
-                ctx.lib_name(),
-            )?;
-
-            // Add to archive: frameworks/watchos/shared/{lib_name}.xcframework
-            if xcframework.exists() {
-                let archive_path = format!(
-                    "{}/{}/{}/{}.xcframework",
-                    ARCHIVE_DIR_FRAMEWORKS,
-                    self.platform_name(),
-                    ARCHIVE_DIR_SHARED,
-                    ctx.lib_name()
-                );
-                archive.add_directory(&xcframework, &archive_path)?;
-            }
+            self.build_xcframework(ctx, &mut builder, "shared", true, &architectures, &archive)?;
             built_link_types.push("shared");
         }
 

@@ -42,6 +42,38 @@ impl IosTarget {
     }
 }
 
+fn find_library_file(dir: &Path, main_name: &str, extension: &str) -> Result<Option<PathBuf>> {
+    let preferred = dir.join(main_name);
+    if preferred.is_file() {
+        return Ok(Some(preferred));
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn apply_feature_options(ctx: &BuildContext, mut cmake: CMakeConfig) -> CMakeConfig {
+    if let Ok(feature_defines) = ctx.cmake_feature_defines() {
+        if !feature_defines.is_empty() {
+            cmake = cmake.feature_definitions(&feature_defines);
+            if ctx.options.verbose {
+                eprintln!(
+                    "    Enabled features: {}",
+                    feature_defines.replace(';', ", ")
+                );
+            }
+        }
+    }
+    if let Some(cache) = ctx.compiler_cache() {
+        cmake = cmake.compiler_cache(cache);
+    }
+    cmake
+}
+
 /// iOS platform builder
 pub struct IosBuilder;
 
@@ -175,32 +207,28 @@ impl IosBuilder {
     }
 
     /// Build for a single target (device or simulator) and architecture
-    fn build_target_arch(
+    fn configure_target_cmake(
         &self,
         ctx: &BuildContext,
         xcode: &XcodeToolchain,
         target: IosTarget,
         arch: &str,
         link_type: &str,
-    ) -> Result<PathBuf> {
+    ) -> Result<(PathBuf, CMakeConfig, bool)> {
         let build_dir =
             ctx.cmake_build_dir
                 .join(format!("{}/{}/{}", link_type, target.name(), arch));
         let install_dir = build_dir.join("install");
-
         let build_shared = link_type == "shared";
-
-        // Get iOS SDK path and CMake variables
         let cmake_vars = xcode.cmake_variables_for_platform(target.platform())?;
 
-        // Configure and build with CMake
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .build_type(if ctx.options.release {
                 BuildType::Release
             } else {
                 BuildType::Debug
             })
-            .install_prefix(install_dir.clone())
+            .install_prefix(install_dir)
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
             .variable(
@@ -213,32 +241,22 @@ impl IosBuilder {
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
-        // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
         }
-
-        // Add SDK-related variables
         for (name, value) in cmake_vars {
             if name != "CMAKE_OSX_ARCHITECTURES" {
                 cmake = cmake.variable(&name, &value);
             }
         }
-
-        // Add CCGO configuration variables
         cmake = cmake.variable(
             "CCGO_CONFIG_PRESET_VISIBILITY",
             ctx.symbol_visibility().to_string(),
         );
-
-        // Add submodule dependencies for shared library linking
         if let Some(deps_map) = ctx.deps_map() {
             cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
         }
 
-        // Resolve dependency linkage for this axis (static vs shared), so the
-        // shared XCFramework links against shared dependency artifacts and the
-        // static one against static artifacts.
         let consumer = if build_shared {
             LinkType::Shared
         } else {
@@ -254,23 +272,7 @@ impl IosBuilder {
             cmake = cmake.variable("CCGO_DEPENDENCY_LINKAGES", linkages_val);
         }
 
-        // Add feature definitions for conditional compilation
-        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
-            if !feature_defines.is_empty() {
-                cmake = cmake.feature_definitions(&feature_defines);
-                if ctx.options.verbose {
-                    eprintln!(
-                        "    Enabled features: {}",
-                        feature_defines.replace(';', ", ")
-                    );
-                }
-            }
-        }
-
-        // Add compiler cache if available
-        if let Some(cache) = ctx.compiler_cache() {
-            cmake = cmake.compiler_cache(cache);
-        }
+        cmake = apply_feature_options(ctx, cmake);
 
         let user = ctx.cmake_user_config("ios");
         cmake = cmake
@@ -278,6 +280,20 @@ impl IosBuilder {
             .user_c_flags(user.c_flags)
             .user_cpp_flags(user.cpp_flags)
             .user_cmake_files(ctx.cmake_user_files("ios"));
+
+        Ok((build_dir, cmake, build_shared))
+    }
+
+    fn build_target_arch(
+        &self,
+        ctx: &BuildContext,
+        xcode: &XcodeToolchain,
+        target: IosTarget,
+        arch: &str,
+        link_type: &str,
+    ) -> Result<PathBuf> {
+        let (build_dir, cmake, build_shared) =
+            self.configure_target_cmake(ctx, xcode, target, arch, link_type)?;
 
         cmake.configure_build_install()?;
 
@@ -464,17 +480,11 @@ impl IosBuilder {
         is_shared: bool,
         lib_name: &str,
     ) -> Result<()> {
-        // Remove existing XCFramework if present
         if output.exists() {
             std::fs::remove_dir_all(output)?;
         }
-
         let extension = if is_shared { "dylib" } else { "a" };
-
-        // Main library filename to look for (e.g., "libccgonow.dylib" or "libccgonow.a")
-        let main_lib_name = format!("lib{}.{}", lib_name, extension);
-
-        // Find the library directories (check multiple possible locations)
+        let main_lib_name = format!("lib{lib_name}.{extension}");
         let device_lib_dir = self
             .find_lib_dir(device_lib)
             .ok_or_else(|| anyhow::anyhow!("Device library directory not found"))?;
@@ -483,47 +493,12 @@ impl IosBuilder {
             .ok_or_else(|| anyhow::anyhow!("Simulator library directory not found"))?;
 
         let mut inputs: Vec<(PathBuf, Option<PathBuf>)> = Vec::new();
-
-        // Find device library - prefer main library with exact name match
-        let device_main_lib = device_lib_dir.join(&main_lib_name);
-        if device_main_lib.exists() {
-            inputs.push((device_main_lib, None));
-        } else {
-            // Fallback: find first library with matching extension
-            for entry in std::fs::read_dir(&device_lib_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == extension {
-                            inputs.push((path, None));
-                            break;
-                        }
-                    }
-                }
-            }
+        if let Some(path) = find_library_file(&device_lib_dir, &main_lib_name, extension)? {
+            inputs.push((path, None));
         }
-
-        // Find simulator library - prefer main library with exact name match
-        let sim_main_lib = sim_lib_dir.join(&main_lib_name);
-        if sim_main_lib.exists() {
-            inputs.push((sim_main_lib, None));
-        } else {
-            // Fallback: find first library with matching extension
-            for entry in std::fs::read_dir(&sim_lib_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == extension {
-                            inputs.push((path, None));
-                            break;
-                        }
-                    }
-                }
-            }
+        if let Some(path) = find_library_file(&sim_lib_dir, &main_lib_name, extension)? {
+            inputs.push((path, None));
         }
-
         if inputs.is_empty() {
             bail!("No libraries found to create XCFramework");
         }
@@ -619,6 +594,47 @@ impl IosBuilder {
             architectures: vec![],
         })
     }
+}
+
+impl IosBuilder {
+    fn build_xcframework(
+        &self,
+        ctx: &BuildContext,
+        xcode: &XcodeToolchain,
+        link_type: &str,
+        shared: bool,
+        archive: &ArchiveBuilder,
+    ) -> Result<()> {
+        let (device_dir, sim_dir) = self.build_link_type(ctx, xcode, link_type)?;
+        let xcframework_path = ctx
+            .cmake_build_dir
+            .join(format!("{link_type}/xcframework"));
+        let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
+        self.create_xcframework(
+            xcode,
+            &device_dir,
+            &sim_dir,
+            &xcframework,
+            shared,
+            ctx.lib_name(),
+        )?;
+        if xcframework.exists() {
+            let archive_path = format!(
+                "{}/{}/{}/{}.xcframework",
+                ARCHIVE_DIR_FRAMEWORKS,
+                self.platform_name(),
+                if shared {
+                    ARCHIVE_DIR_SHARED
+                } else {
+                    ARCHIVE_DIR_STATIC
+                },
+                ctx.lib_name()
+            );
+            archive.add_directory(&xcframework, &archive_path)?;
+        }
+        Ok(())
+    }
+
 }
 
 impl PlatformBuilder for IosBuilder {
@@ -720,63 +736,12 @@ impl PlatformBuilder for IosBuilder {
 
         let mut built_link_types = Vec::new();
 
-        // Build static libraries and create XCFramework
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
-            let (device_dir, sim_dir) = self.build_link_type(ctx, &xcode, "static")?;
-
-            // Create XCFramework
-            let xcframework_path = ctx.cmake_build_dir.join("static/xcframework");
-            let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            self.create_xcframework(
-                &xcode,
-                &device_dir,
-                &sim_dir,
-                &xcframework,
-                false,
-                ctx.lib_name(),
-            )?;
-
-            // Add to archive: lib/ios/static/{lib_name}.xcframework
-            if xcframework.exists() {
-                let archive_path = format!(
-                    "{}/{}/{}/{}.xcframework",
-                    ARCHIVE_DIR_FRAMEWORKS,
-                    self.platform_name(),
-                    ARCHIVE_DIR_STATIC,
-                    ctx.lib_name()
-                );
-                archive.add_directory(&xcframework, &archive_path)?;
-            }
+            self.build_xcframework(ctx, &xcode, "static", false, &archive)?;
             built_link_types.push("static");
         }
-
-        // Build shared libraries and create XCFramework
         if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
-            let (device_dir, sim_dir) = self.build_link_type(ctx, &xcode, "shared")?;
-
-            // Create XCFramework
-            let xcframework_path = ctx.cmake_build_dir.join("shared/xcframework");
-            let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            self.create_xcframework(
-                &xcode,
-                &device_dir,
-                &sim_dir,
-                &xcframework,
-                true,
-                ctx.lib_name(),
-            )?;
-
-            // Add to archive: lib/ios/shared/{lib_name}.xcframework
-            if xcframework.exists() {
-                let archive_path = format!(
-                    "{}/{}/{}/{}.xcframework",
-                    ARCHIVE_DIR_FRAMEWORKS,
-                    self.platform_name(),
-                    ARCHIVE_DIR_SHARED,
-                    ctx.lib_name()
-                );
-                archive.add_directory(&xcframework, &archive_path)?;
-            }
+            self.build_xcframework(ctx, &xcode, "shared", true, &archive)?;
             built_link_types.push("shared");
         }
 

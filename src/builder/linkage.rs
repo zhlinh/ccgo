@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 
 use crate::commands::build::LinkType;
 use crate::config::Linkage;
@@ -89,109 +89,116 @@ pub fn resolve_linkage(
     }
 
     match consumer {
-        // Static consumer: external only — static archives cannot embed other archives.
-        // Hint can override the static/shared choice when Both artifacts exist.
-        LinkType::Static => {
-            // static-embedded is never valid for a static consumer.
-            if matches!(hint, Some(Linkage::StaticEmbedded)) {
-                return Err(anyhow!(
-                    "dependency '{dep_name}': linkage = \"static-embedded\" is not valid \
-                     for a static consumer (static archives cannot embed other archives). \
-                     Use \"static-external\" (default) or \"shared-external\"."
-                ));
-            }
-            match artifacts {
-                DepArtifacts::OnlyShared => {
-                    if matches!(hint, Some(Linkage::StaticExternal)) {
-                        return Err(anyhow!(
-                            "dependency '{dep_name}' provides only a shared library but \
-                             linkage = \"static-external\" was requested. Either drop the \
-                             hint (ccgo will use shared-external automatically), or rebuild \
-                             '{dep_name}' with link_type = \"static\" or \"both\"."
-                        ));
-                    }
-                    Ok(ResolvedLinkage::SharedExternal)
-                }
-                DepArtifacts::OnlyStatic => {
-                    if matches!(hint, Some(Linkage::SharedExternal)) {
-                        return Err(anyhow!(
-                            "dependency '{dep_name}' provides only a static archive but \
-                             linkage = \"shared-external\" was requested. Either drop the \
-                             hint (ccgo will use static-external automatically), or rebuild \
-                             '{dep_name}' with link_type = \"shared\" or \"both\"."
-                        ));
-                    }
-                    Ok(ResolvedLinkage::StaticExternal)
-                }
-                DepArtifacts::Both => match hint {
-                    Some(Linkage::SharedExternal) => Ok(ResolvedLinkage::SharedExternal),
-                    None | Some(Linkage::StaticExternal) => Ok(ResolvedLinkage::StaticExternal),
-                    Some(Linkage::StaticEmbedded) => unreachable!("rejected above"),
-                },
-                DepArtifacts::SourceOnly => Err(anyhow!(
-                    "internal: dependency '{dep_name}' is still source-only at \
-                     link-resolution time. `materialize_source_deps` must run \
-                     before `resolve_linkage` so the dep's .a/.so are available. \
-                     This is a ccgo bug — please report it."
-                )),
-                DepArtifacts::None => unreachable!("handled above"),
-            }
-        }
-        // Shared consumer: forced moves first, then honor hint, then default.
-        LinkType::Shared => match artifacts {
-            DepArtifacts::OnlyStatic => {
-                // No .so — must embed regardless of hint.
-                if matches!(hint, Some(Linkage::SharedExternal)) {
-                    return Err(anyhow!(
-                        "dependency '{dep_name}' provides only a static archive but \
-                         linkage = \"shared-external\" was requested. Either drop the \
-                         hint (ccgo will static-embed automatically), or rebuild '{dep_name}' \
-                         with link_type = \"shared\" or \"both\"."
-                    ));
-                }
-                Ok(ResolvedLinkage::StaticEmbedded)
-            }
-            DepArtifacts::OnlyShared => {
-                // No .a — embedding is impossible.
-                if matches!(hint, Some(Linkage::StaticEmbedded)) {
-                    return Err(anyhow!(
-                        "dependency '{dep_name}' provides only a shared library (.so) but \
-                         linkage = \"static-embedded\" was requested. Either drop the hint \
-                         (ccgo will use shared-external automatically), or rebuild '{dep_name}' \
-                         with link_type = \"static\" or \"both\" so a .a is available."
-                    ));
-                }
-                if matches!(hint, Some(Linkage::StaticExternal)) {
-                    return Err(anyhow!(
-                        "dependency '{dep_name}': linkage = \"static-external\" is not valid \
-                         for a shared consumer (the .so would have unresolved external \
-                         references). Use shared-external (default) or static-embedded."
-                    ));
-                }
-                Ok(ResolvedLinkage::SharedExternal)
-            }
-            DepArtifacts::Both => match hint {
-                None | Some(Linkage::SharedExternal) => Ok(ResolvedLinkage::SharedExternal),
-                Some(Linkage::StaticEmbedded) => Ok(ResolvedLinkage::StaticEmbedded),
-                Some(Linkage::StaticExternal) => Err(anyhow!(
-                    "dependency '{dep_name}': linkage = \"static-external\" is not valid for \
-                     a shared consumer (the .so would have unresolved external static \
-                     references). Use shared-external or static-embedded."
-                )),
-            },
-            DepArtifacts::SourceOnly => Err(anyhow!(
-                "internal: dependency '{dep_name}' is still source-only at \
-                 link-resolution time. `materialize_source_deps` must run \
-                 before `resolve_linkage` so the dep's .a/.so are available. \
-                 This is a ccgo bug — please report it."
-            )),
-            DepArtifacts::None => unreachable!("handled above"),
-        },
+        LinkType::Static => resolve_static_linkage(artifacts, hint, dep_name),
+        LinkType::Shared => resolve_shared_linkage(artifacts, hint, dep_name),
         LinkType::All => Err(anyhow!(
             "resolve_linkage requires a concrete consumer link type \
              (static or shared); caller must collapse LinkType::All \
              into two separate builds (one static, one shared)."
         )),
+    }
+}
+
+fn source_only_error(dep_name: &str) -> anyhow::Error {
+    anyhow!(
+        "internal: dependency '{dep_name}' is still source-only at \
+         link-resolution time. `materialize_source_deps` must run \
+         before `resolve_linkage` so the dep's .a/.so are available. \
+         This is a ccgo bug — please report it."
+    )
+}
+
+fn resolve_static_linkage(
+    artifacts: DepArtifacts,
+    hint: Option<Linkage>,
+    dep_name: &str,
+) -> Result<ResolvedLinkage> {
+    if matches!(hint, Some(Linkage::StaticEmbedded)) {
+        bail!(
+            "dependency '{dep_name}': linkage = \"static-embedded\" is not valid \
+             for a static consumer (static archives cannot embed other archives). \
+             Use \"static-external\" (default) or \"shared-external\"."
+        );
+    }
+    match artifacts {
+        DepArtifacts::OnlyShared => {
+            if matches!(hint, Some(Linkage::StaticExternal)) {
+                bail!(
+                    "dependency '{dep_name}' provides only a shared library but \
+                     linkage = \"static-external\" was requested. Either drop the \
+                     hint (ccgo will use shared-external automatically), or rebuild \
+                     '{dep_name}' with link_type = \"static\" or \"both\"."
+                );
+            }
+            Ok(ResolvedLinkage::SharedExternal)
+        }
+        DepArtifacts::OnlyStatic => {
+            if matches!(hint, Some(Linkage::SharedExternal)) {
+                bail!(
+                    "dependency '{dep_name}' provides only a static archive but \
+                     linkage = \"shared-external\" was requested. Either drop the \
+                     hint (ccgo will use static-external automatically), or rebuild \
+                     '{dep_name}' with link_type = \"shared\" or \"both\"."
+                );
+            }
+            Ok(ResolvedLinkage::StaticExternal)
+        }
+        DepArtifacts::Both => Ok(match hint {
+            Some(Linkage::SharedExternal) => ResolvedLinkage::SharedExternal,
+            None | Some(Linkage::StaticExternal) => ResolvedLinkage::StaticExternal,
+            Some(Linkage::StaticEmbedded) => unreachable!("rejected above"),
+        }),
+        DepArtifacts::SourceOnly => Err(source_only_error(dep_name)),
+        DepArtifacts::None => unreachable!("handled by resolve_linkage"),
+    }
+}
+
+fn resolve_shared_linkage(
+    artifacts: DepArtifacts,
+    hint: Option<Linkage>,
+    dep_name: &str,
+) -> Result<ResolvedLinkage> {
+    match artifacts {
+        DepArtifacts::OnlyStatic => {
+            if matches!(hint, Some(Linkage::SharedExternal)) {
+                bail!(
+                    "dependency '{dep_name}' provides only a static archive but \
+                     linkage = \"shared-external\" was requested. Either drop the \
+                     hint (ccgo will static-embed automatically), or rebuild '{dep_name}' \
+                     with link_type = \"shared\" or \"both\"."
+                );
+            }
+            Ok(ResolvedLinkage::StaticEmbedded)
+        }
+        DepArtifacts::OnlyShared => {
+            if matches!(hint, Some(Linkage::StaticEmbedded)) {
+                bail!(
+                    "dependency '{dep_name}' provides only a shared library (.so) but \
+                     linkage = \"static-embedded\" was requested. Either drop the hint \
+                     (ccgo will use shared-external automatically), or rebuild '{dep_name}' \
+                     with link_type = \"static\" or \"both\" so a .a is available."
+                );
+            }
+            if matches!(hint, Some(Linkage::StaticExternal)) {
+                bail!(
+                    "dependency '{dep_name}': linkage = \"static-external\" is not valid \
+                     for a shared consumer (the .so would have unresolved external \
+                     references). Use shared-external (default) or static-embedded."
+                );
+            }
+            Ok(ResolvedLinkage::SharedExternal)
+        }
+        DepArtifacts::Both => match hint {
+            None | Some(Linkage::SharedExternal) => Ok(ResolvedLinkage::SharedExternal),
+            Some(Linkage::StaticEmbedded) => Ok(ResolvedLinkage::StaticEmbedded),
+            Some(Linkage::StaticExternal) => bail!(
+                "dependency '{dep_name}': linkage = \"static-external\" is not valid for \
+                 a shared consumer (the .so would have unresolved external static \
+                 references). Use shared-external or static-embedded."
+            ),
+        },
+        DepArtifacts::SourceOnly => Err(source_only_error(dep_name)),
+        DepArtifacts::None => unreachable!("handled by resolve_linkage"),
     }
 }
 

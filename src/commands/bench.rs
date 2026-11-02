@@ -109,51 +109,8 @@ impl BenchCommand {
         let config = CcgoConfig::load()?;
         let project_root = std::env::current_dir()?;
 
-        let sanitizer = if self.asan {
-            Some(crate::builder::sanitizer::SanitizerKind::Address)
-        } else if self.tsan {
-            Some(crate::builder::sanitizer::SanitizerKind::Thread)
-        } else {
-            None
-        };
-
-        // Validate reserved profile names.
-        if let Some(ref pname) = self.profile {
-            if matches!(pname.as_str(), "debug" | "release") {
-                anyhow::bail!("'--profile {pname}' is reserved; use --debug or --release instead");
-            }
-        }
-
-        let release = self.release; // mode is CLI-only; profile.release is never applied
-        let profile_name = self.profile.clone();
-
-        // Create build context for benchmarks
-        let options = BuildOptions {
-            // Placeholder: host builds have no BuildTarget. The build directory
-            // name comes from new_with_platform_name() below, not from this.
-            target: BuildTarget::Linux,
-            architectures: vec![],
-            link_type: LinkType::All,
-            use_docker: false,
-            auto_docker: false,
-            jobs: self.jobs,
-            ide_project: self.ide_project,
-            release,
-            native_only: false,
-            toolchain: WindowsToolchain::All,
-            verbose,
-            dev: false,
-            features: vec![],
-            use_default_features: true,
-            all_features: false,
-            cache: Some("auto".to_string()),
-            analytics: false,
-            linkage_default: None,
-            linkage_overrides: std::collections::HashMap::new(),
-            sanitizer,
-            profile_name,
-            ..BuildOptions::default()
-        };
+        self.validate_profile()?;
+        let options = self.build_options(verbose);
 
         let ctx = BuildContext::new_with_platform_name(
             project_root.clone(),
@@ -193,6 +150,51 @@ impl BenchCommand {
         Ok(())
     }
 
+    fn validate_profile(&self) -> Result<()> {
+        if let Some(ref profile) = self.profile {
+            if matches!(profile.as_str(), "debug" | "release") {
+                anyhow::bail!(
+                    "'--profile {profile}' is reserved; use --debug or --release instead"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn build_options(&self, verbose: bool) -> BuildOptions {
+        let sanitizer = if self.asan {
+            Some(crate::builder::sanitizer::SanitizerKind::Address)
+        } else if self.tsan {
+            Some(crate::builder::sanitizer::SanitizerKind::Thread)
+        } else {
+            None
+        };
+        BuildOptions {
+            target: BuildTarget::Linux,
+            architectures: vec![],
+            link_type: LinkType::All,
+            use_docker: false,
+            auto_docker: false,
+            jobs: self.jobs,
+            ide_project: self.ide_project,
+            release: self.release,
+            native_only: false,
+            toolchain: WindowsToolchain::All,
+            verbose,
+            dev: false,
+            features: vec![],
+            use_default_features: true,
+            all_features: false,
+            cache: Some("auto".to_string()),
+            analytics: false,
+            linkage_default: None,
+            linkage_overrides: std::collections::HashMap::new(),
+            sanitizer,
+            profile_name: self.profile.clone(),
+            ..BuildOptions::default()
+        }
+    }
+
     /// List saved benchmark runs
     fn list_saved_runs(&self) -> Result<()> {
         let store = BenchmarkStore::new(BenchmarkStore::default_path());
@@ -214,62 +216,57 @@ impl BenchCommand {
     /// Process benchmark results (save, compare, report)
     fn process_results(&self, project_root: &Path, build_dir: &Path, verbose: bool) -> Result<()> {
         let store = BenchmarkStore::new(project_root.join(".ccgo").join("benchmarks"));
-
-        // Find the latest benchmark JSON output
-        let json_file = self.find_benchmark_json(build_dir)?;
-
-        if let Some(json_path) = json_file {
-            // Parse the results
-            let mut current_run = store.parse_gbench_json(&json_path)?;
-
-            // Set run ID
-            if let Some(ref save_id) = self.save {
-                current_run.run_id = save_id.clone();
-            } else {
-                // Use timestamp as default ID
-                current_run.run_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+        let Some(json_path) = self.find_benchmark_json(build_dir)? else {
+            if verbose {
+                eprintln!(
+                    "Warning: No benchmark JSON output found in {}",
+                    build_dir.display()
+                );
             }
+            return Ok(());
+        };
 
-            // Save if requested
-            if self.save.is_some() {
-                let saved_path = store.save(&current_run)?;
-                eprintln!("📁 Benchmark results saved: {}", saved_path.display());
-            }
-
-            // Compare with baseline
-            let comparison = if let Some(ref baseline_id) = self.baseline {
-                Some(self.compare_with_baseline(&store, baseline_id, &current_run)?)
-            } else if self.compare_latest {
-                match store.load_latest() {
-                    Ok(baseline) => {
-                        if baseline.run_id != current_run.run_id {
-                            Some(ComparisonReport::new(
-                                &baseline,
-                                &current_run,
-                                self.threshold,
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                    Err(_) => None,
-                }
-            } else {
-                None
-            };
-
-            // Process comparison
-            if let Some(report) = comparison {
-                self.report_comparison(&report, verbose)?;
-            }
-        } else if verbose {
-            eprintln!(
-                "Warning: No benchmark JSON output found in {}",
-                build_dir.display()
-            );
+        let mut current_run = store.parse_gbench_json(&json_path)?;
+        self.assign_run_id(&mut current_run);
+        if self.save.is_some() {
+            let saved_path = store.save(&current_run)?;
+            eprintln!("📁 Benchmark results saved: {}", saved_path.display());
         }
-
+        if let Some(report) = self.comparison(&store, &current_run)? {
+            self.report_comparison(&report, verbose)?;
+        }
         Ok(())
+    }
+
+    fn assign_run_id(&self, run: &mut crate::testing::benchmark::BenchmarkRun) {
+        run.run_id = self
+            .save
+            .clone()
+            .unwrap_or_else(|| chrono::Local::now().format("%Y%m%d_%H%M%S").to_string());
+    }
+
+    fn comparison(
+        &self,
+        store: &BenchmarkStore,
+        current: &crate::testing::benchmark::BenchmarkRun,
+    ) -> Result<Option<ComparisonReport>> {
+        if let Some(ref baseline_id) = self.baseline {
+            return Ok(Some(self.compare_with_baseline(store, baseline_id, current)?));
+        }
+        if !self.compare_latest {
+            return Ok(None);
+        }
+        let Ok(baseline) = store.load_latest() else {
+            return Ok(None);
+        };
+        if baseline.run_id == current.run_id {
+            return Ok(None);
+        }
+        Ok(Some(ComparisonReport::new(
+            &baseline,
+            current,
+            self.threshold,
+        )))
     }
 
     /// Find benchmark JSON output file
