@@ -1352,6 +1352,93 @@ fn apple_cocoapods_publishes_static_and_shared_pods() {
 }
 
 #[test]
+fn windows_nuget_packages_static_and_shared_libraries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(
+        bin.join("dotnet"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$PUBLISH_CAPTURE\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("dotnet"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        tmp.path().join("CCGO.toml"),
+        "[project]\nname='logcomm'\nversion='1.0.0'\ndescription='Log library'\nlicense='MIT'\nauthors=['MNA']\n",
+    )
+    .unwrap();
+    let sdk = tmp.path().join("SDK.zip");
+    write_zip(
+        &sdk,
+        &[
+            ("include/logcomm/logcomm.h", b"#pragma once\n"),
+            ("lib/windows/static/x86_64/msvc/logcomm.lib", b"static-x64"),
+            (
+                "lib/windows/static/aarch64/msvc/logcomm.lib",
+                b"static-arm64",
+            ),
+            ("lib/windows/shared/x86_64/msvc/logcomm.dll", b"dll-x64"),
+            ("lib/windows/shared/x86_64/msvc/logcomm.lib", b"import-x64"),
+            ("lib/windows/shared/aarch64/msvc/logcomm.dll", b"dll-arm64"),
+            (
+                "lib/windows/shared/aarch64/msvc/logcomm.lib",
+                b"import-arm64",
+            ),
+        ],
+    );
+
+    let nupkg = tmp.path().join("target/release/nuget/logcomm.1.0.0.nupkg");
+    command_with_tools(tmp.path(), &bin, &tmp.path().join("local-args"))
+        .args([
+            "publish",
+            "windows",
+            "--manager",
+            "nuget",
+            "--path",
+            "SDK.zip",
+            "--registry",
+            "local",
+            "--version",
+            "1.0.0",
+        ])
+        .assert()
+        .success();
+    let zip = zip::ZipArchive::new(fs::File::open(&nupkg).unwrap()).unwrap();
+    let names: Vec<_> = zip.file_names().collect();
+    assert!(names.contains(&"logcomm.nuspec"));
+    assert!(names.contains(&"build/native/logcomm.props"));
+    assert!(names.contains(&"build/native/logcomm.targets"));
+    assert!(names.contains(&"build/native/include/logcomm/logcomm.h"));
+    assert!(names.contains(&"build/native/lib/x64/msvc/static/logcomm.lib"));
+    assert!(names.contains(&"build/native/lib/x64/msvc/shared/logcomm.lib"));
+    assert!(names.contains(&"runtimes/win-x64/native/logcomm.dll"));
+    assert!(names.contains(&"runtimes/win-arm64/native/logcomm.dll"));
+
+    let capture = tmp.path().join("push-args");
+    command_with_tools(tmp.path(), &bin, &capture)
+        .args([
+            "publish",
+            "windows",
+            "--manager",
+            "nuget",
+            "--path",
+            "SDK.zip",
+            "--registry",
+            "private",
+            "--remote",
+            "https://feed.example/v3/index.json",
+            "--version",
+            "1.0.0",
+        ])
+        .assert()
+        .success();
+    let args = fs::read_to_string(capture).unwrap();
+    assert!(args.starts_with("nuget\npush\n"));
+    assert!(args.contains("--source\nhttps://feed.example/v3/index.json"));
+    assert!(args.contains("--skip-duplicate"));
+}
+
+#[test]
 fn apple_github_generates_spm_wrapper_and_uploads_named_zip() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = tmp.path().join("bin");

@@ -793,7 +793,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 
 ### Arguments
 
-- `<PLATFORM>` - Platform to publish: android, apple, ohos, conan, kmp, package, doc
+- `<PLATFORM>` - Platform to publish: android, apple, ohos, conan, kmp, windows, package, doc
 
 ### Options
 
@@ -802,7 +802,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 | `--registry <TYPE>` | Registry: local, official, private |
 | `--url <URL>` | Custom registry URL (private only) |
 | `--skip-build` | Use existing build artifacts |
-| `--manager <MGR>` | Package manager (apple): cocoapods, spm, all |
+| `--manager <MGR>` | Package manager: apple (cocoapods, spm, all) or windows (nuget) |
 | `--linkage <TYPE>` | Apple artifact linkage: all (default), static, or shared (shared artifact gets a `-shared` suffix) |
 | `--pod-name <NAME>` | Static CocoaPods pod name (default: podspec name) |
 | `--shared-pod-name <NAME>` | Dynamic CocoaPods pod name (default: `<pod-name>Shared`) |
