@@ -20,6 +20,24 @@ use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 use crate::commands::build::LinkType;
 
 /// macOS platform builder
+fn apply_feature_options(ctx: &BuildContext, mut cmake: CMakeConfig) -> CMakeConfig {
+    if let Ok(feature_defines) = ctx.cmake_feature_defines() {
+        if !feature_defines.is_empty() {
+            cmake = cmake.feature_definitions(&feature_defines);
+            if ctx.options.verbose {
+                eprintln!(
+                    "    Enabled features: {}",
+                    feature_defines.replace(';', ", ")
+                );
+            }
+        }
+    }
+    if let Some(cache) = ctx.compiler_cache() {
+        cmake = cmake.compiler_cache(cache);
+    }
+    cmake
+}
+
 pub struct MacosBuilder {
     /// Xcode toolchain (lazily initialized)
     xcode: Option<XcodeToolchain>,
@@ -114,29 +132,25 @@ impl MacosBuilder {
 
     /// Build for a single architecture
     /// Returns the build directory where output is located (not install_dir, since CCGO cmake uses "out/")
-    fn build_arch(
+    fn configure_arch_cmake(
         &self,
         ctx: &BuildContext,
         xcode: &XcodeToolchain,
         arch: &str,
         link_type: &str,
-    ) -> Result<PathBuf> {
+    ) -> Result<(PathBuf, CMakeConfig, bool)> {
         let build_dir = ctx.cmake_build_dir.join(format!("{}/{}", link_type, arch));
         let install_dir = build_dir.join("install");
-
         let build_shared = link_type == "shared";
-
-        // Get macOS SDK path and CMake variables
         let cmake_vars = xcode.cmake_variables_for_platform(ApplePlatform::MacOS)?;
 
-        // Configure and build with CMake
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .build_type(if ctx.options.release {
                 BuildType::Release
             } else {
                 BuildType::Debug
             })
-            .install_prefix(install_dir.clone())
+            .install_prefix(install_dir)
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
             .variable(
@@ -148,65 +162,35 @@ impl MacosBuilder {
             .jobs(ctx.jobs())
             .verbose(ctx.options.verbose);
 
-        // Add CCGO_CMAKE_DIR if available
         if let Some(cmake_dir) = ctx.ccgo_cmake_dir() {
             cmake = cmake.variable("CCGO_CMAKE_DIR", cmake_dir.display().to_string());
         }
-
-        // Add SDK-related variables
         for (name, value) in cmake_vars {
             if name != "CMAKE_OSX_ARCHITECTURES" {
-                // Skip archs, we set it above
                 cmake = cmake.variable(&name, &value);
             }
         }
-
-        // Add CCGO configuration variables
         cmake = cmake.variable(
             "CCGO_CONFIG_PRESET_VISIBILITY",
             ctx.symbol_visibility().to_string(),
         );
-
-        // Add submodule dependencies for shared library linking
         if let Some(deps_map) = ctx.deps_map() {
             cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
         }
+        cmake = apply_feature_options(ctx, cmake);
 
-        // Add feature definitions for conditional compilation
-        if let Ok(feature_defines) = ctx.cmake_feature_defines() {
-            if !feature_defines.is_empty() {
-                cmake = cmake.feature_definitions(&feature_defines);
-                if ctx.options.verbose {
-                    eprintln!(
-                        "    Enabled features: {}",
-                        feature_defines.replace(';', ", ")
-                    );
-                }
-            }
-        }
-
-        // Add compiler cache if available
-        if let Some(cache) = ctx.compiler_cache() {
-            cmake = cmake.compiler_cache(cache);
-        }
-
-        // Resolve and pass per-dep linkage as a semicolon-separated list of
-        // <NAME>=<VALUE> pairs. CMake parses this in FindCCGODependencies.cmake
-        // to populate CCGO_DEPENDENCY_<NAME>_LINKAGE for each dep, which then
-        // drives the choice between target_link_libraries(... shared) and
-        // target_link_libraries(... static) per dep.
         let linkages = ctx.resolved_dep_linkages(
             self.platform_name(),
             if build_shared {
-                crate::commands::build::LinkType::Shared
+                LinkType::Shared
             } else {
-                crate::commands::build::LinkType::Static
+                LinkType::Static
             },
         )?;
         if !linkages.is_empty() {
             let linkages_val = linkages
                 .iter()
-                .map(|(name, l)| format!("{name}={l}"))
+                .map(|(name, linkage)| format!("{name}={linkage}"))
                 .collect::<Vec<_>>()
                 .join(";");
             cmake = cmake.variable("CCGO_DEPENDENCY_LINKAGES", linkages_val);
@@ -218,6 +202,19 @@ impl MacosBuilder {
             .user_c_flags(user.c_flags)
             .user_cpp_flags(user.cpp_flags)
             .user_cmake_files(ctx.cmake_user_files("macos"));
+
+        Ok((build_dir, cmake, build_shared))
+    }
+
+    fn build_arch(
+        &self,
+        ctx: &BuildContext,
+        xcode: &XcodeToolchain,
+        arch: &str,
+        link_type: &str,
+    ) -> Result<PathBuf> {
+        let (build_dir, cmake, build_shared) =
+            self.configure_arch_cmake(ctx, xcode, arch, link_type)?;
 
         cmake.configure_build_install()?;
 
@@ -608,6 +605,85 @@ impl MacosBuilder {
     }
 }
 
+impl MacosBuilder {
+    fn build_xcframework(
+        &self,
+        ctx: &BuildContext,
+        builder: &mut MacosBuilder,
+        link_type: &str,
+        shared: bool,
+        architectures: &[String],
+        archive: &ArchiveBuilder,
+    ) -> Result<()> {
+        let universal_dir = builder.build_link_type(ctx, link_type, architectures)?;
+        let xcode = XcodeToolchain::detect()?;
+        let xcframework_path = ctx
+            .cmake_build_dir
+            .join(format!("{link_type}/xcframework"));
+        let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
+        builder.create_xcframework(&xcode, &universal_dir, &xcframework, shared, ctx.lib_name())?;
+        if xcframework.exists() {
+            let archive_path = format!(
+                "{}/{}/{}/{}.xcframework",
+                ARCHIVE_DIR_FRAMEWORKS,
+                self.platform_name(),
+                if shared {
+                    ARCHIVE_DIR_SHARED
+                } else {
+                    ARCHIVE_DIR_STATIC
+                },
+                ctx.lib_name()
+            );
+            archive.add_directory(&xcframework, &archive_path)?;
+        }
+        Ok(())
+    }
+
+}
+
+impl MacosBuilder {
+    fn build_selected_link_types(
+        &self,
+        ctx: &BuildContext,
+        builder: &mut MacosBuilder,
+        architectures: &[String],
+        archive: &ArchiveBuilder,
+    ) -> Result<()> {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
+            self.build_xcframework(ctx, builder, "static", false, architectures, archive)?;
+        }
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
+            self.build_xcframework(ctx, builder, "shared", true, architectures, archive)?;
+        }
+        Ok(())
+    }
+
+    fn selected_architectures(&self, ctx: &BuildContext) -> Vec<String> {
+        if ctx.options.architectures.is_empty() {
+            self.default_architectures()
+        } else {
+            ctx.options.architectures.clone()
+        }
+    }
+
+    fn add_sdk_include_files(ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+        let include_source = ctx.include_source_dir();
+        if !include_source.exists() {
+            return Ok(());
+        }
+        let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+        archive.add_directory(&include_source, &include_path)?;
+        if ctx.options.verbose {
+            eprintln!(
+                "Added include files from {} to {}",
+                include_source.display(),
+                include_path
+            );
+        }
+        Ok(())
+    }
+}
+
 impl PlatformBuilder for MacosBuilder {
     fn platform_name(&self) -> &str {
         "macos"
@@ -679,12 +755,7 @@ impl PlatformBuilder for MacosBuilder {
         // has artifacts on disk; spawns `ccgo build` recursively otherwise.)
         ctx.materialize_source_deps(self.platform_name())?;
 
-        // Determine architectures to build
-        let architectures = if ctx.options.architectures.is_empty() {
-            self.default_architectures()
-        } else {
-            ctx.options.architectures.clone()
-        };
+        let architectures = self.selected_architectures(ctx);
 
         // Create output directory
         std::fs::create_dir_all(&ctx.output_dir)?;
@@ -699,85 +770,9 @@ impl PlatformBuilder for MacosBuilder {
             ctx.output_dir.clone(),
         )?;
 
-        let mut built_link_types = Vec::new();
+        self.build_selected_link_types(ctx, &mut builder, &architectures, &archive)?;
 
-        // Build static libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
-            let universal_dir = builder.build_link_type(ctx, "static", &architectures)?;
-
-            // Get Xcode for XCFramework creation
-            let xcode = XcodeToolchain::detect()?;
-
-            // Create XCFramework
-            let xcframework_path = ctx.cmake_build_dir.join("static/xcframework");
-            let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(
-                &xcode,
-                &universal_dir,
-                &xcframework,
-                false,
-                ctx.lib_name(),
-            )?;
-
-            // Add to archive: frameworks/macos/static/{lib_name}.xcframework
-            if xcframework.exists() {
-                let archive_path = format!(
-                    "{}/{}/{}/{}.xcframework",
-                    ARCHIVE_DIR_FRAMEWORKS,
-                    self.platform_name(),
-                    ARCHIVE_DIR_STATIC,
-                    ctx.lib_name()
-                );
-                archive.add_directory(&xcframework, &archive_path)?;
-            }
-            built_link_types.push("static");
-        }
-
-        // Build shared libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
-            let universal_dir = builder.build_link_type(ctx, "shared", &architectures)?;
-
-            // Get Xcode for XCFramework creation
-            let xcode = XcodeToolchain::detect()?;
-
-            // Create XCFramework
-            let xcframework_path = ctx.cmake_build_dir.join("shared/xcframework");
-            let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-            builder.create_xcframework(
-                &xcode,
-                &universal_dir,
-                &xcframework,
-                true,
-                ctx.lib_name(),
-            )?;
-
-            // Add to archive: frameworks/macos/shared/{lib_name}.xcframework
-            if xcframework.exists() {
-                let archive_path = format!(
-                    "{}/{}/{}/{}.xcframework",
-                    ARCHIVE_DIR_FRAMEWORKS,
-                    self.platform_name(),
-                    ARCHIVE_DIR_SHARED,
-                    ctx.lib_name()
-                );
-                archive.add_directory(&xcframework, &archive_path)?;
-            }
-            built_link_types.push("shared");
-        }
-
-        // Add include files from project's include directory (matching pyccgo behavior)
-        let include_source = ctx.include_source_dir();
-        if include_source.exists() {
-            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
-            archive.add_directory(&include_source, &include_path)?;
-            if ctx.options.verbose {
-                eprintln!(
-                    "Added include files from {} to {}",
-                    include_source.display(),
-                    include_path
-                );
-            }
-        }
+        Self::add_sdk_include_files(ctx, &archive)?;
 
         // Create the SDK archive
         let link_type_str = ctx.options.link_type.to_string();
