@@ -68,6 +68,9 @@ ccgo publish conan --registry private --remote myrepo
 
 # Publish Windows libraries to NuGet
 ccgo publish windows --manager nuget --registry local
+
+# Generate a vcpkg port from a ccgo package
+ccgo publish vcpkg --registry local
 ccgo publish windows --manager nuget --registry official       # NUGET_API_KEY
 ccgo publish windows --manager nuget --registry private --remote https://feed.example/v3/index.json
 
@@ -87,6 +90,7 @@ ccgo publish doc --doc-branch gh-pages --doc-open
 | OHOS | `ohpm prepublish` validation | Official OHPM | Custom OHPM URL | URL |
 | Conan | Local Conan create/export | Unsupported (ConanCenter PR) | Conan remote name | Configured name |
 | Windows | Local `.nupkg` under `target/release/nuget/` | nuget.org (`NUGET_API_KEY`) | NuGet feed URL | URL |
+| vcpkg | Generated port under `target/release/vcpkg/` | Unsupported (prebuilt ports are not upstream) | Generated port for a private registry | Registry Git URL |
 | Package / Index | Local index directory | Official CCGO index | Configured index name | Configured name |
 | Doc | GitHub Pages (no artifact provider) | Not used | Not used | Not used |
 
@@ -529,6 +533,50 @@ MSBuild consumers select the linkage with `<id>Linkage`:
 `--version` overrides the package version. The package ID comes from the
 project name; `--tag` is not used. Pushing requires the .NET SDK and
 `dotnet nuget push`.
+
+## vcpkg Publishing
+
+vcpkg is cross-platform like Conan, so `ccgo publish vcpkg` is a top-level
+target. It generates a port that installs the prebuilt artifacts from an
+existing `ccgo package` ZIP instead of rebuilding with vcpkg.
+
+```bash
+# Uses target/release/package/*_CCGO_PACKAGE-*.zip, or pass --path
+ccgo publish vcpkg --registry local
+
+# Generate a port that downloads the package from a private URL
+ccgo publish vcpkg --registry private \
+  --archive-url-template https://cdn.example/logcomm/{version}/logcomm.zip
+```
+
+Output:
+
+```text
+target/release/vcpkg/ports/<port>/
+├── vcpkg.json
+├── portfile.cmake
+├── install.cmake
+├── copyright
+└── <port>-<version>.zip     # local mode only
+```
+
+`portfile.cmake` downloads or extracts the package; `install.cmake` maps the
+vcpkg triplet to the ccgo SDK layout:
+
+| vcpkg triplet | ccgo layout |
+|---|---|
+| `x64-windows` | `lib/windows/<static|shared>/x86_64/msvc` |
+| `arm64-windows` | `lib/windows/<static|shared>/aarch64/msvc` |
+| `x64-linux` | `lib/linux/<static|shared>/x86_64` |
+| `arm64-linux` | `lib/linux/<static|shared>/aarch64` |
+| `x64-osx` / `arm64-osx` | `lib/macos/<static|shared>/*.xcframework` |
+| `arm64-ios` / `x64-ios` | `lib/ios/<static|shared>/*.xcframework` |
+| Android triplets | `lib/android/<static|shared>/<abi>` |
+
+`VCPKG_LIBRARY_LINKAGE` selects static or shared. `--registry official` errors:
+vcpkg has no binary upload endpoint and upstream does not accept prebuilt-only
+ports. Local/private generation is supported; commit the generated port to a
+private registry and update its baseline manually.
 
 ## Conan Publishing
 

@@ -1439,6 +1439,79 @@ fn windows_nuget_packages_static_and_shared_libraries() {
 }
 
 #[test]
+fn vcpkg_generates_a_prebuilt_sdk_port() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("CCGO.toml"),
+        "[project]\nname='logcomm'\nversion='1.0.0'\ndescription='Log library'\nlicense='MIT'\nauthors=['MNA']\n",
+    )
+    .unwrap();
+    let package = tmp.path().join("LOGCOMM_CCGO_PACKAGE-1.0.0.zip");
+    write_zip(
+        &package,
+        &[
+            ("include/logcomm/logcomm.h", b"#pragma once\n"),
+            ("lib/windows/static/x86_64/msvc/logcomm.lib", b"static"),
+            ("lib/windows/shared/x86_64/msvc/logcomm.dll", b"dll"),
+            ("lib/linux/static/x86_64/liblogcomm.a", b"static"),
+            ("lib/linux/shared/x86_64/liblogcomm.so", b"shared"),
+            (
+                "lib/macos/static/logcomm.xcframework/macos-arm64_x86_64/liblogleaf.a",
+                b"mac",
+            ),
+        ],
+    );
+
+    command_with_tools(
+        tmp.path(),
+        &tmp.path().join("bin"),
+        &tmp.path().join("args"),
+    )
+    .args([
+        "publish",
+        "vcpkg",
+        "--registry",
+        "local",
+        "--path",
+        "LOGCOMM_CCGO_PACKAGE-1.0.0.zip",
+    ])
+    .assert()
+    .success();
+
+    let port = tmp.path().join("target/release/vcpkg/ports/logcomm");
+    assert!(port.join("vcpkg.json").is_file());
+    assert!(port.join("portfile.cmake").is_file());
+    assert!(port.join("install.cmake").is_file());
+    assert!(port.join("logcomm-1.0.0.zip").is_file());
+    let install = fs::read_to_string(port.join("install.cmake")).unwrap();
+    assert!(install.contains("VCPKG_TARGET_IS_WINDOWS"));
+    assert!(install.contains("VCPKG_TARGET_IS_LINUX"));
+    assert!(install.contains("VCPKG_TARGET_IS_OSX"));
+    assert!(install.contains("VCPKG_LIBRARY_LINKAGE"));
+
+    command_with_tools(
+        tmp.path(),
+        &tmp.path().join("bin"),
+        &tmp.path().join("args2"),
+    )
+    .args([
+        "publish",
+        "vcpkg",
+        "--registry",
+        "private",
+        "--path",
+        "LOGCOMM_CCGO_PACKAGE-1.0.0.zip",
+        "--archive-url-template",
+        "https://cdn.example/logcomm/{version}/logcomm.zip",
+    ])
+    .assert()
+    .success();
+    let portfile = fs::read_to_string(port.join("portfile.cmake")).unwrap();
+    assert!(portfile.contains("https://cdn.example/logcomm/1.0.0/logcomm.zip"));
+    assert!(portfile.contains("SHA512 "));
+}
+
+#[test]
 fn apple_github_generates_spm_wrapper_and_uploads_named_zip() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = tmp.path().join("bin");
