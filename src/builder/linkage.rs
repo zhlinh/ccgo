@@ -187,11 +187,10 @@ pub fn resolve_linkage(
             )),
             DepArtifacts::None => unreachable!("handled above"),
         },
-        LinkType::Both => Err(anyhow!(
+        LinkType::All => Err(anyhow!(
             "resolve_linkage requires a concrete consumer link type \
-             (static or shared); caller must collapse LinkType::Both \
-             into two separate calls. Use LinkType::preferred_single() \
-             once that helper lands in Task 5."
+             (static or shared); caller must collapse LinkType::All \
+             into two separate builds (one static, one shared)."
         )),
     }
 }
@@ -402,12 +401,12 @@ mod tests {
     }
 
     #[test]
-    fn link_type_both_is_rejected_with_clear_message() {
-        let err = resolve_linkage(LinkType::Both, DepArtifacts::Both, None, "dep").unwrap_err();
+    fn link_type_all_is_rejected_with_clear_message() {
+        let err = resolve_linkage(LinkType::All, DepArtifacts::Both, None, "dep").unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("LinkType::Both") || msg.contains("static or shared"),
-            "expected message about Both not being allowed, got: {msg}"
+            msg.contains("LinkType::All") || msg.contains("static or shared"),
+            "expected message about All not being allowed, got: {msg}"
         );
     }
 

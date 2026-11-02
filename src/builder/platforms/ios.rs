@@ -236,6 +236,24 @@ impl IosBuilder {
             cmake = cmake.variable("CCGO_CONFIG_DEPS_MAP", deps_map);
         }
 
+        // Resolve dependency linkage for this axis (static vs shared), so the
+        // shared XCFramework links against shared dependency artifacts and the
+        // static one against static artifacts.
+        let consumer = if build_shared {
+            LinkType::Shared
+        } else {
+            LinkType::Static
+        };
+        let linkages = ctx.resolved_dep_linkages(self.platform_name(), consumer)?;
+        if !linkages.is_empty() {
+            let linkages_val = linkages
+                .iter()
+                .map(|(name, linkage)| format!("{name}={linkage}"))
+                .collect::<Vec<_>>()
+                .join(";");
+            cmake = cmake.variable("CCGO_DEPENDENCY_LINKAGES", linkages_val);
+        }
+
         // Add feature definitions for conditional compilation
         if let Ok(feature_defines) = ctx.cmake_feature_defines() {
             if !feature_defines.is_empty() {
@@ -703,7 +721,7 @@ impl PlatformBuilder for IosBuilder {
         let mut built_link_types = Vec::new();
 
         // Build static libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             let (device_dir, sim_dir) = self.build_link_type(ctx, &xcode, "static")?;
 
             // Create XCFramework
@@ -733,7 +751,7 @@ impl PlatformBuilder for IosBuilder {
         }
 
         // Build shared libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             let (device_dir, sim_dir) = self.build_link_type(ctx, &xcode, "shared")?;
 
             // Create XCFramework

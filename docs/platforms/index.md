@@ -105,7 +105,7 @@ ccgo build --build-as static
 ccgo build --build-as shared
 
 # Both (default)
-ccgo build --build-as both
+ccgo build --build-as all
 ```
 
 ### Toolchain Selection (Windows)

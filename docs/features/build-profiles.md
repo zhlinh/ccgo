@@ -33,7 +33,7 @@ Add a `[profile.<name>]` table to your `CCGO.toml`:
 ```toml
 [profile.sanitize]
 release = false
-link_type = "both"
+link_type = "all"
 
 [profile.sanitize.cmake]
 c_flags  = ["-fsanitize=address", "-fno-omit-frame-pointer"]
@@ -195,7 +195,7 @@ cpp_flags = ["-g"]
 ```toml
 [profile.asan]
 inherits  = "debug"
-link_type = "both"
+link_type = "all"
 
 [profile.asan.cmake]
 c_flags   = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]

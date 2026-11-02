@@ -105,7 +105,7 @@ ccgo build --build-as static
 ccgo build --build-as shared
 
 # 两者都有（默认）
-ccgo build --build-as both
+ccgo build --build-as all
 ```
 
 ### 工具链选择（Windows）

@@ -435,8 +435,11 @@ ccgo build <platform> --build-as shared
 Build both static and shared libraries:
 
 ```bash
-ccgo build <platform> --build-as both
+ccgo build <platform> --build-as all
 ```
+
+Dependency linkage is resolved per axis: the static build links static
+dependency artifacts, while the shared build links shared-external artifacts.
 
 ## Toolchain Selection
 

@@ -83,7 +83,7 @@ ccgo build macos --build-type release         # Release 构建（默认）
 # 链接类型
 ccgo build macos --build-as static           # 仅静态库/框架
 ccgo build macos --build-as shared           # 仅动态库/框架
-ccgo build macos --build-as both             # 两种类型（默认）
+ccgo build macos --build-as all             # 两种类型（默认）
 ```
 
 ### 使用 Framework 构建

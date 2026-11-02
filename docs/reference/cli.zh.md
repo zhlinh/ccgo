@@ -148,7 +148,7 @@ ccgo build [OPTIONS] <TARGET>
 | 选项 | 描述 |
 |--------|-------------|
 | `--arch <ARCH>` | 目标架构（逗号分隔）|
-| `--build-as <TYPE>` | `static`、`shared` 或 `both`（默认：`both`）|
+| `--build-as <TYPE>` | `static`、`shared` 或 `all`（默认：`all`）|
 | `--docker` | 使用 Docker 容器构建 |
 | `--auto-docker` | 当本地构建不可用时自动检测并使用 Docker |
 | `-j, --jobs <N>` | 并行构建作业数 |
@@ -803,6 +803,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 | `--url <URL>` | 自定义注册表 URL（仅 private）|
 | `--skip-build` | 使用现有构建产物 |
 | `--manager <MGR>` | 包管理器（apple）：cocoapods、spm、all |
+| `--linkage <TYPE>` | Apple 产物链接方式：all（默认）、static 或 shared（shared 产物名自动加 `-shared` 后缀）|
 | `--push` | 推送 git 标签（仅 SPM）|
 | `--remote-name <NAME>` | Git 远程名称（默认：origin）|
 
@@ -820,6 +821,9 @@ ccgo publish apple --manager cocoapods
 
 # 发布到 SPM 并推送 git
 ccgo publish apple --manager spm --push
+
+# 发布动态 Apple XCFramework（产物名自动加 -shared）
+ccgo publish apple --manager spm --linkage shared --push
 
 # 发布到私有 Maven
 ccgo publish android --registry private --url https://maven.example.com

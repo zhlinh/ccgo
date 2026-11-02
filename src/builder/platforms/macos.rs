@@ -195,7 +195,14 @@ impl MacosBuilder {
         // to populate CCGO_DEPENDENCY_<NAME>_LINKAGE for each dep, which then
         // drives the choice between target_link_libraries(... shared) and
         // target_link_libraries(... static) per dep.
-        let linkages = ctx.resolved_dep_linkages(self.platform_name())?;
+        let linkages = ctx.resolved_dep_linkages(
+            self.platform_name(),
+            if build_shared {
+                crate::commands::build::LinkType::Shared
+            } else {
+                crate::commands::build::LinkType::Static
+            },
+        )?;
         if !linkages.is_empty() {
             let linkages_val = linkages
                 .iter()
@@ -695,7 +702,7 @@ impl PlatformBuilder for MacosBuilder {
         let mut built_link_types = Vec::new();
 
         // Build static libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             let universal_dir = builder.build_link_type(ctx, "static", &architectures)?;
 
             // Get Xcode for XCFramework creation
@@ -727,7 +734,7 @@ impl PlatformBuilder for MacosBuilder {
         }
 
         // Build shared libraries and create XCFramework
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             let universal_dir = builder.build_link_type(ctx, "shared", &architectures)?;
 
             // Get Xcode for XCFramework creation

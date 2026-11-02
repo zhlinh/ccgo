@@ -119,7 +119,7 @@ ccgo build linux --build-type release  # Release 构建（默认）
 # 链接类型
 ccgo build linux --build-as static    # 仅静态库
 ccgo build linux --build-as shared    # 仅共享库
-ccgo build linux --build-as both      # 两种类型（默认）
+ccgo build linux --build-as all      # 两种类型（默认）
 ```
 
 ### 生成 CodeLite 项目

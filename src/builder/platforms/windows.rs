@@ -794,11 +794,11 @@ impl WindowsBuilder {
             eprintln!("Building for arch: {}", arch);
         }
 
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             self.build_and_archive_static(ctx, archive, arch, toolchain, symbols)?;
         }
 
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             self.build_and_archive_shared(ctx, archive, arch, toolchain, symbols)?;
         }
         Ok(())

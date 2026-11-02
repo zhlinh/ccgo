@@ -337,7 +337,7 @@ impl PlatformBuilder for ConanBuilder {
         let mut built_link_types = Vec::new();
 
         // Build static libraries
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             if ctx.options.verbose {
                 eprintln!("Building static library...");
             }
@@ -353,7 +353,7 @@ impl PlatformBuilder for ConanBuilder {
         }
 
         // Build shared libraries
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             if ctx.options.verbose {
                 eprintln!("Building shared library...");
             }

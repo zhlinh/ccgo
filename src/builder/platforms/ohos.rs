@@ -182,7 +182,12 @@ impl OhosBuilder {
         // to populate CCGO_DEPENDENCY_<NAME>_LINKAGE for each dep, which then
         // drives the choice between target_link_libraries(... shared) and
         // target_link_libraries(... static) per dep.
-        let linkages = ctx.resolved_dep_linkages(self.platform_name())?;
+        let consumer = if build_shared {
+            LinkType::Shared
+        } else {
+            LinkType::Static
+        };
+        let linkages = ctx.resolved_dep_linkages(self.platform_name(), consumer)?;
         let linkages_var = if linkages.is_empty() {
             None
         } else {
@@ -923,13 +928,13 @@ impl OhosBuilder {
     ) -> Result<Vec<&'static str>> {
         let mut built_link_types = Vec::new();
 
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             let results = self.build_link_type(ctx, sdk, "static", abis, min_sdk_version)?;
             self.add_libraries_to_archive(archive, &results, "static", false, ctx.lib_name())?;
             built_link_types.push("static");
         }
 
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             let results = self.build_link_type(ctx, sdk, "shared", abis, min_sdk_version)?;
 
             if ctx.options.verbose {

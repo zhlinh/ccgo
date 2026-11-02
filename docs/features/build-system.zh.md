@@ -435,8 +435,11 @@ ccgo build <platform> --build-as shared
 构建静态和动态库：
 
 ```bash
-ccgo build <platform> --build-as both
+ccgo build <platform> --build-as all
 ```
+
+依赖链接按构建轴分别解析：静态构建链接静态依赖产物，动态构建链接
+shared-external 依赖产物。
 
 ## 工具链选择
 

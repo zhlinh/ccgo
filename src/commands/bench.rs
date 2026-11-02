@@ -133,7 +133,7 @@ impl BenchCommand {
             // name comes from new_with_platform_name() below, not from this.
             target: BuildTarget::Linux,
             architectures: vec![],
-            link_type: LinkType::Both,
+            link_type: LinkType::All,
             use_docker: false,
             auto_docker: false,
             jobs: self.jobs,

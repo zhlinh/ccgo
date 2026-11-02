@@ -82,7 +82,7 @@ ccgo build ios --build-type release           # Release build (default)
 # Link types
 ccgo build ios --build-as static             # Static framework only
 ccgo build ios --build-as shared             # Dynamic framework only
-ccgo build ios --build-as both               # Both types (default)
+ccgo build ios --build-as all               # Both types (default)
 ```
 
 ### Build with XCFramework

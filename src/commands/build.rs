@@ -223,9 +223,11 @@ pub enum LinkType {
     Static,
     /// Shared/dynamic library only
     Shared,
-    /// Both static and shared
+    /// Both static and shared (default)
     #[default]
-    Both,
+    #[value(alias = "both")]
+    #[serde(alias = "both")]
+    All,
 }
 
 impl std::fmt::Display for LinkType {
@@ -233,20 +235,7 @@ impl std::fmt::Display for LinkType {
         match self {
             LinkType::Static => write!(f, "static"),
             LinkType::Shared => write!(f, "shared"),
-            LinkType::Both => write!(f, "both"),
-        }
-    }
-}
-
-impl LinkType {
-    /// When the user requested both static and shared, dependency resolution
-    /// uses the shared form (because anything that works for shared also
-    /// works for static — but not vice versa). Static-only collapses to
-    /// Static; Shared-only and Both both collapse to Shared.
-    pub fn preferred_single(&self) -> LinkType {
-        match self {
-            LinkType::Static => LinkType::Static,
-            LinkType::Shared | LinkType::Both => LinkType::Shared,
+            LinkType::All => write!(f, "all"),
         }
     }
 }
@@ -312,8 +301,8 @@ pub struct BuildCommand {
     ///
     /// * `static` — produce only `.a` / `.lib`
     /// * `shared` — produce only `.so` / `.dylib` / `.dll`
-    /// * `both`   — produce both (default)
-    #[arg(long = "build-as", value_enum, default_value_t = LinkType::Both)]
+    /// * `all`    — produce both (default)
+    #[arg(long = "build-as", value_enum, default_value_t = LinkType::All)]
     pub link_type: LinkType,
 
     /// C++ runtime to link against (Android and OHOS only).
@@ -379,10 +368,10 @@ pub struct BuildCommand {
     ///
     /// Overrides `[[dependencies]].linkage_on_shared` and
     /// `[build].dep_linkage_on_shared` from CCGO.toml. Useful when
-    /// `--build-as both` is active and shared/static consumers need different
+    /// `--build-as all` is active and shared/static consumers need different
     /// dependency linkage.
     ///
-    ///   ccgo build android --build-as both \
+    ///   ccgo build android --build-as all \
     ///     --linkage-on-shared shared-external \
     ///     --linkage-on-static static-embedded
     #[arg(long = "linkage-on-shared", verbatim_doc_comment)]
@@ -685,7 +674,7 @@ impl BuildCommand {
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             // release intentionally not applied — mode is CLI-only.
             if let Some(ref prof_lt) = rp.link_type {
-                if cmd.link_type == LinkType::Both {
+                if cmd.link_type == LinkType::All {
                     options.link_type = prof_lt.clone();
                 }
             }
@@ -709,7 +698,7 @@ impl BuildCommand {
                 {
                     // release intentionally not applied — mode is CLI-only.
                     if let Some(ref prof_lt) = rp.link_type {
-                        if cmd.link_type == LinkType::Both {
+                        if cmd.link_type == LinkType::All {
                             options.link_type = prof_lt.clone();
                         }
                     }
@@ -1350,6 +1339,23 @@ mod tests {
     }
 
     #[test]
+    fn build_as_accepts_all_and_legacy_both_alias() {
+        #[derive(clap::Parser)]
+        struct BuildArgs {
+            #[command(flatten)]
+            build: BuildCommand,
+        }
+
+        for value in ["all", "both"] {
+            let command =
+                <BuildArgs as clap::Parser>::try_parse_from(["ccgo", "linux", "--build-as", value])
+                    .unwrap()
+                    .build;
+            assert_eq!(command.link_type, LinkType::All, "--build-as {value}");
+        }
+    }
+
+    #[test]
     fn build_all_accepts_release_and_auto_docker() {
         #[derive(clap::Parser)]
         struct BuildArgs {
@@ -1407,13 +1413,6 @@ mod tests {
                 .is_err(),
             "`auto` must no longer be accepted"
         );
-    }
-
-    #[test]
-    fn preferred_single_collapses_both_to_shared() {
-        assert_eq!(LinkType::Static.preferred_single(), LinkType::Static);
-        assert_eq!(LinkType::Shared.preferred_single(), LinkType::Shared);
-        assert_eq!(LinkType::Both.preferred_single(), LinkType::Shared);
     }
 
     #[test]

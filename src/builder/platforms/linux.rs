@@ -495,7 +495,7 @@ impl LinuxBuilder {
         let linux_arch = LinuxArch::parse(arch)?;
         let toolchain = LinuxToolchain::detect_for_arch(linux_arch)?;
 
-        if matches!(ctx.options.link_type, LinkType::Static | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
             if ctx.options.verbose {
                 eprintln!("  Building static library...");
             }
@@ -511,7 +511,7 @@ impl LinuxBuilder {
             }
         }
 
-        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::Both) {
+        if matches!(ctx.options.link_type, LinkType::Shared | LinkType::All) {
             if ctx.options.verbose {
                 eprintln!("  Building shared library...");
             }
