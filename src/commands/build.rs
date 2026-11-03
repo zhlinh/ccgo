@@ -421,10 +421,10 @@ pub struct BuildCommand {
 
     /// Windows toolchain selection.
     ///
-    /// `all` (default) builds every toolchain installed on the host. `msvc`
+    /// `all` (default) builds every toolchain available in the build environment. `msvc`
     /// and `mingw` select a single toolchain and fail if it is unavailable.
-    /// Docker builds use MinGW only, since the MSVC image needs a ccgo build
-    /// with xwin support.
+    /// Docker builds (`--docker` or `--auto-docker`) support both MinGW and
+    /// the xwin-based MSVC toolchain; `all` builds both.
     #[arg(long, value_enum, default_value_t = WindowsToolchain::All)]
     pub toolchain: WindowsToolchain,
 
