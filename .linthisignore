@@ -1,0 +1,2 @@
+# Test fixtures include sample sources and generated build artifacts.
+tests/fixtures/**
