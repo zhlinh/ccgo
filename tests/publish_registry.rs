@@ -383,13 +383,26 @@ exec '{}' "$@"
     let b = b.join().unwrap();
     let entry: serde_json::Value =
         serde_json::from_str(&git(&remote, &["show", "HEAD:de/mo/demo.json"])).unwrap();
+    assert_concurrent_publications(&a, &b, &entry, conflicting_version, yank);
+    let metadata: serde_json::Value =
+        serde_json::from_str(&git(&remote, &["show", "HEAD:index.json"])).unwrap();
+    assert_eq!(metadata["package_count"], 1);
+}
+
+fn assert_concurrent_publications(
+    a: &std::process::Output,
+    b: &std::process::Output,
+    entry: &serde_json::Value,
+    conflicting_version: bool,
+    yank: bool,
+) {
     if conflicting_version {
         assert_ne!(
             a.status.success(),
             b.status.success(),
             "one publisher must reject conflicting history"
         );
-        let failed = if a.status.success() { &b } else { &a };
+        let failed = if a.status.success() { b } else { a };
         assert!(
             String::from_utf8_lossy(&failed.stderr).contains("Cannot reconcile"),
             "{}",
@@ -414,9 +427,6 @@ exec '{}' "$@"
             assert_eq!(previous["yanked_reason"], "regression");
         }
     }
-    let metadata: serde_json::Value =
-        serde_json::from_str(&git(&remote, &["show", "HEAD:index.json"])).unwrap();
-    assert_eq!(metadata["package_count"], 1);
 }
 
 #[test]
@@ -1076,17 +1086,68 @@ fn index_commit_failure_stops_before_remote_push() {
 
 #[test]
 fn maven_remote_overrides_environment_for_android_and_kmp() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let bin = root.join("bin");
     fs::create_dir(&bin).unwrap();
+    fs::write(
+        root.join("CCGO.toml"),
+        "[project]\nname='demo'\nversion='1.2.3'\ngroup_id='com.example'\n",
+    )
+    .unwrap();
+    let aar = root.join("demo.aar");
+    fs::write(&aar, b"prebuilt-aar").unwrap();
+    let sdk = root.join("sdk");
+    fs::create_dir_all(sdk.join("meta/kmp")).unwrap();
+    fs::create_dir_all(sdk.join("lib/kmp/android")).unwrap();
+    fs::write(
+        sdk.join("meta/kmp/build_info.json"),
+        br#"{"project":"demo","version":"1.2.3"}"#,
+    )
+    .unwrap();
+    fs::write(sdk.join("lib/kmp/android/library.aar"), b"prebuilt-aar").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let remote = format!("http://{}/maven/", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let mut requests = Vec::new();
+        // Each invocation uploads the AAR, POM, and their SHA-256 checksums.
+        for _ in 0..24 {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(15)))
+                .unwrap();
+            let mut data = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let size = stream.read(&mut buffer).unwrap();
+                assert!(size > 0);
+                data.extend_from_slice(&buffer[..size]);
+                if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&data[..end]).to_lowercase();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length: "))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    if data.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            requests.push(data);
+        }
+        requests
+    });
     for target in ["android", "kmp"] {
-        let project = root.join(target);
-        fs::create_dir(&project).unwrap();
-        tool(
-            &project.join("gradlew"),
-            "printf '%s' \"$CCGO_MAVEN_URL\" > \"$PUBLISH_CAPTURE\"",
-        );
         for flag in ["--remote", "--url", "--remote-name"] {
             command(root, &bin)
                 .env("CCGO_MAVEN_URL", "https://old.example/maven/")
@@ -1096,17 +1157,29 @@ fn maven_remote_overrides_environment_for_android_and_kmp() {
                     "--registry",
                     "private",
                     flag,
-                    "https://new.example/maven/",
+                    &remote,
                     "--path",
                 ])
-                .arg(&project)
+                .arg(if target == "android" { &aar } else { &sdk })
                 .assert()
                 .success();
-            assert_eq!(
-                fs::read_to_string(root.join("commands")).unwrap(),
-                "https://new.example/maven/"
-            );
         }
+    }
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 24);
+    for (index, batch) in requests.chunks_exact(4).enumerate() {
+        let artifact_id = if index < 3 {
+            "demo"
+        } else {
+            "demo-kmp-android"
+        };
+        let prefix = format!("PUT /maven/com/example/{artifact_id}/1.2.3/{artifact_id}-1.2.3.");
+        assert!(batch
+            .iter()
+            .all(|request| request.starts_with(prefix.as_bytes())));
+        assert!(batch
+            .iter()
+            .any(|request| request.ends_with(b"prebuilt-aar")));
     }
 }
 
