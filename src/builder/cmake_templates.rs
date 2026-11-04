@@ -50,6 +50,8 @@ pub fn get_cmake_dir() -> Result<PathBuf> {
 
     let cmake_dir = home.join(".ccgo/cmake");
 
+    migrate_configuration_types(&cmake_dir)?;
+
     // Check if templates are already extracted and up-to-date
     if cmake_dir.exists() && is_templates_current(&cmake_dir) {
         return Ok(cmake_dir);
@@ -63,6 +65,26 @@ pub fn get_cmake_dir() -> Result<PathBuf> {
     write_templates(&cmake_dir)?;
 
     Ok(cmake_dir)
+}
+
+/// Update the legacy configuration list without replacing user-edited templates.
+fn migrate_configuration_types(cmake_dir: &Path) -> Result<()> {
+    let path = cmake_dir.join("CMakeUtils.cmake");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let legacy = "set(CMAKE_CONFIGURATION_TYPES \"Debug;Release\" CACHE STRING \"\" FORCE)";
+    let updated = content.replace(
+        legacy,
+        "set(CMAKE_CONFIGURATION_TYPES \"Debug;Release;RelWithDebInfo;MinSizeRel\" CACHE STRING \"\" FORCE)",
+    );
+    if updated != content {
+        fs::write(&path, updated)
+            .with_context(|| format!("Failed to update {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// Check if extracted templates are current (not stale)
@@ -179,4 +201,48 @@ pub fn clean_cmake_dir() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_templates_support_windows_release_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        migrate_configuration_types(dir.path()).unwrap();
+        write_templates(dir.path()).unwrap();
+        let content = fs::read_to_string(dir.path().join("CMakeUtils.cmake")).unwrap();
+        assert!(content.contains("Debug;Release;RelWithDebInfo;MinSizeRel"));
+        assert!(is_templates_current(dir.path()));
+    }
+
+    #[test]
+    fn cached_legacy_template_is_migrated_without_losing_customizations() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CMakeUtils.cmake");
+        fs::write(
+            &path,
+            "# custom\r\nset(CMAKE_CONFIGURATION_TYPES \"Debug;Release\" CACHE STRING \"\" FORCE)\r\n",
+        )
+        .unwrap();
+        migrate_configuration_types(dir.path()).unwrap();
+        let migrated = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            migrated,
+            "# custom\r\nset(CMAKE_CONFIGURATION_TYPES \"Debug;Release;RelWithDebInfo;MinSizeRel\" CACHE STRING \"\" FORCE)\r\n"
+        );
+        migrate_configuration_types(dir.path()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), migrated);
+    }
+
+    #[test]
+    fn custom_configuration_list_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CMakeUtils.cmake");
+        let content = "set(CMAKE_CONFIGURATION_TYPES \"Debug;Release;Custom\")\n";
+        fs::write(&path, content).unwrap();
+        migrate_configuration_types(dir.path()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    }
 }
