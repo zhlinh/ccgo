@@ -16,8 +16,8 @@ include(${CCGO_CMAKE_DIR}/CMakeFunctions.cmake)
 
 message(STATUS "==============CMakeConfig ${CCGO_CMAKE_DIR}/CMakeConfig.cmake====================")
 
-# just debug;release
-set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "" FORCE)
+# Include the release-with-symbols configuration used by ccgo's Windows builds.
+set(CMAKE_CONFIGURATION_TYPES "Debug;Release;RelWithDebInfo;MinSizeRel" CACHE STRING "" FORCE)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
