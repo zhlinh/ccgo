@@ -3,7 +3,7 @@
 //! Detects and configures MinGW-w64 for cross-compiling Windows binaries
 //! from Linux or macOS.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Result};
@@ -46,7 +46,10 @@ impl MingwArch {
             "x86_64" | "x64" => Ok(MingwArch::X86_64),
             "i686" | "x86" | "i386" => Ok(MingwArch::I686),
             "aarch64" | "arm64" => Ok(MingwArch::Aarch64),
-            other => bail!("Unknown MinGW architecture '{}'. Supported: x86_64, i686, aarch64", other),
+            other => bail!(
+                "Unknown MinGW architecture '{}'. Supported: x86_64, i686, aarch64",
+                other
+            ),
         }
     }
 }
@@ -200,14 +203,8 @@ impl MingwToolchain {
 
         let mut vars = vec![
             ("CMAKE_SYSTEM_NAME".to_string(), "Windows".to_string()),
-            (
-                "CMAKE_C_COMPILER".to_string(),
-                self.gcc_path.display().to_string(),
-            ),
-            (
-                "CMAKE_CXX_COMPILER".to_string(),
-                self.gxx_path.display().to_string(),
-            ),
+            ("CMAKE_C_COMPILER".to_string(), cmake_path(&self.gcc_path)),
+            ("CMAKE_CXX_COMPILER".to_string(), cmake_path(&self.gxx_path)),
             (
                 "CMAKE_FIND_ROOT_PATH".to_string(),
                 format!("/usr/{}", prefix),
@@ -228,10 +225,7 @@ impl MingwToolchain {
 
         // Add windres if available
         if let Some(windres) = &self.windres_path {
-            vars.push((
-                "CMAKE_RC_COMPILER".to_string(),
-                windres.display().to_string(),
-            ));
+            vars.push(("CMAKE_RC_COMPILER".to_string(), cmake_path(windres)));
         }
 
         vars
@@ -239,14 +233,20 @@ impl MingwToolchain {
 
     /// Get the strip command path
     pub fn strip_path(&self) -> PathBuf {
-        let strip_name = format!("{}-strip", self.arch.triple_prefix());
-        find_executable(&strip_name).unwrap_or_else(|| PathBuf::from(&strip_name))
+        self.binutil_path("strip")
     }
 
     /// Get the ar (archiver) path
     pub fn ar_path(&self) -> PathBuf {
-        let ar_name = format!("{}-ar", self.arch.triple_prefix());
-        find_executable(&ar_name).unwrap_or_else(|| PathBuf::from(&ar_name))
+        self.binutil_path("ar")
+    }
+
+    fn binutil_path(&self, tool: &str) -> PathBuf {
+        let name = format!("{}-{tool}", self.arch.triple_prefix());
+        // Prefer tools from the selected compiler, including MSYS2's plain names.
+        sibling_binutil(&self.gcc_path, &name, tool)
+            .or_else(|| find_executable(&name))
+            .unwrap_or_else(|| PathBuf::from(name))
     }
 
     /// Merge multiple static libraries into a single library using ar
@@ -275,35 +275,10 @@ impl MingwToolchain {
 
         let ar_cmd = self.ar_path();
 
-        // Extract all object files from source libraries
-        for (idx, lib) in src_libs.iter().enumerate() {
-            let extract_dir = temp_dir.join(format!("lib{}", idx));
-            std::fs::create_dir_all(&extract_dir)?;
-
-            // Extract objects: ar x libname.a
-            let output = Command::new(&ar_cmd)
-                .arg("x")
-                .arg(lib)
-                .current_dir(&extract_dir)
-                .output()
-                .context("Failed to run ar for extraction")?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                std::fs::remove_dir_all(&temp_dir).ok();
-                bail!("ar extraction failed for {}: {}", lib.display(), stderr);
-            }
-        }
+        extract_static_libs(&ar_cmd, src_libs, &temp_dir)?;
 
         // Collect all object files (.o or .obj) from all extraction directories
-        let mut object_files: Vec<PathBuf> = Vec::new();
-        for entry in walkdir::WalkDir::new(&temp_dir) {
-            let entry = entry?;
-            let ext = entry.path().extension().and_then(|e| e.to_str());
-            if matches!(ext, Some("o") | Some("obj")) {
-                object_files.push(entry.path().to_path_buf());
-            }
-        }
+        let object_files = collect_object_files(&temp_dir)?;
 
         if object_files.is_empty() {
             std::fs::remove_dir_all(&temp_dir).ok();
@@ -333,6 +308,120 @@ impl MingwToolchain {
         std::fs::remove_dir_all(&temp_dir).ok();
 
         Ok(())
+    }
+}
+
+fn extract_static_libs(ar_cmd: &Path, src_libs: &[PathBuf], temp_dir: &Path) -> Result<()> {
+    use anyhow::Context;
+
+    // Extract all object files from source libraries
+    for (idx, lib) in src_libs.iter().enumerate() {
+        let extract_dir = temp_dir.join(format!("lib{}", idx));
+        std::fs::create_dir_all(&extract_dir)?;
+
+        // Extract objects: ar x libname.a
+        let output = Command::new(ar_cmd)
+            .arg("x")
+            .arg(lib)
+            .current_dir(&extract_dir)
+            .output()
+            .context("Failed to run ar for extraction")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            std::fs::remove_dir_all(temp_dir).ok();
+            bail!("ar extraction failed for {}: {}", lib.display(), stderr);
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_object_files(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut objects = Vec::new();
+    for entry in walkdir::WalkDir::new(directory) {
+        let entry = entry?;
+        let ext = entry.path().extension().and_then(|ext| ext.to_str());
+        if matches!(ext, Some("o") | Some("obj")) {
+            objects.push(entry.path().to_path_buf());
+        }
+    }
+    Ok(objects)
+}
+
+fn cmake_path(path: &Path) -> String {
+    // CMake persists compiler paths in scripts where backslashes become escapes.
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn sibling_binutil(compiler: &Path, prefixed: &str, plain: &str) -> Option<PathBuf> {
+    let directory = compiler.parent()?;
+    let suffix = if compiler.extension().is_some_and(|ext| ext == "exe") {
+        ".exe"
+    } else {
+        ""
+    };
+    [prefixed, plain]
+        .into_iter()
+        // Unix cross-compilers often share /usr/bin with unrelated host tools.
+        .filter(|name| *name == prefixed || suffix == ".exe")
+        .map(|name| directory.join(format!("{name}{suffix}")))
+        .find(|path| path.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compiler_paths_are_safe_for_cmake_scripts() {
+        let toolchain = MingwToolchain {
+            gcc_path: PathBuf::from(r"C:\Program Files\msys64\ucrt64\bin\gcc.exe"),
+            gxx_path: PathBuf::from(r"C:\msys64/bin\g++.exe"),
+            windres_path: Some(PathBuf::from(r"C:\msys64\bin\windres.exe")),
+            arch: MingwArch::X86_64,
+            version: String::new(),
+        };
+        let variables = toolchain.cmake_variables_for_arch();
+        for name in [
+            "CMAKE_C_COMPILER",
+            "CMAKE_CXX_COMPILER",
+            "CMAKE_RC_COMPILER",
+        ] {
+            let value = &variables.iter().find(|(key, _)| key == name).unwrap().1;
+            assert!(!value.contains('\\'), "{name}: {value}");
+        }
+        assert!(variables
+            .iter()
+            .any(|(_, value)| value == "C:/Program Files/msys64/ucrt64/bin/gcc.exe"));
+    }
+
+    #[test]
+    fn binutils_prefer_compiler_siblings_and_support_plain_exe_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let compiler = dir.path().join("gcc.exe");
+        let prefixed = "x86_64-w64-mingw32-ar";
+        assert_eq!(sibling_binutil(&compiler, prefixed, "ar"), None);
+        let plain = dir.path().join("ar.exe");
+        std::fs::write(&plain, "").unwrap();
+        assert_eq!(sibling_binutil(&compiler, prefixed, "ar"), Some(plain));
+        let target = dir.path().join(format!("{prefixed}.exe"));
+        std::fs::write(&target, "").unwrap();
+        assert_eq!(sibling_binutil(&compiler, prefixed, "ar"), Some(target));
+    }
+
+    #[test]
+    fn unix_cross_compilers_do_not_fall_back_to_host_binutils() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ar"), "").unwrap();
+        assert_eq!(
+            sibling_binutil(
+                &dir.path().join("x86_64-w64-mingw32-gcc"),
+                "x86_64-w64-mingw32-ar",
+                "ar",
+            ),
+            None
+        );
     }
 }
 
