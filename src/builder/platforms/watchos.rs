@@ -4,6 +4,7 @@
 //! Supports device (arm64_32, armv7k) and simulator (arm64) architectures.
 //! Note: watchOS Simulator no longer supports x86_64 since Xcode 14.
 
+use super::apple_symbols::prepare_library;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -135,7 +136,7 @@ impl WatchosBuilder {
 
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .build_type(if ctx.options.release {
-                BuildType::Release
+                BuildType::RelWithDebInfo
             } else {
                 BuildType::Debug
             })
@@ -209,12 +210,15 @@ impl WatchosBuilder {
     fn create_xcframework(
         &self,
         _xcode: &XcodeToolchain,
-        device_lib: &Path,
-        simulator_lib: &Path,
+        libraries: (&Path, &Path),
         output: &Path,
         is_shared: bool,
-        lib_name: &str,
+        ctx: &BuildContext,
+        symbols_dir: &Path,
     ) -> Result<()> {
+        let (device_lib, simulator_lib) = libraries;
+        let lib_name = ctx.lib_name();
+        let release = ctx.options.release;
         // Remove existing xcframework
         if output.exists() {
             std::fs::remove_dir_all(output)?;
@@ -234,7 +238,16 @@ impl WatchosBuilder {
         let device_lib_dir = device_lib.join("out");
         let device_main_lib = device_lib_dir.join(&main_lib_name);
         if device_main_lib.exists() {
-            cmd.arg("-library").arg(&device_main_lib);
+            let (library, dsym) = prepare_library(
+                &device_main_lib,
+                &symbols_dir.join("device"),
+                is_shared,
+                release,
+            )?;
+            cmd.arg("-library").arg(library);
+            if let Some(dsym) = dsym.filter(|_| !release) {
+                cmd.arg("-debug-symbols").arg(dsym);
+            }
         } else {
             bail!("Device library not found: {}", device_main_lib.display());
         }
@@ -243,7 +256,16 @@ impl WatchosBuilder {
         let sim_lib_dir = simulator_lib.join("out");
         let sim_main_lib = sim_lib_dir.join(&main_lib_name);
         if sim_main_lib.exists() {
-            cmd.arg("-library").arg(&sim_main_lib);
+            let (library, dsym) = prepare_library(
+                &sim_main_lib,
+                &symbols_dir.join("simulator"),
+                is_shared,
+                release,
+            )?;
+            cmd.arg("-library").arg(library);
+            if let Some(dsym) = dsym.filter(|_| !release) {
+                cmd.arg("-debug-symbols").arg(dsym);
+            }
         } else {
             bail!("Simulator library not found: {}", sim_main_lib.display());
         }
@@ -314,6 +336,24 @@ impl WatchosBuilder {
 }
 
 impl WatchosBuilder {
+    fn add_sdk_include_files(ctx: &BuildContext, archive: &ArchiveBuilder) -> Result<()> {
+        // Add include files from project's include directory (matching pyccgo behavior)
+        let include_source = ctx.include_source_dir();
+        if include_source.exists() {
+            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
+            archive.add_directory(&include_source, &include_path)?;
+            if ctx.options.verbose {
+                eprintln!(
+                    "Added include files from {} to {}",
+                    include_source.display(),
+                    include_path
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     fn build_xcframework(
         &self,
         ctx: &BuildContext,
@@ -324,17 +364,17 @@ impl WatchosBuilder {
         archive: &ArchiveBuilder,
     ) -> Result<()> {
         let (device_dir, sim_dir) = builder.build_link_type(ctx, link_type, architectures)?;
-        let xcframework_path = ctx
-            .cmake_build_dir
-            .join(format!("{link_type}/xcframework"));
+        let xcframework_path = ctx.cmake_build_dir.join(format!("{link_type}/xcframework"));
         let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
         builder.create_xcframework(
             &XcodeToolchain::detect()?,
-            &device_dir,
-            &sim_dir,
+            (&device_dir, &sim_dir),
             &xcframework,
             shared,
-            ctx.lib_name(),
+            ctx,
+            &ctx.cmake_build_dir
+                .join("symbols_staging/symbols/watchos")
+                .join(link_type),
         )?;
         if xcframework.exists() {
             let archive_path = format!(
@@ -352,7 +392,6 @@ impl WatchosBuilder {
         }
         Ok(())
     }
-
 }
 
 impl PlatformBuilder for WatchosBuilder {
@@ -426,6 +465,11 @@ impl PlatformBuilder for WatchosBuilder {
             ctx.output_dir.clone(),
         )?;
 
+        let symbols_staging = ctx.cmake_build_dir.join("symbols_staging");
+        if symbols_staging.exists() {
+            std::fs::remove_dir_all(&symbols_staging)?;
+        }
+
         let mut built_link_types = Vec::new();
 
         if matches!(ctx.options.link_type, LinkType::Static | LinkType::All) {
@@ -437,23 +481,12 @@ impl PlatformBuilder for WatchosBuilder {
             built_link_types.push("shared");
         }
 
-        // Add include files from project's include directory (matching pyccgo behavior)
-        let include_source = ctx.include_source_dir();
-        if include_source.exists() {
-            let include_path = get_unified_include_path(ctx.lib_name(), &include_source);
-            archive.add_directory(&include_source, &include_path)?;
-            if ctx.options.verbose {
-                eprintln!(
-                    "Added include files from {} to {}",
-                    include_source.display(),
-                    include_path
-                );
-            }
-        }
+        Self::add_sdk_include_files(ctx, &archive)?;
 
         // Create the SDK archive
         let link_type_str = ctx.options.link_type.to_string();
         let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
+        let symbols_archive = Some(archive.create_symbols_archive(&symbols_staging)?);
 
         let duration = start.elapsed();
 
@@ -467,7 +500,7 @@ impl PlatformBuilder for WatchosBuilder {
 
         Ok(BuildResult {
             sdk_archive,
-            symbols_archive: None,
+            symbols_archive,
             aar_archive: None,
             duration_secs: duration.as_secs_f64(),
             architectures,

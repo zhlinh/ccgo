@@ -121,6 +121,27 @@ impl OpenwrtToolchain {
         self.arch
     }
 
+    /// Locate strip through the target compiler, avoiding host tools for cross builds.
+    pub fn strip_path(&self) -> Result<PathBuf> {
+        let output = std::process::Command::new(&self.compiler.cc)
+            .arg("-print-prog-name=strip")
+            .output()
+            .context("Failed to locate target strip tool")?;
+        if !output.status.success() {
+            bail!("Compiler could not locate target strip tool");
+        }
+        let value = String::from_utf8(output.stdout)?;
+        let path = value.trim();
+        if path.is_empty() {
+            bail!("Compiler returned an empty strip tool path");
+        }
+        if path == "strip" {
+            let name = format!("{}-strip", self.arch.triple_prefix());
+            return find_executable(&name).with_context(|| format!("Target strip tool not found: {name}"));
+        }
+        Ok(PathBuf::from(path))
+    }
+
     /// Path to the `ar` archiver for this toolchain
     pub fn ar_path(&self) -> PathBuf {
         let ar_name = format!("{}-ar", self.arch.triple_prefix());
@@ -153,6 +174,19 @@ impl OpenwrtToolchain {
         }
 
         vars
+    }
+
+    fn collect_merge_objects(temp_dir: &std::path::Path) -> Result<Vec<PathBuf>> {
+        let mut object_files: Vec<PathBuf> = Vec::new();
+        for entry in walkdir::WalkDir::new(temp_dir) {
+            let entry = entry?;
+            let ext = entry.path().extension().and_then(|e| e.to_str());
+            if matches!(ext, Some("o") | Some("obj")) {
+                object_files.push(entry.path().to_path_buf());
+            }
+        }
+
+        Ok(object_files)
     }
 
     /// Merge multiple static libraries into one using the arch-appropriate `ar`
@@ -194,14 +228,7 @@ impl OpenwrtToolchain {
             }
         }
 
-        let mut object_files: Vec<PathBuf> = Vec::new();
-        for entry in walkdir::WalkDir::new(&temp_dir) {
-            let entry = entry?;
-            let ext = entry.path().extension().and_then(|e| e.to_str());
-            if matches!(ext, Some("o") | Some("obj")) {
-                object_files.push(entry.path().to_path_buf());
-            }
-        }
+        let object_files = Self::collect_merge_objects(&temp_dir)?;
 
         if object_files.is_empty() {
             std::fs::remove_dir_all(&temp_dir).ok();

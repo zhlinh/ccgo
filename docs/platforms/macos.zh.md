@@ -2,6 +2,14 @@
 
 使用 CCGO 为 macOS 构建 C++ 库的完整指南。
 
+Release 构建使用 `RelWithDebInfo`，并生成独立的 `*-SYMBOLS.zip`。符号保存在 `symbols/macos/{static|shared}/universal/`：静态构建保留未剥离的 `.a`，动态构建生成 `.dylib.dSYM`，Debug 构建时同时加入 XCFramework。iOS、tvOS 和 watchOS 在各自平台目录下分别使用 `device/` 和 `simulator/`。静态库崩溃符号化应使用最终应用的 dSYM。
+
+仅 Release 动态库在生成 dSYM 后使用 `strip -S` 剥离调试信息，dSYM 放入 SYMBOLS 包。SDK 静态库保留 DWARF。CMake 原始构建产物保持未剥离，供增量构建使用。
+
+
+SDK 静态库保留 DWARF，供最终应用生成 dSYM 时收集库内调试信息。崩溃符号化应保留并使用最终应用的 dSYM。
+
+
 ## 概述
 
 CCGO 提供全面的 macOS 支持：

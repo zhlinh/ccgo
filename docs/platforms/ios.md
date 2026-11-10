@@ -2,6 +2,12 @@
 
 Complete guide to building C++ libraries for iOS with CCGO.
 
+Only Release shared libraries are stripped with `strip -S` after dSYM generation; their dSYM bundles are stored in the SYMBOLS archive. Static SDK libraries retain DWARF. CMake build outputs remain unstripped for incremental builds.
+
+
+Static SDK libraries retain DWARF so the consuming application can collect library debug information when generating its dSYM. Retain the final app dSYM for crash symbolication.
+
+
 ## Overview
 
 CCGO provides comprehensive iOS support with:
@@ -140,11 +146,16 @@ target/ios/
 │
 └── MyLib_iOS_SDK-1.0.0-SYMBOLS.zip  # Debug symbols
     └── symbols/
-        ├── static/
-        │   └── MyLib.framework.dSYM/
-        └── shared/
-            └── MyLib.framework.dSYM/
+        └── ios/
+            ├── static/
+            │   ├── device/libMyLib.a
+            │   └── simulator/libMyLib.a
+            └── shared/
+                ├── device/libMyLib.dylib.dSYM/
+                └── simulator/libMyLib.dylib.dSYM/
 ```
+
+Release builds use `RelWithDebInfo`. Static symbols retain the unstripped `.a` archives with embedded object DWARF; dynamic symbols are dSYM bundles. Device and simulator symbols are stored separately. Static libraries contribute debug information when the consuming app is linked; use the app dSYM for crash symbolication.
 
 ### Framework Structure
 
@@ -197,8 +208,10 @@ target/ios/
     ],
     "headers": "include/mylib/",
     "symbols": [
-      "symbols/static/MyLib.framework.dSYM",
-      "symbols/shared/MyLib.framework.dSYM"
+      "symbols/ios/static/device/libMyLib.a",
+      "symbols/ios/static/simulator/libMyLib.a",
+      "symbols/ios/shared/device/libMyLib.dylib.dSYM",
+      "symbols/ios/shared/simulator/libMyLib.dylib.dSYM"
     ]
   },
   "dependencies": {

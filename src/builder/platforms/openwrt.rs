@@ -98,7 +98,7 @@ impl OpenwrtBuilder {
         let build_shared = link_type == "shared";
 
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
-            .build_type(if ctx.options.release { BuildType::Release } else { BuildType::Debug })
+            .build_type(if ctx.options.release { BuildType::RelWithDebInfo } else { BuildType::Debug })
             .install_prefix(install_dir)
             .variable("CCGO_BUILD_STATIC", if build_shared { "OFF" } else { "ON" })
             .variable("CCGO_BUILD_SHARED", if build_shared { "ON" } else { "OFF" })
@@ -186,6 +186,12 @@ impl OpenwrtBuilder {
                     format!("lib/{}/{}/{}", self.platform_name(), ARCHIVE_DIR_SHARED, arch);
                 archive.add_directory_filtered(&lib_dir, &dest, &["so", "a"])?;
                 found_symbols = self.collect_symbols(&lib_dir, symbols_temp, arch)?;
+                if ctx.options.release {
+                    super::elf_symbols::strip_staged_shared_libraries(
+                        &archive.staging_dir().join(&dest),
+                        &toolchain.strip_path()?,
+                    )?;
+                }
             }
         }
 
@@ -199,15 +205,18 @@ impl OpenwrtBuilder {
         arch: &str,
     ) -> Result<bool> {
         let obj_arch_dir = symbols_temp
-            .join(ARCHIVE_DIR_OBJ)
+            .join("symbols")
             .join(self.platform_name())
+            .join(ARCHIVE_DIR_OBJ)
             .join(arch);
         std::fs::create_dir_all(&obj_arch_dir)?;
         let mut found = false;
         for entry in std::fs::read_dir(lib_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "so") {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_file() && (name.ends_with(".so") || name.contains(".so.")) {
                 let file_name = path.file_name().unwrap();
                 std::fs::copy(&path, obj_arch_dir.join(file_name))?;
                 found = true;

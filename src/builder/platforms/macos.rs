@@ -3,6 +3,7 @@
 //! Builds static and dynamic frameworks for macOS using CMake with Clang.
 //! Supports universal binaries (x86_64 + arm64) via lipo.
 
+use super::apple_symbols::prepare_library;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -146,7 +147,7 @@ impl MacosBuilder {
 
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .build_type(if ctx.options.release {
-                BuildType::Release
+                BuildType::RelWithDebInfo
             } else {
                 BuildType::Debug
             })
@@ -546,6 +547,16 @@ impl MacosBuilder {
         })
     }
 
+    fn find_fallback_library(directory: &Path, extension: &str) -> Result<Option<PathBuf>> {
+        for entry in std::fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
+                return Ok(Some(path));
+            }
+        }
+        Ok(None)
+    }
+
     /// Create XCFramework from universal library
     fn create_xcframework(
         &self,
@@ -553,8 +564,11 @@ impl MacosBuilder {
         universal_dir: &Path,
         output: &Path,
         is_shared: bool,
-        lib_name: &str,
+        ctx: &BuildContext,
+        symbols_dir: &Path,
     ) -> Result<()> {
+        let lib_name = ctx.lib_name();
+        let release = ctx.options.release;
         // Remove existing XCFramework if present
         if output.exists() {
             std::fs::remove_dir_all(output)?;
@@ -570,36 +584,20 @@ impl MacosBuilder {
             .find_lib_dir(universal_dir)
             .ok_or_else(|| anyhow::anyhow!("Universal library directory not found"))?;
 
-        // Find main library - prefer exact name match
-        let main_lib = lib_dir.join(&main_lib_name);
-        if !main_lib.exists() {
-            // Fallback: find first library with matching extension
-            let mut found = false;
-            for entry in std::fs::read_dir(&lib_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == extension {
-                            // Use first matching library
-                            xcode.create_xcframework(&[(path, None)], output)?;
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if !found {
-                bail!(
+        let preferred = lib_dir.join(&main_lib_name);
+        let main_lib = if preferred.is_file() {
+            preferred
+        } else {
+            Self::find_fallback_library(&lib_dir, extension)?.ok_or_else(|| {
+                anyhow::anyhow!(
                     "Main library {} not found in {}",
                     main_lib_name,
                     lib_dir.display()
-                );
-            }
-        } else {
-            // Create XCFramework with main library
-            xcode.create_xcframework(&[(main_lib, None)], output)?;
-        }
+                )
+            })?
+        };
+        let (main_lib, dsym) = prepare_library(&main_lib, symbols_dir, is_shared, release)?;
+        xcode.create_xcframework(&[(main_lib, dsym.filter(|_| !release))], output)?;
 
         Ok(())
     }
@@ -617,11 +615,19 @@ impl MacosBuilder {
     ) -> Result<()> {
         let universal_dir = builder.build_link_type(ctx, link_type, architectures)?;
         let xcode = XcodeToolchain::detect()?;
-        let xcframework_path = ctx
-            .cmake_build_dir
-            .join(format!("{link_type}/xcframework"));
+        let xcframework_path = ctx.cmake_build_dir.join(format!("{link_type}/xcframework"));
         let xcframework = xcframework_path.join(format!("{}.xcframework", ctx.lib_name()));
-        builder.create_xcframework(&xcode, &universal_dir, &xcframework, shared, ctx.lib_name())?;
+        builder.create_xcframework(
+            &xcode,
+            &universal_dir,
+            &xcframework,
+            shared,
+            ctx,
+            &ctx.cmake_build_dir
+                .join("symbols_staging/symbols/macos")
+                .join(link_type)
+                .join("universal"),
+        )?;
         if xcframework.exists() {
             let archive_path = format!(
                 "{}/{}/{}/{}.xcframework",
@@ -638,7 +644,6 @@ impl MacosBuilder {
         }
         Ok(())
     }
-
 }
 
 impl MacosBuilder {
@@ -770,6 +775,11 @@ impl PlatformBuilder for MacosBuilder {
             ctx.output_dir.clone(),
         )?;
 
+        let symbols_staging = ctx.cmake_build_dir.join("symbols_staging");
+        if symbols_staging.exists() {
+            std::fs::remove_dir_all(&symbols_staging)?;
+        }
+
         self.build_selected_link_types(ctx, &mut builder, &architectures, &archive)?;
 
         Self::add_sdk_include_files(ctx, &archive)?;
@@ -777,6 +787,7 @@ impl PlatformBuilder for MacosBuilder {
         // Create the SDK archive
         let link_type_str = ctx.options.link_type.to_string();
         let sdk_archive = archive.create_sdk_archive(&architectures, &link_type_str)?;
+        let symbols_archive = Some(archive.create_symbols_archive(&symbols_staging)?);
 
         let duration = start.elapsed();
 
@@ -790,7 +801,7 @@ impl PlatformBuilder for MacosBuilder {
 
         Ok(BuildResult {
             sdk_archive,
-            symbols_archive: None,
+            symbols_archive,
             aar_archive: None,
             duration_secs: duration.as_secs_f64(),
             architectures,

@@ -2,6 +2,12 @@
 
 使用 CCGO 为 iOS 构建 C++ 库的完整指南。
 
+仅 Release 动态库在生成 dSYM 后使用 `strip -S` 剥离调试信息，dSYM 放入 SYMBOLS 包。SDK 静态库保留 DWARF。CMake 原始构建产物保持未剥离，供增量构建使用。
+
+
+SDK 静态库保留 DWARF，供最终应用生成 dSYM 时收集库内调试信息。崩溃符号化应保留并使用最终应用的 dSYM。
+
+
 ## 概述
 
 CCGO 提供全面的 iOS 支持：
@@ -140,11 +146,16 @@ target/ios/
 │
 └── MyLib_iOS_SDK-1.0.0-SYMBOLS.zip  # 调试符号
     └── symbols/
-        ├── static/
-        │   └── MyLib.framework.dSYM/
-        └── shared/
-            └── MyLib.framework.dSYM/
+        └── ios/
+            ├── static/
+            │   ├── device/libMyLib.a
+            │   └── simulator/libMyLib.a
+            └── shared/
+                ├── device/libMyLib.dylib.dSYM/
+                └── simulator/libMyLib.dylib.dSYM/
 ```
+
+Release 构建使用 `RelWithDebInfo`。静态符号包保留带目标文件 DWARF 的未剥离 `.a`，动态符号包包含 dSYM；设备和模拟器分别保存。静态库的调试信息在应用链接时合并，崩溃符号化应使用应用自身的 dSYM。
 
 ### Framework 结构
 
@@ -197,8 +208,10 @@ target/ios/
     ],
     "headers": "include/mylib/",
     "symbols": [
-      "symbols/static/MyLib.framework.dSYM",
-      "symbols/shared/MyLib.framework.dSYM"
+      "symbols/ios/static/device/libMyLib.a",
+      "symbols/ios/static/simulator/libMyLib.a",
+      "symbols/ios/shared/device/libMyLib.dylib.dSYM",
+      "symbols/ios/shared/simulator/libMyLib.dylib.dSYM"
     ]
   },
   "dependencies": {

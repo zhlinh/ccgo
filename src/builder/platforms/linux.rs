@@ -269,7 +269,7 @@ impl LinuxBuilder {
         // Configure and build with CMake
         let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
             .build_type(if ctx.options.release {
-                BuildType::Release
+                BuildType::RelWithDebInfo
             } else {
                 BuildType::Debug
             })
@@ -475,7 +475,9 @@ impl LinuxBuilder {
         for entry in std::fs::read_dir(lib_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "so") {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_file() && (name.ends_with(".so") || name.contains(".so.")) {
                 let file_name = path.file_name().unwrap();
                 std::fs::copy(&path, obj_arch_dir.join(file_name))?;
                 found_symbols = true;
@@ -526,6 +528,12 @@ impl LinuxBuilder {
                 archive.add_directory_filtered(&lib_dir, &archive_path, &["so", "a"])?;
 
                 found_symbols = self.collect_symbols(&lib_dir, symbols_temp, arch)?;
+                if ctx.options.release {
+                    super::elf_symbols::strip_staged_shared_libraries(
+                        &archive.staging_dir().join(&archive_path),
+                        &toolchain.strip_path()?,
+                    )?;
+                }
             }
         }
         Ok(found_symbols)

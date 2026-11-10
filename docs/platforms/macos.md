@@ -2,6 +2,14 @@
 
 Complete guide to building C++ libraries for macOS with CCGO.
 
+Release builds use `RelWithDebInfo` and produce a separate `*-SYMBOLS.zip`. Symbols are stored under `symbols/macos/{static|shared}/universal/`: static builds retain unstripped `.a` archives, and shared builds generate `.dylib.dSYM` bundles, included in the XCFramework for Debug builds. For iOS, tvOS and watchOS, the corresponding platform directory uses separate `device/` and `simulator/` directories. Static library crash symbolication uses the consuming app dSYM.
+
+Only Release shared libraries are stripped with `strip -S` after dSYM generation; their dSYM bundles are stored in the SYMBOLS archive. Static SDK libraries retain DWARF. CMake build outputs remain unstripped for incremental builds.
+
+
+Static SDK libraries retain DWARF so the consuming application can collect library debug information when generating its dSYM. Retain the final app dSYM for crash symbolication.
+
+
 ## Overview
 
 CCGO provides comprehensive macOS support with:

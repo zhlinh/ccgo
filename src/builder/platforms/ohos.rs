@@ -166,7 +166,7 @@ impl OhosBuilder {
         let cmake_vars = sdk.cmake_variables_for_abi(abi, min_sdk_version, &stl);
 
         let build_type = if ctx.options.release {
-            BuildType::Release
+            BuildType::RelWithDebInfo
         } else {
             BuildType::Debug
         };

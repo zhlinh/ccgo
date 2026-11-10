@@ -17,8 +17,10 @@
 //! - **Other Platforms** (Linux, Windows, OHOS): Built in parallel
 
 pub mod android;
+mod apple_symbols;
 pub mod benches;
 pub mod conan;
+mod elf_symbols;
 pub mod ios;
 pub mod kmp;
 pub mod linux;
