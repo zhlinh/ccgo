@@ -353,14 +353,7 @@ impl PlatformBuilder for ConanBuilder {
         std::fs::create_dir_all(&ctx.output_dir)?;
 
         // Create archive builder
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "conan",
-            ctx.output_dir.clone(),
-        )?;
+        let archive = ctx.archive_builder("conan", "")?;
 
         let host_arch = Self::detect_host_arch();
         let mut built_link_types = Vec::new();

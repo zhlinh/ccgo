@@ -640,6 +640,19 @@ impl OhosBuilder {
         }
     }
 
+    fn har_file_name(ctx: &BuildContext) -> String {
+        let stl = crate::builder::resolve_stl(
+            ctx.options.stl.as_deref(),
+            ctx.config.ohos.as_ref().and_then(|o| o.stl.as_deref()),
+        );
+        format!(
+            "{}_OHOS_SDK-{}{}.har",
+            ctx.lib_name().to_uppercase(),
+            ctx.version(),
+            ctx.variant_tail(&stl)
+        )
+    }
+
     /// Find HAR file and copy to output directory
     fn find_and_copy_har_to_output(
         ctx: &BuildContext,
@@ -661,8 +674,7 @@ impl OhosBuilder {
             );
         }
 
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let dest_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
+        let dest_name = Self::har_file_name(ctx);
         let dest = output_dir.join(&dest_name);
 
         if let Some(har_file) = har_files.first() {
@@ -988,8 +1000,7 @@ impl OhosBuilder {
         ctx: &BuildContext,
         archive: &ArchiveBuilder,
     ) -> Result<()> {
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let har_versioned_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
+        let har_versioned_name = Self::har_file_name(ctx);
         let har_path = ctx.output_dir.join(&har_versioned_name);
 
         if har_path.exists() {
@@ -1037,8 +1048,7 @@ impl OhosBuilder {
 
     /// Get HAR archive path if it exists
     fn get_har_archive_path(ctx: &BuildContext) -> Option<PathBuf> {
-        let project_name_upper = ctx.lib_name().to_uppercase();
-        let har_versioned_name = format!("{}_OHOS_SDK-{}.har", project_name_upper, ctx.version());
+        let har_versioned_name = Self::har_file_name(ctx);
         let har_path = ctx.output_dir.join(&har_versioned_name);
 
         if har_path.exists() {
@@ -1052,6 +1062,41 @@ impl OhosBuilder {
 impl Default for OhosBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builder::BuildOptions;
+
+    #[test]
+    fn har_variant_name_is_used_for_copy_and_result_lookup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        let mut ctx = BuildContext {
+            project_root: root.clone(),
+            config: toml::from_str("[package]\nname='demo'\nversion='1.2.3'\n").unwrap(),
+            options: BuildOptions::default(),
+            ccgo_build_root: root.clone(),
+            cmake_build_dir: root.clone(),
+            output_dir: root.clone(),
+            git_version: None,
+            resolved_profile: None,
+            profile_name_override: None,
+        };
+        assert_eq!(OhosBuilder::har_file_name(&ctx), "DEMO_OHOS_SDK-1.2.3.har");
+        ctx.options.variants = vec!["ano".to_string()];
+        ctx.options.stl = Some("c++_static".to_string());
+        let name = "DEMO_OHOS_SDK-1.2.3-ANO-STDEMBED.har";
+        assert_eq!(OhosBuilder::har_file_name(&ctx), name);
+
+        let har_dir = root.join("main_ohos_sdk/build/default/outputs/default");
+        std::fs::create_dir_all(&har_dir).unwrap();
+        std::fs::write(har_dir.join("demo.har"), b"har contents").unwrap();
+        OhosBuilder::find_and_copy_har_to_output(&ctx, &root, &root).unwrap();
+        assert_eq!(OhosBuilder::get_har_archive_path(&ctx), Some(root.join(name)));
+        assert_eq!(std::fs::read(root.join(name)).unwrap(), b"har contents");
     }
 }
 

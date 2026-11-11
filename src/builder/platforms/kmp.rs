@@ -13,7 +13,6 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use walkdir::WalkDir;
 
-use crate::builder::archive::ArchiveBuilder;
 use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 
 /// KMP platform builder
@@ -516,14 +515,7 @@ impl KmpBuilder {
     /// - lib/kmp/native/{target}/klib/{klib}
     /// - lib/kmp/native/{target}/cinterop/{cinterop_klib}
     fn create_sdk_archive(&self, ctx: &BuildContext, outputs: &[PathBuf]) -> Result<PathBuf> {
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name().to_string(),
-            ctx.version().to_string(),
-            ctx.publish_suffix().to_string(),
-            ctx.options.release,
-            "kmp".to_string(),
-            ctx.output_dir.clone(),
-        )?;
+        let archive = ctx.archive_builder("kmp", "")?;
 
         // Organize outputs by type (matching pyccgo structure)
         for output in outputs {

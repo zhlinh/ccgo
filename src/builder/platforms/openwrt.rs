@@ -275,14 +275,7 @@ impl PlatformBuilder for OpenwrtBuilder {
         ctx.materialize_source_deps(self.platform_name())?;
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "openwrt",
-            ctx.output_dir.clone(),
-        )?;
+        let archive = ctx.archive_builder("openwrt", "")?;
 
         let arches = resolve_arches(ctx);
         let link_type_str = ctx.options.link_type.to_string();

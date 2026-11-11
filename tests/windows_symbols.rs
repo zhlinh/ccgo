@@ -18,6 +18,15 @@ fn zip_entry(path: &Path, name: &str) -> Vec<u8> {
 
 #[test]
 fn mingw_build_saves_symbols_before_stripping_and_package_merges_them() {
+    check_windows_packaging(None);
+}
+
+#[test]
+fn mingw_variant_applies_to_sdk_and_symbols_archives() {
+    check_windows_packaging(Some("ANO"));
+}
+
+fn check_windows_packaging(variant: Option<&str>) {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     let bin = root.join("bin");
@@ -70,16 +79,20 @@ esac
             "--build-as",
             "shared",
             "--release",
-        ])
-        .assert()
-        .success();
+        ]);
+    if let Some(variant) = variant {
+        command.args(["--variant", variant]);
+    }
+    command.assert().success();
     assert!(fs::read_to_string(root.join("cmake-args"))
         .unwrap()
         .contains("-DCMAKE_BUILD_TYPE=RelWithDebInfo"));
     let output = root.join("target/release/windows");
+    let variant_tail = variant.map(|v| format!("-{v}")).unwrap_or_default();
+    let archive_name = format!("DEMO_WINDOWS_SDK-1.2.3{variant_tail}");
     assert_eq!(
         zip_entry(
-            &output.join("DEMO_WINDOWS_SDK-1.2.3.zip"),
+            &output.join(format!("{archive_name}.zip")),
             "lib/windows/shared/x86_64/mingw/demo.dll"
         ),
         b"stripped"
@@ -87,7 +100,7 @@ esac
     let symbol_path = "symbols/windows/obj/x86_64/mingw/shared/demo.dll";
     assert_eq!(
         zip_entry(
-            &output.join("DEMO_WINDOWS_SDK-1.2.3-SYMBOLS.zip"),
+            &output.join(format!("{archive_name}-SYMBOLS.zip")),
             symbol_path
         ),
         b"unstripped"

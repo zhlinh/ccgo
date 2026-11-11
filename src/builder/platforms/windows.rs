@@ -884,14 +884,7 @@ impl PlatformBuilder for WindowsBuilder {
         ctx.materialize_source_deps(self.platform_name())?;
         std::fs::create_dir_all(&ctx.output_dir)?;
 
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "windows",
-            ctx.output_dir.clone(),
-        )?;
+        let archive = ctx.archive_builder("windows", "")?;
 
         let mut symbols = WindowsSymbols::new()?;
         let arches = resolve_arches(ctx);

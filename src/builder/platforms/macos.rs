@@ -766,14 +766,7 @@ impl PlatformBuilder for MacosBuilder {
         std::fs::create_dir_all(&ctx.output_dir)?;
 
         // Create archive builder
-        let archive = ArchiveBuilder::new(
-            ctx.lib_name(),
-            ctx.version(),
-            ctx.publish_suffix(),
-            ctx.options.release,
-            "macos",
-            ctx.output_dir.clone(),
-        )?;
+        let archive = ctx.archive_builder("macos", "")?;
 
         let symbols_staging = ctx.cmake_build_dir.join("symbols_staging");
         if symbols_staging.exists() {
