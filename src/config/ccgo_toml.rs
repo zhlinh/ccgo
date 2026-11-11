@@ -1019,6 +1019,9 @@ pub struct KmpSection {
     /// Target groups to build. Empty means "whatever the host supports".
     #[serde(default)]
     pub targets: Vec<String>,
+    /// Prebuilt C/C++ SDK ZIPs, keyed by platform; paths are relative to CCGO.toml.
+    #[serde(default)]
+    pub native_sdks: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

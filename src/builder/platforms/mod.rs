@@ -23,6 +23,7 @@ pub mod conan;
 mod elf_symbols;
 pub mod ios;
 pub mod kmp;
+mod kmp_sdks;
 pub mod linux;
 pub mod macos;
 pub mod ohos;

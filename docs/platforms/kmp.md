@@ -251,6 +251,62 @@ after every native platform and reuses the libraries those builds produced
 instead of rebuilding them. To produce KMP artifacts for another host family,
 run `ccgo build kmp` on that platform.
 
+### Use C/C++ SDK ZIPs from Other Machines
+
+Build the native SDKs on the appropriate machines, copy their ZIPs into this
+project, and select them explicitly in `CCGO.toml`:
+
+```toml
+[kmp]
+targets = ["android", "desktop", "ios", "macos"]
+
+[kmp.native_sdks]
+android = "prebuilt/DEMO_ANDROID_SDK-1.2.3.zip"
+ios = "prebuilt/DEMO_IOS_SDK-1.2.3.zip"
+macos = "prebuilt/DEMO_MACOS_SDK-1.2.3.zip"
+windows = "prebuilt/DEMO_WINDOWS_SDK-1.2.3.zip"
+linux = "prebuilt/DEMO_LINUX_SDK-1.2.3.zip"
+```
+
+```bash
+ccgo build kmp --release --variant ANO
+```
+
+Paths are relative to the project root. Choose SDKs with the intended build mode,
+features and variant; the output `--variant` names the KMP archive and does not
+choose or transform its SDK inputs. SDK metadata must match the project's name,
+version and configured platform. Each SDK is extracted into an isolated temporary
+directory, retained through Gradle execution, then removed. An imported platform
+skips its C/C++ build; other selected platforms retain the normal build behavior.
+
+This requires both the updated ccgo CLI and the updated
+`ccgo-gradle-plugins` KMP native convention plugin. Older plugins that ignore the
+SDK inputs are rejected before packaging. The plugin uses:
+
+- Android: `lib/android/shared/<abi>/*.so` as JNI inputs to the AAR.
+- iOS/macOS: static XCFramework slices, selected by platform, architecture and
+  device/simulator, plus SDK headers for cinterop.
+- Linux: `lib/linux/static/<arch>/lib<project>.a` plus SDK headers for cinterop.
+- Desktop JVM: imported Windows/Linux/macOS shared libraries bundled in the JAR
+  under `native/<platform>/<arch>/...`, preserving toolchain subdirectories.
+
+Supply the static libraries/slices for every declared Kotlin/Native architecture;
+a shared-only SDK cannot supply those cinterop inputs. The Desktop JAR still
+needs application/library code that extracts and loads its bundled native
+resources. Windows uses Desktop JVM in the standard convention plugin; an MSVC
+SDK does not produce a MinGW Kotlin/Native klib.
+
+For a custom Gradle build, consume `-PccgoNativeSdk.<platform>` (the extracted SDK
+root) for headers, native linking and JNI/resources. After wiring all inputs,
+write the file named by `-PccgoNativeSdkReceipt` to acknowledge support. Do not
+acknowledge it without actually using the SDKs.
+
+`ccgo build all --auto-docker` builds the native platforms first and runs KMP
+last. Docker can provide supported native cross-build environments, but it does
+not expand KMP's host target selection or provide macOS/Xcode on Linux/Windows.
+Prebuilt C/C++ libraries do not remove Kotlin/Native's toolchain requirements.
+Run the KMP compilation on the required hosts to produce the remaining klibs.
+
 ### Build Specific Platform
 
 ```bash

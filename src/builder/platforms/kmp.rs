@@ -13,6 +13,7 @@ use std::time::Instant;
 use anyhow::{bail, Context, Result};
 use walkdir::WalkDir;
 
+use super::kmp_sdks::NativeSdks;
 use crate::builder::{BuildContext, BuildResult, PlatformBuilder};
 
 /// KMP platform builder
@@ -242,7 +243,7 @@ impl KmpBuilder {
         Ok(tasks)
     }
 
-    fn build_native_libraries(&self, ctx: &BuildContext) -> Result<()> {
+    fn build_native_libraries(&self, ctx: &BuildContext, sdks: &NativeSdks) -> Result<()> {
         eprintln!("\n{}", "=".repeat(80));
         eprintln!("Building Native Libraries for KMP");
         eprintln!("{}\n", "=".repeat(80));
@@ -256,7 +257,15 @@ impl KmpBuilder {
             let platform = Self::native_platform_for(target);
 
             // Check if native libraries already exist
-            if self.native_libs_exist(ctx, platform) {
+            if target == "desktop"
+                && ["windows", "linux", "macos"]
+                    .iter()
+                    .any(|p| sdks.contains(p))
+            {
+                eprintln!("Using imported desktop native SDKs, skipping C/C++ build.\n");
+                continue;
+            }
+            if sdks.contains(platform) || self.native_libs_exist(ctx, platform) {
                 eprintln!(
                     "✅ {} native libraries already exist, skipping build.\n",
                     platform
@@ -311,7 +320,7 @@ impl KmpBuilder {
     }
 
     /// Run a Gradle command in the KMP directory
-    fn run_gradle(&self, ctx: &BuildContext, args: &[&str]) -> Result<()> {
+    fn run_gradle(&self, ctx: &BuildContext, args: &[&str], sdks: &NativeSdks) -> Result<()> {
         let kmp_dir = ctx.project_root.join("kmp");
         let gradlew = Self::gradlew_cmd();
 
@@ -337,6 +346,15 @@ impl KmpBuilder {
         cmd.env("CCGO_BUILD_TYPE", build_type);
         cmd.arg(format!("-PccgoBuildType={build_type}"));
         cmd.args(args);
+        for (platform, root) in sdks.roots() {
+            cmd.arg(format!("-PccgoNativeSdk.{platform}={}", root.display()));
+        }
+        if !sdks.roots().is_empty() {
+            cmd.arg(format!(
+                "-PccgoNativeSdkReceipt={}",
+                sdks.receipt_path().display()
+            ));
+        }
 
         // Tell the build script which ccgo_build/<mode> tree holds the native
         // libraries it should wire into cinterop and jniLibs. Gradle cannot work
@@ -659,7 +677,8 @@ impl PlatformBuilder for KmpBuilder {
 
         // Step 1: Build native C/C++ libraries first
         // KMP cinterop requires native .a/.so files to link against
-        self.build_native_libraries(ctx)?;
+        let sdks = NativeSdks::load(ctx)?;
+        self.build_native_libraries(ctx, &sdks)?;
 
         // Step 2: Build KMP using Gradle
         eprintln!("\n{}", "=".repeat(80));
@@ -669,7 +688,8 @@ impl PlatformBuilder for KmpBuilder {
         let tasks = Self::gradle_task_list(ctx)?;
 
         // Run Gradle build with all tasks
-        self.run_gradle(ctx, &tasks)?;
+        self.run_gradle(ctx, &tasks, &sdks)?;
+        sdks.verify_gradle_support()?;
 
         // Find build outputs
         let outputs = self.find_build_outputs(ctx)?;

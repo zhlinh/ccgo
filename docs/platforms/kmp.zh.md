@@ -250,6 +250,51 @@ ccgo build kmp
 并直接复用这些平台产出的原生库，不再重复编译。需要其他宿主机家族的 KMP
 产物时，请到对应平台上执行 `ccgo build kmp`。
 
+### 使用其他机器生成的 C/C++ SDK ZIP
+
+在对应机器上构建原生 SDK，把 ZIP 复制到当前项目，在 `CCGO.toml` 中显式指定：
+
+```toml
+[kmp]
+targets = ["android", "desktop", "ios", "macos"]
+
+[kmp.native_sdks]
+android = "prebuilt/DEMO_ANDROID_SDK-1.2.3.zip"
+ios = "prebuilt/DEMO_IOS_SDK-1.2.3.zip"
+macos = "prebuilt/DEMO_MACOS_SDK-1.2.3.zip"
+windows = "prebuilt/DEMO_WINDOWS_SDK-1.2.3.zip"
+linux = "prebuilt/DEMO_LINUX_SDK-1.2.3.zip"
+```
+
+```bash
+ccgo build kmp --release --variant ANO
+```
+
+路径相对项目根目录解析。请明确选用所需模式、features 和 variant 的 SDK；
+输出的 `--variant` 仅控制 KMP 归档命名，不会自动选择或转换输入 SDK。
+导入时校验项目名、版本、平台；ZIP 解压到独立临时目录，保留到 Gradle 完成后清理。
+已有 SDK 的平台跳过 C/C++ 编译，其他选中平台保持原来的构建流程。
+
+需要同时更新 ccgo CLI 和 `ccgo-gradle-plugins` 的 KMP native convention 插件。
+旧插件如果忽略 SDK 输入，会在打包前报错。插件按以下方式使用导入的文件：
+
+- Android：将 `lib/android/shared/<abi>/*.so` 作为 AAR 的 JNI 库。
+- iOS/macOS：依据平台、架构、设备/模拟器选择静态 XCFramework 切片，结合 SDK 头文件生成 cinterop。
+- Linux：使用 `lib/linux/static/<arch>/lib<project>.a` 和 SDK 头文件生成 cinterop。
+- Desktop JVM：把 Windows/Linux/macOS 动态库放进 JAR 的 `native/<platform>/<arch>/...`，保留工具链子目录。
+
+Kotlin/Native 声明的每个架构都需要对应静态库或切片，仅有动态库的 SDK 不能用于这些 cinterop 目标。
+Desktop JAR 仍需要项目自己的代码提取并加载原生资源；标准插件的 Windows 路线是 Desktop JVM，
+MSVC SDK 不会转换成 MinGW 的 Kotlin/Native klib。
+
+自定义 Gradle 项目可以读取 `-PccgoNativeSdk.<platform>` 指定的解压根目录，
+接入头文件、静态链接、JNI 和资源；确认所有输入已接入后，写入
+`-PccgoNativeSdkReceipt` 指定的文件来确认支持。不能只写确认文件而忽略 SDK。
+
+`ccgo build all --auto-docker` 会先构建原生平台、最后构建 KMP，但 Docker 不会扩展
+KMP 的宿主目标选择，也不能在 Linux/Windows 上提供 macOS/Xcode。
+已有 C/C++ SDK 也不能替代 Kotlin/Native 工具链；剩余 klib 仍需到对应宿主机上编译。
+
 ### 构建特定平台
 
 ```bash
