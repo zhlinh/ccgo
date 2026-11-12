@@ -1135,6 +1135,10 @@ impl AndroidBuilder {
         built_link_types: &[&str],
         symbols_staging: &Path,
     ) -> Result<()> {
+        if ctx.options.native_only {
+            return Ok(());
+        }
+
         if !built_link_types.contains(&"shared") {
             return Ok(());
         }
@@ -1154,5 +1158,28 @@ impl AndroidBuilder {
 impl Default for AndroidBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builder::BuildOptions;
+
+    #[test]
+    fn native_only_shared_build_skips_gradle_and_aar_symbol_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let config = toml::from_str("[package]\nname='demo'\nversion='1.2.3'\n").unwrap();
+        let options = BuildOptions {
+            native_only: true,
+            ..BuildOptions::default()
+        };
+        let ctx = BuildContext::new(root.path().to_path_buf(), config, options);
+
+        // No Gradle project or symbol sources exist; native-only must skip both.
+        AndroidBuilder::new()
+            .build_aar_and_symbols(&ctx, &[], &["shared"], &root.path().join("symbols"))
+            .unwrap();
+        assert!(!root.path().join("symbols").exists());
     }
 }
