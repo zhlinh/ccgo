@@ -180,6 +180,7 @@ struct BuildArgs {
     use_default_features: bool,
     all_features: bool,
     variants: Vec<String>,
+    native_sdks: std::collections::BTreeMap<String, PathBuf>,
     jobs: Option<usize>,
     ide_project: bool,
     no_fetch: bool,
@@ -224,6 +225,7 @@ impl BuildArgs {
             use_default_features: ctx.options.use_default_features,
             all_features: ctx.options.all_features,
             variants: ctx.options.variants.clone(),
+            native_sdks: ctx.options.native_sdks.clone(),
             jobs: ctx.options.jobs,
             ide_project: ctx.options.ide_project,
             no_fetch: ctx.options.no_fetch,
@@ -263,6 +265,12 @@ fn subprocess_command_args(platform: &str, args: &BuildArgs) -> Vec<String> {
     push_mode_args(&mut cmd, args);
     push_feature_args(&mut cmd, args);
     push_linkage_args(&mut cmd, args);
+    if platform == "kmp" {
+        for (platform, path) in &args.native_sdks {
+            cmd.push("--native-sdk".to_string());
+            cmd.push(format!("{platform}={}", path.display()));
+        }
+    }
     cmd
 }
 
@@ -946,6 +954,26 @@ mod unit_tests {
             assert!(cmd.iter().any(|arg| arg == "--release"));
             assert!(cmd.iter().any(|arg| arg == "--auto-docker"));
         }
+    }
+
+    #[test]
+    fn native_sdk_overrides_are_forwarded_only_to_kmp() {
+        let args = BuildArgs {
+            native_sdks: [(
+                "android".to_string(),
+                PathBuf::from("/tmp/sdk dir/ANO=1.zip"),
+            )]
+            .into_iter()
+            .collect(),
+            ..BuildArgs::default()
+        };
+        let cmd = subprocess_command_args("kmp", &args);
+        assert!(cmd
+            .windows(2)
+            .any(|pair| pair == ["--native-sdk", "android=/tmp/sdk dir/ANO=1.zip"]));
+        assert!(!subprocess_command_args("android", &args)
+            .iter()
+            .any(|arg| arg == "--native-sdk"));
     }
 
     #[test]

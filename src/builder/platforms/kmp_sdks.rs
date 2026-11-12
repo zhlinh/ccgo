@@ -19,19 +19,23 @@ impl NativeSdks {
             _staging: tempfile::tempdir().context("Failed to stage KMP native SDKs")?,
             roots: BTreeMap::new(),
         };
-        if let Some(kmp) = &ctx.config.kmp {
-            for (platform, input) in &kmp.native_sdks {
-                if !["android", "ios", "macos", "linux", "windows"].contains(&platform.as_str()) {
-                    bail!("Unsupported [kmp.native_sdks] platform: {platform}");
-                }
-                let root = inputs._staging.path().join(platform);
-                let input = ctx.project_root.join(input);
-                extract_sdk(&input, &root).with_context(|| {
-                    format!("Failed to import {platform} SDK {}", input.display())
-                })?;
-                validate_sdk(ctx, platform, &root)?;
-                inputs.roots.insert(platform.clone(), root);
+        let mut configured = ctx
+            .config
+            .kmp
+            .as_ref()
+            .map(|kmp| kmp.native_sdks.clone())
+            .unwrap_or_default();
+        configured.extend(ctx.options.native_sdks.clone());
+        for (platform, input) in &configured {
+            if !["android", "ios", "macos", "linux", "windows"].contains(&platform.as_str()) {
+                bail!("Unsupported [kmp.native_sdks] platform: {platform}");
             }
+            let root = inputs._staging.path().join(platform);
+            let input = ctx.project_root.join(input);
+            extract_sdk(&input, &root)
+                .with_context(|| format!("Failed to import {platform} SDK {}", input.display()))?;
+            validate_sdk(ctx, platform, &root)?;
+            inputs.roots.insert(platform.clone(), root);
         }
         Ok(inputs)
     }

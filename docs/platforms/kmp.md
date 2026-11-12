@@ -253,6 +253,21 @@ run `ccgo build kmp` on that platform.
 
 ### Use C/C++ SDK ZIPs from Other Machines
 
+For paths that change between builds, pass SDKs on the command line:
+
+```bash
+ccgo build kmp --release \
+  --native-sdk android=./downloads/android-sdk.zip \
+  --native-sdk 'windows=./downloads/Windows SDK-1.2.3.zip'
+```
+
+Repeat `--native-sdk PLATFORM=ZIP_PATH` for each platform. CLI values override
+the same platform in `[kmp.native_sdks]`; other configured platforms remain.
+If a platform is repeated, the last CLI value wins. Relative CLI paths resolve
+from the command's working directory, including workspace builds. The option
+also works with `ccgo build all --auto-docker`, which forwards it to the final
+KMP build; it does not change KMP's supported host targets.
+
 Build the native SDKs on the appropriate machines, copy their ZIPs into this
 project, and select them explicitly in `CCGO.toml`:
 

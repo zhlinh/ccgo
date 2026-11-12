@@ -100,6 +100,8 @@ pub struct BuildOptions {
     pub all_features: bool,
     /// Archive name variants from `--variant` (features do not affect the name)
     pub variants: Vec<String>,
+    /// CLI native SDK inputs for KMP; override the corresponding TOML entries.
+    pub native_sdks: std::collections::BTreeMap<String, PathBuf>,
     /// Compiler cache type (ccache, sccache, auto, none)
     pub cache: Option<String>,
     /// Show build analytics summary
@@ -144,6 +146,7 @@ impl Default for BuildOptions {
             no_fetch: false,
             features: Vec::new(),
             variants: Vec::new(),
+            native_sdks: std::collections::BTreeMap::new(),
             use_default_features: true,
             all_features: false,
             cache: None,

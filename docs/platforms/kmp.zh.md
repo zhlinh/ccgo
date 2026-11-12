@@ -252,6 +252,20 @@ ccgo build kmp
 
 ### 使用其他机器生成的 C/C++ SDK ZIP
 
+路径或文件名经常变化时，可以直接从命令行传入，无需修改 TOML：
+
+```bash
+ccgo build kmp --release \
+  --native-sdk android=./downloads/android-sdk.zip \
+  --native-sdk 'windows=./downloads/Windows SDK-1.2.3.zip'
+```
+
+每个平台重复一次 `--native-sdk 平台=ZIP路径`。命令行覆盖 `[kmp.native_sdks]`
+中同平台的值，其他平台配置保留；同平台重复传入时取最后一次。
+命令行相对路径按执行命令时的目录解析，工作区构建也遵循此规则。
+`ccgo build all --auto-docker` 同样接受此参数，并转发给最后的 KMP 构建；
+这不会扩展 KMP 的宿主平台支持范围。
+
 在对应机器上构建原生 SDK，把 ZIP 复制到当前项目，在 `CCGO.toml` 中显式指定：
 
 ```toml

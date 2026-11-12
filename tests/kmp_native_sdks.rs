@@ -127,6 +127,69 @@ fn rejects_sdk_version_mismatch_before_gradle() {
 }
 
 #[test]
+fn cli_native_sdk_works_without_toml_sdk_inputs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    project(root);
+    let config = root.join("CCGO.toml");
+    let text = fs::read_to_string(&config).unwrap();
+    fs::write(config, text.split("[kmp.native_sdks]").next().unwrap()).unwrap();
+    sdk(&root.join("renamed sdk=ANO.zip"), "1.2.3", false);
+    build(root)
+        .args(["--native-sdk", "Android=renamed sdk=ANO.zip"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn cli_native_sdk_overrides_toml_and_last_cli_value_wins() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    project(root);
+    // The configured android-sdk.zip does not exist; only the override is valid.
+    sdk(&root.join("new-sdk.zip"), "1.2.3", false);
+    build(root)
+        .args([
+            "--native-sdk",
+            "android=missing.zip",
+            "--native-sdk",
+            "android=new-sdk.zip",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn cli_native_sdk_preserves_other_toml_platforms() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    project(root);
+    let config = root.join("CCGO.toml");
+    let text = fs::read_to_string(&config).unwrap() + "linux = 'missing-linux.zip'\n";
+    fs::write(config, text).unwrap();
+    sdk(&root.join("new-sdk.zip"), "1.2.3", false);
+    let result = build(root)
+        .args(["--native-sdk", "android=new-sdk.zip"])
+        .assert()
+        .failure();
+    assert!(
+        String::from_utf8_lossy(&result.get_output().stderr).contains("Failed to import linux SDK")
+    );
+    assert!(!root.join("sdk-root").exists());
+}
+
+#[test]
+fn invalid_cli_native_sdk_inputs_are_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    for input in ["android", "android=", "ohos=sdk.zip", "=sdk.zip"] {
+        build(tmp.path())
+            .args(["--native-sdk", input])
+            .assert()
+            .code(2);
+    }
+}
+
+#[test]
 fn rejects_unsafe_sdk_paths_before_gradle() {
     let tmp = tempfile::tempdir().unwrap();
     project(tmp.path());

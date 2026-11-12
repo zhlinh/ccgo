@@ -14,6 +14,18 @@ use crate::builder::{BuildContext, BuildOptions, BuildResult};
 use crate::config::CcgoConfig;
 use crate::workspace::{find_workspace_root, Workspace};
 
+fn parse_native_sdk(value: &str) -> std::result::Result<(String, std::path::PathBuf), String> {
+    let (platform, path) = value.split_once('=').ok_or("Expected PLATFORM=ZIP_PATH")?;
+    let platform = platform.to_ascii_lowercase();
+    if !["android", "ios", "macos", "linux", "windows"].contains(&platform.as_str()) {
+        return Err(format!("Unsupported native SDK platform: {platform}"));
+    }
+    if path.is_empty() {
+        return Err("Native SDK ZIP path must not be empty".to_string());
+    }
+    Ok((platform, std::path::PathBuf::from(path)))
+}
+
 /// Target platform for building
 #[derive(Debug, Clone, PartialEq, Eq, Hash, ValueEnum)]
 pub enum BuildTarget {
@@ -447,6 +459,10 @@ pub struct BuildCommand {
     #[arg(long, value_delimiter = ',')]
     pub variant: Vec<String>,
 
+    /// Prebuilt C/C++ SDK for KMP; repeat per platform. Overrides [kmp.native_sdks].
+    #[arg(long, value_name = "PLATFORM=ZIP_PATH", value_parser = parse_native_sdk)]
+    pub native_sdk: Vec<(String, std::path::PathBuf)>,
+
     /// Do not enable default features
     ///
     /// By default, the features listed in [features].default are enabled.
@@ -773,6 +789,12 @@ impl BuildCommand {
             }
         }
 
+        let invocation_dir = std::env::current_dir()?;
+        let native_sdks = self
+            .native_sdk
+            .iter()
+            .map(|(platform, path)| (platform.clone(), invocation_dir.join(path)))
+            .collect();
         Ok(BuildOptions {
             target: self.target.clone(),
             architectures,
@@ -790,6 +812,7 @@ impl BuildCommand {
             no_fetch: self.no_fetch,
             features: self.features.clone(),
             variants: self.variant.clone(),
+            native_sdks,
             use_default_features: !self.no_default_features,
             all_features: self.all_features,
             cache: Some(self.cache.clone()),
