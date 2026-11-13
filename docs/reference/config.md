@@ -588,8 +588,8 @@ path = "src/bin/server.cpp"
 
 Run binaries with:
 ```bash
-ccgo run my-cli
-ccgo run my-server -- --help
+ccgo run --bin my-cli
+ccgo run --bin my-server -- --help
 ```
 
 ### Example Targets
@@ -611,6 +611,13 @@ Run examples with:
 ccgo run --example basic-usage
 ccgo run --example advanced
 ```
+
+Examples are auto-discovered only under `examples/`: `<name>.cpp`, `.cc`, `.cxx`,
+or `<name>/main.cpp`, `main.cc`, `main.cxx`. An explicit `path` takes precedence.
+Use `--release --build-only` to compile without running. These are local host
+C++ targets, not Flutter/Tauri/Qt application builds. Outputs are in `target/run/`.
+The current runner compiles one entry source, and links the project library
+from `target/run/lib` when that directory exists; SDK ZIPs are not auto-imported.
 
 ---
 

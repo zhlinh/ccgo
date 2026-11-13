@@ -588,8 +588,8 @@ path = "src/bin/server.cpp"
 
 运行二进制文件：
 ```bash
-ccgo run my-cli
-ccgo run my-server -- --help
+ccgo run --bin my-cli
+ccgo run --bin my-server -- --help
 ```
 
 ### 示例目标
@@ -611,6 +611,13 @@ name = "advanced"
 ccgo run --example basic-usage
 ccgo run --example advanced
 ```
+
+只在 `examples/` 自动发现示例：`<name>.cpp`、`.cc`、`.cxx`，或
+`<name>/main.cpp`、`main.cc`、`main.cxx`；显式 `path` 优先。
+使用 `--release --build-only` 可以只编译不运行，产物位于 `target/run/`。
+这些是本机 C++ 目标，不会自动调用 Flutter/Tauri/Qt 的应用工具链。
+当前 runner 编译单个入口源文件；存在 `target/run/lib` 时链接其中的项目库，
+不会自动导入 SDK ZIP。
 
 ---
 

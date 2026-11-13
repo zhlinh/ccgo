@@ -173,9 +173,11 @@ impl RunCommand {
                     }
                 }
             } else if path.is_dir() {
-                // Check for main.cpp in subdirectory
-                let main_cpp = path.join("main.cpp");
-                if main_cpp.exists() {
+                // Use the same source extensions for flat and directory examples.
+                if ["cpp", "cc", "cxx"]
+                    .iter()
+                    .any(|ext| path.join(format!("main.{ext}")).is_file())
+                {
                     if let Some(name) = path.file_name() {
                         examples.push(name.to_string_lossy().to_string());
                     }
@@ -203,33 +205,24 @@ impl RunCommand {
                     }
                 }
 
-                // Default paths for examples
                 let examples_dir = project_root.join("examples");
-
-                // Try examples/{name}.cpp
-                let cpp_path = examples_dir.join(format!("{}.cpp", name));
-                if cpp_path.exists() {
-                    return Ok(cpp_path);
-                }
-
-                // Try examples/{name}.cc
-                let cc_path = examples_dir.join(format!("{}.cc", name));
-                if cc_path.exists() {
-                    return Ok(cc_path);
-                }
-
-                // Try examples/{name}/main.cpp
-                let main_path = examples_dir.join(name).join("main.cpp");
-                if main_path.exists() {
-                    return Ok(main_path);
+                let candidates: Vec<_> = ["cpp", "cc", "cxx"]
+                    .iter()
+                    .map(|ext| examples_dir.join(format!("{name}.{ext}")))
+                    .chain(["cpp", "cc", "cxx"].iter()
+                        .map(|ext| examples_dir.join(name).join(format!("main.{ext}"))))
+                    .collect();
+                for path in &candidates {
+                    if path.is_file() {
+                        return Ok(path.clone());
+                    }
                 }
 
                 bail!(
-                    "Example '{}' not found. Searched:\n  - {}\n  - {}\n  - {}",
+                    "Example '{}' not found. Searched:\n  - {}",
                     name,
-                    cpp_path.display(),
-                    cc_path.display(),
-                    main_path.display()
+                    candidates.iter().map(|path| path.display().to_string())
+                        .collect::<Vec<_>>().join("\n  - ")
                 );
             }
             RunTarget::Bin(name) => {
@@ -370,7 +363,7 @@ add_executable({target_name} ${{SOURCE_FILE}})
 set(LIB_DIR "${{PROJECT_ROOT}}/target/run/lib")
 if(EXISTS "${{LIB_DIR}}")
     target_link_directories({target_name} PRIVATE ${{LIB_DIR}})
-    target_link_libraries({target_name} PRIVATE {lib_name} || true)
+    target_link_libraries({target_name} PRIVATE {lib_name})
 endif()
 
 # Platform-specific settings

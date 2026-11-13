@@ -959,19 +959,19 @@ ccgo package --output /path/to/output
 构建并运行示例或二进制文件。
 
 ```bash
-ccgo run [OPTIONS] <TARGET>
+ccgo run [OPTIONS] [--example <NAME> | --bin <NAME>] [-- <ARGS>...]
 ```
 
-### 参数
-
-- `<TARGET>` - 示例或二进制文件名称
+未指定目标时，依次选择首个已配置示例、`examples/` 中自动发现的示例、
+首个已配置的 bin。
 
 ### 选项
 
 | 选项 | 描述 |
 |--------|-------------|
-| `--example` | 作为示例运行（如果 TARGET 在 examples/ 中则为默认）|
-| `--bin` | 作为二进制文件运行 |
+| `--example <NAME>` | 构建并运行示例 |
+| `--bin <NAME>` | 构建并运行已配置的可执行程序 |
+| `--build-only` | 只编译不运行 |
 | `--release` | 以发布模式构建 |
 | `-- <ARGS>` | 传递给程序的参数 |
 
@@ -979,13 +979,13 @@ ccgo run [OPTIONS] <TARGET>
 
 ```bash
 # 运行示例
-ccgo run my_example
+ccgo run --example my_example
 
 # 使用参数运行
-ccgo run my_example -- --arg1 value1
+ccgo run --example my_example -- --arg1 value1
 
 # 以发布模式运行
-ccgo run my_example --release
+ccgo run --example my_example --release
 ```
 
 ---

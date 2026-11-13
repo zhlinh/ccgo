@@ -959,19 +959,19 @@ ccgo package --output /path/to/output
 Build and run example or binary.
 
 ```bash
-ccgo run [OPTIONS] <TARGET>
+ccgo run [OPTIONS] [--example <NAME> | --bin <NAME>] [-- <ARGS>...]
 ```
 
-### Arguments
-
-- `<TARGET>` - Example or binary name
+Without an explicit target, ccgo selects the first configured example, then
+an example discovered in `examples/`, then the first configured binary.
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `--example` | Run as example (default if TARGET in examples/) |
-| `--bin` | Run as binary |
+| `--example <NAME>` | Build and run an example |
+| `--bin <NAME>` | Build and run a configured binary |
+| `--build-only` | Compile without running |
 | `--release` | Build in release mode |
 | `-- <ARGS>` | Arguments to pass to the program |
 
@@ -979,13 +979,13 @@ ccgo run [OPTIONS] <TARGET>
 
 ```bash
 # Run example
-ccgo run my_example
+ccgo run --example my_example
 
 # Run with arguments
-ccgo run my_example -- --arg1 value1
+ccgo run --example my_example -- --arg1 value1
 
 # Run in release mode
-ccgo run my_example --release
+ccgo run --example my_example --release
 ```
 
 ---
