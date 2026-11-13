@@ -119,9 +119,9 @@ pub struct CcgoConfig {
     #[serde(default, rename = "bin")]
     pub bins: Vec<BinConfig>,
 
-    /// Example programs
-    #[serde(default, rename = "example")]
-    pub examples: Vec<ExampleConfig>,
+    /// Application projects built with their own toolchain.
+    #[serde(default, rename = "app", alias = "example")]
+    pub apps: Vec<AppConfig>,
 
     /// Dependency patches configuration
     /// Allows overriding dependency sources for specific crates
@@ -569,25 +569,37 @@ pub struct BinConfig {
     pub path: String,
 }
 
-/// Example configuration from [[example]] section
-///
-/// Defines an example program that demonstrates library usage.
-///
-/// # Example
-///
-/// ```toml
-/// [[example]]
-/// name = "basic-usage"
-/// path = "examples/basic.cpp"  # Optional, defaults to examples/{name}.cpp
-/// ```
-#[derive(Debug, Clone, Deserialize)]
-pub struct ExampleConfig {
-    /// Example name
-    pub name: String,
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AppFramework {
+    Cpp,
+    Cmake,
+    Flutter,
+    Tauri,
+}
 
-    /// Path to the example source file (optional)
-    /// Defaults to examples/{name}.cpp or examples/{name}/main.cpp
-    pub path: Option<String>,
+/// Application configuration from [[app]]. Paths are relative to the project root.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AppConfig {
+    pub name: String,
+    /// Defaults to app/<name> or app/<name>.cpp/.cc/.cxx.
+    pub path: Option<std::path::PathBuf>,
+    /// Inferred from the application manifest when omitted.
+    pub framework: Option<AppFramework>,
+    /// Optional CMake target to build.
+    pub target: Option<String>,
+    /// CMake executable path, relative to its build directory.
+    pub executable: Option<std::path::PathBuf>,
+    /// Flutter build platform (defaults to the host desktop platform).
+    pub platform: Option<String>,
+    /// Flutter run device (desktop defaults to platform; mobile uses Flutter selection).
+    pub device: Option<String>,
+    /// CMake configure arguments, or Flutter/Tauri build arguments.
+    #[serde(default)]
+    pub build_args: Vec<String>,
+    /// Native executable arguments, or Flutter/Tauri run arguments.
+    #[serde(default)]
+    pub run_args: Vec<String>,
 }
 
 /// Per-platform linkage overrides inside a `[[dependencies]]` entry.

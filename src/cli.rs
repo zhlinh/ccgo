@@ -45,7 +45,7 @@ pub enum Commands {
     /// Initialize library project in current directory
     Init(InitCommand),
 
-    /// Run an example or binary target
+    /// Build and run an application or binary
     Run(RunCommand),
 
     /// Run GoogleTest unit tests

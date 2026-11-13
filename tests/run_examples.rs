@@ -23,11 +23,7 @@ fn run(root: &Path) -> Command {
 
 #[test]
 fn discovers_and_runs_flat_and_directory_cxx_examples() {
-    for relative in [
-        "examples/basic.cxx",
-        "examples/basic/main.cc",
-        "examples/basic/main.cxx",
-    ] {
+    for relative in ["app/basic.cxx", "app/basic/main.cc", "app/basic/main.cxx"] {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         project(root, "");
@@ -64,7 +60,10 @@ fn bin_build_only_compiles_without_running() {
 fn configured_example_links_project_static_library() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    project(root, "[[example]]\nname='linked'\npath='demo.cpp'\n");
+    project(
+        root,
+        "[[app]]\nname='linked'\npath='demo.cpp'\nframework='cpp'\n",
+    );
     fs::write(root.join("library.cpp"), "int demo_value() { return 7; }\n").unwrap();
     fs::write(
         root.join("demo.cpp"),
@@ -84,5 +83,5 @@ fn configured_example_links_project_static_library() {
         .status()
         .unwrap()
         .success());
-    run(root).args(["--example", "linked"]).assert().success();
+    run(root).args(["--app", "linked"]).assert().success();
 }

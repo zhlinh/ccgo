@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 /// Clean build artifacts
 #[derive(Args, Debug)]
 pub struct CleanCommand {
-    /// Target to clean (all, android, ios, macos, ohos, kmp, examples)
+    /// Target to clean (all, android, ios, macos, ohos, kmp, app)
     #[arg(default_value = "all")]
     pub target: String,
 
@@ -340,20 +340,25 @@ impl ProjectCleaner {
         }
     }
 
-    fn clean_examples(&mut self) {
+    fn clean_app(&mut self) {
         println!("\n{}", "=".repeat(60));
-        println!("  Cleaning examples build caches");
+        println!("  Cleaning app build caches");
         println!("{}", "=".repeat(60));
 
-        let examples_dir = self.project_dir.join("examples");
+        let run_cache = self.project_dir.join("target/run/app");
+        if run_cache.exists() {
+            self.remove_directory(&run_cache, Some("target/run/app/"));
+        }
 
-        if !examples_dir.exists() {
-            println!("  ℹ️  examples/ directory does not exist");
+        let app_dir = self.project_dir.join("app");
+
+        if !app_dir.exists() {
+            println!("  ℹ️  app/ directory does not exist");
             return;
         }
 
-        // Find all build directories in examples
-        for entry in WalkDir::new(&examples_dir)
+        // Find all build directories in app/
+        for entry in WalkDir::new(&app_dir)
             .into_iter()
             .filter_map(|e| e.ok())
         {
@@ -379,7 +384,7 @@ impl ProjectCleaner {
             "macos" => self.clean_macos(),
             "ohos" => self.clean_ohos(),
             "kmp" => self.clean_kmp(),
-            "examples" => self.clean_examples(),
+            "app" => self.clean_app(),
             _ => {
                 eprintln!("Unknown platform: {}", platform);
             }
@@ -407,7 +412,7 @@ impl ProjectCleaner {
         self.clean_macos();
         self.clean_ohos();
         self.clean_kmp();
-        self.clean_examples();
+        self.clean_app();
 
         // Also clean root .gradle if exists
         let root_gradle = self.project_dir.join(".gradle");

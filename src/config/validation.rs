@@ -39,13 +39,19 @@ pub fn validate_config(config: &CcgoConfig) -> Result<()> {
         validate_platform_configs(platforms)?;
     }
 
-    // Validate bins and examples
+    validate_targets(config)?;
+
+    Ok(())
+}
+
+fn validate_targets(config: &CcgoConfig) -> Result<()> {
+    // Validate bins and applications
     for bin in &config.bins {
         validate_bin_config(bin)?;
     }
 
-    for example in &config.examples {
-        validate_example_config(example)?;
+    for app in &config.apps {
+        validate_app_config(app)?;
     }
 
     Ok(())
@@ -374,17 +380,17 @@ fn validate_bin_config(bin: &super::BinConfig) -> Result<()> {
     Ok(())
 }
 
-/// Validate example configuration
-fn validate_example_config(example: &super::ExampleConfig) -> Result<()> {
-    validate_package_name(&example.name)?;
+/// Validate application configuration
+fn validate_app_config(app: &super::AppConfig) -> Result<()> {
+    validate_package_name(&app.name)?;
 
-    if let Some(ref path_str) = example.path {
+    if let Some(ref path_str) = app.path {
         let path = Path::new(path_str);
         if !path.exists() {
             eprintln!(
-                "⚠️  Warning: Example source file '{}' for '{}' does not exist.\n\
+                "⚠️  Warning: Application path '{}' for '{}' does not exist.\n\
                  Expected path: {}",
-                path_str, example.name, path.display()
+                path_str.display(), app.name, path.display()
             );
         }
     }

@@ -959,18 +959,18 @@ ccgo package --output /path/to/output
 Build and run example or binary.
 
 ```bash
-ccgo run [OPTIONS] [--example <NAME> | --bin <NAME>] [-- <ARGS>...]
+ccgo run [OPTIONS] [--app <NAME> | --bin <NAME>] [-- <ARGS>...]
 ```
 
-Without an explicit target, ccgo selects the first configured example, then
-an example discovered in `examples/`, then the first configured binary.
+Without an explicit target, ccgo selects the first configured app, then
+an app discovered in `app/`, then the first configured binary.
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `--example <NAME>` | Build and run an example |
 | `--bin <NAME>` | Build and run a configured binary |
+| `--app <NAME>` | Build/run a C++/CMake (ImGui/Qt), Flutter or Tauri application |
 | `--build-only` | Compile without running |
 | `--release` | Build in release mode |
 | `-- <ARGS>` | Arguments to pass to the program |
@@ -979,13 +979,16 @@ an example discovered in `examples/`, then the first configured binary.
 
 ```bash
 # Run example
-ccgo run --example my_example
+ccgo run --app basic
 
 # Run with arguments
-ccgo run --example my_example -- --arg1 value1
+ccgo run --app basic -- --arg1 value1
 
 # Run in release mode
-ccgo run --example my_example --release
+ccgo run --app basic --release
+
+# Build an application without launching its GUI
+ccgo run --app imgui-demo --release --build-only
 ```
 
 ---

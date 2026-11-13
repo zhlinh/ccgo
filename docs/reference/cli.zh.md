@@ -959,18 +959,18 @@ ccgo package --output /path/to/output
 构建并运行示例或二进制文件。
 
 ```bash
-ccgo run [OPTIONS] [--example <NAME> | --bin <NAME>] [-- <ARGS>...]
+ccgo run [OPTIONS] [--app <NAME> | --bin <NAME>] [-- <ARGS>...]
 ```
 
-未指定目标时，依次选择首个已配置示例、`examples/` 中自动发现的示例、
+未指定目标时，依次选择首个已配置应用、`app/` 中自动发现的应用、
 首个已配置的 bin。
 
 ### 选项
 
 | 选项 | 描述 |
 |--------|-------------|
-| `--example <NAME>` | 构建并运行示例 |
 | `--bin <NAME>` | 构建并运行已配置的可执行程序 |
+| `--app <NAME>` | 构建/运行 C++/CMake（ImGui/Qt）、Flutter 或 Tauri 应用 |
 | `--build-only` | 只编译不运行 |
 | `--release` | 以发布模式构建 |
 | `-- <ARGS>` | 传递给程序的参数 |
@@ -979,13 +979,16 @@ ccgo run [OPTIONS] [--example <NAME> | --bin <NAME>] [-- <ARGS>...]
 
 ```bash
 # 运行示例
-ccgo run --example my_example
+ccgo run --app basic
 
 # 使用参数运行
-ccgo run --example my_example -- --arg1 value1
+ccgo run --app basic -- --arg1 value1
 
 # 以发布模式运行
-ccgo run --example my_example --release
+ccgo run --app basic --release
+
+# 只构建应用，不启动 GUI
+ccgo run --app imgui-demo --release --build-only
 ```
 
 ---

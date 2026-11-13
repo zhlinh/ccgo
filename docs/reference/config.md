@@ -125,10 +125,10 @@ The `members` array supports glob patterns:
 members = [
     "core",              # Exact path
     "utils",             # Exact path
-    "examples/*",        # All direct subdirectories
+    "app/*",        # All direct subdirectories
     "plugins/**"         # All subdirectories recursively
 ]
-exclude = ["examples/deprecated"]
+exclude = ["app/deprecated"]
 ```
 
 ### Resolver Versions
@@ -140,8 +140,8 @@ exclude = ["examples/deprecated"]
 
 ```toml
 [workspace]
-members = ["core", "utils", "examples/*"]
-exclude = ["examples/old"]
+members = ["core", "utils", "app/*"]
+exclude = ["app/old"]
 resolver = "2"
 default_members = ["core", "utils"]
 
@@ -592,34 +592,90 @@ ccgo run --bin my-cli
 ccgo run --bin my-server -- --help
 ```
 
-### Example Targets
+### Application Targets
 
-Define example programs with `[[example]]`:
+`ccgo run --app <name>` is the unified entry for standalone C++ programs and
+CMake/ImGui/Qt, Flutter and Tauri projects. All are discovered under `app/`.
 
 ```toml
-[[example]]
-name = "basic-usage"
-path = "examples/basic.cpp"  # Optional: defaults to examples/{name}.cpp
-
-[[example]]
-name = "advanced"
-# path defaults to examples/advanced.cpp or examples/advanced/main.cpp
+[[app]]
+name = "basic"
+path = "app/basic/main.cpp"
+# framework = "cpp"  # Optional: inferred from a source file or main.cpp/.cc/.cxx
 ```
 
-Run examples with:
 ```bash
-ccgo run --example basic-usage
-ccgo run --example advanced
+ccgo run --app basic
+ccgo run --app basic --release --build-only
 ```
 
-Examples are auto-discovered only under `examples/`: `<name>.cpp`, `.cc`, `.cxx`,
-or `<name>/main.cpp`, `main.cc`, `main.cxx`. An explicit `path` takes precedence.
-Use `--release --build-only` to compile without running. These are local host
-C++ targets, not Flutter/Tauri/Qt application builds. Outputs are in `target/run/`.
-The current runner compiles one entry source, and links the project library
-from `target/run/lib` when that directory exists; SDK ZIPs are not auto-imported.
+Simple C++ apps use a generated CMake project; full projects keep their own build
+configuration:
 
----
+```toml
+[[app]]
+name = "imgui-demo"
+path = "app/imgui"
+framework = "cmake"
+target = "imgui_demo"
+executable = "imgui_demo"
+# build_args = ["-DCMAKE_PREFIX_PATH=/path/to/Qt"]
+# run_args = ["--config", "demo.json"]
+
+[[app]]
+name = "flutter-demo"
+path = "app/flutter-demo"
+framework = "flutter"
+# platform = "android"  # build-only defaults to the host desktop platform
+# device = "device-id"  # desktop defaults to platform; mobile lets Flutter select
+
+[[app]]
+name = "tauri-demo"
+path = "app/tauri-demo"
+framework = "tauri"
+```
+
+```bash
+ccgo run --app imgui-demo
+ccgo run --app imgui-demo --release --build-only
+ccgo run --app flutter-demo -- --dart-define=MODE=demo
+ccgo run --app tauri-demo --release
+```
+
+`path` defaults to `app/<name>` or a flat `app/<name>.cpp`/`.cc`/`.cxx` file. If no `[[app]]` is declared, that directory
+can also be discovered directly. Omit `framework` to detect a source file, `main.cpp`/`.cc`/`.cxx`, `CMakeLists.txt`,
+`pubspec.yaml` or `src-tauri/tauri.conf.json` (JSON5/Tauri.toml also supported).
+If several match, set `framework` explicitly.
+
+| Framework | Default run | `--build-only` |
+|-----------|-------------|----------------|
+| `cpp` (single source) | Compile and execute | Compile only |
+| `cmake` (ImGui/Qt/custom) | Configure, build, execute | Configure and build |
+| `flutter` | `flutter run --device-id <device> --debug` | `flutter build <platform> --debug` |
+| `tauri` | `cargo tauri dev` | `cargo tauri build --debug` |
+
+`--release` switches each backend to release mode. CMake uses the app's own
+sources, dependencies and resources, supports `target`, and builds under
+`target/run/app/<name>/<debug|release>/`. The executable defaults to `target`
+or `name` (plus `.exe` on Windows); set `executable` for another path, such as
+`bin/demo` or `Demo.app`. It is resolved relative to the build/config directory.
+The executable runs from the app's source directory so relative resources work.
+
+For C++/CMake, `build_args` are configure options and `run_args` are program arguments;
+arguments after `--` are appended to program arguments. For Flutter/Tauri,
+`build_args` apply to build-only and `run_args` to normal run; arguments after
+`--` are forwarded to the selected framework command. These are argument arrays,
+not shell strings. ccgo feature flags are not supported for apps; use framework
+options instead. `--app` and `--bin` are mutually exclusive.
+
+Simple C++ apps compile one entry source and can link the project library from
+`target/run/lib`; use CMake for multi-source projects. `ccgo clean app` cleans
+`target/run/app/` and application build caches.
+
+Install each toolchain and the application's dependencies first. ccgo does not
+generate Flutter/Tauri/Qt projects, import/build the C++ SDK automatically, or
+provide a universal mobile packaging pipeline. ImGui and Qt use their own CMake
+integration; the template includes a standalone ImGui/GLFW/OpenGL desktop app.
 
 ## Publishing Configuration
 
@@ -719,8 +775,8 @@ min_version = "13.0"
 
 ```toml
 [workspace]
-members = ["core", "utils", "examples/*"]
-exclude = ["examples/old"]
+members = ["core", "utils", "app/*"]
+exclude = ["app/old"]
 resolver = "2"
 
 [[workspace.dependencies]]
@@ -806,13 +862,13 @@ path = "src/bin/tool.cpp"
 name = "converter"
 path = "src/bin/converter.cpp"
 
-[[example]]
+[[app]]
 name = "basic"
-# Defaults to examples/basic.cpp
+# Defaults to app/basic.cpp
 
-[[example]]
+[[app]]
 name = "advanced"
-path = "examples/advanced/main.cpp"
+path = "app/advanced/main.cpp"
 
 [build]
 parallel = true
@@ -839,7 +895,7 @@ Key changes in CCGO.toml format:
 2. **New features:**
    - `[workspace]` section for multi-package projects
    - `[features]` section for conditional compilation
-   - `[[bin]]` and `[[example]]` sections for executables
+   - `[[bin]]` and `[[app]]` sections for executables
    - `workspace = true` for dependency inheritance
    - `resolver` field in workspace config
 

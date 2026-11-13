@@ -1,6 +1,6 @@
 //! Run command implementation
 //!
-//! Builds and runs executable targets (examples or binaries) on the local host.
+//! Builds and runs C++ targets and application projects on the local host.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -12,21 +12,21 @@ use crate::builder::cmake::{BuildType, CMakeConfig};
 use crate::builder::toolchains::detect_default_compiler;
 use crate::config::CcgoConfig;
 
-/// Target type to run
-#[derive(Debug, Clone)]
-enum RunTarget {
-    /// Run an example from examples/ directory
-    Example(String),
-    /// Run a binary target from [[bin]]
-    Bin(String),
+pub(super) struct CppBuild<'a> {
+    pub project_root: &'a Path,
+    pub build_dir: &'a Path,
+    pub target_name: &'a str,
+    pub source_path: &'a Path,
+    pub lib_name: &'a str,
+    pub configure_args: &'a [String],
 }
 
-/// Run an executable target (example or binary)
+/// Build and run an application or binary
 #[derive(Args, Debug)]
 pub struct RunCommand {
-    /// Name of the example to run
+    /// App to run from app/ (C++, CMake/ImGui/Qt, Flutter or Tauri)
     #[arg(long, group = "target")]
-    pub example: Option<String>,
+    pub app: Option<String>,
 
     /// Name of the binary target to run
     #[arg(long, group = "target")]
@@ -56,7 +56,7 @@ pub struct RunCommand {
     #[arg(long)]
     pub all_features: bool,
 
-    /// Arguments to pass to the executable
+    /// Arguments for the executable, or Flutter/Tauri CLI options with --app
     #[arg(last = true)]
     pub args: Vec<String>,
 }
@@ -68,193 +68,65 @@ impl RunCommand {
         let config = CcgoConfig::load()?;
         let project_root = std::env::current_dir()?;
 
-        // Get package info
-        let package = config.require_package()?;
-
-        // Resolve the target to run
-        let target = self.resolve_target(&config, &project_root)?;
-
-        if verbose {
-            match &target {
-                RunTarget::Example(name) => eprintln!("Running example: {}", name),
-                RunTarget::Bin(name) => eprintln!("Running binary: {}", name),
-            }
+        if let Some(name) = &self.app {
+            return super::run_app::execute(&self, &config, &project_root, name, verbose);
         }
-
-        // Get source file path
-        let source_path = self.get_source_path(&config, &project_root, &target)?;
-        if !source_path.exists() {
-            bail!("Source file not found: {}", source_path.display());
+        if let Some(name) = &self.bin {
+            return self.run_bin(&config, &project_root, name, verbose);
         }
+        if let Some(app) = config.apps.first() {
+            return super::run_app::execute(&self, &config, &project_root, &app.name, verbose);
+        }
+        if let Some(name) = super::run_app::discover_first(&project_root)? {
+            return super::run_app::execute(&self, &config, &project_root, &name, verbose);
+        }
+        if let Some(bin) = config.bins.first() {
+            return self.run_bin(&config, &project_root, &bin.name, verbose);
+        }
+        bail!("No application or binary found. Use --app <name> with app/, or configure [[app]] / [[bin]] in CCGO.toml");
+    }
 
-        // Determine target name
-        let target_name = match &target {
-            RunTarget::Example(name) => format!("example_{}", name),
-            RunTarget::Bin(name) => name.clone(),
-        };
-
-        // Build the executable
-        let build_dir = project_root.join("target").join("run").join(&target_name);
+    fn run_bin(&self, config: &CcgoConfig, root: &Path, name: &str, verbose: bool) -> Result<()> {
+        let bin = config
+            .bins
+            .iter()
+            .find(|bin| bin.name == name)
+            .with_context(|| {
+                format!(
+                    "Binary target '{name}' not found. Add [[bin]] with name and path to CCGO.toml"
+                )
+            })?;
+        let source = root.join(&bin.path);
+        if !source.is_file() {
+            bail!("Source file not found: {}", source.display());
+        }
         let executable = self.build_target(
-            &project_root,
-            &build_dir,
-            &target_name,
-            &source_path,
-            &package.name,
+            CppBuild {
+                project_root: root,
+                build_dir: &root.join("target/run").join(name),
+                target_name: name,
+                source_path: &source,
+                lib_name: &config.require_package()?.name,
+                configure_args: &[],
+            },
             verbose,
         )?;
-
-        // Run the executable (unless build-only)
         if !self.build_only {
             self.run_executable(&executable, verbose)?;
         }
-
         Ok(())
     }
 
-    /// Resolve which target to run
-    fn resolve_target(&self, config: &CcgoConfig, project_root: &Path) -> Result<RunTarget> {
-        // Explicit target specified
-        if let Some(name) = &self.example {
-            return Ok(RunTarget::Example(name.clone()));
-        }
-        if let Some(name) = &self.bin {
-            return Ok(RunTarget::Bin(name.clone()));
-        }
-
-        // Auto-discover: prefer examples, then bins
-        // First, check configured examples
-        if !config.examples.is_empty() {
-            return Ok(RunTarget::Example(config.examples[0].name.clone()));
-        }
-
-        // Auto-discover examples from examples/ directory
-        let examples_dir = project_root.join("examples");
-        if examples_dir.exists() {
-            if let Some(example) = self.find_first_example(&examples_dir)? {
-                return Ok(RunTarget::Example(example));
-            }
-        }
-
-        // Check configured binaries
-        if !config.bins.is_empty() {
-            return Ok(RunTarget::Bin(config.bins[0].name.clone()));
-        }
-
-        bail!(
-            "No target specified and no examples or binaries found.\n\
-             Use --example <name> or --bin <name> to specify a target,\n\
-             or create an examples/ directory with .cpp files."
-        );
-    }
-
-    /// Find first example in examples directory
-    fn find_first_example(&self, examples_dir: &Path) -> Result<Option<String>> {
-        let entries = std::fs::read_dir(examples_dir).with_context(|| {
-            format!(
-                "Failed to read examples directory: {}",
-                examples_dir.display()
-            )
-        })?;
-
-        let mut examples: Vec<String> = Vec::new();
-
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_file() {
-                // Check for .cpp, .cc, .cxx files
-                if let Some(ext) = path.extension() {
-                    if ext == "cpp" || ext == "cc" || ext == "cxx" {
-                        if let Some(stem) = path.file_stem() {
-                            examples.push(stem.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            } else if path.is_dir() {
-                // Use the same source extensions for flat and directory examples.
-                if ["cpp", "cc", "cxx"]
-                    .iter()
-                    .any(|ext| path.join(format!("main.{ext}")).is_file())
-                {
-                    if let Some(name) = path.file_name() {
-                        examples.push(name.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-
-        examples.sort();
-        Ok(examples.into_iter().next())
-    }
-
-    /// Get the source file path for the target
-    fn get_source_path(
-        &self,
-        config: &CcgoConfig,
-        project_root: &Path,
-        target: &RunTarget,
-    ) -> Result<PathBuf> {
-        match target {
-            RunTarget::Example(name) => {
-                // Check configured examples first
-                if let Some(example_config) = config.examples.iter().find(|e| &e.name == name) {
-                    if let Some(path) = &example_config.path {
-                        return Ok(project_root.join(path));
-                    }
-                }
-
-                let examples_dir = project_root.join("examples");
-                let candidates: Vec<_> = ["cpp", "cc", "cxx"]
-                    .iter()
-                    .map(|ext| examples_dir.join(format!("{name}.{ext}")))
-                    .chain(["cpp", "cc", "cxx"].iter()
-                        .map(|ext| examples_dir.join(name).join(format!("main.{ext}"))))
-                    .collect();
-                for path in &candidates {
-                    if path.is_file() {
-                        return Ok(path.clone());
-                    }
-                }
-
-                bail!(
-                    "Example '{}' not found. Searched:\n  - {}",
-                    name,
-                    candidates.iter().map(|path| path.display().to_string())
-                        .collect::<Vec<_>>().join("\n  - ")
-                );
-            }
-            RunTarget::Bin(name) => {
-                // Must be configured in [[bin]]
-                if let Some(bin_config) = config.bins.iter().find(|b| &b.name == name) {
-                    return Ok(project_root.join(&bin_config.path));
-                }
-
-                bail!(
-                    "Binary target '{}' not found in CCGO.toml.\n\
-                     Add it with:\n\n\
-                     [[bin]]\n\
-                     name = \"{}\"\n\
-                     path = \"src/bin/{}.cpp\"",
-                    name,
-                    name,
-                    name
-                );
-            }
-        }
-    }
-
     /// Build the executable target
-    fn build_target(
-        &self,
-        project_root: &Path,
-        build_dir: &Path,
-        target_name: &str,
-        source_path: &Path,
-        lib_name: &str,
-        verbose: bool,
-    ) -> Result<PathBuf> {
+    pub(super) fn build_target(&self, target: CppBuild<'_>, verbose: bool) -> Result<PathBuf> {
+        let CppBuild {
+            project_root,
+            build_dir,
+            target_name,
+            source_path,
+            lib_name,
+            configure_args,
+        } = target;
         // Create build directory
         std::fs::create_dir_all(build_dir).with_context(|| {
             format!("Failed to create build directory: {}", build_dir.display())
@@ -270,8 +142,7 @@ impl RunCommand {
         }
 
         // Generate CMakeLists.txt
-        let cmake_content =
-            self.generate_cmake(project_root, target_name, source_path, lib_name)?;
+        let cmake_content = self.generate_cmake(target_name, source_path, lib_name)?;
         let cmake_path = build_dir.join("CMakeLists.txt");
         std::fs::write(&cmake_path, &cmake_content)
             .with_context(|| format!("Failed to write CMakeLists.txt: {}", cmake_path.display()))?;
@@ -292,6 +163,7 @@ impl RunCommand {
         // Build using CMakeConfig
         let cmake = CMakeConfig::new(build_dir.to_path_buf(), build_dir.to_path_buf())
             .build_type(build_type)
+            .user_arguments(configure_args.to_vec())
             .variable("CMAKE_C_COMPILER", compiler.cc.display().to_string())
             .variable("CMAKE_CXX_COMPILER", compiler.cxx.display().to_string())
             .variable(
@@ -324,14 +196,11 @@ impl RunCommand {
     /// Generate CMakeLists.txt for the target
     fn generate_cmake(
         &self,
-        project_root: &Path,
         target_name: &str,
         source_path: &Path,
         lib_name: &str,
     ) -> Result<String> {
-        let source_relative = source_path
-            .strip_prefix(project_root)
-            .unwrap_or(source_path);
+        let source = source_path.to_string_lossy().replace('\\', "/");
 
         let cmake = format!(
             r#"cmake_minimum_required(VERSION 3.16)
@@ -354,7 +223,7 @@ include_directories(
 )
 
 # Source file
-set(SOURCE_FILE "${{PROJECT_ROOT}}/{source_path}")
+set(SOURCE_FILE "{source_path}")
 
 # Add executable
 add_executable({target_name} ${{SOURCE_FILE}})
@@ -376,7 +245,7 @@ if(UNIX AND NOT APPLE)
 endif()
 "#,
             target_name = target_name,
-            source_path = source_relative.display(),
+            source_path = source,
             lib_name = lib_name,
         );
 
@@ -397,7 +266,9 @@ endif()
                 .join(format!("{}.exe", target_name)),
         ];
 
-        for path in &candidates {
+        let debug_exe = build_dir.join("Debug").join(format!("{target_name}.exe"));
+        let debug_bin = build_dir.join("Debug").join(target_name);
+        for path in candidates.iter().chain([&debug_exe, &debug_bin]) {
             if path.exists() {
                 return Ok(path.clone());
             }

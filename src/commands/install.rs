@@ -547,47 +547,11 @@ fn install_bin_targets(
         .with_context(|| format!("Failed to create {}", bin_dir_global.display()))?;
 
     for bin_name in selected {
-        // Validate the bin is actually declared.
-        if !all_bins.iter().any(|b| &b.name == bin_name) {
-            return Err(anyhow!(
-                "Binary '{}' is not declared in CCGO.toml [[bin]] entries.\n\
-                 Available: {}",
-                bin_name,
-                all_bins
-                    .iter()
-                    .map(|b| b.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
+        validate_selected_bin(all_bins, bin_name)?;
 
         println!("\n🔨 Building bin: {}", style(bin_name).cyan().bold());
 
-        // Delegate to RunCommand in build-only mode.
-        let run_cmd = RunCommand {
-            example: None,
-            bin: Some(bin_name.clone()),
-            release,
-            build_only: true,
-            jobs: None,
-            features: Vec::new(),
-            no_default_features: false,
-            all_features: false,
-            args: Vec::new(),
-        };
-        // Ensure the build runs from project root so relative paths resolve.
-        std::env::set_current_dir(project_root)?;
-        run_cmd.execute(verbose)?;
-
-        // Locate the produced executable.
-        let build_dir = project_root.join("target").join("run").join(bin_name);
-        let produced = find_built_executable(&build_dir, bin_name).ok_or_else(|| {
-            anyhow!(
-                "Built binary not found under {} (target name: {})",
-                build_dir.display(),
-                bin_name
-            )
-        })?;
+        let produced = build_install_binary(project_root, bin_name, release, verbose)?;
 
         // Copy into package cache
         let pkg_target = bin_dir_pkg.join(with_exe_suffix(bin_name));
@@ -612,17 +576,7 @@ fn install_bin_targets(
         make_executable(&pkg_target)?;
         println!("   📦 package: {}", pkg_target.display());
 
-        // Symlink into the global bin dir
-        let link = bin_dir_global.join(with_exe_suffix(bin_name));
-        if link.exists() || link.symlink_metadata().is_ok() {
-            std::fs::remove_file(&link).ok();
-        }
-        make_symlink(&pkg_target, &link)?;
-        println!(
-            "   🔗 symlink: {} → {}",
-            link.display(),
-            pkg_target.display()
-        );
+        link_installed_bin(&pkg_target, &bin_dir_global, bin_name)?;
     }
 
     // PATH hint (mirroring Cargo's post-install message).
@@ -631,6 +585,74 @@ fn install_bin_targets(
         "\n💡 Make sure the following directory is on your PATH:\n    export PATH=\"{}:$PATH\"",
         bin_dir_display
     );
+
+    Ok(())
+}
+
+fn build_install_binary(
+    project_root: &Path,
+    bin_name: &str,
+    release: bool,
+    verbose: bool,
+) -> Result<PathBuf> {
+    // Delegate to RunCommand in build-only mode.
+    let run_cmd = RunCommand {
+        app: None,
+        bin: Some(bin_name.to_string()),
+        release,
+        build_only: true,
+        jobs: None,
+        features: Vec::new(),
+        no_default_features: false,
+        all_features: false,
+        args: Vec::new(),
+    };
+    // Ensure the build runs from project root so relative paths resolve.
+    std::env::set_current_dir(project_root)?;
+    run_cmd.execute(verbose)?;
+
+    // Locate the produced executable.
+    let build_dir = project_root.join("target").join("run").join(bin_name);
+    let produced = find_built_executable(&build_dir, bin_name).ok_or_else(|| {
+        anyhow!(
+            "Built binary not found under {} (target name: {})",
+            build_dir.display(),
+            bin_name
+        )
+    })?;
+
+    Ok(produced)
+}
+
+fn link_installed_bin(pkg_target: &Path, bin_dir_global: &Path, bin_name: &str) -> Result<()> {
+    // Symlink into the global bin dir
+    let link = bin_dir_global.join(with_exe_suffix(bin_name));
+    if link.exists() || link.symlink_metadata().is_ok() {
+        std::fs::remove_file(&link).ok();
+    }
+    make_symlink(pkg_target, &link)?;
+    println!(
+        "   🔗 symlink: {} → {}",
+        link.display(),
+        pkg_target.display()
+    );
+    Ok(())
+}
+
+fn validate_selected_bin(all_bins: &[BinConfig], bin_name: &str) -> Result<()> {
+    // Validate the bin is actually declared.
+    if !all_bins.iter().any(|b| b.name == bin_name) {
+        return Err(anyhow!(
+            "Binary '{}' is not declared in CCGO.toml [[bin]] entries.\n\
+                 Available: {}",
+            bin_name,
+            all_bins
+                .iter()
+                .map(|b| b.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
 
     Ok(())
 }

@@ -125,10 +125,10 @@ git = "https://github.com/fmtlib/fmt.git"
 members = [
     "core",              # 精确路径
     "utils",             # 精确路径
-    "examples/*",        # 所有直接子目录
+    "app/*",        # 所有直接子目录
     "plugins/**"         # 所有子目录（递归）
 ]
-exclude = ["examples/deprecated"]
+exclude = ["app/deprecated"]
 ```
 
 ### 解析器版本
@@ -140,8 +140,8 @@ exclude = ["examples/deprecated"]
 
 ```toml
 [workspace]
-members = ["core", "utils", "examples/*"]
-exclude = ["examples/old"]
+members = ["core", "utils", "app/*"]
+exclude = ["app/old"]
 resolver = "2"
 default_members = ["core", "utils"]
 
@@ -592,34 +592,85 @@ ccgo run --bin my-cli
 ccgo run --bin my-server -- --help
 ```
 
-### 示例目标
+### 应用目标
 
-使用 `[[example]]` 定义示例程序：
+`ccgo run --app <名称>` 是简单 C++、CMake/ImGui/Qt、Flutter、Tauri 的统一入口，
+目录统一为 `app/`：
 
 ```toml
-[[example]]
-name = "basic-usage"
-path = "examples/basic.cpp"  # 可选：默认为 examples/{name}.cpp
-
-[[example]]
-name = "advanced"
-# path 默认为 examples/advanced.cpp 或 examples/advanced/main.cpp
+[[app]]
+name = "basic"
+path = "app/basic/main.cpp"
+# framework = "cpp"  # 可省略：从源文件或 main.cpp/.cc/.cxx 自动识别
 ```
 
-运行示例：
 ```bash
-ccgo run --example basic-usage
-ccgo run --example advanced
+ccgo run --app basic
+ccgo run --app basic --release --build-only
 ```
 
-只在 `examples/` 自动发现示例：`<name>.cpp`、`.cc`、`.cxx`，或
-`<name>/main.cpp`、`main.cc`、`main.cxx`；显式 `path` 优先。
-使用 `--release --build-only` 可以只编译不运行，产物位于 `target/run/`。
-这些是本机 C++ 目标，不会自动调用 Flutter/Tauri/Qt 的应用工具链。
-当前 runner 编译单个入口源文件；存在 `target/run/lib` 时链接其中的项目库，
-不会自动导入 SDK ZIP。
+简单 C++ 应用使用生成的 CMake 项目；完整应用保留自己的构建工程：
 
----
+```toml
+[[app]]
+name = "imgui-demo"
+path = "app/imgui"
+framework = "cmake"
+target = "imgui_demo"
+executable = "imgui_demo"
+# build_args = ["-DCMAKE_PREFIX_PATH=/path/to/Qt"]
+# run_args = ["--config", "demo.json"]
+
+[[app]]
+name = "flutter-demo"
+path = "app/flutter-demo"
+framework = "flutter"
+# platform = "android"  # 只构建时默认选择当前宿主桌面平台
+# device = "device-id"  # 桌面默认采用 platform，移动端交给 Flutter 选择
+
+[[app]]
+name = "tauri-demo"
+path = "app/tauri-demo"
+framework = "tauri"
+```
+
+```bash
+ccgo run --app imgui-demo
+ccgo run --app imgui-demo --release --build-only
+ccgo run --app flutter-demo -- --dart-define=MODE=demo
+ccgo run --app tauri-demo --release
+```
+
+`path` 默认是 `app/<名称>` 或单文件 `app/<名称>.cpp`/`.cc`/`.cxx`；没有 `[[app]]` 配置时也可直接发现该目录。
+省略 `framework` 时，根据 C++ 源文件、`main.cpp`/`.cc`/`.cxx`、`CMakeLists.txt`、`pubspec.yaml`、
+`src-tauri/tauri.conf.json`（也支持 JSON5/Tauri.toml）识别框架；
+同时发现多个框架时必须显式选择。
+
+| 框架 | 默认运行 | `--build-only` |
+|------|----------|----------------|
+| `cpp`（单源文件） | 编译并执行 | 只编译 |
+| `cmake`（ImGui/Qt/自定义） | 配置、构建、执行 | 只配置、构建 |
+| `flutter` | `flutter run --device-id <设备> --debug` | `flutter build <平台> --debug` |
+| `tauri` | `cargo tauri dev` | `cargo tauri build --debug` |
+
+`--release` 将对应工具切换到 release 模式。CMake 使用应用自身的多源文件、依赖和资源配置，
+支持 `target`，构建目录为 `target/run/app/<名称>/<debug|release>/`。
+默认执行文件名取 `target` 或应用名称（Windows 添加 `.exe`），其他路径可通过
+`executable` 指定，例如 `bin/demo` 或 `Demo.app`，相对构建目录或多配置生成器的配置子目录解析。
+程序工作目录是应用源码目录，便于读取相对路径资源。
+
+C++/CMake 的 `build_args` 是配置参数，`run_args` 和 `--` 后参数传给应用程序。
+Flutter/Tauri 的 `build_args` 用于只构建，`run_args` 用于正常运行，
+`--` 后参数追加到对应框架命令。这些字段是参数数组，不是 shell 命令字符串。
+应用不使用 ccgo features 参数，请通过框架参数配置。
+`--app` 与 `--bin` 互斥。
+
+简单 C++ 应用编译单个入口源文件，可链接 `target/run/lib` 中的项目库；
+多源文件工程使用 CMake。`ccgo clean app` 清理 `target/run/app/` 和应用构建缓存。
+
+需要预先安装对应工具链和应用依赖。ccgo 不生成 Flutter/Tauri/Qt 工程，
+不自动导入或构建 C++ SDK，也不提供统一的移动端打包流程。
+ImGui 和 Qt 使用自己的 CMake 集成；模板附带独立的 ImGui/GLFW/OpenGL 桌面应用。
 
 ## 发布配置
 
@@ -719,8 +770,8 @@ min_version = "13.0"
 
 ```toml
 [workspace]
-members = ["core", "utils", "examples/*"]
-exclude = ["examples/old"]
+members = ["core", "utils", "app/*"]
+exclude = ["app/old"]
 resolver = "2"
 
 [[workspace.dependencies]]
@@ -806,13 +857,13 @@ path = "src/bin/tool.cpp"
 name = "converter"
 path = "src/bin/converter.cpp"
 
-[[example]]
+[[app]]
 name = "basic"
-# 默认为 examples/basic.cpp
+# 默认为 app/basic.cpp
 
-[[example]]
+[[app]]
 name = "advanced"
-path = "examples/advanced/main.cpp"
+path = "app/advanced/main.cpp"
 
 [build]
 parallel = true
@@ -839,7 +890,7 @@ CCGO.toml 格式的主要变化：
 2. **新特性：**
    - 用于多包项目的 `[workspace]` 部分
    - 用于条件编译的 `[features]` 部分
-   - 用于可执行文件的 `[[bin]]` 和 `[[example]]` 部分
+   - 用于可执行文件的 `[[bin]]` 和 `[[app]]` 部分
    - 用于依赖继承的 `workspace = true`
    - 工作区配置中的 `resolver` 字段
 

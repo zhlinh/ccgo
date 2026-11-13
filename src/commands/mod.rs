@@ -21,6 +21,7 @@ pub mod registry;
 pub mod release;
 pub mod remove;
 pub mod run;
+mod run_app;
 pub mod search;
 pub mod self_cmd;
 pub mod self_update;
