@@ -802,6 +802,7 @@ ccgo publish [OPTIONS] <PLATFORM>
 | `--registry <TYPE>` | Registry: local, official, private |
 | `--url <URL>` | Custom registry URL (private only) |
 | `--skip-build` | Use existing build artifacts |
+| `--path <PATH>` | Publish input; repeat for iOS/macOS SDK ZIPs with Apple CocoaPods and an artifact provider to generate a pod supporting both platforms |
 | `--manager <MGR>` | Package manager: apple (cocoapods, spm, all) or windows (nuget) |
 | `--linkage <TYPE>` | Apple artifact linkage: all (default), static, or shared (shared artifact gets a `-shared` suffix) |
 | `--pod-name <NAME>` | Static CocoaPods pod name (default: podspec name) |

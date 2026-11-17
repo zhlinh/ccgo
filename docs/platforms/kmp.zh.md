@@ -301,6 +301,13 @@ Kotlin/Native 声明的每个架构都需要对应静态库或切片，仅有动
 Desktop JAR 仍需要项目自己的代码提取并加载原生资源；标准插件的 Windows 路线是 Desktop JVM，
 MSVC SDK 不会转换成 MinGW 的 Kotlin/Native klib。
 
+导入的 SDK 只解压到本次构建的临时目录，不会复制到 `ccgo_build/release/`。
+如果自定义 `build.gradle.kts` 根据该目录是否存在来启用 Apple target 或 cinterop，
+守卫也必须识别 `providers.gradleProperty("ccgoNativeSdk.ios")` 和
+`providers.gradleProperty("ccgoNativeSdk.macos")`，并从对应 SDK 的 `include/` 和
+`lib/<platform>/static/*.xcframework` 选择头文件和库，不能只放宽守卫。
+如果日志里没有这些 Gradle 参数，先用 `which ccgo` 和 `ccgo --version` 确认实际调用的二进制。
+
 自定义 Gradle 项目可以读取 `-PccgoNativeSdk.<platform>` 指定的解压根目录，
 接入头文件、静态链接、JNI 和资源；确认所有输入已接入后，写入
 `-PccgoNativeSdkReceipt` 指定的文件来确认支持。不能只写确认文件而忽略 SDK。

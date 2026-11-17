@@ -219,6 +219,28 @@ ccgo publish apple --manager spm \
 
 GitHub uses authenticated `gh` and requires `--github-repo owner/repo` plus an existing `v<version>` Release. The asset is named `<artifactId>-<version>.zip`; existing assets are not overwritten.
 
+For separate iOS and macOS SDK ZIPs, repeat `--path` to publish one podspec supporting both platforms:
+
+```bash
+ccgo publish apple --manager cocoapods \
+  --path ./DEMO_IOS_SDK-1.0.0.zip \
+  --path ./DEMO_MACOS_SDK-1.0.0.zip \
+  --linkage static \
+  --artifact-provider maven --maven-registry private --artifact-group com.example \
+  --registry private --remote company-specs
+```
+
+The ZIPs are combined per linkage into one download containing `ios/<name>.xcframework`
+and `macos/<name>.xcframework`. The podspec uses `ios.vendored_frameworks` and
+`osx.vendored_frameworks`. Declare both deployment targets in the base podspec.
+The default `--linkage all` generates separate static and shared pods, each supporting
+both platforms; select `static` or `shared` for a single podspec. Both SDKs must supply
+the same selected linkages. Repeated `--path` requires CocoaPods and an artifact provider,
+and cannot be combined with `--platform`. The provider hosts the binary ZIP;
+generated podspecs remain in `target/ccgo-publish/apple/<version>/` and are pushed to
+the configured Specs repository with `--registry private --remote company-specs`.
+Use `--registry official` for Trunk or `local` for lint only (ZIP upload still occurs).
+
 Without `--path`, provider mode selects one SDK ZIP for the current project version from `target/release/ios/` and `target/release/macos/`, excluding `-SYMBOLS.zip`. Use `--platform ios|macos` to narrow this down; missing or ambiguous inputs fail. This mode does not build.
 
 Apple SDK ZIPs produced by `ccgo build` contain both `lib/<platform>/static/` and `lib/<platform>/shared/`. Matching the build default (`--build-as all`), `ccgo publish apple` publishes both: the static XCFramework under the base artifact name and the shared one under `<artifact>-shared-<version>.zip`. Each archive contains one XCFramework at its root. Use `--linkage static` or `--linkage shared` to publish only one. CocoaPods publishes one podspec per linkage: the original pod name for static and `<name>Shared` for dynamic (for example `Demo` and `DemoShared`; override with `--pod-name` / `--shared-pod-name` or `[publish.apple].pod_name` / `shared_pod_name`). Each podspec points at its own artifact, rewrites `vendored_frameworks` to the XCFramework at the archive root, and sets `static_framework` accordingly. Dependencies in the generated `-shared` podspec are rewritten to their shared variants (`Dep` → `DepShared`; subspecs become `DepShared/Sub`). Only dependencies declared in `[[dependencies]]` are rewritten by default, so external pods such as `Alamofire` keep their names. Override the set when needed:

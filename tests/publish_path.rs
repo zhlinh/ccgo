@@ -1911,3 +1911,165 @@ fn doc_maven_builds_fresh_site_and_uploads_only_with_push() {
     assert_eq!(html, "fresh");
     assert!(String::from_utf8_lossy(&requests[2]).contains("<packaging>zip</packaging>"));
 }
+
+#[test]
+fn apple_cocoapods_combines_platform_zips_with_repeated_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    fs::create_dir(&bin).unwrap();
+    fs::write(
+        bin.join("gh"),
+        "#!/bin/sh\nif [ \"$2\" = upload ]; then for arg in \"$@\"; do case \"$arg\" in *.zip) cp \"$arg\" \"$PUBLISH_DIR/$(basename \"$arg\")\" ;; esac; done; fi\n",
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        bin.join("pod"),
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$PUBLISH_CAPTURE\"\nif [ \"$1\" = ipc ]; then\n  echo '{\"name\":\"Demo\",\"version\":\"1.0.0\",\"summary\":\"fixture\",\"dependencies\":{\"Dep\":\"~> 1.0\",\"Dep/Sub\":\"~> 2.0\",\"Alamofire\":\"~> 5.0\"}}'\nfi\n",
+    )
+    .unwrap();
+    fs::set_permissions(bin.join("pod"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(
+        tmp.path().join("CCGO.toml"),
+        "[project]\nname='demo'\nversion='1.0.0'\n\n[[dependencies]]\nname='Dep'\nversion='1.0.0'\n",
+    )
+    .unwrap();
+    fs::write(tmp.path().join("Demo.podspec"), "fixture").unwrap();
+    let sdk = tmp.path().join("SDK.zip");
+    write_zip(
+        &sdk,
+        &[
+            (
+                "lib/ios/static/Demo.xcframework/Info.plist",
+                b"static-fixture",
+            ),
+            (
+                "lib/ios/shared/Demo.xcframework/Info.plist",
+                b"shared-fixture",
+            ),
+        ],
+    );
+    write_zip(
+        &tmp.path().join("macOS SDK.zip"),
+        &[
+            (
+                "lib/macos/static/Demo.xcframework/Info.plist",
+                b"macos-static",
+            ),
+            (
+                "lib/macos/shared/Demo.xcframework/Info.plist",
+                b"macos-shared",
+            ),
+        ],
+    );
+    let uploads = tmp.path().join("uploads");
+    fs::create_dir(&uploads).unwrap();
+    let capture = tmp.path().join("pod-args");
+    command_with_tools(tmp.path(), &bin, &capture)
+        .env("PUBLISH_DIR", &uploads)
+        .args([
+            "publish",
+            "apple",
+            "--manager",
+            "cocoapods",
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+            "--path",
+            "SDK.zip",
+            "--path",
+            "macOS SDK.zip",
+            "--registry",
+            "private",
+            "--remote",
+            "company-specs",
+        ])
+        .assert()
+        .success();
+
+    let dir = tmp.path().join("target/ccgo-publish/apple/1.0.0");
+    let static_spec: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("demo-apple.podspec.json")).unwrap()).unwrap();
+    let shared_spec: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("demo-apple-shared.podspec.json")).unwrap())
+            .unwrap();
+
+    assert_eq!(static_spec["name"], "Demo");
+    assert_eq!(static_spec["static_framework"], true);
+    for spec in [&static_spec, &shared_spec] {
+        assert!(spec.get("vendored_frameworks").is_none());
+        assert_eq!(spec["ios"]["vendored_frameworks"], "ios/Demo.xcframework");
+        assert_eq!(spec["osx"]["vendored_frameworks"], "macos/Demo.xcframework");
+    }
+    assert_eq!(
+        uploaded_entry(
+            &uploads.join("demo-apple-1.0.0.zip"),
+            "ios/Demo.xcframework/Info.plist"
+        ),
+        b"static-fixture"
+    );
+    assert_eq!(
+        uploaded_entry(
+            &uploads.join("demo-apple-1.0.0.zip"),
+            "macos/Demo.xcframework/Info.plist"
+        ),
+        b"macos-static"
+    );
+    assert_eq!(
+        uploaded_entry(
+            &uploads.join("demo-apple-shared-1.0.0.zip"),
+            "macos/Demo.xcframework/Info.plist"
+        ),
+        b"macos-shared"
+    );
+    assert_eq!(static_spec["dependencies"]["Dep"], "~> 1.0");
+    assert!(static_spec["source"]["http"]
+        .as_str()
+        .unwrap()
+        .ends_with("demo-apple-1.0.0.zip"));
+
+    assert_eq!(shared_spec["name"], "DemoShared");
+    assert_eq!(shared_spec["module_name"], "Demo");
+    assert_eq!(shared_spec["static_framework"], false);
+    assert!(shared_spec["dependencies"].get("Dep").is_none());
+    assert_eq!(shared_spec["dependencies"]["DepShared"], "~> 1.0");
+    assert_eq!(shared_spec["dependencies"]["DepShared/Sub"], "~> 2.0");
+    assert_eq!(shared_spec["dependencies"]["Alamofire"], "~> 5.0");
+    assert!(shared_spec["source"]["http"]
+        .as_str()
+        .unwrap()
+        .ends_with("demo-apple-shared-1.0.0.zip"));
+
+    let args = fs::read_to_string(&capture).unwrap();
+    assert_eq!(args.lines().filter(|line| *line == "push").count(), 2);
+    assert_eq!(
+        args.lines().filter(|line| *line == "company-specs").count(),
+        2
+    );
+}
+
+#[test]
+fn repeated_paths_require_apple_cocoapods_artifact_publishing() {
+    for args in [
+        vec!["publish", "android"],
+        vec!["publish", "apple", "--manager", "cocoapods"],
+        vec![
+            "publish",
+            "apple",
+            "--manager",
+            "spm",
+            "--artifact-provider",
+            "github",
+        ],
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        Command::new(env!("CARGO_BIN_EXE_ccgo"))
+            .current_dir(tmp.path())
+            .args(args)
+            .args(["--path", "ios.zip", "--path", "macos.zip"])
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains("Repeated --path requires"));
+    }
+}

@@ -213,6 +213,27 @@ ccgo publish apple --manager spm \
   --artifact-provider github --github-repo company/library --push
 ```
 
+iOS 和 macOS 为独立 SDK ZIP 时，重复 `--path` 即可发布到同一份 podspec：
+
+```bash
+ccgo publish apple --manager cocoapods \
+  --path ./DEMO_IOS_SDK-1.0.0.zip \
+  --path ./DEMO_MACOS_SDK-1.0.0.zip \
+  --linkage static \
+  --artifact-provider maven --maven-registry private --artifact-group com.example \
+  --registry private --remote company-specs
+```
+
+两个 ZIP 按链接类型合并为一个下载源，内部保留 `ios/<名称>.xcframework` 和
+`macos/<名称>.xcframework`，podspec 分别设置 `ios.vendored_frameworks` 与
+`osx.vendored_frameworks`，所以同一个 Pod 同时支持 iOS/macOS。基础 podspec 应声明
+两个平台的最低系统版本。默认 `--linkage all` 为静态和动态各生成一个同时支持两个平台的 Pod；
+只需一份 podspec 时使用 `--linkage static` 或 `shared`。两个 SDK 必须提供相同的所选链接类型。
+重复 `--path` 仅支持带 artifact provider 的 CocoaPods 发布，不与 `--platform` 同用。
+ZIP 上传到 provider，生成的 podspec 保留在 `target/ccgo-publish/apple/<版本>/`，随后由
+`--registry private --remote company-specs` 推送到已配置的 CocoaPods Specs 仓库；
+`--registry official` 推送 Trunk，`--registry local` 仅执行 lint（仍会上传 ZIP）。
+
 不传 `--path` 时，provider 模式在 `target/release/ios/` 和 `target/release/macos/` 查找当前项目版本的 SDK ZIP，排除 `-SYMBOLS.zip`；可用 `--platform ios|macos` 缩小范围。缺失或多个候选都会报错。此模式不触发构建。
 
 原 ZIP 按原字节上传，目录则临时打包；输入保持不变，临时文件在成功或失败后清理。目录中的符号链接必须指向输入目录内部。CocoaPods 保留 podspec 的依赖、vendored 路径等元信息，只替换 `source.http` 和 `source.sha256`，请确保这些路径与 ZIP 内容匹配。生成文件位于 `target/ccgo-publish/apple/<版本>/`，该目录保留供检查，源 podspec / manifest 不被修改。

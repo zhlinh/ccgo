@@ -311,6 +311,15 @@ needs application/library code that extracts and loads its bundled native
 resources. Windows uses Desktop JVM in the standard convention plugin; an MSVC
 SDK does not produce a MinGW Kotlin/Native klib.
 
+Imported SDKs are extracted into a temporary directory for the build; they are
+not copied into `ccgo_build/release/`. If a custom `build.gradle.kts` enables
+Apple targets or cinterop only when that directory exists, its guards must also
+recognize `providers.gradleProperty("ccgoNativeSdk.ios")` and
+`providers.gradleProperty("ccgoNativeSdk.macos")`. Resolve headers from the SDK's
+`include/` and libraries from `lib/<platform>/static/*.xcframework`; changing
+the guards alone is insufficient. If these Gradle arguments are absent, check
+`which ccgo` and `ccgo --version` to identify the binary actually being used.
+
 For a custom Gradle build, consume `-PccgoNativeSdk.<platform>` (the extracted SDK
 root) for headers, native linking and JNI/resources. After wiring all inputs,
 write the file named by `-PccgoNativeSdkReceipt` to acknowledge support. Do not

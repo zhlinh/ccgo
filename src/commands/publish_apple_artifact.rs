@@ -428,11 +428,45 @@ fn podspec_for(
         "sha256": artifact.checksum,
     });
     spec["vendored_frameworks"] = serde_json::json!(artifact.xcframework);
+    configure_platform_frameworks(&mut spec, &artifact.platform_frameworks)?;
     spec["static_framework"] = serde_json::json!(artifact.linkage == AppleLinkage::Static);
     if artifact.linkage == AppleLinkage::Shared {
         rewrite_shared_dependencies(&mut spec, policy);
     }
     Ok(spec)
+}
+
+fn configure_platform_frameworks(
+    spec: &mut Value,
+    frameworks: &BTreeMap<String, String>,
+) -> Result<()> {
+    if !frameworks.is_empty() {
+        spec.as_object_mut().unwrap().remove("vendored_frameworks");
+        if let Some(platforms) = spec.get_mut("platforms").and_then(Value::as_object_mut) {
+            for platform in frameworks.keys() {
+                let key = if platform == "macos" { "osx" } else { "ios" };
+                if !platforms.contains_key(key) {
+                    bail!("Base podspec must declare a deployment target for {key}");
+                }
+            }
+            platforms.retain(|key, _| {
+                artifact
+                    .platform_frameworks
+                    .contains_key(if key == "osx" { "macos" } else { key })
+            });
+        }
+        for (platform, framework) in frameworks {
+            let key = if platform == "macos" { "osx" } else { "ios" };
+            if spec.get(key).is_none() {
+                spec[key] = serde_json::json!({});
+            }
+            if !spec[key].is_object() {
+                bail!("podspec {key} settings must be an object");
+            }
+            spec[key]["vendored_frameworks"] = serde_json::json!(framework);
+        }
+    }
+    Ok(())
 }
 
 fn linkage_dir(linkage: AppleLinkage) -> &'static str {
@@ -593,6 +627,7 @@ fn find_xcframework_root(
     source_zip: &mut zip::ZipArchive<fs::File>,
     prefix: &str,
 ) -> Result<Option<String>> {
+    let mut roots = BTreeSet::new();
     for index in 0..source_zip.len() {
         let name = source_zip.by_index(index)?.name().to_string();
         let Some(rest) = name.strip_prefix(prefix) else {
@@ -600,11 +635,17 @@ fn find_xcframework_root(
         };
         if let Some(first) = rest.split('/').next() {
             if first.ends_with(".xcframework") {
-                return Ok(Some(first.to_string()));
+                roots.insert(first.to_string());
             }
         }
     }
-    Ok(None)
+    if roots.len() > 1 {
+        bail!(
+            "Expected one XCFramework under {prefix}, found {}",
+            roots.len()
+        );
+    }
+    Ok(roots.into_iter().next())
 }
 
 fn copy_xcframework_entries(
@@ -670,9 +711,120 @@ struct AppleArtifact {
     linkage: AppleLinkage,
     artifact_id: String,
     xcframework: String,
+    platform_frameworks: BTreeMap<String, String>,
     archive: PathBuf,
     checksum: String,
     upload: PreparedUpload,
+}
+
+/// CocoaPods downloads one source per pod, so keep platform bundles in one ZIP
+/// and select them through platform-scoped vendored_frameworks attributes.
+fn prepare_platform_artifacts(
+    command: &PublishCommand,
+    configuration: &toml::Value,
+    temporary: &Path,
+    release: &AppleRelease,
+) -> Result<Vec<AppleArtifact>> {
+    let inputs = platform_sdk_inputs(&command.paths)?;
+    let first = &inputs.values().next().context("No Apple SDK inputs")?.1;
+    let linkages = selected_linkages(first, command.linkage)?;
+    for (_, available) in inputs.values() {
+        if selected_linkages(available, command.linkage)? != linkages {
+            bail!("Apple SDKs must provide the same selected linkages for every platform");
+        }
+    }
+    let mut artifacts = Vec::new();
+    for linkage in linkages {
+        let artifact_id = artifact_id_for(&release.artifact, linkage);
+        let archive = temporary.join(format!("{artifact_id}-{}.zip", release.version));
+        let mut output = zip::ZipWriter::new(fs::File::create(&archive)?);
+        let mut platform_frameworks = BTreeMap::new();
+        for (platform, (source, _)) in &inputs {
+            let root = append_platform_framework(&mut output, source, platform, linkage)?;
+            platform_frameworks.insert(platform.clone(), format!("{platform}/{root}"));
+        }
+        output.finish()?;
+        validate_apple_archive(&archive, false)?;
+        let checksum = format!("{:x}", Sha256::digest(fs::read(&archive)?));
+        let upload = PreparedUpload::prepare_with_artifact(
+            command,
+            configuration,
+            &artifact_id,
+            &release.version,
+            &release.release_tag,
+            "apple",
+        )?;
+        artifacts.push(AppleArtifact {
+            linkage,
+            artifact_id,
+            xcframework: String::new(),
+            platform_frameworks,
+            archive,
+            checksum,
+            upload,
+        });
+    }
+    Ok(artifacts)
+}
+
+type PlatformSdkInputs<'a> = BTreeMap<String, (&'a PathBuf, BTreeSet<AppleLinkage>)>;
+
+fn platform_sdk_inputs(paths: &[PathBuf]) -> Result<PlatformSdkInputs<'_>> {
+    let mut inputs = BTreeMap::new();
+    for source in paths {
+        validate_apple_archive(source, false)?;
+        let (platform, available) = nested_linkages(source, None)?.context(
+            "Repeated --path requires an SDK ZIP with lib/<ios|macos>/<static|shared>/ layout",
+        )?;
+        if !matches!(platform.as_str(), "ios" | "macos") {
+            bail!("Unsupported Apple SDK platform: {platform}");
+        }
+        if inputs
+            .insert(platform.clone(), (source, available))
+            .is_some()
+        {
+            bail!("Duplicate platform in --path inputs: {platform}");
+        }
+    }
+    Ok(inputs)
+}
+
+fn append_platform_framework(
+    output: &mut zip::ZipWriter<fs::File>,
+    source: &Path,
+    platform: &str,
+    linkage: AppleLinkage,
+) -> Result<String> {
+    let prefix = format!("lib/{platform}/{}/", linkage_dir(linkage));
+    let mut input = zip::ZipArchive::new(fs::File::open(source)?)?;
+    let root = find_xcframework_root(&mut input, &prefix)?
+        .context("Apple SDK has no XCFramework for selected linkage")?;
+    let bundle_prefix = format!("{prefix}{root}/");
+    let mut seen = BTreeSet::new();
+    for index in 0..input.len() {
+        let mut entry = input.by_index(index)?;
+        let name = entry.name().to_string();
+        if !name.starts_with(&bundle_prefix) || entry.is_dir() {
+            continue;
+        }
+        let relative = name.strip_prefix(&prefix).unwrap();
+        let destination = format!("{platform}/{relative}");
+        if !seen.insert(destination.clone()) {
+            bail!("Duplicate Apple SDK ZIP entry: {destination}");
+        }
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(entry.unix_mode().unwrap_or(0o644));
+        if is_symlink(&entry) {
+            let mut target = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut target)?;
+            output.add_symlink(destination, target, options)?;
+        } else {
+            output.start_file(destination, options)?;
+            std::io::copy(&mut entry, &mut *output)?;
+        }
+    }
+    Ok(root)
 }
 
 fn prepare_artifacts(
@@ -758,6 +910,7 @@ fn prepare_artifact(
         linkage,
         artifact_id,
         xcframework,
+        platform_frameworks: BTreeMap::new(),
         archive,
         checksum,
         upload,
@@ -1005,11 +1158,10 @@ pub(super) fn publish(command: &PublishCommand, verbose: bool) -> Result<()> {
     let release = apple_release(command, &configuration)?;
     let version = release.version.as_str();
     let temporary = tempfile::tempdir()?;
-    let source = apple_artifact_source(command, &project, release.name, version)?;
-    let artifacts = prepare_artifacts(
+    let artifacts = prepare_release_artifacts(
         command,
+        &project,
         &configuration,
-        &source,
         temporary.path(),
         &release,
         spm,
@@ -1035,6 +1187,25 @@ pub(super) fn publish(command: &PublishCommand, verbose: bool) -> Result<()> {
         println!("Commit the generated Package.swift to your SPM wrapper repository, then push its version tag.");
     }
     Ok(())
+}
+
+fn prepare_release_artifacts(
+    command: &PublishCommand,
+    project: &Path,
+    configuration: &toml::Value,
+    temporary: &Path,
+    release: &AppleRelease,
+    spm: bool,
+) -> Result<Vec<AppleArtifact>> {
+    Ok(if command.paths.len() <= 1 {
+        let source = apple_artifact_source(command, project, release.name, &release.version)?;
+        prepare_artifacts(command, configuration, &source, temporary, release, spm)?
+    } else {
+        if spm {
+            bail!("Repeated --path currently requires --manager cocoapods; SPM needs a single combined XCFramework");
+        }
+        prepare_platform_artifacts(command, configuration, temporary, &release)?
+    })
 }
 
 fn prepare_swift_manifest(
@@ -1114,6 +1285,79 @@ fn publish_podspecs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn combined_sdks_reject_duplicate_platforms_and_mismatched_linkages() {
+        let temporary = tempfile::tempdir().unwrap();
+        let ios = temporary.path().join("ios.zip");
+        let macos = temporary.path().join("macos.zip");
+        let write_sdk = |path: &Path, platform: &str, linkages: &[&str]| {
+            let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+            for linkage in linkages {
+                zip.start_file(
+                    format!("lib/{platform}/{linkage}/Demo.xcframework/Info.plist"),
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+                zip.write_all(b"fixture").unwrap();
+            }
+            zip.finish().unwrap();
+        };
+        write_sdk(&ios, "ios", &["static", "shared"]);
+        write_sdk(&macos, "macos", &["static"]);
+        let mut command = publish_command(&[
+            "ccgo",
+            "publish",
+            "apple",
+            "--manager",
+            "cocoapods",
+            "--artifact-provider",
+            "github",
+            "--github-repo",
+            "company/sdk",
+        ]);
+        let config = toml::from_str("[package]\nname='demo'\nversion='1.0.0'\n").unwrap();
+        let release = apple_release(&command, &config).unwrap();
+        command.paths = vec![ios.clone(), ios.clone()];
+        let error = prepare_platform_artifacts(&command, &config, temporary.path(), &release)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("Duplicate platform"), "{error}");
+        command.paths = vec![ios, macos];
+        let error = prepare_platform_artifacts(&command, &config, temporary.path(), &release)
+            .err()
+            .unwrap();
+        assert!(
+            error.to_string().contains("same selected linkages"),
+            "{error}"
+        );
+        command.linkage = AppleLinkage::Static;
+        let artifacts =
+            prepare_platform_artifacts(&command, &config, temporary.path(), &release).unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].platform_frameworks.len(), 2);
+        let spec = serde_json::json!({"name": "Demo", "platforms": {"ios": "13.0", "osx": "10.15", "tvos": "13.0"}});
+        let generated = podspec_for(
+            &spec,
+            &artifacts[0],
+            &SharedSuffixPolicy::default(),
+            &ApplePodNames::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            generated["platforms"],
+            serde_json::json!({"ios": "13.0", "osx": "10.15"})
+        );
+        let spec = serde_json::json!({"name": "Demo", "platforms": {"ios": "13.0"}});
+        assert!(podspec_for(
+            &spec,
+            &artifacts[0],
+            &SharedSuffixPolicy::default(),
+            &ApplePodNames::default()
+        )
+        .is_err());
+    }
+
     fn publish_command(args: &[&str]) -> PublishCommand {
         let cli = <crate::cli::Cli as clap::Parser>::try_parse_from(args).unwrap();
         match cli.command {

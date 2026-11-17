@@ -213,7 +213,12 @@ pub struct PublishCommand {
     /// ZIP inputs are supported for Android, OHOS, KMP, Conan, Doc, and Apple with --artifact-provider.
     /// Prebuilt Android AARs and KMP SDKs upload directly for --registry local/private.
     /// Relative paths are resolved from the current working directory.
-    #[arg(long, value_name = "PATH")]
+    /// Repeat for separate iOS/macOS SDK ZIPs with --manager cocoapods and --artifact-provider.
+    #[arg(long = "path", value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
+
+    // Resolved single input used by platform publishers after CLI validation.
+    #[arg(skip)]
     pub path: Option<PathBuf>,
 
     /// Upload an Apple binary, Index package or documentation ZIP
@@ -452,10 +457,23 @@ impl PublishCommand {
         Ok(())
     }
 
-    /// Execute the publish command
-    pub fn execute(mut self, verbose: bool) -> Result<()> {
-        self.validate_version_options()?;
-        self.validate_registry_usage()?;
+    fn validate_publish_paths(&self) -> Result<()> {
+        if self.paths.len() > 1 {
+            if !matches!(self.target, PublishTarget::Apple)
+                || self.artifact_provider.is_none()
+                || !matches!(self.manager, AppleManager::Cocoapods)
+            {
+                bail!("Repeated --path requires publish apple --manager cocoapods --artifact-provider");
+            }
+            if self.platform.is_some() {
+                bail!("Repeated --path selects platforms from SDK ZIPs; omit --platform");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_manager_options(&self) -> Result<()> {
         if self.linkage != AppleLinkage::All && !matches!(self.target, PublishTarget::Apple) {
             bail!("--linkage is supported only for apple publishing");
         }
@@ -479,11 +497,27 @@ impl PublishCommand {
         {
             bail!("--pod-name/--shared-pod-name require --artifact-provider");
         }
+        Ok(())
+    }
+
+    fn validate_publish_options(&self) -> Result<()> {
+        self.validate_publish_paths()?;
+        self.validate_version_options()?;
+        self.validate_registry_usage()?;
+        self.validate_manager_options()?;
         if matches!(self.target, PublishTarget::Apple)
             && matches!(self.manager, AppleManager::Spm | AppleManager::All)
         {
             self.validate_spm_registry()?;
         }
+        Ok(())
+    }
+
+    /// Execute the publish command
+    pub fn execute(mut self, verbose: bool) -> Result<()> {
+        self.validate_publish_options()?;
+        self.path = self.paths.first().cloned().or(self.path);
+
         if self.artifact_provider.is_some() {
             if !matches!(
                 self.target,
@@ -529,9 +563,9 @@ impl PublishCommand {
         if (self.version.is_some() || self.tag.is_some())
             && !(matches!(self.target, PublishTarget::Doc) && self.artifact_provider.is_some())
             && !matches!(
-            self.target,
-            PublishTarget::Index | PublishTarget::Windows | PublishTarget::Vcpkg
-        )
+                self.target,
+                PublishTarget::Index | PublishTarget::Windows | PublishTarget::Vcpkg
+            )
             && !(matches!(self.target, PublishTarget::Apple)
                 && (matches!(self.manager, AppleManager::Spm) || self.artifact_provider.is_some()))
         {
@@ -660,11 +694,9 @@ impl PublishCommand {
             PublishTarget::Android => input::unique_file(&path, "aar", true)?,
             PublishTarget::Ohos if !extracted && path.join("oh-package.json5").is_file() => path,
             PublishTarget::Ohos => input::unique_file(&path, "har", true)?,
-            PublishTarget::Kmp => path,
+            PublishTarget::Kmp | PublishTarget::Windows | PublishTarget::Vcpkg => path,
             PublishTarget::Apple => self.validate_apple_directory(path)?,
             PublishTarget::Conan => Self::resolve_conan_directory(path, extracted)?,
-            PublishTarget::Windows => path,
-            PublishTarget::Vcpkg => path,
             PublishTarget::Doc => Self::resolve_doc_directory(path, extracted)?,
             PublishTarget::Index => input::unique_file(&path, "zip", true)?,
         })
@@ -2172,6 +2204,7 @@ mod tests {
             manager: AppleManager::All,
             push: false,
             platform: None,
+            paths: Vec::new(),
             linkage: AppleLinkage::Static,
             pod_name: None,
             shared_pod_name: None,
@@ -2221,6 +2254,7 @@ mod tests {
             manager: AppleManager::All,
             push: false,
             platform: None,
+            paths: Vec::new(),
             linkage: AppleLinkage::Static,
             pod_name: None,
             shared_pod_name: None,

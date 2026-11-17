@@ -273,3 +273,97 @@ printf desktop-jar > build/libs/demo.jar
         .join("target/release/kmp/DEMO_KMP_SDK-1.2.3-ANO.zip")
         .is_file());
 }
+
+#[test]
+#[cfg(target_os = "macos")]
+fn cli_apple_sdks_reach_gradle_without_local_native_build_trees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    project(root);
+    fs::write(
+        root.join("CCGO.toml"),
+        "[package]\nname = 'demo'\nversion = '1.2.3'\n[kmp]\ntargets = ['ios', 'macos']\n",
+    )
+    .unwrap();
+    for platform in ["ios", "macos"] {
+        let path = root.join(format!("{platform} sdk.zip"));
+        let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, content) in [
+            (
+                format!("meta/{platform}/build_info.json"),
+                format!(r#"{{"project":"demo","version":"1.2.3","platform":"{platform}"}}"#),
+            ),
+            (
+                "include/demo/api/native/demo.h".into(),
+                "void demo(void);".into(),
+            ),
+            (
+                format!("lib/{platform}/static/demo.xcframework/slice/libdemo.a"),
+                format!("{platform}-library"),
+            ),
+        ] {
+            zip.start_file(name, opts).unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    fs::write(
+        root.join("kmp/gradlew"),
+        r#"#!/bin/sh
+set -eu
+ios=''
+macos=''
+tasks=''
+for arg in "$@"; do
+    case "$arg" in
+        -PccgoNativeSdk.ios=*) ios="${arg#*=}";;
+        -PccgoNativeSdk.macos=*) macos="${arg#*=}";;
+        -PccgoNativeSdkReceipt=*) receipt="${arg#*=}";;
+        *MainKlibrary) tasks="$tasks $arg";;
+    esac
+done
+test -n "$ios"
+test -n "$macos"
+test ! -d ../ccgo_build/release
+test "$(cat "$ios/lib/ios/static/demo.xcframework/slice/libdemo.a")" = ios-library
+test "$(cat "$macos/lib/macos/static/demo.xcframework/slice/libdemo.a")" = macos-library
+test -f "$ios/include/demo/api/native/demo.h"
+test -f "$macos/include/demo/api/native/demo.h"
+test "$tasks" = ' iosArm64MainKlibrary iosX64MainKlibrary iosSimulatorArm64MainKlibrary macosArm64MainKlibrary macosX64MainKlibrary'
+printf '%s\n%s\n' "$ios" "$macos" > ../sdk-roots
+printf ready > "$receipt"
+for target in iosArm64 iosX64 iosSimulatorArm64 macosArm64 macosX64; do
+    mkdir -p "build/classes/kotlin/$target/main/cinterop"
+    printf apple-klib > "build/classes/kotlin/$target/main/cinterop/demo.klib"
+done
+"#,
+    )
+    .unwrap();
+    let result = build(root)
+        .args([
+            "--native-sdk",
+            "ios=ios sdk.zip",
+            "--native-sdk",
+            "macos=macos sdk.zip",
+        ])
+        .assert()
+        .success();
+    assert!(!String::from_utf8_lossy(&result.get_output().stderr).contains("--- Building"));
+    for sdk_root in fs::read_to_string(root.join("sdk-roots")).unwrap().lines() {
+        assert!(!Path::new(sdk_root).exists());
+    }
+    let archive = root.join("target/release/kmp/DEMO_KMP_SDK-1.2.3-ANO.zip");
+    let mut zip = zip::ZipArchive::new(fs::File::open(archive).unwrap()).unwrap();
+    for target in [
+        "iosArm64",
+        "iosX64",
+        "iosSimulatorArm64",
+        "macosArm64",
+        "macosX64",
+    ] {
+        assert!(zip
+            .by_name(&format!("lib/kmp/native/{target}/cinterop/demo.klib"))
+            .is_ok());
+    }
+}
