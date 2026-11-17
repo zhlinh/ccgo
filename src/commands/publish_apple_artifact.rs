@@ -449,11 +449,8 @@ fn configure_platform_frameworks(
                     bail!("Base podspec must declare a deployment target for {key}");
                 }
             }
-            platforms.retain(|key, _| {
-                artifact
-                    .platform_frameworks
-                    .contains_key(if key == "osx" { "macos" } else { key })
-            });
+            platforms
+                .retain(|key, _| frameworks.contains_key(if key == "osx" { "macos" } else { key }));
         }
         for (platform, framework) in frameworks {
             let key = if platform == "macos" { "osx" } else { "ios" };
@@ -1204,7 +1201,7 @@ fn prepare_release_artifacts(
         if spm {
             bail!("Repeated --path currently requires --manager cocoapods; SPM needs a single combined XCFramework");
         }
-        prepare_platform_artifacts(command, configuration, temporary, &release)?
+        prepare_platform_artifacts(command, configuration, temporary, release)?
     })
 }
 
