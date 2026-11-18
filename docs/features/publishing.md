@@ -219,6 +219,8 @@ ccgo publish apple --manager spm \
 
 GitHub uses authenticated `gh` and requires `--github-repo owner/repo` plus an existing `v<version>` Release. The asset is named `<artifactId>-<version>.zip`; existing assets are not overwritten.
 
+Generated podspec filenames always match their `name`, such as `MnaLogComm.podspec.json` and `MnaLogCommShared.podspec.json`, as required by CocoaPods validation. `--artifact-id logcomm-apple` controls Maven coordinates and binary ZIP names independently of pod names and podspec filenames.
+
 For separate iOS and macOS SDK ZIPs, repeat `--path` to publish one podspec supporting both platforms:
 
 ```bash

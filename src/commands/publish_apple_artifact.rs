@@ -248,14 +248,22 @@ fn manifest_dir(project: &Path, version: &str) -> Result<PathBuf> {
     Ok(output)
 }
 
-fn write_podspec(
-    project: &Path,
-    version: &str,
-    artifact_id: &str,
-    spec: &Value,
-) -> Result<PathBuf> {
+fn write_podspec(project: &Path, version: &str, spec: &Value) -> Result<PathBuf> {
+    let name = spec
+        .get("name")
+        .and_then(Value::as_str)
+        .context("podspec must have a name")?;
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name
+            .chars()
+            .any(|ch| ch == '/' || ch == '\\' || ch.is_control())
+    {
+        bail!("Pod name must be a nonempty filename component: {name:?}");
+    }
     let output = manifest_dir(project, version)?;
-    let path = output.join(format!("{artifact_id}.podspec.json"));
+    let path = output.join(format!("{name}.podspec.json"));
     fs::write(&path, serde_json::to_vec_pretty(spec)?)?;
     Ok(path)
 }
@@ -706,7 +714,6 @@ fn artifact_id_for(base: &str, linkage: AppleLinkage) -> String {
 
 struct AppleArtifact {
     linkage: AppleLinkage,
-    artifact_id: String,
     xcframework: String,
     platform_frameworks: BTreeMap<String, String>,
     archive: PathBuf,
@@ -753,7 +760,6 @@ fn prepare_platform_artifacts(
         )?;
         artifacts.push(AppleArtifact {
             linkage,
-            artifact_id,
             xcframework: String::new(),
             platform_frameworks,
             archive,
@@ -905,7 +911,6 @@ fn prepare_artifact(
     )?;
     Ok(AppleArtifact {
         linkage,
-        artifact_id,
         xcframework,
         platform_frameworks: BTreeMap::new(),
         archive,
@@ -1248,9 +1253,18 @@ fn write_podspecs(
         return Ok(Vec::new());
     };
     let mut podspecs = Vec::new();
+    let mut pod_names = BTreeSet::new();
     for artifact in artifacts {
         let spec = podspec_for(base_spec, artifact, policy, names)?;
-        let path = write_podspec(project, version, &artifact.artifact_id, &spec)?;
+        if !pod_names.insert(
+            spec["name"]
+                .as_str()
+                .context("podspec must have a name")?
+                .to_string(),
+        ) {
+            bail!("Static and shared pods must use different names");
+        }
+        let path = write_podspec(project, version, &spec)?;
         podspecs.push((path, artifact.upload.url.clone()));
     }
     Ok(podspecs)
@@ -1282,6 +1296,33 @@ fn publish_podspecs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn podspec_filename_uses_pod_name_and_rejects_path_components() {
+        let project = tempfile::tempdir().unwrap();
+        for name in ["MnaLogComm", "MnaLogCommShared"] {
+            let path =
+                write_podspec(project.path(), "1.0.0", &serde_json::json!({"name": name})).unwrap();
+            assert_eq!(
+                path.file_name().unwrap().to_str().unwrap(),
+                format!("{name}.podspec.json")
+            );
+        }
+        for name in [
+            "",
+            ".",
+            "..",
+            "../outside",
+            "dir/pod",
+            "dir\\pod",
+            "pod\nname",
+        ] {
+            assert!(
+                write_podspec(project.path(), "1.0.0", &serde_json::json!({"name": name})).is_err()
+            );
+        }
+        assert!(write_podspec(project.path(), "1.0.0", &serde_json::json!({})).is_err());
+    }
 
     #[test]
     fn combined_sdks_reject_duplicate_platforms_and_mismatched_linkages() {

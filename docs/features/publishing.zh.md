@@ -213,6 +213,8 @@ ccgo publish apple --manager spm \
   --artifact-provider github --github-repo company/library --push
 ```
 
+生成的文件名始终使用 podspec 的 `name`：例如 `MnaLogComm.podspec.json` 和 `MnaLogCommShared.podspec.json`，以满足 CocoaPods 校验要求。`--artifact-id logcomm-apple` 只决定 Maven 坐标和二进制 ZIP 名称，不影响 Pod 名称或 podspec 文件名。
+
 iOS 和 macOS 为独立 SDK ZIP 时，重复 `--path` 即可发布到同一份 podspec：
 
 ```bash

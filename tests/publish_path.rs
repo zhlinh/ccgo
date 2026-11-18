@@ -1012,7 +1012,7 @@ fn apple_maven_upload_and_private_specs_are_independent() {
     let spec: serde_json::Value = serde_json::from_slice(
         &fs::read(
             tmp.path()
-                .join("target/ccgo-publish/apple/1.2.3/demo-apple.podspec.json"),
+                .join("target/ccgo-publish/apple/1.2.3/Demo.podspec.json"),
         )
         .unwrap(),
     )
@@ -1281,10 +1281,9 @@ fn apple_cocoapods_publishes_static_and_shared_pods() {
 
     let dir = tmp.path().join("target/ccgo-publish/apple/1.0.0");
     let static_spec: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("demo-apple.podspec.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(dir.join("Demo.podspec.json")).unwrap()).unwrap();
     let shared_spec: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("demo-apple-shared.podspec.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&fs::read(dir.join("DemoShared.podspec.json")).unwrap()).unwrap();
 
     assert_eq!(static_spec["name"], "Demo");
     assert_eq!(static_spec["static_framework"], true);
@@ -1330,23 +1329,38 @@ fn apple_cocoapods_publishes_static_and_shared_pods() {
             "private",
             "--remote",
             "company-specs",
+            "--artifact-id",
+            "logcomm-apple",
             "--pod-name",
-            "LogComm",
+            "MnaLogComm",
             "--shared-pod-name",
-            "LogCommDynamic",
+            "MnaLogCommShared",
         ])
         .assert()
         .success();
     let static_spec: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("demo-apple.podspec.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(dir.join("MnaLogComm.podspec.json")).unwrap()).unwrap();
     let shared_spec: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("demo-apple-shared.podspec.json")).unwrap())
+        serde_json::from_slice(&fs::read(dir.join("MnaLogCommShared.podspec.json")).unwrap())
             .unwrap();
-    assert_eq!(static_spec["name"], "LogComm");
+    assert_eq!(static_spec["name"], "MnaLogComm");
     assert_eq!(static_spec["module_name"], "Demo");
-    assert_eq!(shared_spec["name"], "LogCommDynamic");
+    assert_eq!(shared_spec["name"], "MnaLogCommShared");
     assert_eq!(shared_spec["module_name"], "Demo");
 
+    assert!(uploads2.join("logcomm-apple-1.0.0.zip").is_file());
+    assert!(uploads2.join("logcomm-apple-shared-1.0.0.zip").is_file());
+    assert!(static_spec["source"]["http"]
+        .as_str()
+        .unwrap()
+        .ends_with("logcomm-apple-1.0.0.zip"));
+    assert!(shared_spec["source"]["http"]
+        .as_str()
+        .unwrap()
+        .ends_with("logcomm-apple-shared-1.0.0.zip"));
+    let pod_args = fs::read_to_string(capture2).unwrap();
+    assert!(pod_args.contains("/MnaLogComm.podspec.json"));
+    assert!(pod_args.contains("/MnaLogCommShared.podspec.json"));
     let args = fs::read_to_string(capture).unwrap();
     assert_eq!(args.matches("repo\npush\ncompany-specs\n").count(), 2);
 }
@@ -1990,10 +2004,9 @@ fn apple_cocoapods_combines_platform_zips_with_repeated_paths() {
 
     let dir = tmp.path().join("target/ccgo-publish/apple/1.0.0");
     let static_spec: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("demo-apple.podspec.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(dir.join("Demo.podspec.json")).unwrap()).unwrap();
     let shared_spec: serde_json::Value =
-        serde_json::from_slice(&fs::read(dir.join("demo-apple-shared.podspec.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&fs::read(dir.join("DemoShared.podspec.json")).unwrap()).unwrap();
 
     assert_eq!(static_spec["name"], "Demo");
     assert_eq!(static_spec["static_framework"], true);
