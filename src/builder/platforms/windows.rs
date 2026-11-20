@@ -342,7 +342,7 @@ impl WindowsBuilder {
 
         let cmake_vars = mingw.cmake_variables_for_arch();
 
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+        let mut cmake = CMakeConfig::for_project(ctx, build_dir.clone())
             .generator("Unix Makefiles")
             .build_type(if ctx.options.release {
                 BuildType::RelWithDebInfo
@@ -388,7 +388,7 @@ impl WindowsBuilder {
         let install_dir = build_dir.join("install");
         let build_shared = link_type == "shared";
 
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+        let mut cmake = CMakeConfig::for_project(ctx, build_dir.clone())
             .generator(msvc.cmake_generator())
             .build_type(if ctx.options.release {
                 BuildType::RelWithDebInfo

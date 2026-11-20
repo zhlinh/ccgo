@@ -226,6 +226,8 @@ system_libs = ["pthread", "dl"]
 
 ### [build.cmake]
 
+Third-party CMake projects can set `source_dir`, `target`, and `install_include_dir` (default: `include`), with platform overrides. See [third-party CMake integration](../guides/third-party-cmake.md).
+
 Extra CMake arguments and compiler flags injected at configure time. These are appended **after** all internal CCGO flags, so they can override or extend defaults.
 
 | Field | Type | Description | Default |

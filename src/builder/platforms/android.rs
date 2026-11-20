@@ -132,7 +132,7 @@ impl AndroidBuilder {
             BuildType::Debug
         };
 
-        let cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+        let cmake = CMakeConfig::for_project(ctx, build_dir.clone())
             .build_type(build_type)
             .install_prefix(install_dir.clone())
             .jobs(ctx.jobs())

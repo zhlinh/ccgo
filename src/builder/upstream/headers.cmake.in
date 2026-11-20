@@ -1,0 +1,7 @@
+set(source "${CMAKE_INSTALL_PREFIX}/@CCGO_UPSTREAM_INCLUDE@")
+if(NOT IS_DIRECTORY "${source}")
+    message(FATAL_ERROR "Upstream install did not produce headers: ${source}")
+endif()
+file(REMOVE_RECURSE "@CCGO_HEADER_STAGE@")
+file(MAKE_DIRECTORY "@CCGO_HEADER_STAGE@")
+file(COPY "${source}/" DESTINATION "@CCGO_HEADER_STAGE@")

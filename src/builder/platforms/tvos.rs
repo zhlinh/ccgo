@@ -134,7 +134,7 @@ impl TvosBuilder {
         };
         let cmake_vars = xcode.cmake_variables_for_platform(platform)?;
 
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+        let mut cmake = CMakeConfig::for_project(ctx, build_dir.clone())
             .build_type(if ctx.options.release {
                 BuildType::RelWithDebInfo
             } else {

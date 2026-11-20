@@ -64,9 +64,42 @@ pub struct CMakeConfig {
     /// Explicit cmake script files from [build].cmake_file / [platforms.X.build].cmake_file.
     /// None = auto-discover; Some(vec![]) = suppress; Some(paths) = include these files.
     user_cmake_files: Option<Vec<PathBuf>>,
+    upstream: bool,
 }
 
 impl CMakeConfig {
+    /// Adapt an upstream library without adding files to its source tree.
+    pub fn for_project(ctx: &super::BuildContext, build_dir: PathBuf) -> Self {
+        let platform = ctx.options.target.to_string().to_lowercase();
+        let config = ctx.cmake_user_config(&platform);
+        let Some(source) = config.source_dir else {
+            return Self::new(ctx.project_root.clone(), build_dir);
+        };
+        let mut cmake = Self::new(build_dir.join("ccgo-adapter"), build_dir)
+            .variable(
+                "CCGO_UPSTREAM_SOURCE",
+                ctx.project_root.join(source).to_string_lossy(),
+            )
+            .variable("CCGO_UPSTREAM_TARGET", config.target.unwrap_or_default())
+            .variable("CCGO_UPSTREAM_NAME", ctx.lib_name())
+            .variable(
+                "CCGO_UPSTREAM_INCLUDE",
+                config
+                    .install_include_dir
+                    .unwrap_or_else(|| "include".into()),
+            )
+            .variable(
+                "CCGO_HEADER_STAGE",
+                ctx.cmake_build_dir
+                    .join("upstream-include")
+                    .to_string_lossy(),
+            )
+            .variable("CCGO_PROJECT_ROOT", ctx.project_root.to_string_lossy())
+            .user_cmake_files(ctx.cmake_user_files(&platform));
+        cmake.upstream = true;
+        cmake
+    }
+
     /// Create a new CMake configuration
     pub fn new(source_dir: PathBuf, build_dir: PathBuf) -> Self {
         Self {
@@ -200,24 +233,82 @@ impl CMakeConfig {
         which::which("cmake").context("CMake not found. Please install CMake and add it to PATH.")
     }
 
-    /// Run CMake configure step
-    pub fn configure(&self) -> Result<()> {
-        let cmake = Self::find_cmake()?;
+    fn prepare_upstream_adapter(&self) -> Result<()> {
+        if self.upstream {
+            std::fs::create_dir_all(&self.source_dir)?;
+            for (name, contents) in [
+                ("CMakeLists.txt", include_str!("upstream/CMakeLists.txt")),
+                ("merge.cmake", include_str!("upstream/merge.cmake")),
+                (
+                    "headers.cmake.in",
+                    include_str!("upstream/headers.cmake.in"),
+                ),
+            ] {
+                let path = self.source_dir.join(name);
+                if std::fs::read_to_string(&path).ok().as_deref() != Some(contents) {
+                    std::fs::write(path, contents)?;
+                }
+            }
+        }
 
-        // Create build directory if it doesn't exist
-        std::fs::create_dir_all(&self.build_dir)
-            .context("Failed to create CMake build directory")?;
+        Ok(())
+    }
 
-        let mut cmd = Command::new(&cmake);
-        cmd.current_dir(&self.build_dir);
+    fn print_user_settings(&self) {
+        if !self.user_arguments.is_empty()
+            || !self.user_c_flags.is_empty()
+            || !self.user_cpp_flags.is_empty()
+            || self.user_cmake_files.is_some()
+        {
+            println!("   📋 Custom CMake settings from CCGO.toml:");
+            if !self.user_arguments.is_empty() {
+                println!("      arguments : [{}]", self.user_arguments.join(", "));
+            }
+            if !self.user_c_flags.is_empty() {
+                println!("      c_flags   : [{}]", self.user_c_flags.join(", "));
+            }
+            if !self.user_cpp_flags.is_empty() {
+                println!("      cpp_flags : [{}]", self.user_cpp_flags.join(", "));
+            }
+            if let Some(files) = &self.user_cmake_files {
+                if files.is_empty() {
+                    println!("      cmake_file: (suppressed)");
+                } else {
+                    for f in files {
+                        println!("      cmake_file: {}", f.display());
+                    }
+                }
+            }
+        }
+    }
 
-        // Source directory
-        cmd.arg("-S").arg(&self.source_dir);
-        cmd.arg("-B").arg(&self.build_dir);
+    fn apply_user_settings(&self, cmd: &mut Command) {
+        for arg in &self.user_arguments {
+            cmd.arg(arg);
+        }
+        if !self.user_c_flags.is_empty() {
+            cmd.arg(format!(
+                "-DCMAKE_C_FLAGS:STRING={}",
+                self.user_c_flags.join(" ")
+            ));
+        }
+        if !self.user_cpp_flags.is_empty() {
+            cmd.arg(format!(
+                "-DCMAKE_CXX_FLAGS:STRING={}",
+                self.user_cpp_flags.join(" ")
+            ));
+        }
+        if let Some(files) = &self.user_cmake_files {
+            let list = files
+                .iter()
+                .map(|f| f.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(";");
+            cmd.arg(format!("-DCCGO_USER_CMAKE_FILES={}", list));
+        }
+    }
 
-        // Build type
-        cmd.arg(format!("-DCMAKE_BUILD_TYPE={}", self.build_type));
-
+    fn apply_build_settings(&self, cmd: &mut Command) {
         // Install prefix
         if let Some(prefix) = &self.install_prefix {
             cmd.arg(format!("-DCMAKE_INSTALL_PREFIX={}", prefix.display()));
@@ -265,60 +356,37 @@ impl CMakeConfig {
             let definitions = self.compile_definitions.join(";");
             cmd.arg(format!("-DCCGO_FEATURE_DEFINITIONS={}", definitions));
         }
+    }
+
+    /// Run CMake configure step
+    pub fn configure(&self) -> Result<()> {
+        let cmake = Self::find_cmake()?;
+
+        self.prepare_upstream_adapter()?;
+
+        // Create build directory if it doesn't exist
+        std::fs::create_dir_all(&self.build_dir)
+            .context("Failed to create CMake build directory")?;
+
+        let mut cmd = Command::new(&cmake);
+        cmd.current_dir(&self.build_dir);
+
+        // Source directory
+        cmd.arg("-S").arg(&self.source_dir);
+        cmd.arg("-B").arg(&self.build_dir);
+
+        // Build type
+        cmd.arg(format!("-DCMAKE_BUILD_TYPE={}", self.build_type));
+
+        self.apply_build_settings(&mut cmd);
 
         // User-specified flags from [build.cmake] / [platforms.X.build.cmake].
         // Emitted last so they can override earlier -D settings.
         //
         // Print a visible summary so the user can confirm their CCGO.toml
         // cmake settings were picked up.
-        if !self.user_arguments.is_empty()
-            || !self.user_c_flags.is_empty()
-            || !self.user_cpp_flags.is_empty()
-            || self.user_cmake_files.is_some()
-        {
-            println!("   📋 Custom CMake settings from CCGO.toml:");
-            if !self.user_arguments.is_empty() {
-                println!("      arguments : [{}]", self.user_arguments.join(", "));
-            }
-            if !self.user_c_flags.is_empty() {
-                println!("      c_flags   : [{}]", self.user_c_flags.join(", "));
-            }
-            if !self.user_cpp_flags.is_empty() {
-                println!("      cpp_flags : [{}]", self.user_cpp_flags.join(", "));
-            }
-            if let Some(files) = &self.user_cmake_files {
-                if files.is_empty() {
-                    println!("      cmake_file: (suppressed)");
-                } else {
-                    for f in files {
-                        println!("      cmake_file: {}", f.display());
-                    }
-                }
-            }
-        }
-        for arg in &self.user_arguments {
-            cmd.arg(arg);
-        }
-        if !self.user_c_flags.is_empty() {
-            cmd.arg(format!(
-                "-DCMAKE_C_FLAGS:STRING={}",
-                self.user_c_flags.join(" ")
-            ));
-        }
-        if !self.user_cpp_flags.is_empty() {
-            cmd.arg(format!(
-                "-DCMAKE_CXX_FLAGS:STRING={}",
-                self.user_cpp_flags.join(" ")
-            ));
-        }
-        if let Some(files) = &self.user_cmake_files {
-            let list = files
-                .iter()
-                .map(|f| f.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join(";");
-            cmd.arg(format!("-DCCGO_USER_CMAKE_FILES={}", list));
-        }
+        self.print_user_settings();
+        self.apply_user_settings(&mut cmd);
 
         if self.verbose {
             eprintln!("Running: {:?}", cmd);
@@ -342,6 +410,9 @@ impl CMakeConfig {
 
         let mut cmd = Command::new(&cmake);
         cmd.arg("--build").arg(&self.build_dir);
+        if self.upstream {
+            cmd.arg("--target").arg("ccgo_upstream");
+        }
 
         // Add config for multi-config generators (Windows).
         // Visual Studio ignores CMAKE_BUILD_TYPE, so without this MSBuild builds the

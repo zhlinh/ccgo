@@ -358,12 +358,17 @@ impl BuildContext {
     }
 
     /// Get the include source directory for SDK packaging.
-    /// Uses `[include].src` from CCGO.toml if configured; otherwise falls back to `include/`.
+    /// Uses explicit headers, upstream installed headers, or the default `include/`.
     pub fn include_source_dir(&self) -> PathBuf {
         if let Some(src) = self.config.include.as_ref().and_then(|c| c.src.as_deref()) {
             self.project_root.join(src)
         } else {
-            self.project_root.join("include")
+            let platform = self.options.target.to_string().to_lowercase();
+            if self.cmake_user_config(&platform).source_dir.is_some() {
+                self.cmake_build_dir.join("upstream-include")
+            } else {
+                self.project_root.join("include")
+            }
         }
     }
 
@@ -969,6 +974,7 @@ impl BuildContext {
                 arguments: rp.cmake.arguments.clone(),
                 c_flags: rp.cmake.c_flags.clone(),
                 cpp_flags: rp.cmake.cpp_flags.clone(),
+                ..Default::default()
             })
             .unwrap_or_default();
 
@@ -1016,10 +1022,16 @@ impl BuildContext {
                 arguments: rc.arguments.clone(),
                 c_flags: rc.c_flags.clone(),
                 cpp_flags: rc.cpp_flags.clone(),
+                ..Default::default()
             })
             .unwrap_or_default();
 
         CmakeUserConfig {
+            source_dir: platform_cfg.source_dir.or(global.source_dir),
+            target: platform_cfg.target.or(global.target),
+            install_include_dir: platform_cfg
+                .install_include_dir
+                .or(global.install_include_dir),
             arguments: [
                 global.arguments,
                 profile_global.arguments,
@@ -1688,6 +1700,40 @@ arguments = ["-DPROFILE=1"]
         let cmake_cfg = ctx.cmake_user_config("linux");
         assert!(cmake_cfg.arguments.contains(&"-DGLOBAL=1".to_string()));
         assert!(cmake_cfg.arguments.contains(&"-DPROFILE=1".to_string()));
+    }
+
+    #[test]
+    fn cmake_upstream_fields_inherit_and_override_per_platform() {
+        let config = crate::config::CcgoConfig::parse(
+            r#"
+[package]
+name = "wrapper"
+version = "1.0.0"
+[build.cmake]
+source_dir = "vendor/upstream"
+target = "common"
+install_include_dir = "include/vendor"
+[platforms.android.build.cmake]
+target = "android_lib"
+"#,
+        )
+        .unwrap();
+        let ctx = make_ctx(bare_options(), config);
+        let android = ctx.cmake_user_config("android");
+        assert_eq!(android.target.as_deref(), Some("android_lib"));
+        assert_eq!(android.source_dir.as_deref(), Some("vendor/upstream"));
+        assert_eq!(
+            android.install_include_dir.as_deref(),
+            Some("include/vendor")
+        );
+        assert_eq!(
+            ctx.cmake_user_config("macos").target.as_deref(),
+            Some("common")
+        );
+        assert_eq!(
+            ctx.include_source_dir(),
+            ctx.cmake_build_dir.join("upstream-include")
+        );
     }
 
     #[test]

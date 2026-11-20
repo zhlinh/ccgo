@@ -1131,6 +1131,12 @@ pub struct BuildConfig {
 /// concatenated: global first, then platform-specific.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct CmakeUserConfig {
+    /// Upstream CMake source directory, relative to the project root.
+    pub source_dir: Option<String>,
+    /// Upstream library target to package (may be overridden per platform).
+    pub target: Option<String>,
+    /// Public headers directory relative to the upstream install prefix.
+    pub install_include_dir: Option<String>,
     /// Raw arguments passed verbatim to the cmake configure invocation.
     /// Example: `["-DANDROID_ARM_NEON=TRUE", "-DANDROID_TOOLCHAIN=clang"]`
     #[serde(default)]

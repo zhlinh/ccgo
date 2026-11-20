@@ -167,7 +167,7 @@ impl ConanBuilder {
         let build_shared = link_type == "shared";
 
         // Configure and build with CMake
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+        let mut cmake = CMakeConfig::for_project(ctx, build_dir.clone())
             .build_type(if ctx.options.release {
                 BuildType::Release
             } else {

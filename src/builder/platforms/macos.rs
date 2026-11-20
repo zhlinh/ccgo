@@ -145,7 +145,7 @@ impl MacosBuilder {
         let build_shared = link_type == "shared";
         let cmake_vars = xcode.cmake_variables_for_platform(ApplePlatform::MacOS)?;
 
-        let mut cmake = CMakeConfig::new(ctx.project_root.clone(), build_dir.clone())
+        let mut cmake = CMakeConfig::for_project(ctx, build_dir.clone())
             .build_type(if ctx.options.release {
                 BuildType::RelWithDebInfo
             } else {

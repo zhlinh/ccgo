@@ -226,6 +226,8 @@ system_libs = ["pthread", "dl"]
 
 ### [build.cmake]
 
+第三方 CMake 工程可配置 `source_dir`、`target` 和 `install_include_dir`（默认 `include`），均支持平台覆盖。参见[第三方 CMake 接入](../guides/third-party-cmake.zh.md)。
+
 在 configure 阶段注入的额外 CMake 参数和编译器标志。这些标志追加在所有内部 CCGO 标志**之后**，因此可以覆盖或扩展默认值。
 
 | 字段 | 类型 | 描述 | 默认值 |
